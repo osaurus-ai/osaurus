@@ -34,6 +34,9 @@ struct FloatingInputCard: View {
     let supportsImages: Bool
     /// Current estimated context token count for the session
     let estimatedContextTokens: Int
+    /// True when the next local send has an enabled tool surface, so an
+    /// untouched toggleable model will use the agent direct-reasoning default.
+    let appliesAgentReasoningDefault: Bool
     /// Per-category breakdown of context token usage
     var contextBreakdown: ContextBreakdown = .zero
     /// Total micro-USD spent on the Osaurus Router this session.
@@ -133,6 +136,7 @@ struct FloatingInputCard: View {
         isPrivacyReviewSheetVisible: Bool = false,
         supportsImages: Bool,
         estimatedContextTokens: Int,
+        appliesAgentReasoningDefault: Bool = false,
         contextBreakdown: ContextBreakdown = .zero,
         sessionSpendMicro: Int = 0,
         isRouterBilledSession: Bool = false,
@@ -175,6 +179,7 @@ struct FloatingInputCard: View {
         self.isPrivacyReviewSheetVisible = isPrivacyReviewSheetVisible
         self.supportsImages = supportsImages
         self.estimatedContextTokens = estimatedContextTokens
+        self.appliesAgentReasoningDefault = appliesAgentReasoningDefault
         self.contextBreakdown = contextBreakdown
         self.sessionSpendMicro = sessionSpendMicro
         self.isRouterBilledSession = isRouterBilledSession
@@ -2227,8 +2232,19 @@ extension FloatingInputCard {
             inlineReasoningSuffix == nil,
             ModelProfileRegistry.profile(for: model)?.thinkingOption != nil
         else { return nil }
-        return ModelProfileRegistry.thinkingEnabled(for: model, values: activeModelOptions)
-            ?? ModelProfileRegistry.thinkingDefaultOn(for: model)
+        return effectiveThinkingEnabled(for: model)
+    }
+
+    /// Keep the chip and picker on the same policy as dispatch. In a local
+    /// tool-capable chat, an untouched toggleable model defaults to direct
+    /// answers; in ordinary no-tool chat, the bundle template still owns the
+    /// default. An explicit persisted UI choice wins in either context.
+    private func effectiveThinkingEnabled(for model: String) -> Bool {
+        AgentReasoningPolicy.effectiveEnableThinkingForPresentation(
+            isAgentOrToolRequest: appliesAgentReasoningDefault,
+            modelOptions: activeModelOptions,
+            capability: LocalReasoningCapability.capability(forModelId: model)
+        )
     }
 
     private var selectorRow: some View {
@@ -3121,7 +3137,7 @@ extension FloatingInputCard {
             values: activeModelOptions
         )
         return ModelPickerThinkingControl(
-            isEnabled: explicitEnabled ?? ModelProfileRegistry.thinkingDefaultOn(for: model),
+            isEnabled: effectiveThinkingEnabled(for: model),
             isExplicit: explicitEnabled != nil,
             onSetEnabled: { enabled in
                 // Deferred write for the same reason as the generic option

@@ -1,10 +1,14 @@
 # Gemma/Bonsai Emergency Proof Ledger
 
-Last updated: 2026-07-19 (America/Los_Angeles)
+Last updated: 2026-07-20 (America/Los_Angeles)
 
-Verdict: **PASS for the narrow schema-1 JANG loader pin; PARTIAL for the
-separate Ornith multi-step semantic-completion defect, which is not changed or
-claimed fixed by this PR.**
+Verdict: **PASS for the narrow Ornith/Qwen-toggleable agent-reasoning policy
+and recurrent-cache cross-hit repair on the exact installed JANG_4M bundle;
+PASS for the historical schema-1 JANG loader and Bonsai paged-chain repairs;
+PARTIAL for the separate Ornith semantic-completion defect and every deferred
+family/cache matrix. The current Release app was operated through the real UI
+across untouched OFF, explicit ON, OFF-after-ON, process restart, and partial
+disk-L2 reuse. No MXFP4 artifact was loaded or used as evidence.**
 
 ## Local model root (hard rule)
 
@@ -18,7 +22,8 @@ Current Ornith fixtures:
 - JANG_4M: `/Users/eric/models/JANGQ-AI/Ornith-1.0-9B-JANG_4M`
 - MXFP8: `/Users/eric/models/JANGQ-AI/Ornith-1.0-9B-MXFP8`
 
-This branch starts from `origin/main` `504d174ab`. Bonsai structured-chart and
+This emergency branch is rebased on merged `main`
+`08eb8bd8a29f79bef9bdb1dd791fcf6a8c1fea4c`. Bonsai structured-chart and
 hybrid-memory fixes are already on main through PR #2041. Selected Memory
 Safety load admission is already on main through PR #2045. The deferred broad
 automatic-routing/hardware-guidance work in PR #2044 is not part of this
@@ -35,21 +40,294 @@ emergency diff.
 - Record visible output, tool cards, streamed tool assembly, token/s, physical
   footprint, cache topology/counters, and on-disk effects.
 
+## Active Gemma 4 QAT checkpoint gates
+
+The project `AGENTS.md` makes the following required follow-up evidence part of
+this ledger. These rows do not broaden the present emergency diff, and they
+remain PARTIAL until exercised in an exact-head Release Osaurus app through the
+real UI:
+
+- ordinary single-batch chat/server loading starts with paged RAM KV off;
+  paged RAM may only be enabled by an explicit user or regression setting;
+- Gemma 4 JANG_4M and QAT MXFP4 use bundle generation configuration plus the
+  real Osaurus/vMLX parser/tool/streaming path, with no protocol-marker leakage
+  and no prompt, sampler, reasoning-tag, stop-token, or output-cap masking;
+- telemetry names the effective topology exactly. Rotating KV plus disk restore
+  with `turbo_quant_kv_layer_count=0` must not be described as a TurboQuant-KV
+  topology, and prefix/paged/L2/disk-restore counters must agree with behavior;
+- long first-token waits expose runtime prefill/cache/media progress rather
+  than UI timer estimates;
+- every generation row records TTFT/token/s, visible answer and reasoning
+  coherency, no loop or hidden-only answer, and Activity Monitor
+  `phys_footprint`; load-only and report-only admission rows do not pass; and
+- multi-turn plus architecture-specific cache proof is mandatory, including
+  companion state for rotating SWA, hybrid/recurrent state, VL, video, or other
+  path-dependent caches. Raw speed and Gemma 4 audio stay deferred until the
+  correctness checkpoint closes, and BF16/source Gemma bundles are excluded
+  from that checkpoint.
+
 ## Priority and current evidence
 
 | Priority | Row | Status |
 | --- | --- | --- |
-| P0 | Installed JANG schema-1 bundles load | LIVE LOAD PASS on exact JANG_4M; multi-step correctness still fails |
+| P0 | Installed JANG schema-1 bundles load | LIVE LOAD PASS on exact JANG_4M; separate semantic-completion row remains partial |
+| P0 | Untouched Thinking state on agent/tool runs | VERIFIED-SOURCE + VERIFIED-LIVE on exact current Release app: OFF→ON→OFF and restart |
+| P0 | Reasoning-mode cache isolation across same-chat tool turns | VERIFIED-SOURCE + VERIFIED-LIVE: no stale replay after vMLX reset plus detached recurrent snapshots |
 | P0 | Ornith/Qwen post-tool cutoff or partial completion | REPRODUCED AS PARTIAL MUTATION on JANG_4M and MXFP8; exact pre-write cutoff not reproduced |
 | P0 | Bonsai tiny-pool paged-cache eviction and hybrid replay tail | VERIFIED-SOURCE + VERIFIED-LIVE for the cache defect; model semantic-quality controls remain mixed |
 | P0 | PR scope contains no deferred routing/hardware changes | PASS for current pin-only source/test diff plus ledger; repeat on final diff |
-| P0 | Exact pin-only candidate Release UI rerun | PASS for JANG_4M load and plain generation; semantic handbook behavior remains a separate reproduced failure |
+| P0 | Exact pin-only candidate Release UI rerun | PASS for the scoped agent reasoning/cache matrix; semantic handbook behavior remains a separate reproduced failure |
 | P1 | Gemma/Bonsai tool correctness regressions | NOT YET RUN on clean head |
 | P1 | TurboQuant default-off, explicit toggle, persistence, Gemma rotating-SWA topology | NOT YET RUN on clean head |
 | P1 | Qwen 3.5 text/VL hybrid rederive, prefix/L2 disk restore, cache growth in GB | NOT YET RUN on clean head |
 | P1 | Memory Safety warning, setting change, larger-model load, restore refusal | NOT YET RUN on clean head |
 | P1 | Image generation/editing and spawn/delegation RAM admission/notifications | NOT YET RUN on clean head |
+| P1 | MiniMax M2.7 JANGTQ/JANG_K runtime plus native reasoning-mode behavior | DOCUMENTED; SEPARATE LIVE MATRIX OPEN |
+| P1 | DSV4 Flash mixed SWA/HCA/CSA/DSA/MLA prefix/partial/L2 cache behavior | DOCUMENTED; SEPARATE LIVE MATRIX OPEN |
 | P2 | MXFP4 structurally incomplete answer/reasoning/tool-envelope recovery | DOCUMENTED ONLY; no MXFP4 runtime claim and excluded from the emergency diff without a later exact-model reproduction |
+
+## 2026-07-20 Ornith agent reasoning emergency
+
+Status: **VERIFIED-SOURCE + VERIFIED-LIVE for the scoped emergency.** The
+current request policy and both vMLX cache repairs were rebuilt together into
+an isolated Release app and operated through the real model picker, folder,
+tool cards, cache settings, chat history, and process restart. The same chat
+completed OFF→ON→OFF without a stale tool call, and the restarted process
+restored a partial disk prefix before the requested tool call. This does not
+close the separate Ornith semantic-completion defect or any deferred model
+family.
+
+### Reproduced contract
+
+The exact installed bundle
+`/Users/eric/models/JANGQ-AI/Ornith-1.0-9B-JANG_4M` declares
+`text_config.model_type=qwen3_5_text`, 24 linear-attention layers, eight
+full-attention layers, and a Qwen tool/reasoning contract. Its template's only
+direct-rail branch is
+`enable_thinking is defined and enable_thinking is false`; omission therefore
+means thinking ON. Ornith's display id does not match the existing Qwen family
+name path in `MLXBatchAdapter`, so an untouched request reaches the template
+without `enable_thinking` and inherits the reasoning rail.
+
+Osaurus `main` at `846ca9185dfee42a9bf2f741938f0b89a546b8ca`
+already freezes an explicit Thinking choice for every reconstructed ChatView
+tool iteration and cap finalizer. That fix deliberately preserves `nil` for an
+untouched control, so it does not implement the required agent default.
+
+### Required policy
+
+- Ordinary chat plus untouched Thinking: preserve the bundle/template default.
+- Agent or tool run plus untouched Thinking: pass
+  `enable_thinking=false` for every model step and finalizer, but only when the
+  installed bundle exposes a real toggleable reasoning template.
+- Explicit Thinking ON or OFF: the user/API choice wins on every step.
+- Explicit reasoning effort: the effort rail wins; do not synthesize a
+  contradictory boolean.
+- Non-toggleable models, models with a dedicated reasoning-effort control
+  (including DSV4 instruct/reasoning/max and Hy3), and remote agent-owned Mode
+  2 generation receive no synthetic local boolean kwarg.
+- Detect from the local template/config capability, never from `ornith`,
+  `qwen`, or another display-name allowlist.
+
+### Owning-layer fixes
+
+The Osaurus candidate adds a pure `AgentReasoningPolicy` and calls
+it from `ChatEngine.prepareDispatch`, the shared stream/non-stream request
+entry. The policy fires only for `isAgentRequest` or a non-empty tool schema,
+only for `LocalReasoningCapability.isToggleableThinking`, and only when no
+explicit thinking or reasoning-effort control exists. Any model profile that
+owns a segmented `reasoningEffort` rail is excluded even if its underlying
+template also accepts `enable_thinking`. ChatView carries the
+logical agent marker into its tool-less cap finalizer. Plugin iterations copy
+the same marker when their resolved schema is non-empty. Computer Use,
+AppleScript, HTTP agent loops, and delegated subagents already mark their
+requests as agent-driven and therefore converge at the shared entry point.
+Fresh local `.chatUI` requests created by Computer Use, AppleScript, and
+delegated text-agent loops now resolve the persisted per-model picker choice at
+that same entry point when the request does not already carry explicit
+`modelOptions`. This lookup is limited to local `.chatUI` agent requests:
+explicit request options win, and ordinary chat, OpenAI/API tools, plugins,
+scheduled/P2P work, and remote-agent execution do not inherit GUI state.
+An ordinary OpenAI request that supplies schemas with `tool_choice: none`
+remains ordinary chat and preserves the bundle default; an explicit local
+agent marker still wins for a tool-less finalizer.
+
+This is request-policy wiring, not a model-behavior repair: it does not change
+the chat template, prompt text, sampler, output parser, stop/EOS handling,
+reasoning delimiters, tool JSON schema, tool-result history, or content-delta
+assembly.
+
+### Required current-source and live closure
+
+| Gate | Required evidence | Status |
+| --- | --- | --- |
+| Pure precedence tests | ordinary unset, agent unset, explicit ON/OFF, explicit effort, non-toggleable, dedicated effort rail, remote-agent exclusion | PASS: rebased-head `ReasoningTests9.xcresult` reports 64 passed, 0 failed, 0 skipped across policy, dispatch, turn controls, local capability, and profile regressions |
+| Request reconstruction | ChatView normal iterations + finalizer, HTTP agents, plugins, Computer Use, AppleScript, delegated subagents | VERIFIED-SOURCE at shared dispatch and reconstruction sites; local ChatView path VERIFIED-LIVE; other surfaces not separately live-proven by this row |
+| Untouched real-user row | Fresh isolated preferences; real tool calls; zero reasoning on every step; exact tool args/results; final answer; TTFT and tok/s | PASS-LIVE: two exact file reads, zero reasoning deltas on all steps/finalizer, exact `FIX2-OFF-DONE`; TTFT 0.48s, 72.7 tok/s, 6 tokens |
+| Explicit OFF row | Toggle OFF in picker; repeat multi-tool run; zero reasoning on every step and finalizer | PASS-LIVE after ON: two exact requested reads, no extras/reasoning, exact `FIX2-OFF-RETURN-DONE`; TTFT 0.44s, 69.8 tok/s, 8 tokens |
+| Explicit ON row | Toggle ON in picker; structured reasoning present on every intended step without leakage/looping | PASS-LIVE: one exact requested read, visible Thought before and after the tool, exact `FIX2-ON-DONE`; TTFT 0.52s, 70.6 tok/s, 27 tokens |
+| OFF after ON | Toggle back OFF; repeat to prove no stale prompt/cache replay | PASS-LIVE: no stale argument or final-answer replay in the same chat |
+| Settings/user-state truth | Reopen history and restart app; visible mode and effective request behavior agree | PASS-LIVE: reopened persisted chat after process restart; chip remained Off and every restarted step logged zero reasoning deltas |
+| Adjacent behavior | tool error + recovery, auto/required/no-tool, post-tool final answer, content/reasoning delta boundaries, cancellation, retry, spawn/delegation | OPEN |
+| Resource/cache proof | Activity Monitor physical footprint, per-turn token/s, prefix/paged/L2/SSM counters, no cache cross-hit between thinking states | PASS for scoped row: exact PID 84047 was 2.53 GB; rates above; disk partial-prefix hits and quota eviction captured. Broader cache-efficiency/family rows remain PARTIAL |
+
+Current-source safeguard results: the reasoning-delta routing, Chat UI
+reasoning routing, and no-hidden-local-sampler-default guards pass. The broad
+no-forced-behavior guard reports one lexical failure at the untouched
+`CapabilityTools.swift:17` documentation phrase `parser repair`. That line
+predates this branch (blame commit `2d238592cf`) and describes why malformed
+dynamic schemas fail closed; this diff does not modify that file or add a
+parser repair. The guard is therefore not reported as passing and the unrelated
+documentation is not edited merely to silence it.
+
+### Adjacent cache-contamination reproduction and candidate root
+
+The isolated proof app at
+`/private/tmp/osaurus-ornith-reasoning-release-derived/Build/Products/Release/osaurus.app`
+used bundle id `com.dinoki.osaurus.ornithreasoningproof`, isolated files and
+preferences, and the exact JANG_4M fixture. In one OFF turn it read lines 20–22
+and 35–37. After changing the same chat to ON, a prompt requesting only lines
+70–72 first executed the stale lines-20–22 call and only then the requested
+lines-70–72 call. The UI showed two tool cards and Thinking before every model
+step, then ended `ON-CROSS-HIT-DONE` at TTFT 0.36s and 80.7 tok/s. Runtime logs
+recorded the stale and requested argument objects in that order. A fresh-chat
+ON control did not replay the old arguments, which isolates the defect to
+cross-request state rather than tool JSON assembly or content-delta streaming.
+
+vMLX already salts coordinator keys by exact prompt tokens plus
+`reasoning=on|off`, tool choice, media, and effective KV policy. The coordinator
+therefore returned a miss after the mode change. `TokenIterator` nevertheless
+kept a populated caller-owned cache on that miss and treated the numeric cache
+offset as if it proved token-prefix identity. Offset ordering cannot prove that
+the rendered tool/reasoning history is the same; for Ornith/Qwen 3.5 it carried
+old `ArraysCache` recurrent state into the new request. The owning-layer
+fix in `6d5694fff9816e5f2e31444e62158e0970013b26` discards any
+populated unverified cache on a coordinator miss and full-prefills the request;
+verified coordinator hits remain the only reuse path. `NativeMTPTokenIterator`
+receives the same invariant.
+
+The first post-reset probe still exposed a second owning-layer defect:
+`ArraysCache.copy()` and `MambaCache.copy()` used an ellipsis slice, which is a
+view rather than an independent recurrent-state snapshot. Later tool/output
+tokens could therefore mutate a prompt-boundary cache entry stored under an
+earlier prompt hash. vMLX commit
+`4b431c6a3f229e2150810b9dea9afe57790ca60b` creates independent buffers,
+materializes prompt snapshots once, detaches recorded Mamba prefix states, and
+adds mutation-after-snapshot coverage. It does not modify prompt text, model
+templates, samplers, stop/EOS handling, parsers, tool schemas, or output
+streaming.
+
+Focused current-source vMLX evidence at that exact revision:
+
+- `BatchEngineGrowingChatCacheSourceTests`: 17 passed;
+- `CacheCoordinatorTopologyFocusedTests`: 40 passed;
+- `CacheCoordinatorModeKeyIsolationTests`: 9 passed;
+- `swift build --target MLXLMCommon` completed; and
+- `git diff --check` returned clean.
+
+### Exact current Release UI proof
+
+- App:
+  `/private/tmp/osaurus-ornith-cachefix2-release-derived/Build/Products/Release/osaurus.app`
+- Bundle id: `com.dinoki.osaurus.ornithcachefixproof2`
+- Embedded vMLX revision:
+  `4b431c6a3f229e2150810b9dea9afe57790ca60b`
+- Executable SHA-256:
+  `5291afc8309f8a94b7642cbb7da04b326227fd23eafabd94a11047c66c1d7dde`
+- Runtime root:
+  `/private/tmp/osaurus-ornith-cachefix2-proof-root-v1`
+- Exact model:
+  `/Users/eric/models/JANGQ-AI/Ornith-1.0-9B-JANG_4M`
+
+The Release build completed successfully, was ad-hoc signed under the isolated
+bundle id, and passed deep strict code-sign verification. Fresh preferences,
+test-root files, and keychain-disabled mode kept it separate from the installed
+app. The real Cache settings UI showed Prefix on, paged RAM/GPU cache off, SSD
+L2 on, codec `Engine Selected` rather than TurboQuant, SSM rederive on, and a
+10 GB disk soft cap.
+
+After the OFF→ON→OFF chat matrix, the app was quit and the same binary/root was
+relaunched. History restored the same chat, working folder, model, and Off
+presentation. A unique prompt then executed exactly one `read_file` for
+`FloatingInputCard.swift:2220-2240`, rendered exactly
+`FIX2-RESTART-L2-DONE`, and showed TTFT 0.65s, 71.9 tok/s, and 9 tokens. Runtime
+traces recorded zero reasoning deltas, a disk partial-prefix hit at
+`boundary=4921 remaining=2481`, the exact requested tool arguments, a later
+disk hit at `boundary=7112 remaining=823`, and no stale calls or finals.
+
+The `ssm=48 fmtV=2 willRestore=false` trace is not a missing companion restore
+for this effective topology. The live cache was 24 `MambaCache` plus eight
+`KVCacheSimple` layers; v2 typed disk payloads restore Mamba state directly,
+while the extra sidecar apply is reserved for legacy format or dynamic
+`ArraysCache` layers that v2 marks skipped. The visible coherent continuation
+and exact tool/final output are live behavior evidence, not a claim that every
+Qwen hybrid representation has now been proven.
+
+Activity Monitor visibly showed the exact restarted process PID 84047 at
+2.53 GB after generation. The disk root reached 9.8 GB with 219 files and 36
+files above 100 MB. Quota traces showed active KV and companion eviction back
+under the 10 GB soft cap. Correctness and quota enforcement passed this scoped
+row, but per-boundary disk amplification/efficiency remains a separate PARTIAL
+follow-up; it is not silently called healthy or changed in this emergency PR.
+
+After adding the shared local `.chatUI` agent-option lookup, this exact app was
+rebuilt in Release, ad-hoc signed, and passed deep strict verification again.
+The existing isolated root and persisted chat were reopened through the real
+sidebar; the model and working folder restored and the visible Thinking chip
+remained Off. A new unique request executed exactly one `read_file` for
+`ChatEngine.swift:144-171`, rendered exactly
+`FIX2-CURRENT-SOURCE-OFF-DONE`, and showed TTFT 1.23s, 68.9 tok/s, and 10
+tokens. The tool card reported 925 ms. Runtime logs recorded zero reasoning
+deltas on the tool step and finalizer, the exact requested arguments, a disk
+partial-prefix hit at `boundary=7734 remaining=943`, the same 24 `MambaCache`
+plus eight `KVCacheSimple` topology, and no stale call or final. Activity
+Monitor visibly showed exact PID 90712 at 2.45 GB after this generation. The
+app then exited cleanly. This live row exercises the main ChatView path on the
+final source; the explicit persisted-choice branches for Computer Use,
+AppleScript, delegation, ordinary-chat exclusion, and remote-agent exclusion
+have current source/test evidence but are still not separately live-proven by
+this row.
+
+The branch was then rebased cleanly onto `main`
+`08eb8bd8a29f79bef9bdb1dd791fcf6a8c1fea4c`, which added unrelated TTS and
+slash-command fixes outside this PR diff. The focused matrix was rerun as
+`ReasoningTests9.xcresult` with 64 passed, 0 failed, and 0 skipped; the same app
+path was rebuilt in Release, re-signed, and passed deep strict verification at
+the final executable hash recorded above. In the reopened real UI, the model,
+folder, chat, and visible Off state restored. A new unique request produced
+exactly one 923 ms `read_file` card for
+`AgentReasoningPolicy.swift:40-55`, exact final
+`FIX2-REBASED-HEAD-OFF-DONE`, TTFT 0.67s, 69.9 tok/s, and 12 tokens. Logs
+recorded exact arguments, zero reasoning deltas on the tool and finalizer
+steps, no stale call/final, and a post-tool disk partial-prefix hit at
+`boundary=8466 remaining=708` with 24 `MambaCache` plus eight
+`KVCacheSimple` layers. Activity Monitor visibly showed exact PID 93334 at
+2.45 GB after generation, and the proof app exited cleanly.
+
+The separate Ornith semantic-completion defect remains separate. A faster
+direct rail does not prove multi-step task completion, success detection, tool
+selection, tool-error honesty, or final-answer correctness.
+
+### Deferred mixed-cache/runtime matrices
+
+These are required follow-up campaigns and must not be described as closed by
+the Ornith reasoning patch:
+
+- MiniMax M2.7 JANGTQ and JANG_K: prove load, coherent multi-turn text and
+  tools, the bundle's own reasoning-mode semantics, explicit mode changes,
+  TTFT/token rate, physical footprint, and prefix/paged/L2 behavior. Do not
+  translate its reasoning contract onto the generic boolean rail unless the
+  exact bundle template/config explicitly owns that kwarg.
+- DSV4 Flash: prove the effective mixed SWA/HCA/CSA/DSA/MLA cache topology,
+  full and partial prefix reuse, paged eviction, disk-L2-only restore, raw
+  prefill fallback, companion-state synchronization/rederivation, coherent
+  tool continuation, TTFT/token rate, and physical footprint. Exercise
+  instruct, reasoning, and max separately; no row may infer one mode from
+  another.
+
+Both matrices require an isolated Release Osaurus app operated through the UI
+with exact local bundle paths and visible cache/resource evidence. Source
+inspection, unit tests, load-only rows, and CLI harness output remain PARTIAL.
 
 ## 2026-07-19 Bonsai paged-cache eviction checkpoint
 

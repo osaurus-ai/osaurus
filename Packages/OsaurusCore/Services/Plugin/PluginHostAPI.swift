@@ -1096,6 +1096,7 @@ final class PluginHostContext: @unchecked Sendable {
         request.enable_thinking = base.enable_thinking
         request.reasoning_effort = base.reasoning_effort
         request.modelOptions = base.modelOptions
+        request.isAgentRequest = base.isAgentRequest || tools?.isEmpty == false
         return request
     }
 
@@ -1262,6 +1263,7 @@ final class PluginHostContext: @unchecked Sendable {
         request.enable_thinking = inference.request.enable_thinking
         request.reasoning_effort = inference.request.reasoning_effort
         request.modelOptions = inference.request.modelOptions
+        request.isAgentRequest = inference.request.isAgentRequest || effectiveTools?.isEmpty == false
         return EnrichedInference(request: request, tools: effectiveTools)
     }
 

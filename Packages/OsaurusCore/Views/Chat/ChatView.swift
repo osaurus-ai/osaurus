@@ -1543,6 +1543,15 @@ final class ChatSession: ObservableObject {
         return preview
     }
 
+    /// Whether the next local UI send exposes at least one tool and will
+    /// therefore carry the same agent/tool marker consumed by
+    /// `ChatEngine.prepareDispatch`. The composer uses this exact preview
+    /// surface to present the untouched Thinking default truthfully.
+    var appliesAgentReasoningDefault: Bool {
+        guard !isRemoteAgentTarget else { return false }
+        return previewContext()?.tools.isEmpty == false
+    }
+
     /// Compose a fresh welcome/pre-send preview from the current agent /
     /// sandbox / tool / folder / model state. Pure — no caching, no
     /// `objectWillChange`. Single source of truth for the lazy read
@@ -5105,6 +5114,12 @@ final class ChatSession: ObservableObject {
                             req.remoteAgentLogModel =
                                 self.isRemoteAgentTarget
                                 ? self.windowState?.pinnedRemoteAgentEffectiveModel : nil
+                            // Freeze agent semantics for the whole logical run.
+                            // Tool schemas stay present on ordinary iterations,
+                            // but the cap finalizer below intentionally removes
+                            // them; the explicit marker keeps both paths on the
+                            // same reasoning policy.
+                            req.isAgentRequest = !toolSpecs.isEmpty || self.isRemoteAgentTarget
                             turnGenerationControls.apply(to: &req)
                             req.backgroundModelLoad = (self.loadIntent == .background)
                             req.ttftTrace = ttftTrace
@@ -5386,6 +5401,7 @@ final class ChatSession: ObservableObject {
                             finalReq.remoteAgentLogModel =
                                 isRemoteAgentTarget
                                 ? windowState?.pinnedRemoteAgentEffectiveModel : nil
+                            finalReq.isAgentRequest = !toolSpecs.isEmpty || isRemoteAgentTarget
                             turnGenerationControls.apply(to: &finalReq)
                             finalReq.backgroundModelLoad = (loadIntent == .background)
                             finalReq.turnId = assistantTurn.id
@@ -6153,6 +6169,7 @@ struct ChatView: View {
                                 isPrivacyReviewSheetVisible: pendingRedactionReview != nil,
                                 supportsImages: observedSession.selectedModelSupportsImages,
                                 estimatedContextTokens: observedSession.estimatedContextTokens,
+                                appliesAgentReasoningDefault: observedSession.appliesAgentReasoningDefault,
                                 contextBreakdown: observedSession.estimatedContextBreakdown,
                                 sessionSpendMicro: observedSession.sessionRouterSpendMicro,
                                 isRouterBilledSession: observedSession.isOsaurusRouterSession,
