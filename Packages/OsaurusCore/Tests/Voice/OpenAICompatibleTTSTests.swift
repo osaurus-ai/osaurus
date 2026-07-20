@@ -318,10 +318,12 @@ struct OpenAICompatibleTTSClientTests {
 
     // MARK: - Compressed fallback
 
-    @Test("garbage bytes with an mp3 magic throw unexpectedFormat, not crash")
+    @Test("undecodable bytes throw unexpectedFormat, not crash")
     func compressedDecodeRejectsGarbage() {
-        var garbage = Data([0xFF, 0xFB, 0x90, 0x00])
-        garbage.append(Data((0..<512).map { UInt8($0 % 251) }))
+        // No MP3 sync word anywhere: CoreAudio's MP3 parser is lenient
+        // enough to sync onto a 0xFFxx frame header and "decode" noise,
+        // so use bytes no decoder can open at all.
+        let garbage = Data(repeating: 0x00, count: 512)
         #expect(throws: OpenAICompatibleTTSError.self) {
             _ = try OpenAICompatibleTTSClient.decodeCompressedAudio(garbage, formatHint: "MP3")
         }

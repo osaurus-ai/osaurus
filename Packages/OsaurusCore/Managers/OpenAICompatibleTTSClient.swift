@@ -337,7 +337,14 @@ struct OpenAICompatibleTTSClient: Sendable {
         let base = trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
         // Accept either a bare host or a URL that already includes the path.
         let full = base.hasSuffix("/v1/audio/speech") ? base : base + "/v1/audio/speech"
-        guard let url = URL(string: full), url.scheme != nil else {
+        // Newer Foundation URL parsing accepts "localhost:5050" with scheme
+        // "localhost", so a nil-scheme check alone no longer catches
+        // schemeless endpoints. Require an http(s) scheme and a host.
+        guard let url = URL(string: full),
+            let scheme = url.scheme?.lowercased(),
+            scheme == "http" || scheme == "https",
+            url.host != nil
+        else {
             throw OpenAICompatibleTTSError.invalidEndpoint(endpoint)
         }
 
