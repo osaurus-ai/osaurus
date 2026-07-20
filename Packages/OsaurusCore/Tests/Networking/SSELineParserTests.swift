@@ -128,6 +128,25 @@ struct SSELineParserTests {
         #expect(expected == ["data: a", "data: b", "data: c", "", "", "data: {\"x\":\"y\"}"])
     }
 
+    @Test(arguments: [7_996, 9_000, 16_000])
+    func splitter_reassemblesLargeSingleLineAcross4KBChunks(payloadBytes: Int) {
+        let value = String(repeating: "x", count: payloadBytes)
+        let wire = Data(("data: {\"value\":\"" + value + "\"}\n\n").utf8)
+        var parser = RemoteProviderService.SSELineParser()
+
+        var offset = 0
+        while offset < wire.count {
+            let end = min(offset + 4_096, wire.count)
+            parser.append(wire.subdata(in: offset ..< end))
+            offset = end
+        }
+
+        let lines = drain(&parser)
+        #expect(lines.count == 2)
+        #expect(lines.last == "")
+        #expect(lines.first == "data: {\"value\":\"" + value + "\"}")
+    }
+
     // MARK: - processSSELine (field parser)
 
     @Test func fieldParser_handlesDataWithSpace() {

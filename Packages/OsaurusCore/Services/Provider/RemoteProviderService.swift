@@ -1475,6 +1475,28 @@ public actor RemoteProviderService: ToolCapableService {
         )
     }
 
+    /// A provider output cap is never a valid tool-call finish. Arguments can
+    /// be syntactically valid at the cut point (or still completely buffered
+    /// upstream), so JSON repair alone cannot identify this truncation.
+    static func outputLimitToolCallError(
+        from accumulated: [Int: StreamingState.ToolSlot],
+        finishMarker: String
+    ) -> RemoteProviderServiceError {
+        let calls = accumulated.values.filter { $0.name != nil }
+        let names = calls.compactMap(\.name).joined(separator: "', '")
+        let receivedBytes = calls.reduce(0) { $0 + $1.args.utf8.count }
+        let label = names.isEmpty ? "tool call" : "tool call '\(names)'"
+        print(
+            "[Osaurus] Discarding output-limited \(label): "
+                + "received \(receivedBytes) argument bytes (\(finishMarker))"
+        )
+        return .streamingError(
+            "Provider reached the output token limit while generating \(label) "
+                + "arguments (\(finishMarker), received \(receivedBytes) bytes). "
+                + "Increase the agent's Max Tokens setting and retry."
+        )
+    }
+
     /// Process one fully-framed SSE event payload. Returns `true` when the
     /// outer loop should terminate (event signalled finish, tool call, or
     /// error), `false` to keep iterating. Inlined into `_streamRemote`'s
@@ -1660,8 +1682,19 @@ public actor RemoteProviderService: ToolCapableService {
                 )
             }
         } catch {
-            print("[Osaurus] Warning: Failed to parse SSE chunk: \(error.localizedDescription)")
-            return .continue
+            let phase =
+                state.accumulatedToolCalls.isEmpty
+                ? "" : " while receiving tool arguments"
+            print(
+                "[Osaurus] Failed to parse provider SSE event\(phase): "
+                    + "\(error.localizedDescription) (\(jsonData.count) bytes)"
+            )
+            return .finishWithError(
+                RemoteProviderServiceError.streamingError(
+                    "Provider emitted an invalid streaming event\(phase) "
+                        + "(\(jsonData.count) bytes). The response may have been truncated in transit."
+                )
+            )
         }
     }
 
@@ -1712,7 +1745,11 @@ public actor RemoteProviderService: ToolCapableService {
         providerType: RemoteProviderType,
         parameters: GenerationParameters
     ) -> Int? {
-        if providerType == .osaurusRouter {
+        // Router upstreams and Anthropic's Messages API both require an
+        // explicit output cap. Preserve ChatEngine's resolved implicit budget
+        // for them instead of falling through to a smaller transport-local
+        // fallback (Anthropic previously dropped 16K to 4K).
+        if providerType == .osaurusRouter || providerType == .anthropic {
             return parameters.maxTokens
         }
         return parameters.maxTokensExplicit ? parameters.maxTokens : nil
@@ -1817,9 +1854,7 @@ public actor RemoteProviderService: ToolCapableService {
         state: inout StreamingState,
         yield: (String) -> Void
     ) throws -> StreamEventOutcome {
-        guard let event = try? state.decoder.decode(AnthropicSSEEvent.self, from: jsonData) else {
-            return .continue
-        }
+        let event = try state.decoder.decode(AnthropicSSEEvent.self, from: jsonData)
 
         switch event.type {
         case "message_start":
@@ -1827,31 +1862,28 @@ public actor RemoteProviderService: ToolCapableService {
             // usage split. Log the cache read/write counts so the win from the
             // top-level `cache_control` in `toAnthropicRequest()` is observable
             // per turn (cache reads bill 0.1x input; writes 1.25x).
-            if let startEvent = try? state.decoder.decode(MessageStartEvent.self, from: jsonData) {
-                let usage = startEvent.message.usage
-                debugLog(
-                    "[Cache][Anthropic] input=\(usage.input_tokens)"
-                        + " cacheRead=\(usage.cache_read_input_tokens ?? 0)"
-                        + " cacheWrite=\(usage.cache_creation_input_tokens ?? 0)"
+            let startEvent = try state.decoder.decode(MessageStartEvent.self, from: jsonData)
+            let usage = startEvent.message.usage
+            debugLog(
+                "[Cache][Anthropic] input=\(usage.input_tokens)"
+                    + " cacheRead=\(usage.cache_read_input_tokens ?? 0)"
+                    + " cacheWrite=\(usage.cache_creation_input_tokens ?? 0)"
+            )
+            // Seed provider usage with the prompt side; `message_delta`
+            // fills in the completion side. Without this capture the
+            // Anthropic path never emitted a `StreamingStatsHint`, so
+            // completion tokens fell back to estimates and the provider's
+            // stop reason never reached the HTTP `finish_reason`.
+            state.captureProviderUsage(
+                Usage(
+                    prompt_tokens: usage.input_tokens,
+                    completion_tokens: 0,
+                    total_tokens: usage.input_tokens
                 )
-                // Seed provider usage with the prompt side; `message_delta`
-                // fills in the completion side. Without this capture the
-                // Anthropic path never emitted a `StreamingStatsHint`, so
-                // completion tokens fell back to estimates and the provider's
-                // stop reason never reached the HTTP `finish_reason`.
-                state.captureProviderUsage(
-                    Usage(
-                        prompt_tokens: usage.input_tokens,
-                        completion_tokens: 0,
-                        total_tokens: usage.input_tokens
-                    )
-                )
-            }
+            )
 
         case "content_block_delta":
-            guard
-                let deltaEvent = try? state.decoder.decode(ContentBlockDeltaEvent.self, from: jsonData)
-            else { return .continue }
+            let deltaEvent = try state.decoder.decode(ContentBlockDeltaEvent.self, from: jsonData)
             if case .textDelta(let textDelta) = deltaEvent.delta {
                 let (truncated, hitStop) = applyStopSequences(
                     textDelta.text,
@@ -1872,35 +1904,47 @@ public actor RemoteProviderService: ToolCapableService {
             }
 
         case "content_block_start":
-            guard
-                let startEvent = try? state.decoder.decode(ContentBlockStartEvent.self, from: jsonData)
-            else { return .continue }
+            let startEvent = try state.decoder.decode(ContentBlockStartEvent.self, from: jsonData)
             if case .toolUse(let toolBlock) = startEvent.content_block {
                 let idx = startEvent.index
+                let initialArgs: String
+                if toolBlock.input.isEmpty {
+                    initialArgs = ""
+                } else {
+                    let input = toolBlock.input.mapValues(\.value)
+                    let data = try JSONSerialization.data(
+                        withJSONObject: input,
+                        options: .osaurusCanonical
+                    )
+                    initialArgs = String(decoding: data, as: UTF8.self)
+                }
                 state.accumulatedToolCalls[idx] = (
-                    id: toolBlock.id, name: toolBlock.name, args: "", thoughtSignature: nil
+                    id: toolBlock.id,
+                    name: toolBlock.name,
+                    args: initialArgs,
+                    thoughtSignature: nil
                 )
                 print("[Osaurus] Anthropic tool call detected: index=\(idx), name=\(toolBlock.name)")
                 yield(StreamingToolHint.encode(toolBlock.name))
+                if !initialArgs.isEmpty {
+                    yield(StreamingToolHint.encodeArgs(initialArgs))
+                }
             }
 
         case "message_delta":
-            if let deltaEvent = try? state.decoder.decode(MessageDeltaEvent.self, from: jsonData) {
-                // Complete the usage pair started at `message_start` so
-                // `dispatchFinal` emits a stats hint with the REAL output
-                // token count (Anthropic reports it on this event).
-                let promptTokens = state.providerUsage?.prompt_tokens ?? 0
-                state.captureProviderUsage(
-                    Usage(
-                        prompt_tokens: promptTokens,
-                        completion_tokens: deltaEvent.usage.output_tokens,
-                        total_tokens: promptTokens + deltaEvent.usage.output_tokens
-                    )
+            let deltaEvent = try state.decoder.decode(MessageDeltaEvent.self, from: jsonData)
+            // Complete the usage pair started at `message_start` so
+            // `dispatchFinal` emits a stats hint with the REAL output
+            // token count (Anthropic reports it on this event).
+            let promptTokens = state.providerUsage?.prompt_tokens ?? 0
+            state.captureProviderUsage(
+                Usage(
+                    prompt_tokens: promptTokens,
+                    completion_tokens: deltaEvent.usage.output_tokens,
+                    total_tokens: promptTokens + deltaEvent.usage.output_tokens
                 )
-            }
-            if let deltaEvent = try? state.decoder.decode(MessageDeltaEvent.self, from: jsonData),
-                let stopReason = deltaEvent.delta.stop_reason
-            {
+            )
+            if let stopReason = deltaEvent.delta.stop_reason {
                 // Normalize the Anthropic stop vocabulary to the OpenAI
                 // `finish_reason` contract every downstream consumer expects
                 // (`InferenceLog.FinishReason`, the HTTP chat writer, the
@@ -1940,6 +1984,14 @@ public actor RemoteProviderService: ToolCapableService {
             }
 
         case "message_stop":
+            if state.lastFinishReason == "length", !state.accumulatedToolCalls.isEmpty {
+                return .finishWithError(
+                    outputLimitToolCallError(
+                        from: state.accumulatedToolCalls,
+                        finishMarker: "anthropic stop_reason=max_tokens"
+                    )
+                )
+            }
             switch resolveAccumulatedToolCall(
                 from: state.accumulatedToolCalls,
                 finishMarker: "anthropic message_stop"
@@ -2187,6 +2239,16 @@ public actor RemoteProviderService: ToolCapableService {
                     stopReason: state.lastFinishReason
                 )
             )
+        }
+
+        if state.lastFinishReason == "length", !state.accumulatedToolCalls.isEmpty {
+            continuation.finish(
+                throwing: outputLimitToolCallError(
+                    from: state.accumulatedToolCalls,
+                    finishMarker: finishMarker
+                )
+            )
+            return
         }
 
         switch resolveAccumulatedToolCall(
@@ -4361,7 +4423,11 @@ struct RemoteChatRequest: Encodable {
                 AnthropicTool(
                     name: tool.function.name,
                     description: tool.function.description,
-                    input_schema: tool.function.parameters ?? emptySchema
+                    input_schema: tool.function.parameters ?? emptySchema,
+                    // GA Anthropic contract: stream large parameter values as
+                    // generated so file-write calls do not sit entirely in an
+                    // upstream buffer until the value closes.
+                    eager_input_streaming: stream ? true : nil
                 )
             }
         }

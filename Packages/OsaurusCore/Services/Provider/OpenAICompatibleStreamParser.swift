@@ -311,7 +311,14 @@ struct OpenAICompatibleToolCallAccumulator {
 
     static func validateToolCallJSON(_ json: String) -> ValidatedToolCallJSON {
         let trimmed = json.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return ValidatedToolCallJSON(json: "{}", wasRepaired: false) }
+        // Providers represent a real no-argument call as the explicit JSON
+        // object `{}`. A named slot that reaches finish with zero argument
+        // bytes instead means its argument event was buffered, dropped, or
+        // truncated. Mark it repaired so dispatch quarantines the call instead
+        // of inventing `{}` and producing a misleading schema error.
+        guard !trimmed.isEmpty else {
+            return ValidatedToolCallJSON(json: "{}", wasRepaired: true)
+        }
 
         if let data = trimmed.data(using: .utf8),
             (try? JSONSerialization.jsonObject(with: data)) != nil
@@ -415,7 +422,8 @@ struct OpenAICompatibleToolCallAccumulator {
         )
         return RemoteProviderServiceError.streamingError(
             "Stream ended before tool call '\(toolName)' arguments were complete "
-                + "(finish marker: \(finishMarker)). The provider closed the connection "
+                + "(finish marker: \(finishMarker); \(argsSummary)). "
+                + "The provider closed the connection "
                 + "mid-argument; retry the request."
         )
     }
@@ -639,6 +647,14 @@ struct OpenAICompatibleStreamParser {
                 return .finishWithError(
                     RemoteProviderServiceError.streamingError(
                         "Provider reached the output token limit before emitting visible text, reasoning, or a tool call (finish_reason=length). Increase max_tokens or reduce the prompt/tool context."
+                    )
+                )
+            }
+            if finishReason == "length", !state.accumulatedToolCalls.isEmpty {
+                return .finishWithError(
+                    RemoteProviderService.outputLimitToolCallError(
+                        from: state.accumulatedToolCalls,
+                        finishMarker: "finish_reason=length"
                     )
                 )
             }
