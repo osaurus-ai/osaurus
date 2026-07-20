@@ -1,6 +1,6 @@
 # Gemma/Bonsai Emergency Proof Ledger
 
-Last updated: 2026-07-16 (America/Los_Angeles)
+Last updated: 2026-07-19 (America/Los_Angeles)
 
 Verdict: **PASS for the narrow schema-1 JANG loader pin; PARTIAL for the
 separate Ornith multi-step semantic-completion defect, which is not changed or
@@ -41,6 +41,7 @@ emergency diff.
 | --- | --- | --- |
 | P0 | Installed JANG schema-1 bundles load | LIVE LOAD PASS on exact JANG_4M; multi-step correctness still fails |
 | P0 | Ornith/Qwen post-tool cutoff or partial completion | REPRODUCED AS PARTIAL MUTATION on JANG_4M and MXFP8; exact pre-write cutoff not reproduced |
+| P0 | Bonsai tiny-pool paged-cache eviction and hybrid replay tail | VERIFIED-SOURCE + VERIFIED-LIVE for the cache defect; model semantic-quality controls remain mixed |
 | P0 | PR scope contains no deferred routing/hardware changes | PASS for current pin-only source/test diff plus ledger; repeat on final diff |
 | P0 | Exact pin-only candidate Release UI rerun | PASS for JANG_4M load and plain generation; semantic handbook behavior remains a separate reproduced failure |
 | P1 | Gemma/Bonsai tool correctness regressions | NOT YET RUN on clean head |
@@ -49,6 +50,127 @@ emergency diff.
 | P1 | Memory Safety warning, setting change, larger-model load, restore refusal | NOT YET RUN on clean head |
 | P1 | Image generation/editing and spawn/delegation RAM admission/notifications | NOT YET RUN on clean head |
 | P2 | MXFP4 structurally incomplete answer/reasoning/tool-envelope recovery | DOCUMENTED ONLY; no MXFP4 runtime claim and excluded from the emergency diff without a later exact-model reproduction |
+
+## 2026-07-19 Bonsai paged-cache eviction checkpoint
+
+Status: **VERIFIED-SOURCE + VERIFIED-LIVE for the paged-chain eviction fix;
+PARTIAL for Bonsai answer quality.** This checkpoint used only
+`/Users/eric/models/dealign.ai/Bonsai-27b-1bit-JANG-CRACK`. No MXFP4 bundle
+was loaded, downloaded, or used as evidence.
+
+### Owning-layer source fix
+
+The pre-fix tiny-pool trace showed that `PagedCacheManager.storeTokenSequence`
+released each block immediately after inserting it. With only two blocks, the
+pool could recycle a parent while constructing its child, leaving an orphan
+leaf that could not satisfy the root-to-leaf prefix walk. Fetch release also
+ran root-to-leaf, making the indispensable root the oldest eviction target.
+Hybrid SSM replay independently captured every automatic paged boundary even
+when the configured pool could retain only one useful boundary.
+
+vMLX commit `24ce87c5ef812f816a242459aec50e544fd228f4`:
+
+- pins the complete block chain until storage finishes;
+- re-pins an existing free chain member before constructing descendants;
+- releases stored and fetched chains leaf-to-root; and
+- caps automatic hybrid companion boundaries to usable paged capacity while
+  retaining exact, prompt-minus-one, history, and explicit boundaries.
+
+The diff changes only `PagedCacheManager`, `CacheCoordinator`, `SSMReDerive`,
+and their tests. It does not change chat templates, prompts, thinking tags,
+reasoning closers, sampler defaults, stop/EOS behavior, token limits, tool
+schemas, content-delta assembly, or model routing.
+
+Focused current-source proof passed 109 selected vMLX cache tests: 21 XCTest
+cases plus 88 Swift Testing cases covering paged eviction, disk L2, SSM
+companion state, TurboQuant transitions, and multi-turn behavior. The Osaurus
+pin resolves the same vMLX revision from the manifest and all three lockfiles.
+
+### Exact isolated Release app
+
+- App:
+  `/private/tmp/osaurus-cache-campaign-patched-derived/Build/Products/Release/osaurus.app`
+- Proof bundle id: `com.dinoki.osaurus.cachecampaignpatchedproof`
+- Compiled Osaurus source: `8730a66b8065cce59d5cbcaa654880e554f914e5`
+- Embedded vMLX source: `24ce87c5ef812f816a242459aec50e544fd228f4`
+- Executable SHA-256:
+  `52354ba594599a296e41f131caab27661c54eaae98488c67a56f5e3e1823b90c`
+- Runtime root:
+  `/private/tmp/osaurus-cache-campaign-patched-live-20260719-2132`
+
+The app was built Release-optimized, ad-hoc signed, verified with
+`codesign --verify --deep --strict`, launched keychain-free against the
+isolated root, and operated through the actual UI. Settings visibly remained
+`All changes saved` when Cache was opened without an edit. The UI then saved
+Prefix on, Paged on, two maximum blocks, SSD L2 on, TurboQuant 4/4, and SSM
+rederive on; persisted JSON matched those values and did not materialize the
+untouched effective-one concurrent-session default.
+
+### Paged on plus explicit TurboQuant 4/4
+
+Thinking was explicitly turned off in the real model picker. The first visible
+turn produced four coherent numbered sentences with no reasoning or tool call:
+TTFT 2.69 seconds, 45.3 tok/s, 79 tokens. The second visible turn produced one
+coherent sentence with no reasoning or tool call at TTFT 1.40 seconds and 18.6
+tok/s, but it used label `1.` instead of the requested `5.` and gave a generic
+LRU explanation. That instruction/semantic row is failed rather than hidden.
+
+After the second turn the admin endpoint reported:
+
+- paged hits 4, misses 6, one eviction, two total blocks, one free block;
+- SSD L2 hits 4, misses 12, stores 12;
+- SSM companion hits 4 and rederives 6;
+- effective KV mode `turbo(4,4)`;
+- exactly 16 `KVCacheSimple` layers converted to TurboQuant and all 48 Mamba
+  layers retained as native Mamba companion state; and
+- a transition from 16 KV + 48 Mamba to 16 TQ-KV + 48 Mamba, with no blanket
+  encoding of the Mamba layers.
+
+The prompt-boundary trace reduced the roughly 2,923-token warmup capture from
+every 16-token boundary to `[16, 2920, 2922, 2923]`. A coarse UI observation
+bounded the first post-answer maintenance tail below 18.3 seconds, versus the
+pre-fix 41.04-second diagnostic; this is an improvement bound, not a precise
+tail benchmark. Activity Monitor visibly reported the exact proof process at
+2.49 GB after the two turns.
+
+### Paged off, SSD-only restart and partial reuse
+
+The real Settings UI turned Paged off while keeping Prefix, SSD L2,
+TurboQuant 4/4, and SSM rederive on, then saved successfully. After terminating
+and relaunching only the isolated proof app:
+
+- warmup restored an exact 2,923-token disk boundary with zero remaining;
+- the user turn restored the same 2,923-token boundary with 36 tokens
+  remaining;
+- fresh-process counters reached SSD L2 hits 3 and SSM companion hits 3 while
+  paged hits/misses both remained zero;
+- the real user request triggered the delayed live transition of exactly 16
+  normal KV layers to TQ-KV while leaving 48 Mamba layers native;
+- visible telemetry was TTFT 1.16 seconds, 44.0 tok/s, 185 tokens, with no
+  reasoning, tool call, protocol leakage, stream cutoff, or loop; and
+- Activity Monitor visibly reported 2.27 GB for the restarted proof process.
+
+The answer's explanation of SSD controller behavior was factually poor. The
+identical prompt was therefore repeated after restoring the UI default codec
+and restarting into effective `fp16`; it remained factually poor at TTFT 0.74
+seconds and 50.0 tok/s. The FP16 endpoint showed 16 native KV + 48 Mamba,
+TurboQuant transition `null`, paged off, and SSD on. This matched control
+isolates the misconception to the model's answer quality rather than TQ cache
+encoding or delta streaming. No prompt coercion or decoder guard is added.
+
+The proof SSD directory reached 6.9 GB with 17 top-level cache payloads during
+the complete native/TQ sequence. TQ and native cache keys remained isolated:
+after returning to engine-selected FP16, the first 2,923-token FP16 warmup was
+a disk miss rather than consuming the TQ entry.
+
+### Honest boundary
+
+The cache corruption/eviction path is fixed and live-proven on the exact
+Bonsai JANG 1-bit bundle. Bonsai's strict instruction following and factual
+quality are mixed and are not repaired by this change. The vMLX fork's GitHub
+workflow is hard-gated to `ml-explore/mlx-swift`, so all fork jobs are skipped;
+the 109-test local Xcode/Swift run is the executable engine evidence. Osaurus
+CI must be green on the final four-pin source state before merge.
 
 ## Current-source trace
 

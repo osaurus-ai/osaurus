@@ -696,7 +696,9 @@ struct RuntimePolicySourceTests {
         // Now also carries native schema-2 affine1 JANG loading and Metal
         // execution, Qwen3-VL tool-schema preservation, bounded media-cache
         // cleanup (vmlx-swift#149), and the Nemotron Omni projector,
-        // bounded-media-prefill, and safe hybrid media-prefix fixes (#156).
+        // bounded-media-prefill, and safe hybrid media-prefix fixes (#156),
+        // plus the paged-cache chain pinning, leaf-first release order, and
+        // bounded hybrid companion-state replay proven in vmlx-swift#161.
         //
         // This assertion is a repin tripwire, and it earned its keep: PR #1986
         // shipped titled "(+ vmlx repin)" carrying no repin at all, and the live
@@ -705,7 +707,7 @@ struct RuntimePolicySourceTests {
         // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
         // xcworkspace Package.resolved files. Miss one and the app resolves a
         // revision nobody proved.
-        let expectedRuntimeHardenedRevision = "3852026f9fe052abe9e158ae915fa8ad3d7577c6"
+        let expectedRuntimeHardenedRevision = "24ce87c5ef812f816a242459aec50e544fd228f4"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
