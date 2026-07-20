@@ -250,3 +250,46 @@ admin JSON mixed-topology shaping, all four exact vMLX pin checks, legacy
 settings repair without enabling TQ, per-engine resolved-key diagnostics, and
 the shared image-bridge contract's pin-only assertion. The latter contains no
 image-runtime behavior change in this diff.
+
+## 2026-07-20 mmap-alignment and final pin proof
+
+The four Osaurus SwiftPM locations now pin vMLX
+`f2b184841e98d969e46dec83109f27cd7bb57357`, which embeds MLX
+`a828cb4726f603d1cc9ac63359cd563865fdf8f6`. The MLX change preserves mmap for
+aligned tensors in a safetensors shard and copies only dtype-unaligned tensors;
+the vMLX change limits fp16/fp32 mmap dtype preservation to Gemma 4
+`jang_affine`. No Osaurus model template, sampler, parser, content-delta
+stream, tool schema, reasoning behavior, MLXPress policy, or automatic routing
+implementation is changed.
+
+The exact isolated Release app was
+`/private/tmp/osaurus-gemma4-alignment-release-derived-20260720/Build/Products/Release/osaurus.app`,
+bundle id `com.dinoki.osaurus.gemma4alignmentproof20260720`, executable
+SHA-256 `61dbf6ddae5d4dded60e00aa383da3c69ec7683c096542f0db53906c2b48fa67`,
+and keychain-free root
+`/private/tmp/osaurus-gemma4-alignment-proof-root-20260720-1414`. No MXFP4
+model was loaded.
+
+| Gate | Current evidence | Status |
+|---|---|---|
+| Fresh/restored settings | Prefix On, GPU/Paged Off, SSD L2 On, Codec Engine Selected, SSM rederive On, Safe Auto, MLXPress Off; Thinking Off | VERIFIED-LIVE |
+| JANG_4M native | Exact cold/follow-up outputs at 1.00/0.99 s TTFT and 37.6/37.5 tok/s | VERIFIED-LIVE |
+| JANG_4M explicit TQ4/4 | Exact output at 4.31 s TTFT and 17.2 tok/s; Activity Monitor 6.84 GB | VERIFIED-LIVE correctness; explicit opt-in remains slower |
+| JANG_4M explicit paged | Exact cold/warm outputs at 2.35/1.13 s TTFT and 37.6/37.3 tok/s; paged and SSD counters increased; defaults then visibly restored | VERIFIED-LIVE |
+| 31B memory control | Strict custom 10% refused at 12.8 GB; visible No Automatic Limits loaded the same 31B model and returned exact output; Safe Auto restored | VERIFIED-LIVE |
+| Final switch/reload | Fresh chat selected exact local 12B JANG_4M with Thinking Off, showed `Prefill 512/1887`, and returned exact `GEMMA4-FINAL-SWITCH-7735`; TTFT 2.27 s, 35.7 tok/s | VERIFIED-LIVE |
+| Final 12B footprint | Activity Monitor PID 36563: 6.92 GB after generation versus 9.439 GiB bundle | VERIFIED-LIVE; current low-footprint row is below full bundle size |
+| Pin contract tests | `/private/tmp/osaurus-gemma4-pin-contract-tests-20260720-1446.xcresult`: 94 passed, 0 failed, 0 skipped | VERIFIED-TEST |
+
+The earlier CI failure at Osaurus head `84b7f7c3` was five stale source-contract
+expectations that still named the preceding vMLX commit `db39150b`: four
+package-resolution assertions and one runtime-policy assertion. The manifests
+already resolved `f2b18484`. Updating only those five expected hashes makes the
+same two selected suites pass 94/94 locally; no app runtime source changed.
+
+One adjacent mixed-history probe is retained honestly: after many Gemma exact-
+answer turns, switching that same chat to Ornith caused it to copy a prior
+Gemma answer. Activity Monitor showed the 2.74 GB Ornith process, and the same
+Ornith bundle answered a fresh chat coherently at TTFT 0.50 s and 70.1 tok/s
+with unchanged cache settings and Thinking Off. This is not evidence of a
+global cross-model KV collision, and this Gemma-only PR adds no guard for it.
