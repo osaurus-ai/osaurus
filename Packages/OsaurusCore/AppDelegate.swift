@@ -191,6 +191,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // (and so an in-app token authenticates the very first request).
         GitHubAuth.preloadInBackground()
 
+        // Warm the memoized default-models-directory resolution off the main
+        // thread. Its first access enumerates candidate folders (and can stall
+        // on iCloud-synced ~/Documents); paying that on a utility queue here
+        // means the first main-thread caller hits the cache.
+        DispatchQueue.global(qos: .utility).async {
+            _ = DirectoryPickerService.defaultModelsDirectory()
+        }
+
         // Same for the Hugging Face token: the Models → Catalog card reads its
         // presence synchronously at view-init (on the main thread), so warm the
         // cache here rather than racing that read from `ModelDownloadService`.
