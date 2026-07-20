@@ -12,6 +12,10 @@ final class SharedConfigurationService {
     static let shared = SharedConfigurationService()
     private let instanceId = UUID().uuidString
 
+    /// Serial queue so writes and removals apply in call order without blocking the main thread
+    private static let ioQueue = DispatchQueue(
+        label: "com.dinoki.osaurus.shared-configuration", qos: .utility)
+
     private init() {}
 
     private func baseDirectoryURL() -> URL {
@@ -22,27 +26,26 @@ final class SharedConfigurationService {
         baseDirectoryURL().appendingPathComponent(instanceId, isDirectory: true)
     }
 
-    private func ensureDirectories() -> URL? {
-        let instance = instanceDirectoryURL()
+    private nonisolated static func ensureDirectories(base: URL, instance: URL) -> Bool {
         do {
-            try OsaurusPaths.ensureExists(baseDirectoryURL())
+            try OsaurusPaths.ensureExists(base)
             try OsaurusPaths.ensureExists(instance)
-            return instance
+            return true
         } catch {
             print("[Osaurus] SharedConfigurationService: failed to create directories: \(error)")
-            return nil
+            return false
         }
     }
 
     /// Update or remove the shared configuration based on server health
     func update(health: ServerHealth, configuration: ServerConfiguration, localAddress: String) {
-        guard let instanceDir = ensureDirectories() else { return }
+        let base = baseDirectoryURL()
+        let instanceDir = instanceDirectoryURL()
 
-        let fileURL = instanceDir.appendingPathComponent("configuration.json")
-
+        let values: [String: Any]
         switch health {
         case .running:
-            let values: [String: Any] = [
+            values = [
                 "instanceId": instanceId,
                 "updatedAt": ISO8601DateFormatter().string(from: Date()),
                 "port": configuration.port,
@@ -51,74 +54,69 @@ final class SharedConfigurationService {
                 "exposeToNetwork": configuration.exposeToNetwork,
                 "health": "running",
             ]
-            do {
-                let jsonData = try JSONSerialization.data(
-                    withJSONObject: values,
-                    options: [.prettyPrinted, .sortedKeys]
-                )
-                try jsonData.write(to: fileURL, options: [.atomic])
-                // Touch base directory mtime for discoverability of latest instance
-                _ = try? FileManager.default.setAttributes(
-                    [.modificationDate: Date()],
-                    ofItemAtPath: instanceDir.path
-                )
-            } catch {
-                print("[Osaurus] SharedConfigurationService: failed to write configuration: \(error)")
-            }
         case .starting:
             // Publish minimal metadata while starting
-            let values: [String: Any] = [
+            values = [
                 "instanceId": instanceId,
                 "updatedAt": ISO8601DateFormatter().string(from: Date()),
                 "health": "starting",
             ]
-            do {
-                let jsonData = try JSONSerialization.data(
-                    withJSONObject: values,
-                    options: [.prettyPrinted, .sortedKeys]
-                )
-                try jsonData.write(to: fileURL, options: [.atomic])
-            } catch {
-                print(
-                    "[Osaurus] SharedConfigurationService: failed to write starting configuration: \(error)"
-                )
-            }
         case .restarting:
             // Publish minimal metadata while restarting
-            let values: [String: Any] = [
+            values = [
                 "instanceId": instanceId,
                 "updatedAt": ISO8601DateFormatter().string(from: Date()),
                 "health": "restarting",
             ]
+        case .stopped, .stopping, .error:
+            // Remove the file to indicate this instance is not serving
+            remove()
+            return
+        }
+
+        let touchDirectory = health == .running
+        Self.ioQueue.async {
+            guard Self.ensureDirectories(base: base, instance: instanceDir) else { return }
+            let fileURL = instanceDir.appendingPathComponent("configuration.json")
             do {
                 let jsonData = try JSONSerialization.data(
                     withJSONObject: values,
                     options: [.prettyPrinted, .sortedKeys]
                 )
                 try jsonData.write(to: fileURL, options: [.atomic])
+                if touchDirectory {
+                    // Touch base directory mtime for discoverability of latest instance
+                    _ = try? FileManager.default.setAttributes(
+                        [.modificationDate: Date()],
+                        ofItemAtPath: instanceDir.path
+                    )
+                }
             } catch {
-                print(
-                    "[Osaurus] SharedConfigurationService: failed to write restarting configuration: \(error)"
-                )
+                print("[Osaurus] SharedConfigurationService: failed to write configuration: \(error)")
             }
-        case .stopped, .stopping, .error:
-            // Remove the file to indicate this instance is not serving
-            remove()
         }
+    }
+
+    /// Drain the I/O queue so pending writes/removals land before process exit
+    func flushPendingWork() {
+        Self.ioQueue.sync {}
     }
 
     /// Remove this instance's shared files
     func remove() {
         let instance = instanceDirectoryURL()
-        do {
-            if FileManager.default.fileExists(atPath: instance.path) {
-                try FileManager.default.removeItem(at: instance)
+        Self.ioQueue.async {
+            do {
+                if FileManager.default.fileExists(atPath: instance.path) {
+                    try FileManager.default.removeItem(at: instance)
+                    print(
+                        "[Osaurus] SharedConfigurationService: removed instance directory at \(instance.path)"
+                    )
+                }
+            } catch {
                 print(
-                    "[Osaurus] SharedConfigurationService: removed instance directory at \(instance.path)"
-                )
+                    "[Osaurus] SharedConfigurationService: failed to remove instance directory: \(error)")
             }
-        } catch {
-            print("[Osaurus] SharedConfigurationService: failed to remove instance directory: \(error)")
         }
     }
 }

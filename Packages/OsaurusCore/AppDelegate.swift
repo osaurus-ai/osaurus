@@ -1319,6 +1319,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         ToastWindowController.shared.teardown()
         NotchWindowController.shared.teardown()
         SharedConfigurationService.shared.remove()
+        SharedConfigurationService.shared.flushPendingWork()
         // `applicationWillTerminate` is sync and the process exits as
         // soon as it returns. Bridge to the actor synchronously so
         // any debounced greeting-pool entries land on disk — without
