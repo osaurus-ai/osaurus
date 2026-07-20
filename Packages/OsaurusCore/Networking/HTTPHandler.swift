@@ -928,6 +928,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 row["cache_enabled"] = true
                 row["is_hybrid"] = stats.isHybrid
                 row["is_paged_incompatible"] = stats.isPagedIncompatible
+                row["requires_paged_boundary_companion"] =
+                    stats.requiresPagedBoundaryCompanion
                 let turboQuantTransition = turboQuantTransitions[summary.name]
                 let effectiveCacheTopology = Self.effectiveCacheTopology(
                     baseline: summary.cacheTopology,

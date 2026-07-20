@@ -1,5 +1,70 @@
 # Gemma 4 QAT cache checkpoint — 2026-07-19
 
+## 2026-07-20 explicit mixed-SWA paged-cache checkpoint
+
+Status: **PARTIAL overall; VERIFIED-LIVE for the exact JANG_4M settings,
+native/TurboQuant mixed-cache, bounded paged-RAM, eviction, and fresh-process
+SSD rows below. The strict low-physical-footprint gate failed, so this branch
+is not described as release-ready.**
+
+This run used Osaurus base `4e29c0eb67c75f0892934aa7c629ced434bb12c0`
+and vMLX `db39150bc353cfd2df1bd50d796272424037c8bb`. The isolated
+Release app was copied to
+`/private/tmp/Osaurus Gemma4 Paged Proof 20260720.app`, used bundle id
+`com.dinoki.osaurus.gemma4pagedproof20260720`, executable SHA-256
+`bc795f0b82a94c54920ce67b3e892a8ecae40f5168e764de7f7a6e52a62848b1`,
+and used the keychain-free storage root
+`/private/tmp/osaurus-gemma4-paged-explicit-proof-root-20260720-1219`.
+Only `/Users/eric/models/OsaurusAI/OsaurusAI--gemma-4-12B-it-qat-JANG_4M`
+was loaded. No MXFP4 model was loaded or used as substitute evidence.
+
+### Current source trace
+
+- All four Osaurus resolution points pin the same vMLX revision. The Osaurus
+  runtime behavior change is limited to exposing
+  `requires_paged_boundary_companion` in `/admin/cache-stats`; admission,
+  companion ownership, eviction, and SSD fallback remain owned by vMLX.
+- vMLX admits paged RAM only for the exact direct mix of
+  `RotatingKVCache` plus full-attention `KVCacheSimple` or
+  `TurboQuantKVCache`. Paged blocks contain only token-sliceable
+  full-attention KV. An exact prompt-boundary leaf owns the rotating rings and
+  their `(keep, maxSize, step, offset, idx)` metadata. A missing companion
+  releases the probed paged blocks and falls through to typed SSD state.
+- The ordinary default remains paged RAM off. TurboQuant remains explicit
+  opt-in with explicit key/value widths. No model template, sampler, parser,
+  content-delta stream, tool schema, routing, MLXPress, or Bonsai behavior is
+  changed by this branch.
+
+### Current Release UI evidence
+
+| Row | Visible app evidence | Matching runtime evidence | Status |
+|---|---|---|---|
+| Fresh defaults | Server -> Settings -> Cache visibly showed Prefix On, GPU Cache Off, SSD Disk Cache On, Codec Engine Selected, and SSM re-derive On; chat showed Thinking Off | `paged_kv_enabled=false`, block-disk true, native fp16, 48 layers = 8 KV + 40 rotating, TQ layers 0, MLXPress disabled | VERIFIED-LIVE |
+| Default native turn | Exact answer `NATIVE-DEFAULT-OFF-7319`; TTFT 1.25 s, 31.5 tok/s, 15 tokens | Paged false; SSD hits 2 / misses 4 / stores 4; companion required; bundle defaults temperature 1, top-k 64, top-p 0.95 | VERIFIED-LIVE |
+| Explicit paged native | Settings visibly saved GPU Cache On with a 32-block cap. Exact answers `PAGED-NATIVE-PARTIAL-8426` and `PAGED-NATIVE-WARM-1957`; TTFT 1.63/0.61 s and 43.5/43.0 tok/s | Paged hits rose to 83, misses 4, and evictions 2; SSD hits 4 / misses 4 / stores 6; topology stayed 8 KV + 40 rotating | VERIFIED-LIVE |
+| TurboQuant validation | Selecting TurboQuant without widths visibly produced `TurboQuant KV requires explicit key and value bit widths`; entering 4/4 removed the error and saved | Settings reported `live_kv_codec=turboquant`, key/value bits 4/4; saving unloaded the prior model | VERIFIED-LIVE |
+| Paged TQ4/4 cold/warm | Exact answers `PAGED-TQ44-COLD-6048` and `PAGED-TQ44-WARM-9173`; TTFT 3.75/0.85 s and 14.1/37.5 tok/s. The warm turn was visibly observed first as a partial content delta and then as the complete exact answer | Exact transition 8 native KV + 40 rotating to 8 TQ + 40 rotating; paged enabled with hits and SSD hit/store activity; MLXPress disabled | VERIFIED-LIVE |
+| Fresh-process L2 plus paged | The exact app was quit, relaunched with the same isolated root, the prior chat was selected from History, and `TQ44-RESTART-L2-2864` completed at TTFT 0.79 s, 34.1 tok/s, 18 tokens | New PID 99553 loaded 8 TQ + 40 rotating; SSD hits 3 / misses 9 / stores 4 and paged hits 84 / misses 4 / evictions 2. Quitting removed the old process RAM tier; the focused vMLX test below establishes the causal eviction-to-SSD fallback contract | VERIFIED-LIVE for fresh-process disk and paged activity; causal fallback VERIFIED-SOURCE/UNIT |
+| Defaults restored | The same UI visibly saved GPU Cache Off, Codec Engine Selected, and blank Max Blocks while retaining Prefix and SSD On. `DEFAULTS-RESTORED-NATIVE-4092` completed at TTFT 3.01 s, 42.1 tok/s, 19 tokens | Native fp16, 8 KV + 40 rotating, TQ layers 0, transition null, paged disabled, SSD hits 1 / misses 10 / stores 3, MLXPress disabled | VERIFIED-LIVE |
+| Physical footprint | Activity Monitor visibly showed the exact proof PID 98028 at 9.38 GB after the native UI row | Runtime weights were 10,135,442,741 bytes; this is close to full dense-weight residency and is not a low-footprint pass | FAILED-LIVE |
+
+The current Debug Xcode result at
+`/private/tmp/osaurus-gemma4-focused-tests-derived/Logs/Test/Test-OsaurusCoreTests-2026.07.20_12-37-14--0700.xcresult`
+records 94/94 passed, zero failed/skipped, for the complete
+`RuntimePolicySourceTests` and `ImageGenerationBridgeContractTests` selections.
+The isolated Release app build also exited zero before ad-hoc sealing and
+strict signature verification.
+
+The live counters prove that the user-facing settings reach the runtime and
+that a fresh process uses both SSD and a newly populated bounded paged tier.
+They do not alone assign each individual disk hit to a particular evicted RAM
+leaf. That ownership is established by vMLX's exact
+`gemmaMixedTurboQuantRotatingUsesPagedThenDiskAfterEviction` regression, which
+forces the eviction, restores from SSD, appends the same suffix to both
+rotating rings, and compares the temporally ordered KV. The missing-companion
+regression separately proves safe SSD fallback rather than partial paged
+restore.
+
 ## Current-main Gemma/Bonsai follow-up
 
 Status: **PARTIAL overall; VERIFIED-LIVE for the narrow Gemma effective-cache
