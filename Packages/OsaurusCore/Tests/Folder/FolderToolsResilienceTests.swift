@@ -502,9 +502,8 @@ struct FolderToolsResilienceTests {
     @Test func fileUndo_operationIdWithAgreeingPathUndoes() async throws {
         await FileOperationLog.shared.clearAll()
         let root = tmpRoot()
-        // performUndo resolves relative paths against the log's root (set by
-        // folder-context activation in the app).
-        await FileOperationLog.shared.setRootPath(root)
+        // performUndo resolves relative paths against the root recorded on
+        // the operation itself (written by the mutating tool at log time).
         let file = root.appendingPathComponent("CHANGELOG.md")
         try "original\n".write(to: file, atomically: true, encoding: .utf8)
 
@@ -527,7 +526,6 @@ struct FolderToolsResilienceTests {
             let after = try String(contentsOf: file, encoding: .utf8)
             #expect(after == "original\n")
         }
-        await FileOperationLog.shared.setRootPath(nil)
     }
 
     /// A genuine DISAGREEMENT (id belongs to one file, path names another)

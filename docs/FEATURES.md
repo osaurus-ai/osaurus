@@ -118,10 +118,11 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── WatcherStore (Watcher persistence)                              │
 │  │   └── DirectoryFingerprint (Change detection via Merkle hashing)      │
 │  ├── Folder Tools                                                        │
-│  │   ├── FolderContextService (Working folder + security-scoped bookmarks) │
-│  │   ├── FolderToolManager (Registers folder tools when folder selected) │
-│  │   ├── FolderToolFactory (Builds file/coding/git tools per project)    │
-│  │   └── FileOperationLog (Logs writes/exec for undo support)            │
+│  │   ├── ChatFolderState (Per-chat folder + security-scoped bookmark)    │
+│  │   ├── FolderContextService (Stateless bookmark/context utilities)     │
+│  │   ├── FolderToolManager (One-time canonical folder tool registration) │
+│  │   ├── FolderToolFactory (Builds file/coding/git tools)                │
+│  │   └── FileOperationLog (Logs writes/exec + per-op root for undo)      │
 │  ├── Sandbox                                                             │
 │  │   ├── SandboxManager (Container lifecycle and exec)                   │
 │  │   ├── SandboxPluginManager (Per-agent plugin install/uninstall)       │
@@ -646,11 +647,12 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - `Services/Chat/ContextBudgetManager.swift` + `Services/Chat/CompactionWatermark.swift` — Budget reservations and sticky, KV-prefix-stable history compaction (monotonic summarize→drop decisions, byte-stable trim note, `overBudget` signal)
 - `Services/Context/AgentLoopEvaluator.swift` — Drives the same loop end-to-end for the OsaurusEvals `agent_loop` proof suite
 - `Tools/AgentLoopTools.swift` — The three chat-layer-intercepted loop tools (`todo`, `complete`, `clarify`); registered as global built-ins
-- `Tools/FolderToolManager.swift` — Registers folder tools when a working folder is selected; unregisters on clear. `share_artifact` is no longer registered here — it lives as a global built-in alongside the loop tools.
+- `Tools/FolderToolManager.swift` — Ensures the canonical folder tool surface is registered once per process (lazily, on the first folder mount anywhere); per-request visibility is schema filtering in `ToolRegistry`, not register/unregister. `share_artifact` is no longer registered here — it lives as a global built-in alongside the loop tools.
 - `Folder/FolderContext.swift` — Project type, file tree, manifest, git status, optional `AGENTS.md`/`CLAUDE.md`/`.cursorrules`
-- `Folder/FolderContextService.swift` — `NSOpenPanel`, security-scoped bookmark persistence, MainActor service
+- `Folder/ChatFolderState.swift` — Per-`ChatSession` folder ownership: security-scoped URL, built context, persistable bookmark, refresh/clear, one-time legacy global-bookmark adoption
+- `Folder/FolderContextService.swift` — Stateless bookmark helpers + `FolderContext` building (no process-wide "current folder" state)
 - `Folder/FolderTools.swift` — File / shell / git tool implementations + `FolderToolFactory`
-- `Folder/ChatExecutionContext.swift` — TaskLocal session/agent/batch IDs read by tools at execution time
+- `Folder/ChatExecutionContext.swift` — TaskLocal session/agent/batch IDs plus the executing chat's folder root, read by tools at execution time
 - `Folder/ExecutionMode.swift` — First-class `.hostFolder | .sandbox(hostRead:) | .none` enum (the sandbox case carries an optional read-only host folder for combined mode)
 - `Folder/FileOperation.swift`, `Folder/FileOperationLog.swift` — Per-op log used for undo
 - `Models/Chat/AgentTodo.swift`, `Models/Chat/AgentTodoStore.swift` — Markdown checklist parser + per-session store
@@ -664,8 +666,8 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - **KV-stable compaction** — History trimming is sticky and monotonic (`CompactionWatermark`), so the rendered prompt prefix stays byte-stable across iterations and the paged-KV cache keeps its hits; UI and runtime share one budget assessment (`AgentLoopBudget.assess`) so the context chip and the send gate can't disagree with the trimmer
 - **`todo` / `complete` / `clarify`** — Three minimal-schema global built-in tools whose results the chat layer intercepts to drive the inline UI (not a pre-dispatch hook — the registry runs them like any other tool)
 - **Single mode resolver** — `ToolRegistry.resolveExecutionMode(folderContext:autonomousEnabled:)` decides sandbox > host folder > none for chat, plugin, and HTTP entry points
-- **Working folder picker** — Per-chat folder via `FolderContextService`, with security-scoped bookmark persistence
-- **Project-aware tools** — Core file tools + `shell_run` registered for every folder mount; git tools layered on when the folder is a git repo. Project type only changes the file-tree ignore patterns (and prompt metadata), not the tool surface.
+- **Per-chat working folder** — Each chat session owns its folder (`ChatFolderState`): picking, refreshing, or clearing a folder affects only that chat, concurrent chats can work against different repos, and the security-scoped bookmark is persisted per session and restored on reopen. Tools resolve the executing chat's root from the TaskLocal execution scope, never from process-wide state.
+- **Project-aware tools** — Core file tools + `shell_run` surfaced for every folder mount; git tools layered on when that session's folder is a git repo. Project type only changes the file-tree ignore patterns (and prompt metadata), not the tool surface.
 - **Sandbox toggle** — Composes with the working-folder backend. Sandbox-only keeps current behavior; **combined mode** (sandbox on + folder selected → `.sandbox(hostRead: ctx)`) exposes the host workspace **read-only** (`file_read` / `file_search`, scoped to the folder root, secret files refused; `file_read` also lists directories) while all execution stays in the sandbox VM, which has no mount of the host workspace. Host write/edit/shell/git stay hidden in combined mode. Residual risks (the trusted agent is the read→exec bridge, prompt injection from read content, in-scope secrets) are mitigated by scope enforcement + secret refusal; v1 keeps sandbox network-on, so document the exfiltration residual rather than relying on isolation.
 - **`share_artifact`** — Only path for the user to see files the agent produced
 **Loop Tools (engine-intercepted):**
@@ -702,9 +704,9 @@ The previously-discrete `file_move`, `file_copy`, `file_delete`, `dir_create`, a
 
 **Storage:**
 
-- Folder bookmark — UserDefaults (`FolderContextBookmark`)
+- Folder bookmark + display path — persisted per chat session (`ChatSessionData.folderBookmark` / `folderPath`, sessions schema v10). The legacy process-wide UserDefaults key (`FolderContextBookmark`) is migrated once to the first eligible chat opened after the update, then deleted.
 - Artifacts — `~/.osaurus/artifacts/<sessionId>/`
-- Per-session todo and file-op log — in-memory keyed by chat session ID
+- Per-session todo and file-op log — in-memory keyed by chat session ID (each file op records the folder root it ran against, so undo stays correct across chats with different folders)
 
 See [AGENT_LOOP.md](AGENT_LOOP.md) for the full guide.
 

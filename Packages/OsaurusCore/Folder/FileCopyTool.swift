@@ -63,13 +63,18 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
     /// disk image / model checkpoint from filling the sandbox share.
     static let defaultMaxCopyBytes = 512 * 1024 * 1024
 
-    private let rootPath: URL
+    private let fixedRootPath: URL?
     private let maxCopyBytes: Int
 
-    init(rootPath: URL, maxCopyBytes: Int = FileCopyTool.defaultMaxCopyBytes) {
-        self.rootPath = rootPath
+    init(rootPath: URL? = nil, maxCopyBytes: Int = FileCopyTool.defaultMaxCopyBytes) {
+        self.fixedRootPath = rootPath
         self.maxCopyBytes = maxCopyBytes
     }
+
+    /// The executing chat's folder root (TaskLocal scope), or the fixed
+    /// root when this instance was built for a known folder. Only needed
+    /// for host-side routes; sandbox-to-sandbox copies never touch it.
+    private var rootPath: URL? { FolderToolHelpers.resolveRoot(fixed: fixedRootPath) }
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
@@ -131,6 +136,9 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
         let sourceURL: URL
         switch sourceRoute {
         case .host:
+            guard let rootPath else {
+                return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
+            }
             sourceURL = try FolderToolHelpers.resolvePath(source, rootPath: rootPath)
             // Copying a secret INTO the sandbox is exactly the exfiltration
             // path the combined-mode read denylist exists to block.
@@ -177,6 +185,9 @@ struct FileCopyTool: OsaurusTool, PermissionedTool {
         let destinationURL: URL
         switch destinationRoute {
         case .host:
+            guard let rootPath else {
+                return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
+            }
             destinationURL = try FolderToolHelpers.resolvePath(destination, rootPath: rootPath)
             // Same tamper gate as `file_write`: a sandbox-driven agent must
             // not create or overwrite secret-shaped files in the workspace.

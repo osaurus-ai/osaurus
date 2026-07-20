@@ -22,17 +22,12 @@ struct DatabaseToolsTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let context = FolderContext(
-            rootPath: root,
-            projectType: .unknown,
-            tree: "",
-            manifest: nil,
-            gitStatus: nil,
-            isGitRepo: false
-        )
-        FolderToolManager.shared.registerFolderTools(for: context)
-        defer { FolderToolManager.shared.unregisterFolderTools() }
-        return try await body(root)
+        // Folder ownership is per chat session now: the resolver reads the
+        // executing scope's root from the TaskLocal, so bind it here the way
+        // the send path does instead of registering a global folder.
+        return try await ChatExecutionContext.$currentFolderRoot.withValue(root) {
+            try await body(root)
+        }
     }
 
     @Test

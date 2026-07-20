@@ -42,17 +42,7 @@ public actor FileOperationLog {
     /// Operations grouped by chat session id (most recent last)
     private var operations: [String: [FileOperation]] = [:]
 
-    /// Root path for file operations (set when folder context is active)
-    private var rootPath: URL?
-
     private init() {}
-
-    // MARK: - Configuration
-
-    /// Set the root path for undo operations
-    public func setRootPath(_ url: URL?) {
-        rootPath = url
-    }
 
     // MARK: - Logging
 
@@ -244,9 +234,13 @@ public actor FileOperationLog {
     // MARK: - Private Undo Implementation
 
     private func performUndo(_ operation: FileOperation) throws {
-        guard let root = rootPath else {
-            throw FileUndoError.cannotUndo("No root path configured")
+        // Undo targets the root captured when the operation was logged, so a
+        // later folder switch (or a concurrent chat on another folder) can
+        // never redirect the revert to the wrong filesystem location.
+        guard let rootPathString = operation.rootPath else {
+            throw FileUndoError.cannotUndo("No root path recorded for this operation")
         }
+        let root = URL(fileURLWithPath: rootPathString, isDirectory: true)
 
         let fm = FileManager.default
         let fileURL = root.appendingPathComponent(operation.path)

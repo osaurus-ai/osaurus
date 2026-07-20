@@ -115,6 +115,10 @@ struct FloatingInputCard: View {
     var warmModelsOnLoadEnabled: Bool = false
     /// Warm-up state for the selected local model in this session.
     @ObservedObject var warmupController: ChatWarmupController = ChatWarmupController()
+    /// THIS chat session's working-folder state. The folder chip, picker,
+    /// refresh/clear actions, and "@" file completion all operate on it, so
+    /// they affect only the owning chat — never other windows.
+    @ObservedObject var folderState: ChatFolderState
 
     init(
         text: Binding<String>,
@@ -156,7 +160,8 @@ struct FloatingInputCard: View {
         inputHistoryProvider: (() -> [String])? = nil,
         inputHistoryKey: UUID? = nil,
         warmModelsOnLoadEnabled: Bool = false,
-        warmupController: ChatWarmupController = ChatWarmupController()
+        warmupController: ChatWarmupController = ChatWarmupController(),
+        folderState: ChatFolderState? = nil
     ) {
         self._text = text
         self._selectedModel = selectedModel
@@ -198,11 +203,11 @@ struct FloatingInputCard: View {
         self.inputHistoryKey = inputHistoryKey
         self.warmModelsOnLoadEnabled = warmModelsOnLoadEnabled
         self._warmupController = ObservedObject(wrappedValue: warmupController)
+        self._folderState = ObservedObject(wrappedValue: folderState ?? ChatFolderState())
     }
 
     // Observe managers for reactive updates
     @ObservedObject private var agentManager = AgentManager.shared
-    @ObservedObject private var folderContextService = FolderContextService.shared
     @ObservedObject private var sandboxState = SandboxManager.State.shared
     @ObservedObject private var clipboardService = ClipboardService.shared
     @ObservedObject private var appConfig = AppConfiguration.shared
@@ -1800,9 +1805,9 @@ extension FloatingInputCard {
         // Only treat this as a blocking "load" when we have nothing to show yet;
         // when refining an existing list we keep the current rows visible.
         atMenuLoading = atMenuItems.isEmpty
-        // Snapshot the folder root here (main actor); the enumeration itself
-        // runs detached so filesystem I/O never blocks the UI.
-        let rootPath = FolderContextService.cachedRootPath
+        // Snapshot THIS chat's folder root here (main actor); the enumeration
+        // itself runs detached so filesystem I/O never blocks the UI.
+        let rootPath = folderState.rootPath
         atMenuTask = Task {
             let result = await Task.detached(priority: .userInitiated) {
                 AtFileMenu.list(query: query, rootPath: rootPath)
@@ -3339,10 +3344,14 @@ extension FloatingInputCard {
     /// Open the system folder picker. Sandbox and folder now compose
     /// (combined mode), so selecting a folder no longer disables the
     /// sandbox — picking a folder while sandbox is on yields a read-only
-    /// host workspace alongside sandbox exec.
+    /// host workspace alongside sandbox exec. Presented as a sheet on this
+    /// chat's window (folder ownership is per chat) so the picker can't
+    /// flicker against the floating chat panel and it's obvious which chat
+    /// the folder attaches to.
     private func selectFolder() {
+        let window = windowId.flatMap { ChatWindowManager.shared.getNSWindow(id: $0) }
         Task {
-            _ = await folderContextService.selectFolder()
+            _ = await folderState.selectFolder(from: window)
         }
     }
 
@@ -3350,7 +3359,7 @@ extension FloatingInputCard {
     /// where exec runs in the VM and the host workspace is read-only
     /// unless the agent's folder-writes opt-in is on.
     private var isCombinedMode: Bool {
-        isSandboxEnabled && folderContextService.hasActiveFolder
+        isSandboxEnabled && folderState.hasActiveFolder
     }
 
     /// The `allowHostFolderWrites` opt-in for the current agent: in
@@ -4183,7 +4192,7 @@ extension FloatingInputCard {
     // MARK: - Folder Context Chip
 
     private func folderContextChip(compact: Bool) -> some View {
-        let hasFolder = folderContextService.hasActiveFolder
+        let hasFolder = folderState.hasActiveFolder
 
         return HStack(spacing: 4) {
             Button(action: selectFolder) {
@@ -4204,7 +4213,7 @@ extension FloatingInputCard {
                         }
                     }
                     Button {
-                        Task { await folderContextService.refreshContext() }
+                        Task { await folderState.refreshContext() }
                     } label: {
                         Label {
                             Text("Refresh Context", bundle: .module)
@@ -4227,7 +4236,7 @@ extension FloatingInputCard {
                     }
                     Divider()
                     Button(role: .destructive) {
-                        folderContextService.clearFolder()
+                        folderState.clearFolder()
                     } label: {
                         Label {
                             Text("Clear Folder", bundle: .module)
@@ -4240,7 +4249,7 @@ extension FloatingInputCard {
 
             if hasFolder {
                 Button {
-                    folderContextService.clearFolder()
+                    folderState.clearFolder()
                 } label: {
                     Image(systemName: "xmark")
                         .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
@@ -4268,7 +4277,7 @@ extension FloatingInputCard {
 
             // The selected folder name is live state, so keep it even when
             // compact; only the "Folder" placeholder collapses to the icon.
-            if let context = folderContextService.currentContext {
+            if let context = folderState.context {
                 Text(context.rootPath.lastPathComponent)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .foregroundColor(canEdit ? theme.secondaryText : theme.tertiaryText)
@@ -4293,7 +4302,7 @@ extension FloatingInputCard {
             // Drop the picker chevron in the compact placeholder state so the
             // chip shrinks to just the folder glyph; keep it whenever a name
             // is shown so the affordance to change folders stays visible.
-            if canEdit && (!compact || folderContextService.currentContext != nil) {
+            if canEdit && (!compact || folderState.context != nil) {
                 Image(systemName: "chevron.up.chevron.down")
                     .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
                     .foregroundColor(theme.tertiaryText)

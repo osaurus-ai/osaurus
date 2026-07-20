@@ -22,23 +22,27 @@
     struct SandboxWorkspaceMountIsolationTests {
 
         /// The mount source returned for the sandbox is always the
-        /// Osaurus-owned container workspace, not a host folder.
+        /// Osaurus-owned container workspace, not a host folder — even when
+        /// several concurrent chats have different folders selected.
         @Test func returnsContainerWorkspaceUnchanged() {
             let workspace = OsaurusPaths.containerWorkspace().path
             let resolved = SandboxManager.validatedWorkspaceMountSource(
                 workspace: workspace,
-                folderRoot: "/Users/example/some-project"
+                folderRoots: [
+                    "/Users/example/some-project",
+                    "/Users/example/another-project",
+                ]
             )
             #expect(resolved == workspace)
         }
 
-        /// A nil folder root (no folder selected) is the common case and
-        /// must pass through untouched.
-        @Test func nilFolderRootPassesThrough() {
+        /// No live folder roots (no chat has a folder selected) is the
+        /// common case and must pass through untouched.
+        @Test func noFolderRootsPassesThrough() {
             let workspace = OsaurusPaths.containerWorkspace().path
             let resolved = SandboxManager.validatedWorkspaceMountSource(
                 workspace: workspace,
-                folderRoot: nil
+                folderRoots: []
             )
             #expect(resolved == workspace)
         }

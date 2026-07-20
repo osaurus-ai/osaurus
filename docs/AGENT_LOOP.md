@@ -84,14 +84,16 @@ The `clarify` (along with `todo` and `complete`) tool call is filtered out of th
 
 ## Working Folder (Folder Context)
 
-Selecting a working folder transforms the chat into a code-aware agent. The selector lives on the chat input bar; you can also point any chat at a folder programmatically via [`FolderContextService`](../Packages/OsaurusCore/Folder/FolderContextService.swift).
+Selecting a working folder transforms the chat into a code-aware agent. The selector lives on the chat input bar; you can also point a chat at a folder programmatically via its session's [`ChatFolderState`](../Packages/OsaurusCore/Folder/ChatFolderState.swift).
+
+**Folder ownership is per chat.** Each `ChatSession` owns a `ChatFolderState` — its security-scoped URL, built `FolderContext`, and persistable bookmark. Picking, refreshing, or clearing a folder affects only that chat; two concurrent chats can work against two different repos without cross-routing. The folder is persisted on the session row (`ChatSessionData.folderBookmark` / `folderPath`, sessions schema v10) and restored when the session reloads, so a chat reopened after relaunch comes back attached to its own folder. New chats always start folder-less. The pre-per-chat process-wide bookmark (`FolderContextBookmark` in UserDefaults) is migrated once — the first eligible chat opened after the update adopts it, then the global key is deleted.
 
 ### What happens when you pick a folder
 
-1. macOS issues a security-scoped bookmark that persists across launches.
-2. [`FolderContextService`](../Packages/OsaurusCore/Folder/FolderContextService.swift) builds a `FolderContext` with project-type detection, file tree summary, manifest contents, and git status.
-3. [`FolderToolManager`](../Packages/OsaurusCore/Tools/FolderToolManager.swift) registers the folder tools listed below into [`ToolRegistry`](../Packages/OsaurusCore/Tools/ToolRegistry.swift).
-4. The system prompt composer injects the folder context (tree, manifest, git status, optional `AGENTS.md` / `CLAUDE.md` / `.cursorrules`) for the model.
+1. macOS issues a security-scoped bookmark; it's persisted with the chat session and survives relaunch.
+2. [`FolderContextService`](../Packages/OsaurusCore/Folder/FolderContextService.swift) (now stateless bookmark/context-building utilities) builds a `FolderContext` with project-type detection, file tree summary, manifest contents, and git status; the result is stored on the session's `ChatFolderState`.
+3. [`FolderToolManager`](../Packages/OsaurusCore/Tools/FolderToolManager.swift) ensures the canonical folder tool surface is registered in [`ToolRegistry`](../Packages/OsaurusCore/Tools/ToolRegistry.swift) — once per process, on the first folder mount anywhere. Tool bodies resolve the **executing** chat's root from the TaskLocal execution scope (`ChatExecutionContext.currentFolderRoot`, bound around each run), so the shared registration can never route one chat's calls to another chat's folder. Per-request visibility (no folder → folder tools hidden, non-git folder → git tools hidden) is schema filtering per session, not register/unregister.
+4. The system prompt composer injects that session's folder context (tree, manifest, git status, optional `AGENTS.md` / `CLAUDE.md` / `.cursorrules`) for the model.
 
 Project type is auto-detected from manifests (defined in [`FolderContext.swift`](../Packages/OsaurusCore/Folder/FolderContext.swift)):
 
@@ -108,7 +110,7 @@ Project type is auto-detected from manifests (defined in [`FolderContext.swift`]
 
 ### Folder tool inventory
 
-Built by [`FolderToolFactory`](../Packages/OsaurusCore/Folder/FolderTools.swift) when the folder is selected. Tools that operate on the filesystem all enforce the same path contract: a path is taken relative to the working folder, but an absolute path is also accepted as long as it resolves (after `..`/`.` standardisation) to the working folder or somewhere strictly under it; paths outside it are rejected. `share_artifact` is NOT in this table — it lives as a global built-in (see below) so it's available in every chat.
+Built by [`FolderToolFactory`](../Packages/OsaurusCore/Folder/FolderTools.swift) and registered once per process on the first folder mount; each execution resolves the calling chat's root from its TaskLocal scope. Tools that operate on the filesystem all enforce the same path contract: a path is taken relative to the working folder, but an absolute path is also accepted as long as it resolves (after `..`/`.` standardisation) to the working folder or somewhere strictly under it; paths outside it are rejected. `share_artifact` is NOT in this table — it lives as a global built-in (see below) so it's available in every chat.
 
 **Core (always registered):**
 
@@ -124,9 +126,9 @@ Built by [`FolderToolFactory`](../Packages/OsaurusCore/Folder/FolderTools.swift)
 
 The previously-discrete `file_move`, `file_copy`, `file_delete`, `dir_create`, and `batch` tools were dropped — `mv`, `cp`, `rm`, and `mkdir` go through `shell_run` so the model picks "shell command" once instead of differentiating four near-identical tool names. Multi-step orchestration goes through `shell_run` chains. The standalone `file_tree` was folded into `file_read` (pass a directory path to get a listing) so the path argument carries the file-vs-directory decision.
 
-`shell_run` lives in the core set so it's available for every folder mount, regardless of whether a project type was detected; the folder-section prompt names it unconditionally and the registration matrix has to follow.
+`shell_run` lives in the core set so it's available for every folder mount, regardless of whether a project type was detected; the folder-section prompt names it unconditionally and the schema has to follow.
 
-**Git (registered when the folder is a git repo):**
+**Git (surfaced when the session's folder is a git repo; filtered from the schema otherwise):**
 
 | Tool         | Description                                       |
 | ------------ | ------------------------------------------------- |
@@ -134,7 +136,7 @@ The previously-discrete `file_move`, `file_copy`, `file_delete`, `dir_create`, a
 | `git_diff`   | Show diffs                                        |
 | `git_commit` | Stage and commit (requires approval)              |
 
-Every applied `file_write` / `file_edit` call is logged in [`FileOperationLog`](../Packages/OsaurusCore/Folder/FileOperationLog.swift) so the user — or the agent, via `file_undo` — can review and revert individual file operations. Dry-run write/edit previews do not log because they do not change the filesystem.
+Every applied `file_write` / `file_edit` call is logged in [`FileOperationLog`](../Packages/OsaurusCore/Folder/FileOperationLog.swift) so the user — or the agent, via `file_undo` — can review and revert individual file operations. Each logged operation records the folder root it ran against, and undo resolves against **that** root — so a session's history stays revertible even while other chats work in different folders. Dry-run write/edit previews do not log because they do not change the filesystem.
 
 Common-case `shell_run` mutations join the same log: [`ShellMutationLog`](../Packages/OsaurusCore/Folder/ShellMutationLog.swift) plans simple `mv` / `cp` / `rm` / `mkdir` commands **before** execution (an `rm` undo needs the pre-exec file content) and logs the planned operations when the command exits 0. The capture is all-or-nothing per command: anything it can't parse faithfully (pipes, globs, redirects, directories, paths outside the root) is classified *unloggable* and the tool result carries an explicit "not covered by the undo log" warning instead of a half-logged entry. Each history entry reports an honest per-entry `can_undo`, and operations within one parallel batch share a batch id so related changes group together in history.
 
@@ -266,7 +268,7 @@ The protected regions are the first message (original task) and the most recent 
 
 ### Proof lane: end-to-end agentic evals
 
-[`AgentLoopEvaluator`](../Packages/OsaurusCore/Services/Context/AgentLoopEvaluator.swift) drives this same driver against a fixture-seeded temp workspace for the OsaurusEvals `agent_loop` domain — streaming model steps, a stable `session_id` for KV reuse, the parallel batch executor, and config-resolved `max_tokens`, so the eval exercises the production shape rather than a simplified one. Cases assert **outcomes** (file contents, command exit codes) plus harness behaviors: dedupe replays firing, the repeated-call nudge landing, and compaction actually occurring. The evaluator refuses to run while a user folder session is active in-process and snapshots/restores any prior folder-tool registration. See [`Packages/OsaurusEvals/README.md`](../Packages/OsaurusEvals/README.md#agent_loop-domain) for the case schema and the suite inventory.
+[`AgentLoopEvaluator`](../Packages/OsaurusCore/Services/Context/AgentLoopEvaluator.swift) drives this same driver against a fixture-seeded temp workspace for the OsaurusEvals `agent_loop` domain — streaming model steps, a stable `session_id` for KV reuse, the parallel batch executor, and config-resolved `max_tokens`, so the eval exercises the production shape rather than a simplified one. Cases assert **outcomes** (file contents, command exit codes) plus harness behaviors: dedupe replays firing, the repeated-call nudge landing, and compaction actually occurring. The evaluator binds its temp workspace as the TaskLocal folder root for the run, so it can execute alongside live user folder chats without touching or restoring any shared registration. See [`Packages/OsaurusEvals/README.md`](../Packages/OsaurusEvals/README.md#agent_loop-domain) for the case schema and the suite inventory.
 
 ---
 

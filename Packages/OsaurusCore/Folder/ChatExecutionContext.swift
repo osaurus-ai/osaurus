@@ -70,6 +70,16 @@ public enum ChatExecutionContext {
     /// `BackgroundTaskManager.dispatchChat` alongside `currentRunId`.
     @TaskLocal public static var currentBackgroundId: UUID?
 
+    /// Root of the working folder owned by the chat session driving the
+    /// current execution. Bound by every send/run surface (chat run task,
+    /// HTTP `/agents/{id}/run`, plugin tool loop, eval harness) from that
+    /// surface's OWN folder state, so folder tools, undo, combined-mode
+    /// policy, and change checkpoints all resolve against the executing
+    /// chat's folder — never a process-wide one. `nil` means the execution
+    /// has no working folder; folder tools return a typed `unavailable`
+    /// envelope in that case.
+    @TaskLocal public static var currentFolderRoot: URL?
+
     /// Root of the read-only host workspace when the current execution
     /// is in combined sandbox + host-read mode
     /// (`ExecutionMode.sandbox(hostRead: ctx)`). Bound by the send paths

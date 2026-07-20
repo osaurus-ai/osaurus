@@ -929,13 +929,20 @@ final class PluginHostContext: @unchecked Sendable {
 
         // Honour the same execution-mode rules the chat UI uses so a
         // plugin invocation against this agent sees the same tool surface
-        // (sandbox > host folder > none). Previously this path was hard-
-        // coded to `folderContext: nil`, so a host-folder agent driven via
-        // a plugin would silently lose its folder tools.
+        // (sandbox > host folder > none). Folder ownership is per chat
+        // session now; a plugin inference resolves the folder of the
+        // SESSION driving it (the live dispatched session with this id,
+        // when one exists) — never a process-wide folder that could belong
+        // to an unrelated chat window.
+        let sessionFolderContext: FolderContext? = await MainActor.run {
+            guard let sid = sessionId, let sessionUUID = UUID(uuidString: sid) else { return nil }
+            return BackgroundTaskManager.shared.liveTask(forSessionId: sessionUUID)?
+                .chatSession?.folderState.context
+        }
         let (execMode, agentModel, toolMode) = await MainActor.run {
             () -> (ExecutionMode, String?, ToolSelectionMode) in
             let mode = ToolRegistry.shared.resolveExecutionMode(
-                folderContext: FolderContextService.shared.currentContext,
+                folderContext: sessionFolderContext,
                 autonomousEnabled: resolved.autonomousEnabled,
                 allowHostFolderWrites: AgentManager.shared.effectiveAutonomousExec(for: agentId)?
                     .allowHostFolderWrites == true

@@ -4912,30 +4912,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 isAuthenticatedRemote
                 ? await Self.resolveAgentHostFolder(agentId: agentId)
                 : nil
-            // Snapshot/restore the process-wide folder-tool registration around
-            // the run (mirrors `AgentLoopEvaluator`) so a concurrent in-app
-            // folder session is restored afterward, serialized via
-            // `HostFolderRunGate` so two host-folder runs can't corrupt the
-            // single global registration.
-            let priorFolderContext: FolderContext? = await { () -> FolderContext? in
-                guard let hostFolder else { return nil }
-                await HostFolderRunGate.shared.acquire()
-                return await MainActor.run {
-                    let prior = FolderToolManager.shared.registeredContext
-                    FolderToolManager.shared.registerFolderTools(for: hostFolder.context)
-                    return prior
+            // Folder tools register process-wide once (idempotent) and resolve
+            // the run's folder from the TaskLocal root bound around the loop
+            // below, so concurrent host-folder runs — and concurrent in-app
+            // folder chats — each work against their own root with no
+            // register/restore swap and no serializing gate.
+            if hostFolder != nil {
+                await MainActor.run {
+                    FolderToolManager.shared.ensureFolderToolsRegistered()
                 }
-            }()
+            }
             let releaseHostFolder: @Sendable () async -> Void = {
                 guard let hostFolder else { return }
-                await MainActor.run {
-                    FolderToolManager.shared.unregisterFolderTools()
-                    if let priorFolderContext {
-                        FolderToolManager.shared.registerFolderTools(for: priorFolderContext)
-                    }
-                }
                 hostFolder.url.stopAccessingSecurityScopedResource()
-                await HostFolderRunGate.shared.release()
             }
 
             let executionMode: ExecutionMode = await MainActor.run {
@@ -5456,19 +5445,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // relaxation (`isDeniedForCurrentSurface`) and the host file
                 // tools see it; `nil` when no folder is mounted, leaving the
                 // external-surface denial fully intact. Child tasks spawned by
-                // the parallel batch executor inherit the task-local.
-                let runResult = try await ChatExecutionContext.$authenticatedHostFolderRoot
+                // the parallel batch executor inherit the task-locals.
+                // `currentFolderRoot` scopes the folder tools + undo +
+                // change checkpoints to THIS run's granted folder.
+                let runResult = try await ChatExecutionContext.$currentFolderRoot
                     .withValue(hostFolder?.url) {
-                        try await AgentToolLoop.run(
-                            policy: AgentLoopPolicy(
-                                maxIterations: maxIterations,
-                                stopOnToolRejection: false,
-                                dedupeNoticeEnabled: false,
-                                maxDataMovementSteps: min(16, maxIterations)
-                            ),
-                            state: taskState,
-                            hooks: hooks
-                        )
+                        try await ChatExecutionContext.$authenticatedHostFolderRoot
+                            .withValue(hostFolder?.url) {
+                                try await AgentToolLoop.run(
+                                    policy: AgentLoopPolicy(
+                                        maxIterations: maxIterations,
+                                        stopOnToolRejection: false,
+                                        dedupeNoticeEnabled: false,
+                                        maxDataMovementSteps: min(16, maxIterations)
+                                    ),
+                                    state: taskState,
+                                    hooks: hooks
+                                )
+                            }
                     }
                 exitState = runResult.exit
                 RemoteAgentRunLog.server(

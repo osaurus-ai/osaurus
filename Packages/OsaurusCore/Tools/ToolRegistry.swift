@@ -850,7 +850,10 @@ public final class ToolRegistry: ObservableObject {
                         )
                     )
                 } else if tool.mutatesHostFolder {
-                    if let folderRoot = FolderContextService.cachedRootPath {
+                    // The EXECUTING chat's folder root (TaskLocal, bound by
+                    // the send/run surface) — never a process-wide folder, so
+                    // concurrent chats checkpoint their own roots.
+                    if let folderRoot = ChatExecutionContext.currentFolderRoot {
                         changeCheckpoints.append(
                             await SandboxWorkspaceChangeTracker.shared.beginHostCheckpoint(
                                 sessionId: sessionId,
@@ -930,7 +933,7 @@ public final class ToolRegistry: ObservableObject {
     /// folder and plain sandbox modes.
     private var combinedHostReadPolicy: (scope: URL?, allowSecretReads: Bool, allowFolderWrites: Bool) {
         guard toolsByName.keys.contains("sandbox_exec"),
-            let root = FolderContextService.cachedRootPath
+            let root = ChatExecutionContext.currentFolderRoot
         else { return (nil, false, false) }
         let config = resolvedAutonomousExecConfig
         return (
@@ -948,7 +951,7 @@ public final class ToolRegistry: ObservableObject {
     /// modes so they stay untouched.
     private var combinedSandboxReadBridge: SandboxReadBridge? {
         guard toolsByName.keys.contains("sandbox_exec"),
-            FolderContextService.cachedRootPath != nil
+            ChatExecutionContext.currentFolderRoot != nil
         else { return nil }
         // Prefer the identity captured at sandbox-tool registration; it
         // can't go stale mid-turn and doesn't require `currentAgentId` to
@@ -1646,6 +1649,13 @@ public final class ToolRegistry: ObservableObject {
         Set(FolderToolManager.shared.folderToolNames)
     }
 
+    /// The git subset of the folder tools. Registered process-wide with the
+    /// core set; visible only when the executing session's folder is a git
+    /// repo (schema filtering in `excludedToolNames`).
+    static let gitToolNames: Set<String> = [
+        "git_status", "git_diff", "git_commit",
+    ]
+
     /// The read-only subset of the folder tools. In combined sandbox +
     /// host-read mode these stay visible (the agent reads the host
     /// workspace) while every other folder tool — host write / edit /
@@ -1744,6 +1754,13 @@ public final class ToolRegistry: ObservableObject {
             // there is no sandbox to bridge to, and `shell_run` (`cp`)
             // covers host-side copies.
             excluded.formUnion(Self.combinedModeBridgeToolNames)
+            // Git tools are registered process-wide with the rest of the
+            // folder surface but only make sense against a repo — filter
+            // them per request from THIS session's folder context (the old
+            // behavior registered them per folder; now it's schema-level).
+            if mode.folderContext?.isGitRepo != true {
+                excluded.formUnion(Self.gitToolNames)
+            }
         }
         if !mode.usesSandboxTools {
             excluded.formUnion(builtInSandboxToolNames)

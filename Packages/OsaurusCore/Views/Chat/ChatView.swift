@@ -222,6 +222,16 @@ final class ChatSession: ObservableObject {
     /// on the intercept.
     @Published var awaitingClarify: ClarifyPayload?
 
+    /// This chat's working-folder state (context, security-scoped access,
+    /// persistable bookmark). Owned per session so picking/refreshing/
+    /// clearing a folder affects ONLY this chat — never other windows or
+    /// concurrent headless runs. Persisted through `ChatSessionData`.
+    let folderState = ChatFolderState()
+
+    /// Bridges `ChatFolderState.objectWillChange` up to the session so the
+    /// folder chip / previews re-render when this chat's folder changes.
+    nonisolated(unsafe) private var folderStateCancellable: AnyCancellable?
+
     /// Tracks expand/collapse state for tool calls, thinking blocks, etc.
     /// Lives on the session so state survives NSTableView cell reuse.
     let expandedBlocksStore = ExpandedBlocksStore()
@@ -562,6 +572,28 @@ final class ChatSession: ObservableObject {
                 self?.objectWillChange.send()
             }
 
+        // Same bridge for the per-session folder state: the folder chip and
+        // context previews render from `folderState`, whose mutations must
+        // surface through the session object SwiftUI actually observes.
+        folderStateCancellable = folderState.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+
+        // Persist user folder mutations promptly: without this, a folder
+        // picked (or cleared) mid-conversation only reaches disk on the next
+        // turn/teardown save and is lost on a crash or force-quit. Fires only
+        // for user-initiated select/change/clear — never persistence restores
+        // — and only once the session has content to persist (`save()` skips
+        // empty sessions; a brand-new chat's folder is saved with its first
+        // turn). Folder mutations are rare click-driven events, so a direct
+        // save (already async via `saveAsync`) needs no debounce.
+        folderState.onFolderMutated = { [weak self] in
+            guard let self, !self.turns.isEmpty else { return }
+            self.isDirty = true
+            self.save()
+        }
+
         remoteModelsObserver = NotificationCenter.default.addObserver(
             forName: .remoteProviderModelsChanged,
             object: nil,
@@ -768,7 +800,7 @@ final class ChatSession: ObservableObject {
             voidNotification(.agentUpdated),
             voidNotification(.activeAgentChanged),
             voidNotification(.toolsListChanged),
-            FolderContextService.shared.objectWillChange
+            folderState.objectWillChange
                 .map { _ in () }.eraseToAnyPublisher(),
             $selectedModel.map { _ in () }.eraseToAnyPublisher(),
         ]
@@ -1987,6 +2019,9 @@ final class ChatSession: ObservableObject {
         dispatchTaskId = nil
         archived = false
         isDirty = false
+        // A new chat starts folder-less; the outgoing session's folder stays
+        // persisted on its own row and does not leak into the fresh one.
+        folderState.clearFolder()
 
         // Reset agent-loop UI state.
         currentTodo = nil
@@ -2234,7 +2269,9 @@ final class ChatSession: ObservableObject {
             externalSessionKey: externalSessionKey,
             dispatchTaskId: dispatchTaskId,
             archived: archived,
-            capabilities: SessionCapability.derive(from: turnData)
+            capabilities: SessionCapability.derive(from: turnData),
+            folderBookmark: folderState.persistedBookmark,
+            folderPath: folderState.persistedPath
         )
     }
 
@@ -2290,6 +2327,11 @@ final class ChatSession: ObservableObject {
         externalSessionKey = data.externalSessionKey
         dispatchTaskId = data.dispatchTaskId
         archived = data.archived
+
+        // Restore THIS session's persisted folder (fire-and-forget: the
+        // bookmark resolve + context build happen off the main actor and
+        // apply when done). Sessions without a folder simply clear it.
+        folderState.restore(bookmark: data.folderBookmark, path: data.folderPath)
 
         // Restore the persisted model when it's still valid; otherwise
         // fall back to the agent's preferred model. `isLoadingModel`
@@ -2907,7 +2949,7 @@ final class ChatSession: ObservableObject {
     /// to nil even when a folder is globally active — keeping the budget
     /// preview and the sent prompt folder-less and consistent.
     private func activeFolderContext(for agentId: UUID) -> FolderContext? {
-        agentId == Agent.defaultId ? nil : FolderContextService.shared.currentContext
+        agentId == Agent.defaultId ? nil : folderState.context
     }
 
     private func estimatedChatExecutionMode(agentId: UUID) -> ExecutionMode {
@@ -4020,6 +4062,23 @@ final class ChatSession: ObservableObject {
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
             guard self.isRunActive(runId) else { return }
+            // A send issued right after a session switch / app launch can
+            // race the fire-and-forget bookmark restore; wait for it so this
+            // turn composes WITH the folder instead of silently folder-less.
+            // Instant when no restore is pending. Default agent skips — it
+            // is folder-less by policy and must not wait on a restore.
+            if turnAgentId != Agent.defaultId {
+                _ = await self.folderState.contextWaitingForRestore()
+            }
+            guard self.isRunActive(runId) else { return }
+            // Bind THIS session's folder root for the whole turn. Folder
+            // tools, undo roots, combined-mode policy, and external-tool
+            // context all resolve the root from this TaskLocal, so a folder
+            // picked in another chat window mid-run can never redirect this
+            // chat's tools. Resolved AFTER the restore wait so the bound
+            // root and the composed prompt always agree.
+            let turnFolderRoot = self.activeFolderContext(for: turnAgentId)?.rootPath
+            await ChatExecutionContext.$currentFolderRoot.withValue(turnFolderRoot) { [self] in
             await ChatExecutionContext.$currentAgentId.withValue(turnAgentId) { [self] in
                 debugLog("send: task started runId=\(runId) model=\(self.selectedModel ?? "nil")")
                 lastStreamError = nil
@@ -5415,6 +5474,7 @@ final class ChatSession: ObservableObject {
                     noteInsufficientFundsIfNeeded(error: error, blockedTurn: assistantTurn)
                 }
             }  // ChatExecutionContext.$currentAgentId.withValue
+            }  // ChatExecutionContext.$currentFolderRoot.withValue
         }
     }
 
@@ -6132,7 +6192,8 @@ struct ChatView: View {
                                 },
                                 inputHistoryKey: observedSession.sessionId,
                                 warmModelsOnLoadEnabled: ChatConfigurationStore.load().warmModelsOnLoad,
-                                warmupController: observedSession.warmupController
+                                warmupController: observedSession.warmupController,
+                                folderState: observedSession.folderState
                             )
                             .frame(maxWidth: 1100)
                             .frame(maxWidth: .infinity)

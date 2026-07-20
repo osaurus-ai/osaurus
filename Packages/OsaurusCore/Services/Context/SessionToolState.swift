@@ -76,10 +76,17 @@ struct SessionToolState: Sendable {
 
     /// Canonical fingerprint string for a (mode, toolSelectionMode) pair.
     /// Centralised so the read and write sides cannot drift in shape.
+    /// The folder ROOT is part of the identity: folders are per chat
+    /// session now, and switching this chat's folder (or restoring a
+    /// session against a different root) must invalidate cached tool
+    /// state — the composed folder sections and git-tool availability
+    /// both depend on which root is mounted, and a stale entry from the
+    /// old root would silently keep composing against it.
     static func fingerprint(executionMode: ExecutionMode, toolMode: ToolSelectionMode) -> String {
         let modeTag: String
         switch executionMode {
-        case .hostFolder: modeTag = "host"
+        case .hostFolder(let context):
+            modeTag = "host@\(folderIdentity(context))"
         // Combined sandbox + host-read carries a different tool surface
         // (host read tools present) than plain sandbox, so it gets its
         // own fingerprint — toggling a folder on/off while sandbox stays
@@ -88,13 +95,29 @@ struct SessionToolState: Sendable {
         // `file_edit` appear, `sandbox_write_file` hides), so it forks
         // the fingerprint too.
         case .sandbox(let hostRead, let hostWrite):
-            if hostRead == nil {
-                modeTag = "sandbox"
+            if let hostRead = hostRead {
+                let grant = hostWrite ? "sandbox+hostwrite" : "sandbox+hostread"
+                modeTag = "\(grant)@\(folderIdentity(hostRead))"
             } else {
-                modeTag = hostWrite ? "sandbox+hostwrite" : "sandbox+hostread"
+                modeTag = "sandbox"
             }
         case .none: modeTag = "none"
         }
         return "\(modeTag)/\(toolMode.rawValue)"
+    }
+
+    /// Stable, non-sensitive identity for a mounted folder: a short hash of
+    /// the standardized root path (the raw path never enters logs that print
+    /// fingerprints).
+    private static func folderIdentity(_ context: FolderContext) -> String {
+        let path = context.rootPath.standardizedFileURL.path
+        // FNV-1a rather than `Hasher` — Swift's Hasher is randomly seeded
+        // per process, and this identity must be stable across composes.
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in path.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x1_0000_01b3
+        }
+        return String(format: "%016llx", hash)
     }
 }

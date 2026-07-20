@@ -189,6 +189,16 @@ final class ChatWindowState: ObservableObject {
             self?.refreshSessionsDebounced()
         }
 
+        // One-time legacy migration: pre-per-chat-isolation builds persisted a
+        // single process-wide folder bookmark. The first eligible chat opened
+        // after the update adopts it as ITS folder (then the global key is
+        // deleted); it is never used as a default for any other chat. The
+        // Default agent is folder-less by policy, and a session that already
+        // carries its own bookmark must not be overridden.
+        if agentId != Agent.defaultId, sessionData?.folderBookmark == nil {
+            self.session.folderState.adoptLegacyGlobalBookmarkIfNeeded()
+        }
+
         setupNotificationObservers()
         observeBonjourBrowser()
         observeAgentManager()

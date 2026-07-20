@@ -748,16 +748,19 @@ struct SandboxWorkspaceChangeTrackerTests {
             let sessionId = UUID().uuidString
             let target = folder.appendingPathComponent("host-tracked.txt")
 
-            FolderContextService._setCachedRootPathForTesting(folder)
             ToolRegistry.shared.register(FakeHostMutatingTool(fileURL: target))
             defer {
                 ToolRegistry.shared.unregister(names: ["test_host_mutator"])
-                FolderContextService._setCachedRootPathForTesting(nil)
             }
 
-            _ = try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-                try await ToolRegistry.shared.execute(
-                    name: "test_host_mutator", argumentsJSON: "{}")
+            // The registry reads the executing chat's folder root from the
+            // TaskLocal scope (per-chat folder isolation), so bind it the
+            // way the send path does.
+            _ = try await ChatExecutionContext.$currentFolderRoot.withValue(folder) {
+                try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
+                    try await ToolRegistry.shared.execute(
+                        name: "test_host_mutator", argumentsJSON: "{}")
+                }
             }
 
             let changes = await SandboxWorkspaceChangeTracker.shared.changes(for: sessionId)
@@ -801,9 +804,9 @@ struct SandboxWorkspaceChangeTrackerTests {
             let sessionId = UUID().uuidString
             let target = folder.appendingPathComponent("dual-tracked.txt")
 
-            // Combined-mode gates: sandbox_exec registered + folder root +
-            // captured sandbox identity.
-            FolderContextService._setCachedRootPathForTesting(folder)
+            // Combined-mode gates: sandbox_exec registered + folder root
+            // (bound as the TaskLocal execution scope below) + captured
+            // sandbox identity.
             ToolRegistry.shared.setActiveSandboxAgentContext(
                 agentName: agentName,
                 home: OsaurusPaths.inContainerAgentHome(agentName)
@@ -813,12 +816,13 @@ struct SandboxWorkspaceChangeTrackerTests {
             defer {
                 ToolRegistry.shared.unregister(names: ["sandbox_exec", "test_host_mutator"])
                 ToolRegistry.shared.unregisterAllBuiltinSandboxTools()
-                FolderContextService._setCachedRootPathForTesting(nil)
             }
 
-            _ = try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-                try await ToolRegistry.shared.execute(
-                    name: "test_host_mutator", argumentsJSON: "{}")
+            _ = try await ChatExecutionContext.$currentFolderRoot.withValue(folder) {
+                try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
+                    try await ToolRegistry.shared.execute(
+                        name: "test_host_mutator", argumentsJSON: "{}")
+                }
             }
 
             let changes = await SandboxWorkspaceChangeTracker.shared.changes(for: sessionId)

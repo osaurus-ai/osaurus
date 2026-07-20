@@ -2,126 +2,24 @@
 //  FolderContextService.swift
 //  osaurus
 //
-//  Service for managing work folder context with security-scoped bookmarks,
-//  project type detection, file tree generation, and git status.
+//  Stateless utilities for working-folder support: security-scoped bookmark
+//  helpers and `FolderContext` building (project type detection, file tree
+//  generation, git status). Per-chat folder OWNERSHIP lives on each
+//  `ChatSession`'s `ChatFolderState` — this service holds no process-wide
+//  "current folder" state.
 //
 
 import AppKit
 import Foundation
 
-// Lock-protected cache for the folder root path, accessible from any isolation domain.
-// Lives outside the @MainActor class so the lock and storage are never actor-isolated.
-// Concurrency safety is enforced manually via _folderRootPathLock.
-private let _folderRootPathLock = NSLock()
-private nonisolated(unsafe) var _folderCachedRootPath: URL?
-
-/// Service for managing work folder context
+/// Bookmark + context-building utilities for working folders.
 @MainActor
-public final class FolderContextService: ObservableObject {
+public final class FolderContextService {
     public static let shared = FolderContextService()
 
-    @Published public private(set) var currentContext: FolderContext? {
-        didSet {
-            _folderRootPathLock.withLock {
-                _folderCachedRootPath = currentContext?.rootPath
-            }
-        }
-    }
-    /// Derived from `currentContext` rather than stored as a second
-    /// `@Published` source. The two were always mutated in lockstep, so a
-    /// stored property just doubled the synchronous `objectWillChange`
-    /// fan-out (and the Combine debounce reschedule it drives) on every
-    /// folder change — a hot spot in the app-hang samples. SwiftUI observers
-    /// re-read this whenever `currentContext` publishes, so behaviour is
-    /// unchanged.
-    public var hasActiveFolder: Bool { currentContext != nil }
+    private init() {}
 
-    /// Thread-safe accessor for the current folder root path.
-    /// Reads a lock-protected cache so callers never need to hop to MainActor.
-    public nonisolated static var cachedRootPath: URL? {
-        _folderRootPathLock.withLock { _folderCachedRootPath }
-    }
-
-    /// Test-only: override the cached root path without building a full
-    /// folder context (no bookmarks, no tool registration).
-    nonisolated static func _setCachedRootPathForTesting(_ url: URL?) {
-        _folderRootPathLock.withLock { _folderCachedRootPath = url }
-    }
-
-    private let bookmarkKey = "FolderContextBookmark"
-    private var securityScopedResource: URL?
-
-    private init() {
-        loadSavedFolder()
-    }
-
-    // MARK: - Public API
-
-    /// Select a folder via NSOpenPanel, build context, and register tools
-    @discardableResult
-    public func selectFolder() async -> FolderContext? {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.canCreateDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.title = L("Select Working Directory")
-        panel.message = L("Choose a folder for the AI to work with")
-        panel.prompt = L("Select")
-
-        guard await panel.beginModal() == .OK, let url = panel.url else {
-            return nil
-        }
-
-        return await setFolder(url)
-    }
-
-    /// Set a folder programmatically and build context
-    @discardableResult
-    public func setFolder(_ url: URL) async -> FolderContext? {
-        // Stop accessing previous resource
-        clearFolderInternal(unregisterTools: true)
-
-        do {
-            // Creating a security-scoped bookmark does synchronous IPC and can
-            // stall for seconds; keep it off the main actor so it doesn't trip
-            // the app-hang watchdog.
-            let bookmarkData = try await Task.detached(priority: .userInitiated) {
-                try url.bookmarkData(
-                    options: .withSecurityScope,
-                    includingResourceValuesForKeys: nil,
-                    relativeTo: nil
-                )
-            }.value
-
-            // Save bookmark to UserDefaults
-            UserDefaults.standard.set(bookmarkData, forKey: bookmarkKey)
-
-            guard url.startAccessingSecurityScopedResource() else { return nil }
-
-            securityScopedResource = url
-
-            // Build context
-            let context = await buildContext(from: url)
-            currentContext = context
-
-            // Register folder tools
-            FolderToolManager.shared.registerFolderTools(for: context)
-
-            return context
-
-        } catch {
-            return nil
-        }
-    }
-
-    /// Clear the current folder and unregister tools
-    public func clearFolder() {
-        clearFolderInternal(unregisterTools: true)
-        UserDefaults.standard.removeObject(forKey: bookmarkKey)
-    }
-
-    // MARK: - Per-agent bookmark helpers
+    // MARK: - Bookmark helpers
 
     /// Create a security-scoped bookmark for `url`, suitable for persisting on
     /// an `Agent` (`Agent.hostWorkspaceBookmark`) so a host-folder grant
@@ -152,26 +50,6 @@ public final class FolderContextService: ObservableObject {
             ), !isStale
         else { return nil }
         return url
-    }
-
-    // MARK: - Eval-harness activation (module-internal)
-
-    /// Activate an already-built context as the process-wide folder
-    /// context WITHOUT a security-scoped bookmark or persistence —
-    /// used by `AgentLoopEvaluator` for combined sandbox + host-read
-    /// cases, where `ToolRegistry.execute` resolves the read-only
-    /// scope / secret policy / read bridge from `cachedRootPath`.
-    /// Callers must already hold the evaluator's "no user folder
-    /// session" guarantee and must pair with `deactivateEvalContext()`.
-    func activateEvalContext(_ context: FolderContext) {
-        currentContext = context
-    }
-
-    /// Reverse of `activateEvalContext` — clears the context without
-    /// touching bookmarks, saved defaults, or tool registration (the
-    /// evaluator owns its own registration lifecycle).
-    func deactivateEvalContext() {
-        currentContext = nil
     }
 
     /// Build context from a URL (assumes access is already granted)
@@ -314,77 +192,6 @@ public final class FolderContextService: ObservableObject {
         let marker =
             "\n\n[truncated \(label): kept \(headChars)+\(tailChars) of \(content.count) chars]\n\n"
         return head + marker + tail
-    }
-
-    /// Refresh the current context (rebuild tree, git status, etc.)
-    public func refreshContext() async {
-        guard let url = securityScopedResource else { return }
-        let context = await buildContext(from: url)
-        currentContext = context
-    }
-
-    // MARK: - Private Implementation
-
-    private func clearFolderInternal(unregisterTools: Bool) {
-        securityScopedResource?.stopAccessingSecurityScopedResource()
-        securityScopedResource = nil
-        currentContext = nil
-
-        if unregisterTools {
-            FolderToolManager.shared.unregisterFolderTools()
-        }
-
-        // Folder change rotates the deterministic plugin-tool injection
-        // set (xlsx in `~/reports`, none in a code repo). Drop every
-        // cached preflight snapshot so the next turn rebuilds against
-        // the new folder context instead of replaying the prior
-        // folder's tools. Folder swaps are rare; losing mid-session
-        // `capabilities_load` history across the process is an
-        // acceptable cost vs the alternative of stale tool sets.
-        Task { await SessionToolStateStore.shared.invalidateAll() }
-    }
-
-    /// Load previously saved folder from security-scoped bookmark
-    private func loadSavedFolder() {
-        guard let bookmarkData = UserDefaults.standard.data(forKey: bookmarkKey) else {
-            return
-        }
-
-        // Called from `init`. Resolving the bookmark does synchronous IPC to
-        // the scoped-bookmarks agent, so push it off the main actor and apply
-        // the result back on main once it resolves.
-        Task {
-            let resolved: (url: URL, isStale: Bool)
-            do {
-                resolved = try await Task.detached(priority: .userInitiated) {
-                    var isStale = false
-                    let url = try URL(
-                        resolvingBookmarkData: bookmarkData,
-                        options: .withSecurityScope,
-                        relativeTo: nil,
-                        bookmarkDataIsStale: &isStale
-                    )
-                    return (url, isStale)
-                }.value
-            } catch {
-                UserDefaults.standard.removeObject(forKey: bookmarkKey)
-                return
-            }
-
-            if resolved.isStale {
-                // Bookmark is stale, need to recreate it
-                UserDefaults.standard.removeObject(forKey: bookmarkKey)
-                return
-            }
-
-            guard resolved.url.startAccessingSecurityScopedResource() else { return }
-
-            securityScopedResource = resolved.url
-
-            let context = await buildContext(from: resolved.url)
-            self.currentContext = context
-            FolderToolManager.shared.registerFolderTools(for: context)
-        }
     }
 
     // MARK: - Project Type Detection
@@ -665,9 +472,5 @@ public final class FolderContextService: ObservableObject {
         } catch {
             return nil
         }
-    }
-
-    deinit {
-        securityScopedResource?.stopAccessingSecurityScopedResource()
     }
 }

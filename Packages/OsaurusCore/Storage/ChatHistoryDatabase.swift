@@ -141,7 +141,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
 
     /// Highest schema version this build knows how to produce. Opening a DB
     /// stamped newer than this is refused (forward-version fail-fast).
-    private static let latestSchemaVersion = 9
+    private static let latestSchemaVersion = 10
 
     private func runMigrations() throws {
         let current = try getSchemaVersion()
@@ -166,6 +166,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if current < 7 { try runMigrationStep(7, migrateToV7) }
         if current < 8 { try runMigrationStep(8, migrateToV8) }
         if current < 9 { try runMigrationStep(9, migrateToV9) }
+        if current < 10 { try runMigrationStep(10, migrateToV10) }
     }
 
     /// Run one migration body atomically. Called only from `runMigrations`,
@@ -365,6 +366,18 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             "CREATE INDEX IF NOT EXISTS idx_sandbox_changes_session ON sandbox_changes (session_id)"
         )
         try setSchemaVersion(9)
+    }
+
+    /// v10: per-session working folder. `folder_bookmark` is the
+    /// security-scoped bookmark blob (nil = no folder); `folder_path` is the
+    /// non-sensitive display path that survives a stale bookmark. Both
+    /// nullable — legacy rows simply have no folder, matching the pre-v10
+    /// behavior where the (process-global) folder was never persisted per
+    /// chat.
+    private func migrateToV10() throws {
+        try addColumnIfMissing("sessions", "folder_bookmark", "BLOB")
+        try addColumnIfMissing("sessions", "folder_path", "TEXT")
+        try setSchemaVersion(10)
     }
 
     // MARK: - Public API: sessions
@@ -893,6 +906,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             Self.bindText(stmt, index: 10, value: session.dispatchTaskId?.uuidString)
             sqlite3_bind_int(stmt, 11, session.archived ? 1 : 0)
             Self.bindText(stmt, index: 12, value: SessionCapability.encode(session.capabilities))
+            Self.bindBlob(stmt, index: 13, value: session.folderBookmark)
+            Self.bindText(stmt, index: 14, value: session.folderPath)
         }
     }
 
@@ -1099,7 +1114,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private static let baseSessionSelectSQL = """
         SELECT id, title, created_at, updated_at, selected_model, agent_id,
                source, source_plugin_id, external_session_key, dispatch_task_id,
-               archived, capabilities
+               archived, capabilities, folder_bookmark, folder_path
         FROM sessions
         """
 
@@ -1109,8 +1124,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         INSERT INTO sessions
             (id, title, created_at, updated_at, selected_model, agent_id,
              source, source_plugin_id, external_session_key, dispatch_task_id,
-             archived, capabilities)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             archived, capabilities, folder_bookmark, folder_path)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
         ON CONFLICT(id) DO UPDATE SET
             title                = excluded.title,
             updated_at           = excluded.updated_at,
@@ -1121,7 +1136,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             external_session_key = excluded.external_session_key,
             dispatch_task_id     = excluded.dispatch_task_id,
             archived             = excluded.archived,
-            capabilities         = excluded.capabilities
+            capabilities         = excluded.capabilities,
+            folder_bookmark      = excluded.folder_bookmark,
+            folder_path          = excluded.folder_path
         """
 
     private static let insertTurnSQL = """
@@ -1176,6 +1193,10 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         let dispatchId = sqlite3_column_text(stmt, 9).map { String(cString: $0) }.flatMap { UUID(uuidString: $0) }
         let archived = sqlite3_column_int(stmt, 10) != 0
         let capabilitiesRaw = sqlite3_column_text(stmt, 11).map { String(cString: $0) } ?? ""
+        let folderBookmark: Data? = sqlite3_column_blob(stmt, 12).map { base in
+            Data(bytes: base, count: Int(sqlite3_column_bytes(stmt, 12)))
+        }
+        let folderPath = sqlite3_column_text(stmt, 13).map { String(cString: $0) }
         return ChatSessionData(
             id: UUID(uuidString: idStr) ?? UUID(),
             title: title,
@@ -1189,7 +1210,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             externalSessionKey: externalKey,
             dispatchTaskId: dispatchId,
             archived: archived,
-            capabilities: SessionCapability.decode(capabilitiesRaw)
+            capabilities: SessionCapability.decode(capabilitiesRaw),
+            folderBookmark: folderBookmark,
+            folderPath: folderPath
         )
     }
 
@@ -1336,6 +1359,18 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         OpaquePointer(bitPattern: -1),
         to: sqlite3_destructor_type.self
     )
+
+    static func bindBlob(_ stmt: OpaquePointer, index: Int, value: Data?) {
+        if let value {
+            _ = value.withUnsafeBytes { bytes in
+                sqlite3_bind_blob(
+                    stmt, Int32(index), bytes.baseAddress, Int32(value.count), SQLITE_TRANSIENT
+                )
+            }
+        } else {
+            sqlite3_bind_null(stmt, Int32(index))
+        }
+    }
 
     static func bindText(_ stmt: OpaquePointer, index: Int, value: String?) {
         if let value {

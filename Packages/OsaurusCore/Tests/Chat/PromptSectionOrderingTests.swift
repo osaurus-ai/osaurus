@@ -312,8 +312,8 @@ struct PromptSectionOrderingTests {
                 gitStatus: nil,
                 isGitRepo: false
             )
-            FolderToolManager.shared.registerFolderTools(for: folderCtx)
-            defer { FolderToolManager.shared.unregisterFolderTools() }
+            FolderToolManager.shared.ensureFolderToolsRegistered()
+            defer { FolderToolManager.shared._unregisterAllForTesting() }
 
             let ctx = await SystemPromptComposer.composeChatContext(
                 agentId: agent.id,

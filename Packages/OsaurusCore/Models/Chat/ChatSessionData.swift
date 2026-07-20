@@ -36,6 +36,14 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
     /// Derived from turns at save time and persisted so the sidebar can
     /// render badges without loading every turn.
     public var capabilities: Set<SessionCapability>
+    /// Security-scoped bookmark of this chat's working folder, nil when no
+    /// folder is selected. Folder ownership is PER SESSION: each chat
+    /// persists (and restores) its own folder independently.
+    public var folderBookmark: Data?
+    /// Non-sensitive display path of the working folder. Kept alongside the
+    /// bookmark so the UI can show where the folder lived even when the
+    /// bookmark has gone stale (folder moved/deleted).
+    public var folderPath: String?
 
     public init(
         id: UUID = UUID(),
@@ -50,7 +58,9 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         externalSessionKey: String? = nil,
         dispatchTaskId: UUID? = nil,
         archived: Bool = false,
-        capabilities: Set<SessionCapability> = []
+        capabilities: Set<SessionCapability> = [],
+        folderBookmark: Data? = nil,
+        folderPath: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -65,6 +75,8 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         self.dispatchTaskId = dispatchTaskId
         self.archived = archived
         self.capabilities = capabilities
+        self.folderBookmark = folderBookmark
+        self.folderPath = folderPath
     }
 
     // Custom decoder for backward compatibility with old sessions
@@ -85,6 +97,8 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         dispatchTaskId = try container.decodeIfPresent(UUID.self, forKey: .dispatchTaskId)
         archived = try container.decodeIfPresent(Bool.self, forKey: .archived) ?? false
         capabilities = try container.decodeIfPresent(Set<SessionCapability>.self, forKey: .capabilities) ?? []
+        folderBookmark = try container.decodeIfPresent(Data.self, forKey: .folderBookmark)
+        folderPath = try container.decodeIfPresent(String.self, forKey: .folderPath)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -102,6 +116,8 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(dispatchTaskId, forKey: .dispatchTaskId)
         try container.encode(archived, forKey: .archived)
         try container.encode(capabilities, forKey: .capabilities)
+        try container.encodeIfPresent(folderBookmark, forKey: .folderBookmark)
+        try container.encodeIfPresent(folderPath, forKey: .folderPath)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -110,6 +126,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         case source, sourcePluginId, externalSessionKey, dispatchTaskId
         case archived
         case capabilities
+        case folderBookmark, folderPath
     }
 
     /// Generate a title from the first user message

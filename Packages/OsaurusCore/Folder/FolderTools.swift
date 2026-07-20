@@ -206,6 +206,28 @@ enum FolderToolHelpers {
         return url.lastPathComponent
     }
 
+    /// Resolve the working-folder root for a folder tool. Tools registered
+    /// process-wide carry no fixed root and resolve the EXECUTING chat's
+    /// folder from the TaskLocal scope bound by the send/run surfaces;
+    /// fixed-root instances (tests, direct construction) win over it.
+    static func resolveRoot(fixed: URL?) -> URL? {
+        fixed ?? ChatExecutionContext.currentFolderRoot
+    }
+
+    /// Typed failure returned when a folder tool executes with no working
+    /// folder in scope (e.g. the model guessed a tool name outside a folder
+    /// session, or the folder was cleared mid-run).
+    static func noActiveFolderEnvelope(tool: String) -> String {
+        ToolEnvelope.failure(
+            kind: .unavailable,
+            message:
+                "No working folder is selected for this chat — folder tools are "
+                + "unavailable. Ask the user to pick a folder via the Folder chip.",
+            tool: tool,
+            retryable: false
+        )
+    }
+
     /// Check if pattern matches filename
     static func matchesPattern(_ name: String, pattern: String) -> Bool {
         if pattern.contains("*") {
@@ -497,11 +519,15 @@ struct FileTreeTool: OsaurusTool {
         "required": .array([]),
     ])
 
-    private let rootPath: URL
+    private let fixedRootPath: URL?
 
-    init(rootPath: URL) {
-        self.rootPath = rootPath
+    init(rootPath: URL? = nil) {
+        self.fixedRootPath = rootPath
     }
+
+    /// The executing chat's folder root (TaskLocal scope), or the fixed
+    /// root when this instance was built for a known folder.
+    private var rootPath: URL? { FolderToolHelpers.resolveRoot(fixed: fixedRootPath) }
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
@@ -522,6 +548,7 @@ struct FileTreeTool: OsaurusTool {
             return try await sandboxBridgeList(bridge, path: relativePath, maxDepth: maxDepth)
         }
 
+        guard let rootPath else { return FolderToolHelpers.noActiveFolderEnvelope(tool: name) }
         let targetURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
 
         var isDirectory: ObjCBool = false
@@ -550,6 +577,7 @@ struct FileTreeTool: OsaurusTool {
     /// same ignore/secret/cap rules as `buildTree`. `truncated` is true when
     /// the file cap or a per-directory file cap dropped entries.
     func entries(for targetURL: URL, maxDepth: Int) -> (entries: [[String: Any]], truncated: Bool) {
+        guard let rootPath else { return ([], false) }
         var out: [[String: Any]] = []
         var fileCount = 0
         var truncated = false
@@ -624,6 +652,7 @@ struct FileTreeTool: OsaurusTool {
     private static let maxFilesPerDir = 20
 
     private func buildTree(_ url: URL, maxDepth: Int) -> String {
+        guard let rootPath else { return "" }
         var result = "./\n"
         var fileCount = 0
         var truncated = false
@@ -763,11 +792,11 @@ struct FileReadTool: OsaurusTool {
         "required": .array([.string("path")]),
     ])
 
-    private let rootPath: URL
+    private let fixedRootPath: URL?
     private let documentRegistry: DocumentFormatRegistry
 
-    init(rootPath: URL, documentRegistry: DocumentFormatRegistry = .shared) {
-        self.rootPath = rootPath
+    init(rootPath: URL? = nil, documentRegistry: DocumentFormatRegistry = .shared) {
+        self.fixedRootPath = rootPath
         self.documentRegistry = documentRegistry
     }
 
@@ -836,6 +865,9 @@ struct FileReadTool: OsaurusTool {
             )
         }
 
+        guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
+            return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
+        }
         let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
 
         // Combined sandbox + host-read mode: refuse secret files even
@@ -1481,10 +1513,10 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
     var mutatesHostFolder: Bool { true }
 
-    private let rootPath: URL
+    private let fixedRootPath: URL?
 
-    init(rootPath: URL) {
-        self.rootPath = rootPath
+    init(rootPath: URL? = nil) {
+        self.fixedRootPath = rootPath
     }
 
     func execute(argumentsJSON: String) async throws -> String {
@@ -1538,6 +1570,9 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
             )
         }
 
+        guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
+            return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
+        }
         let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
         // Writable combined mode: refuse secret-file writes on the host —
         // the write channel is the tampering half of the agent-as-bridge
@@ -1601,7 +1636,8 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
                 path: relativePath,
                 previousContent: previousContent,
                 sessionId: sessionId,
-                batchId: ChatExecutionContext.currentBatchId
+                batchId: ChatExecutionContext.currentBatchId,
+                rootPath: rootPath.standardizedFileURL.path
             )
             await FileOperationLog.shared.log(operation)
             preview.payload["operation_id"] = operation.id.uuidString
@@ -1667,10 +1703,10 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
     var mutatesHostFolder: Bool { true }
 
-    private let rootPath: URL
+    private let fixedRootPath: URL?
 
-    init(rootPath: URL) {
-        self.rootPath = rootPath
+    init(rootPath: URL? = nil) {
+        self.fixedRootPath = rootPath
     }
 
     func execute(argumentsJSON: String) async throws -> String {
@@ -1741,6 +1777,9 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             )
         }
 
+        guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
+            return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
+        }
         let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
         // Same secret-write gate as `file_write` — the denylist must not be
         // bypassable by switching to the edit tool.
@@ -1824,7 +1863,8 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                 path: relativePath,
                 previousContent: originalContent,
                 sessionId: sid,
-                batchId: ChatExecutionContext.currentBatchId
+                batchId: ChatExecutionContext.currentBatchId,
+                rootPath: rootPath.standardizedFileURL.path
             )
             await FileOperationLog.shared.log(operation)
             preview.payload["operation_id"] = operation.id.uuidString
@@ -1989,10 +2029,10 @@ struct FileOperationHistoryTool: OsaurusTool {
         "required": .array([]),
     ])
 
-    private let rootPath: URL
+    private let fixedRootPath: URL?
 
-    init(rootPath: URL) {
-        self.rootPath = rootPath
+    init(rootPath: URL? = nil) {
+        self.fixedRootPath = rootPath
     }
 
     func execute(argumentsJSON: String) async throws -> String {
@@ -2007,6 +2047,10 @@ struct FileOperationHistoryTool: OsaurusTool {
 
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
+            return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
+        }
 
         let rawPath = args["path"] as? String
         let pathFilter: String?
@@ -2087,10 +2131,10 @@ struct FileUndoTool: OsaurusTool, PermissionedTool {
     /// re-diffs against the baseline.
     var mutatesHostFolder: Bool { true }
 
-    private let rootPath: URL
+    private let fixedRootPath: URL?
 
-    init(rootPath: URL) {
-        self.rootPath = rootPath
+    init(rootPath: URL? = nil) {
+        self.fixedRootPath = rootPath
     }
 
     func execute(argumentsJSON: String) async throws -> String {
@@ -2104,6 +2148,10 @@ struct FileUndoTool: OsaurusTool, PermissionedTool {
         }
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
+            return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
+        }
 
         let operationIdRaw = (args["operation_id"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2255,16 +2303,21 @@ struct FileSearchTool: OsaurusTool {
         "required": .array([.string("pattern")]),
     ])
 
-    private let rootPath: URL
+    private let fixedRootPath: URL?
     /// Entries pulled from the enumerator before a search stops and reports
     /// truncation. Defaults to the shared budget; injectable so tests can
     /// exercise the bound without creating tens of thousands of files.
     private let maxEntriesVisited: Int
 
-    init(rootPath: URL, maxEntriesVisited: Int = FolderToolHelpers.maxSearchEntriesVisited) {
-        self.rootPath = rootPath
+    init(rootPath: URL? = nil, maxEntriesVisited: Int = FolderToolHelpers.maxSearchEntriesVisited) {
+        self.fixedRootPath = rootPath
         self.maxEntriesVisited = maxEntriesVisited
     }
+
+    /// The executing chat's folder root (TaskLocal scope), or the fixed
+    /// root when this instance was built for a known folder. Helpers run
+    /// inside `execute`'s task, so they resolve the same root.
+    private var rootPath: URL? { FolderToolHelpers.resolveRoot(fixed: fixedRootPath) }
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
@@ -2302,6 +2355,7 @@ struct FileSearchTool: OsaurusTool {
             )
         }
 
+        guard let rootPath else { return FolderToolHelpers.noActiveFolderEnvelope(tool: name) }
         let searchURL = try FolderToolHelpers.resolvePath(searchPath, rootPath: rootPath)
 
         // `target="files"`: filename find (no content read). Mirrors
@@ -2515,6 +2569,7 @@ struct FileSearchTool: OsaurusTool {
     private func collectFileMatches(root: URL, glob: String, maxResults: Int) throws
         -> (entries: [[String: Any]], truncated: Bool)
     {
+        guard let rootPath else { return ([], false) }
         let regexBody =
             NSRegularExpression.escapedPattern(for: glob)
             .replacingOccurrences(of: "\\*", with: ".*")
@@ -2694,6 +2749,7 @@ struct FileSearchTool: OsaurusTool {
         }
         guard let content = try? String(contentsOf: url, encoding: .utf8) else { return .skipped }
 
+        guard let rootPath else { return .skipped }
         let relativePath = FolderToolHelpers.displayPath(for: url, under: rootPath)
 
         let lines = content.components(separatedBy: .newlines)
@@ -2755,15 +2811,19 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
     /// `timeout` (idle ceiling) as the safety net.
     var bypassRegistryTimeout: Bool { true }
 
-    private let rootPath: URL
+    private let fixedRootPath: URL?
 
-    init(rootPath: URL) {
-        self.rootPath = rootPath
+    init(rootPath: URL? = nil) {
+        self.fixedRootPath = rootPath
     }
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
+            return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
+        }
 
         let cmdReq = requireString(
             args,
@@ -2971,7 +3031,8 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
                             destinationPath: op.destinationPath,
                             previousContent: op.previousContent,
                             sessionId: sessionId,
-                            batchId: ChatExecutionContext.currentBatchId
+                            batchId: ChatExecutionContext.currentBatchId,
+                            rootPath: rootPath.standardizedFileURL.path
                         )
                         await FileOperationLog.shared.log(operation)
                         operationIds.append(operation.id.uuidString)
@@ -3159,13 +3220,16 @@ struct GitStatusTool: OsaurusTool {
         "required": .array([]),
     ])
 
-    private let rootPath: URL
+    private let fixedRootPath: URL?
 
-    init(rootPath: URL) {
-        self.rootPath = rootPath
+    init(rootPath: URL? = nil) {
+        self.fixedRootPath = rootPath
     }
 
     func execute(argumentsJSON: String) async throws -> String {
+        guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
+            return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
+        }
         let (output, exitCode) = try await FolderToolHelpers.runGitCommand(
             arguments: ["status"],
             in: rootPath
@@ -3208,15 +3272,19 @@ struct GitDiffTool: OsaurusTool {
         "required": .array([]),
     ])
 
-    private let rootPath: URL
+    private let fixedRootPath: URL?
 
-    init(rootPath: URL) {
-        self.rootPath = rootPath
+    init(rootPath: URL? = nil) {
+        self.fixedRootPath = rootPath
     }
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
+            return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
+        }
 
         // All three are optional; the preflight already drops empty-string
         // fillers (`path: ""`, `commit: ""`) so a plain `as? String` cleanly
@@ -3293,15 +3361,19 @@ struct GitCommitTool: OsaurusTool, PermissionedTool {
     var requirements: [String] { ["permission:git"] }
     var defaultPermissionPolicy: ToolPermissionPolicy { .ask }
 
-    private let rootPath: URL
+    private let fixedRootPath: URL?
 
-    init(rootPath: URL) {
-        self.rootPath = rootPath
+    init(rootPath: URL? = nil) {
+        self.fixedRootPath = rootPath
     }
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
+            return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
+        }
 
         let messageReq = requireString(
             args,
@@ -3375,7 +3447,10 @@ enum FolderToolFactory {
     /// matches the schema. Multi-step orchestration goes through
     /// `shell_run` chains or — when the chat is sandbox-mode —
     /// `sandbox_write_file` + `sandbox_exec`.
-    static func buildCoreTools(rootPath: URL) -> [OsaurusTool] {
+    /// `rootPath: nil` (the canonical process-wide registration) makes every
+    /// tool resolve the EXECUTING chat's folder from the TaskLocal scope; a
+    /// non-nil root pins the instance to that folder (tests, direct use).
+    static func buildCoreTools(rootPath: URL? = nil) -> [OsaurusTool] {
         // `file_tree` is intentionally absent: `file_read` now lists a
         // directory when the path is one (the path carries the decision),
         // so a separate listing tool is just a redundant name the model
@@ -3396,8 +3471,9 @@ enum FolderToolFactory {
         ]
     }
 
-    /// Build git tools. Installed when the working folder is a git repo.
-    static func buildGitTools(rootPath: URL) -> [OsaurusTool] {
+    /// Build git tools. Visible when the executing chat's folder is a git
+    /// repo (schema-filtered per request; the registration is process-wide).
+    static func buildGitTools(rootPath: URL? = nil) -> [OsaurusTool] {
         return [
             GitStatusTool(rootPath: rootPath),
             GitDiffTool(rootPath: rootPath),

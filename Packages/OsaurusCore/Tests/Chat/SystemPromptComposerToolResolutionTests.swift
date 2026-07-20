@@ -71,9 +71,9 @@ struct SystemPromptComposerToolResolutionTests {
             gitStatus: nil,
             isGitRepo: false
         )
-        FolderToolManager.shared.registerFolderTools(for: folder)
+        FolderToolManager.shared.ensureFolderToolsRegistered()
         body(folder)
-        FolderToolManager.shared.unregisterFolderTools()
+        FolderToolManager.shared._unregisterAllForTesting()
     }
 
     /// Minimal snapshot for the gate tests that exercise `resolveTools`
