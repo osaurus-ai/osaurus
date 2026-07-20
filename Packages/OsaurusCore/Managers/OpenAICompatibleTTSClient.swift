@@ -3,57 +3,14 @@
 //  osaurus
 //
 //  Streams speech from any server implementing the OpenAI `/v1/audio/speech`
-//  API (openai-edge-tts, Kokoro-FastAPI, LocalAI, OpenAI itself). Requests raw
-//  PCM and converts it to the Float32 frames `TTSAudioPipeline` plays.
+//  API (openai-edge-tts, Kokoro-FastAPI, LocalAI, OpenAI itself). Requests
+//  WAV, sniffs what the server actually sent (WAV, raw PCM, or compressed),
+//  and converts it to the Float32 frames `TTSAudioPipeline` plays.
 //
 
 import AVFoundation
 import Foundation
-
-/// Append-only diagnostic log for remote TTS at `~/.osaurus/tmp/tts.log`.
-/// Exists because "static noise" and "silence" bugs are invisible in the UI:
-/// the request, the server's declared content type, and the first bytes of
-/// the body are what identify a format mismatch, and users can attach the
-/// file to a report. Truncated when it grows past 1 MB so it never balloons.
-enum TTSDebugLog {
-    private static let queue = DispatchQueue(label: "ai.osaurus.tts.debuglog", qos: .utility)
-    private static let maxBytes = 1_048_576
-    private static var fileURL: URL {
-        OsaurusPaths.root()
-            .appendingPathComponent("tmp", isDirectory: true)
-            .appendingPathComponent("tts.log")
-    }
-
-    /// Append a timestamped line. Fire-and-forget off the caller's thread;
-    /// logging must never slow down or break audio delivery.
-    static func log(_ message: String) {
-        let url = fileURL
-        queue.async {
-            let timestamp = ISO8601DateFormatter().string(from: Date())
-            let line = "[\(timestamp)] \(message)\n"
-            let fm = FileManager.default
-            try? fm.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if let size = try? fm.attributesOfItem(atPath: url.path)[.size] as? Int,
-                size > maxBytes
-            {
-                try? fm.removeItem(at: url)
-            }
-            if let handle = try? FileHandle(forWritingTo: url) {
-                defer { try? handle.close() }
-                _ = try? handle.seekToEnd()
-                try? handle.write(contentsOf: Data(line.utf8))
-            } else {
-                try? Data(line.utf8).write(to: url)
-            }
-        }
-    }
-
-    /// Hex dump of the first `count` bytes, for eyeballing magic numbers.
-    static func hexPreview(_ data: Data, count: Int = 16) -> String {
-        data.prefix(count).map { String(format: "%02x", $0) }.joined(separator: " ")
-    }
-}
+import OSLog
 
 public enum OpenAICompatibleTTSError: LocalizedError {
     case invalidEndpoint(String)
@@ -252,24 +209,16 @@ struct OpenAICompatibleTTSClient: Sendable {
     /// Synthesize `text`, yielding Float32 sample frames as bytes arrive.
     func synthesizeStreaming(text: String) throws -> AsyncThrowingStream<[Float], Error> {
         let request = try makeRequest(text: text)
-        TTSDebugLog.log(
-            "request POST \(request.url?.absoluteString ?? "?") model=\(model) voice=\(voice) "
-                + "speed=\(speed) auth=\(apiKey?.isEmpty == false)")
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     let (bytes, response) = try await URLSession.shared.bytes(for: request)
-                    let http = response as? HTTPURLResponse
-                    let contentType = http?.value(forHTTPHeaderField: "Content-Type") ?? "?"
-                    TTSDebugLog.log(
-                        "response status=\(http?.statusCode ?? -1) contentType=\(contentType)")
-                    if let http, !(200...299).contains(http.statusCode) {
+                    if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                         var body = ""
                         for try await line in bytes.lines {
                             body += line
                             if body.count > 500 { break }
                         }
-                        TTSDebugLog.log("error body: \(body.prefix(500))")
                         throw OpenAICompatibleTTSError.serverError(
                             status: http.statusCode, message: Self.extractServerMessage(body))
                     }
@@ -278,37 +227,27 @@ struct OpenAICompatibleTTSClient: Sendable {
                     // between chunks; PCM samples are 2 bytes and frames are
                     // fixed-size, but HTTP chunk boundaries are arbitrary.
                     var pending = Data()
-                    var totalBytes = 0
-                    var totalSamples = 0
-                    var peak: Float = 0
                     var sniffed: SniffedFormat?
                     var awaitingWavHeader = false
                     var compressedFormat: String?
 
                     func emit(_ frame: [Float]) {
                         guard !frame.isEmpty else { return }
-                        totalSamples += frame.count
-                        for s in frame { peak = max(peak, abs(s)) }
                         continuation.yield(frame)
                     }
 
                     for try await byte in bytes {
-                        totalBytes += 1
                         pending.append(byte)
                         if sniffed == nil, pending.count >= 16 {
                             sniffed = Self.sniffFormat(pending)
                             switch sniffed! {
                             case .pcm:
-                                TTSDebugLog.log(
-                                    "body sniffed as raw PCM, first bytes: "
-                                        + TTSDebugLog.hexPreview(pending))
+                                break
                             case .wav:
                                 awaitingWavHeader = true
                             case .compressed(let name):
-                                TTSDebugLog.log(
-                                    "body is \(name), first bytes: "
-                                        + TTSDebugLog.hexPreview(pending)
-                                        + " — buffering for CoreAudio decode after download")
+                                TTSLogger.service.info(
+                                    "remote TTS body is \(name, privacy: .public); buffering for CoreAudio decode")
                                 compressedFormat = name
                             }
                         }
@@ -322,9 +261,6 @@ struct OpenAICompatibleTTSClient: Sendable {
                         if awaitingWavHeader {
                             if let info = Self.parseWavHeader(pending) {
                                 awaitingWavHeader = false
-                                TTSDebugLog.log(
-                                    "body is WAV: \(info.sampleRate) Hz, \(info.channels) ch, "
-                                        + "\(info.bitsPerSample)-bit, data at byte \(info.dataOffset)")
                                 guard
                                     info.sampleRate == 24_000, info.channels == 1,
                                     info.bitsPerSample == 16
@@ -348,9 +284,6 @@ struct OpenAICompatibleTTSClient: Sendable {
                     if let compressedFormat {
                         let decoded = try Self.decodeCompressedAudio(
                             pending, formatHint: compressedFormat)
-                        TTSDebugLog.log(
-                            "decoded \(compressedFormat) body: \(pending.count) bytes -> "
-                                + "\(decoded.count) samples")
                         var offset = 0
                         while offset < decoded.count {
                             let end = min(offset + Self.frameSampleCount, decoded.count)
@@ -361,14 +294,8 @@ struct OpenAICompatibleTTSClient: Sendable {
                     }
                     var remainder = Data()
                     emit(Self.samples(from: pending, keepingRemainderIn: &remainder))
-                    TTSDebugLog.log(
-                        "stream finished: \(totalBytes) bytes, \(totalSamples) samples "
-                            + String(
-                                format: "(%.2fs at 24kHz), peak amplitude %.3f",
-                                Double(totalSamples) / 24_000.0, peak))
                     continuation.finish()
                 } catch {
-                    TTSDebugLog.log("stream failed: \(error.localizedDescription)")
                     continuation.finish(throwing: error)
                 }
             }
