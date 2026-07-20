@@ -141,6 +141,19 @@ struct OpenAICompatibleTTSClient: Sendable {
     /// image: playback starts only after the whole body has downloaded, but
     /// it plays instead of failing. Throws `unexpectedFormat` when CoreAudio
     /// can't read the data either.
+    /// Mutable state for the synchronous `AVAudioConverter` input block. The
+    /// block is `@Sendable`, so the non-Sendable buffer and the end-of-file
+    /// flag are boxed here; access is confined to one synchronous conversion.
+    private final class DecodeState: @unchecked Sendable {
+        let file: AVAudioFile
+        let inBuffer: AVAudioPCMBuffer
+        var reachedEnd = false
+        init(file: AVAudioFile, inBuffer: AVAudioPCMBuffer) {
+            self.file = file
+            self.inBuffer = inBuffer
+        }
+    }
+
     static func decodeCompressedAudio(_ data: Data, formatHint: String) throws -> [Float] {
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("osaurus-tts-\(UUID().uuidString).\(formatHint.lowercased())")
@@ -166,27 +179,31 @@ struct OpenAICompatibleTTSClient: Sendable {
         }
 
         var samples: [Float] = []
-        var reachedEnd = false
+        // `AVAudioConverterInputBlock` is `@Sendable`, so it cannot capture the
+        // non-Sendable `inBuffer` or a mutable `var` directly. The conversion
+        // below is fully synchronous on this thread, so boxing the buffer and
+        // the end-of-file flag in a reference type is safe.
+        let state = DecodeState(file: file, inBuffer: inBuffer)
         let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
-            if reachedEnd {
+            if state.reachedEnd {
                 outStatus.pointee = .endOfStream
                 return nil
             }
-            inBuffer.frameLength = 0
+            state.inBuffer.frameLength = 0
             do {
-                try file.read(into: inBuffer)
+                try state.file.read(into: state.inBuffer)
             } catch {
-                reachedEnd = true
+                state.reachedEnd = true
                 outStatus.pointee = .endOfStream
                 return nil
             }
-            if inBuffer.frameLength == 0 {
-                reachedEnd = true
+            if state.inBuffer.frameLength == 0 {
+                state.reachedEnd = true
                 outStatus.pointee = .endOfStream
                 return nil
             }
             outStatus.pointee = .haveData
-            return inBuffer
+            return state.inBuffer
         }
 
         while true {
@@ -201,7 +218,7 @@ struct OpenAICompatibleTTSClient: Sendable {
                 samples.append(
                     contentsOf: UnsafeBufferPointer(start: channel, count: Int(outBuffer.frameLength)))
             }
-            if status == .endOfStream || (status == .inputRanDry && reachedEnd) { break }
+            if status == .endOfStream || (status == .inputRanDry && state.reachedEnd) { break }
         }
         return samples
     }
