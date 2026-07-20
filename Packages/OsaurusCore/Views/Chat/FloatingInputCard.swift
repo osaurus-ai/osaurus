@@ -217,13 +217,11 @@ struct FloatingInputCard: View {
     /// Master-switch mirror for the Osaurus Router; the credits chip shows in
     /// every session while the router is usable (switch on + identity present).
     @ObservedObject private var remoteProviders = RemoteProviderManager.shared
-    /// Frontmost-app source + Accessibility status for the read-only
-    /// screen-context chip (shown only on the empty/welcome screen). The opt-in
-    /// gate is now per-agent (a child of Computer Use), read via `agentManager`.
-    @ObservedObject private var frontmostApp = FrontmostAppTracker.shared
-    @ObservedObject private var permissionService = SystemPermissionService.shared
-    /// Per-model warm-up progress (load / prefill %) for the chip tooltip.
-    @ObservedObject private var warmupProgressHub = WarmupProgressHub.shared
+    // Frontmost-app + Accessibility observation for the read-only
+    // screen-context row lives inside `ScreenContextIndicator`, and the
+    // warm-up progress observation lives inside `ModelWarmupHelp` — both
+    // scoped to their own view nodes so their publishes can't re-evaluate
+    // this card's whole body.
 
     // MARK: - Slash Command State
 
@@ -359,7 +357,6 @@ struct FloatingInputCard: View {
     /// own window, so hovering it doesn't keep the chip "hovered"); the panel's
     /// own hover cancels it so its buttons stay clickable.
     @State private var walletDismissTask: Task<Void, Never>?
-    @State private var isSandboxHovered = false
     /// Width available to the toggle-chip region (the space between the model
     /// chip and the meta cluster). Measured cheaply via `onGeometryChange` and
     /// used to decide whether the chips collapse to icon-only — see
@@ -371,11 +368,6 @@ struct FloatingInputCard: View {
     /// meta cluster (credits CTA + token readout) also sheds its non-essential
     /// bits when the window is tiled narrow — not just when the sidebar is open.
     @State private var selectorRowWidth: CGFloat = 0
-    @State private var sandboxPulseAmount: CGFloat = 1.0
-    @State private var sandboxPulseTask: Task<Void, Never>? = nil
-    @State private var isClipboardHovered = false
-    @State private var clipboardPulseAmount: CGFloat = 0.0
-    @State private var clipboardPulseOpacity: Double = 0.0
     // Cache picker items to prevent popover refresh during streaming
     @State private var cachedPickerItems: [ModelPickerItem] = []
 
@@ -645,10 +637,10 @@ struct FloatingInputCard: View {
             // selector row, right-aligned so it stacks directly over the
             // context-token count, rendered as quiet muted text (not a chip)
             // so it reads as passive status rather than a control.
-            if !showVoiceOverlay && (showScreenContextIndicator || showSelectorRow) {
+            if !showVoiceOverlay && (screenContextMayShow || showSelectorRow) {
                 VStack(alignment: .trailing, spacing: 7) {
-                    if showScreenContextIndicator {
-                        screenContextIndicator
+                    if screenContextMayShow {
+                        ScreenContextIndicator()
                     }
                     if showSelectorRow {
                         selectorRow
@@ -2837,32 +2829,57 @@ extension FloatingInputCard {
         return .green
     }
 
-    private var modelWarmupDotHelp: String {
-        guard warmModelsOnLoadEnabled, isSelectedModelLocal, !isRemoteAgentRun else {
-            return String(localized: "Model ready", bundle: .module)
+    /// Warm-up tooltip for the model chip, applied as a modifier so the
+    /// `WarmupProgressHub` observation lives in the modifier's own view node —
+    /// per-tick prefill progress no longer re-evaluates the whole card body.
+    private struct ModelWarmupHelp: ViewModifier {
+        let isDeprecated: Bool
+        /// `warmModelsOnLoadEnabled && isSelectedModelLocal && !isRemoteAgentRun`
+        let warmupApplies: Bool
+        let selectedModel: String?
+        @ObservedObject var warmupController: ChatWarmupController
+        @ObservedObject private var warmupProgressHub = WarmupProgressHub.shared
+
+        func body(content: Content) -> some View {
+            content.help(
+                isDeprecated
+                    ? String(
+                        localized: "This model is outdated. Click to switch to a newer version.",
+                        bundle: .module)
+                    : helpText
+            )
         }
-        switch warmupController.state {
-        case .warm:
-            return String(localized: "Model warm — ready for a fast first response", bundle: .module)
-        case .cold:
-            return String(localized: "Model cold — will load on next response", bundle: .module)
-        case .warming:
-            guard let model = selectedModel, let phase = warmupProgressHub.phases[model] else {
-                return String(localized: "Warming up…", bundle: .module)
+
+        private var helpText: String {
+            guard warmupApplies else {
+                return String(localized: "Model ready", bundle: .module)
             }
-            switch phase {
-            case .loadingModel:
-                return String(localized: "Warming up — loading model…", bundle: .module)
-            case .prefilling(let state):
-                guard state.totalUnitCount > 0 else {
-                    return String(localized: "Warming up — prefilling context…", bundle: .module)
+            switch warmupController.state {
+            case .warm:
+                return String(
+                    localized: "Model warm — ready for a fast first response", bundle: .module)
+            case .cold:
+                return String(
+                    localized: "Model cold — will load on next response", bundle: .module)
+            case .warming:
+                guard let model = selectedModel, let phase = warmupProgressHub.phases[model] else {
+                    return String(localized: "Warming up…", bundle: .module)
                 }
-                let percent = Int(state.percentCompleted.rounded())
-                return state.totalUnitCount == 1
-                    ? L("Warming up — prefilling context \(percent)% (\(state.completedUnitCount)/1 token)")
-                    : L(
-                        "Warming up — prefilling context \(percent)% (\(state.completedUnitCount)/\(state.totalUnitCount) tokens)"
-                    )
+                switch phase {
+                case .loadingModel:
+                    return String(localized: "Warming up — loading model…", bundle: .module)
+                case .prefilling(let state):
+                    guard state.totalUnitCount > 0 else {
+                        return String(
+                            localized: "Warming up — prefilling context…", bundle: .module)
+                    }
+                    let percent = Int(state.percentCompleted.rounded())
+                    return state.totalUnitCount == 1
+                        ? L("Warming up — prefilling context \(percent)% (\(state.completedUnitCount)/1 token)")
+                        : L(
+                            "Warming up — prefilling context \(percent)% (\(state.completedUnitCount)/\(state.totalUnitCount) tokens)"
+                        )
+                }
             }
         }
     }
@@ -2987,10 +3004,13 @@ extension FloatingInputCard {
             }
         }
         // Chip-wide hover target: the 6px dot alone is too small to hover.
-        .help(
-            isSelectedModelDeprecated
-                ? String(localized: "This model is outdated. Click to switch to a newer version.", bundle: .module)
-                : modelWarmupDotHelp
+        .modifier(
+            ModelWarmupHelp(
+                isDeprecated: isSelectedModelDeprecated,
+                warmupApplies: warmModelsOnLoadEnabled && isSelectedModelLocal && !isRemoteAgentRun,
+                selectedModel: selectedModel,
+                warmupController: warmupController
+            )
         )
         .popover(isPresented: $showModelPicker, arrowEdge: .top) {
             ModelPickerView(
@@ -3450,6 +3470,10 @@ extension FloatingInputCard {
     }
 
     private func sandboxToggleChip(compact: Bool) -> some View {
+        // HoverScope owns the hover flag (and the pulse modifier owns the
+        // loading pulse), so hover-in/out and pulse ticks re-render only this
+        // chip's subtree — not the whole card body.
+        HoverScope { isSandboxHovered in
         Button(action: handleSandboxChipTap) {
             HStack(spacing: 5) {
                 if isSandboxFailed {
@@ -3487,7 +3511,7 @@ extension FloatingInputCard {
                         )
                         .lineLimit(1)
                         .fixedSize()
-                        .opacity(isSandboxLoading ? sandboxPulseAmount : 1.0)
+                        .modifier(PulsingOpacity(active: isSandboxLoading))
                 }
 
                 // Inline cold-path download/unpack progress.
@@ -3510,9 +3534,9 @@ extension FloatingInputCard {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
-            .background(sandboxChipBackground)
+            .background(sandboxChipBackground(isSandboxHovered: isSandboxHovered))
             .clipShape(Capsule())
-            .overlay(sandboxChipBorder)
+            .overlay(sandboxChipBorder(isSandboxHovered: isSandboxHovered))
             .shadow(
                 color: isSandboxFailed
                     ? Color.red.opacity(0.15)
@@ -3531,11 +3555,6 @@ extension FloatingInputCard {
         // through to the Sandbox settings tab and watch the journey
         // unfold. Toggling on/off is intercepted by
         // `handleSandboxChipTap` in that state.
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isSandboxHovered = hovering
-            }
-        }
         .help(sandboxHelpText)
         .contextMenu {
             if isSandboxFailed {
@@ -3551,30 +3570,11 @@ extension FloatingInputCard {
                 Text("Open Sandbox Settings", bundle: .module)
             }
         }
-        .task(id: isSandboxLoading) {
-            sandboxPulseTask?.cancel()
-            guard isSandboxLoading else {
-                sandboxPulseAmount = 1.0
-                return
-            }
-            sandboxPulseTask = Task {
-                while !Task.isCancelled {
-                    withAnimation(.easeInOut(duration: 0.8)) {
-                        sandboxPulseAmount = 0.4
-                    }
-                    try? await Task.sleep(nanoseconds: 800_000_000)
-                    guard !Task.isCancelled else { break }
-                    withAnimation(.easeInOut(duration: 0.8)) {
-                        sandboxPulseAmount = 1.0
-                    }
-                    try? await Task.sleep(nanoseconds: 800_000_000)
-                }
-            }
         }
     }
 
     @ViewBuilder
-    private var sandboxChipBackground: some View {
+    private func sandboxChipBackground(isSandboxHovered: Bool) -> some View {
         ZStack {
             Capsule()
                 .fill(theme.secondaryBackground.opacity(isSandboxHovered || isSandboxEnabled ? 0.95 : 0.8))
@@ -3602,7 +3602,7 @@ extension FloatingInputCard {
     }
 
     @ViewBuilder
-    private var sandboxChipBorder: some View {
+    private func sandboxChipBorder(isSandboxHovered: Bool) -> some View {
         if isSandboxFailed {
             Capsule()
                 .strokeBorder(Color.red.opacity(isSandboxHovered ? 0.45 : 0.30), lineWidth: 1)
@@ -3682,6 +3682,9 @@ extension FloatingInputCard {
     }
 
     private func clipboardToggleChip(compact: Bool) -> some View {
+        // HoverScope owns the hover flag and ClipboardPulseSweep owns the
+        // arrival-pulse animation state, so neither re-renders the card body.
+        HoverScope { isClipboardHovered in
         Button(action: attachClipboardSnippet) {
             clipboardChipLabel(compact: compact)
                 .padding(.horizontal, 10)
@@ -3706,45 +3709,15 @@ extension FloatingInputCard {
                             lineWidth: 1
                         )
                 )
-                .overlay(
-                    // animated clockwise border sweep using custom shape to fix vertical frame issue
-                    ClipboardSweepShape()
-                        .trim(from: 0, to: clipboardPulseAmount)
-                        .stroke(
-                            LinearGradient(
-                                colors: [
-                                    theme.glassEdgeLight.opacity(0.8),
-                                    theme.accentColor,
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
-                        )
-                        .opacity(clipboardPulseOpacity)
-                )
-                .overlay(
-                    // accompanying glow that follows the sweep
-                    ClipboardSweepShape()
-                        .trim(from: 0, to: clipboardPulseAmount)
-                        .stroke(theme.accentColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                        .opacity(clipboardPulseOpacity * 0.4)
-                        .blur(radius: 3)
-                )
-                .shadow(
-                    color: theme.accentColor.opacity(isClipboardHovered ? 0.35 : (0.05 + clipboardPulseOpacity * 0.2)),
-                    radius: isClipboardHovered ? 6 : (4 + clipboardPulseOpacity * 4),
-                    x: 0,
-                    y: 1
+                .modifier(
+                    ClipboardPulseSweep(
+                        hovered: isClipboardHovered,
+                        trigger: clipboardService.hasNewContent
+                    )
                 )
         }
         .buttonStyle(.plain)
         .pointingHandCursor()
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isClipboardHovered = hovering
-            }
-        }
         .help(Text(localized: "Attach snippet from \(clipboardService.lastSourceApp ?? "clipboard")"))
         .contextMenu {
             Button {
@@ -3784,40 +3757,6 @@ extension FloatingInputCard {
             }
         }
         .transition(.scale(scale: 0.8).combined(with: .opacity))
-        .onAppear {
-            if clipboardService.hasNewContent {
-                triggerPulse()
-            }
-        }
-        .onChange(of: clipboardService.hasNewContent) { _, newValue in
-            if newValue {
-                triggerPulse()
-            }
-        }
-    }
-
-    private func triggerPulse() {
-        // reset state immediately and hide animation layers
-        clipboardPulseAmount = 0
-        clipboardPulseOpacity = 0
-
-        // small delay to ensure the window transition is complete
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            withAnimation(.easeIn(duration: 0.1)) {
-                clipboardPulseOpacity = 1.0
-            }
-
-            // animate the stroke clockwise around the capsule
-            withAnimation(.easeInOut(duration: 0.8)) {
-                clipboardPulseAmount = 1.0
-            }
-
-            // fade out after completion
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-                withAnimation(.easeOut(duration: 0.4)) {
-                    clipboardPulseOpacity = 0
-                }
-            }
         }
     }
 
@@ -3937,23 +3876,16 @@ extension FloatingInputCard {
         .accessibilityLabel(Text("Configuration assistant", bundle: .module))
     }
 
-    /// Accessibility permission, the gate for a useful screen-context capture.
-    private var isAccessibilityGranted: Bool {
-        permissionService.permissionStates[.accessibility] ?? false
-    }
-
-    /// The read-only screen-context indicator is shown only on the welcome/empty
-    /// screen, while the opt-in is on, Accessibility is granted, and we know
-    /// which app the user was just in (the snapshot freezes on the first send,
-    /// so "currently focused" only reads true pre-send).
-    private var showScreenContextIndicator: Bool {
+    /// Cheap, card-level half of the screen-context gate: opt-in on, empty
+    /// chat, not Mode 2. The observed half (Accessibility granted, a known
+    /// frontmost app) lives inside `ScreenContextIndicator` so app switches
+    /// and the 2s permission refresh don't re-evaluate the whole card body.
+    private var screenContextMayShow: Bool {
         // Mode 2 never injects local screen context (the remote agent runs its
         // own context server-side), so don't promise a snapshot we won't send.
         !isRemoteAgentRun
             && agentManager.effectiveCapabilities(for: effectiveAgentId).screenContextEnabled
             && isEmptyChat
-            && isAccessibilityGranted
-            && frontmostApp.lastNonSelfAppName != nil
     }
 
     /// Read-only indicator of the app the frozen screen-context snapshot will be
@@ -3961,26 +3893,38 @@ extension FloatingInputCard {
     /// right-aligned status line above the context-token count — just a
     /// viewfinder glyph plus the app name, in muted text — so it pairs with the
     /// budget readout rather than reading as a control.
-    private var screenContextIndicator: some View {
-        let app = frontmostApp.lastNonSelfAppName ?? "the focused app"
-        return HStack(spacing: 5) {
-            Image(systemName: "viewfinder")
-                .symbolRenderingMode(.hierarchical)
-                .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                .foregroundColor(theme.accentColor.opacity(0.85))
+    ///
+    /// Owns the `FrontmostAppTracker` / `SystemPermissionService` observation
+    /// and self-gates (renders nothing until Accessibility is granted and a
+    /// non-self app has been seen), so those publishes re-render only this row.
+    private struct ScreenContextIndicator: View {
+        @Environment(\.theme) private var theme
+        @ObservedObject private var frontmostApp = FrontmostAppTracker.shared
+        @ObservedObject private var permissionService = SystemPermissionService.shared
 
-            Text(app)
-                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
-                .lineLimit(1)
+        var body: some View {
+            let granted = permissionService.permissionStates[.accessibility] ?? false
+            if granted, let app = frontmostApp.lastNonSelfAppName {
+                HStack(spacing: 5) {
+                    Image(systemName: "viewfinder")
+                        .symbolRenderingMode(.hierarchical)
+                        .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                        .foregroundColor(theme.accentColor.opacity(0.85))
+
+                    Text(app)
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(1)
+                }
+                .help(
+                    Text(
+                        "A read-only snapshot of \(app) is shared with this chat when you send. Manage it in Computer Use settings.",
+                        bundle: .module
+                    )
+                )
+                .accessibilityLabel(Text("Screen context from \(app)", bundle: .module))
+            }
         }
-        .help(
-            Text(
-                "A read-only snapshot of \(app) is shared with this chat when you send. Manage it in Computer Use settings.",
-                bundle: .module
-            )
-        )
-        .accessibilityLabel(Text("Screen context from \(app)", bundle: .module))
     }
 
     /// Floating wrapper for `configContextErrorBanner`: keeps the toast out of
@@ -5336,6 +5280,128 @@ extension FloatingInputCard {
 // MARK: - Clipboard Animation Shape
 
 /// A custom capsule shape that starts its path at the top center to allow for clockwise border sweeps
+/// Owns a hover flag in its own view node so hover-in/out re-renders only the
+/// wrapped subtree. Hover state on `FloatingInputCard` itself re-evaluates the
+/// card's entire body per mouse transition (Sentry app-hang cluster).
+private struct HoverScope<Content: View>: View {
+    var animation: Animation = .easeOut(duration: 0.15)
+    @ViewBuilder let content: (Bool) -> Content
+    @State private var hovered = false
+
+    var body: some View {
+        content(hovered)
+            .onHover { hovering in
+                withAnimation(animation) {
+                    hovered = hovering
+                }
+            }
+    }
+}
+
+/// Self-contained 0.4↔1.0 opacity pulse while `active`. The animation state
+/// lives here (not on the card), and `.task(id:)` cancels the loop when
+/// `active` flips or the view leaves the hierarchy.
+private struct PulsingOpacity: ViewModifier {
+    let active: Bool
+    @State private var amount: CGFloat = 1.0
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(active ? amount : 1.0)
+            .task(id: active) {
+                guard active else {
+                    amount = 1.0
+                    return
+                }
+                while !Task.isCancelled {
+                    withAnimation(.easeInOut(duration: 0.8)) { amount = 0.4 }
+                    try? await Task.sleep(nanoseconds: 800_000_000)
+                    guard !Task.isCancelled else { break }
+                    withAnimation(.easeInOut(duration: 0.8)) { amount = 1.0 }
+                    try? await Task.sleep(nanoseconds: 800_000_000)
+                }
+            }
+    }
+}
+
+/// The clipboard chip's arrival animation — clockwise border sweep, trailing
+/// glow, and the hover/pulse-aware shadow — with the animation state scoped
+/// to this modifier so each pulse frame re-renders only the chip.
+private struct ClipboardPulseSweep: ViewModifier {
+    let hovered: Bool
+    /// Rising edge starts a sweep (new clipboard content just arrived).
+    let trigger: Bool
+    @Environment(\.theme) private var theme
+    @State private var amount: CGFloat = 0.0
+    @State private var opacity: Double = 0.0
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                // animated clockwise border sweep using custom shape to fix vertical frame issue
+                ClipboardSweepShape()
+                    .trim(from: 0, to: amount)
+                    .stroke(
+                        LinearGradient(
+                            colors: [
+                                theme.glassEdgeLight.opacity(0.8),
+                                theme.accentColor,
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
+                    )
+                    .opacity(opacity)
+            )
+            .overlay(
+                // accompanying glow that follows the sweep
+                ClipboardSweepShape()
+                    .trim(from: 0, to: amount)
+                    .stroke(theme.accentColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .opacity(opacity * 0.4)
+                    .blur(radius: 3)
+            )
+            .shadow(
+                color: theme.accentColor.opacity(hovered ? 0.35 : (0.05 + opacity * 0.2)),
+                radius: hovered ? 6 : (4 + opacity * 4),
+                x: 0,
+                y: 1
+            )
+            .onAppear {
+                if trigger { pulse() }
+            }
+            .onChange(of: trigger) { _, newValue in
+                if newValue { pulse() }
+            }
+    }
+
+    private func pulse() {
+        // reset state immediately and hide animation layers
+        amount = 0
+        opacity = 0
+
+        // small delay to ensure the window transition is complete
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            withAnimation(.easeIn(duration: 0.1)) {
+                opacity = 1.0
+            }
+
+            // animate the stroke clockwise around the capsule
+            withAnimation(.easeInOut(duration: 0.8)) {
+                amount = 1.0
+            }
+
+            // fade out after completion
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                withAnimation(.easeOut(duration: 0.4)) {
+                    opacity = 0
+                }
+            }
+        }
+    }
+}
+
 struct ClipboardSweepShape: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
