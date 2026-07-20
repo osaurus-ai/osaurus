@@ -2208,6 +2208,23 @@ extension FloatingInputCard {
         )
     }
 
+    /// Effective thinking state for toggle-only reasoning models, shown as a
+    /// brain glyph on the model chip (accent while on, muted while off) so
+    /// the state stays visible at a glance now that the control lives in the
+    /// picker's Model Options section. Nil hides the glyph: models with a
+    /// segmented effort suffix, models without a thinking toggle, and Mode 2
+    /// remote-agent runs — the remote agent owns its generation config
+    /// server-side, so a local state readout would mislead.
+    private var inlineThinkingEnabled: Bool? {
+        guard let model = selectedModel,
+            !isRemoteAgentRun,
+            inlineReasoningSuffix == nil,
+            ModelProfileRegistry.profile(for: model)?.thinkingOption != nil
+        else { return nil }
+        return ModelProfileRegistry.thinkingEnabled(for: model, values: activeModelOptions)
+            ?? ModelProfileRegistry.thinkingDefaultOn(for: model)
+    }
+
     private var selectorRow: some View {
         HStack(spacing: 6) {
             if !pickerItems.isEmpty || isModelPinned {
@@ -2304,12 +2321,6 @@ extension FloatingInputCard {
     /// screen (a remote-agent run, for instance, hides most of them).
     private var visibleToggleChipCount: Int {
         var count = 0
-        if !isRemoteAgentRun,
-            let model = selectedModel,
-            ModelProfileRegistry.profile(for: model)?.thinkingOption != nil
-        {
-            count += 1
-        }
         if autoSpeakAssistant { count += 1 }
         if !isRemoteAgentRun, !isDefaultConfigAgent, isSandboxAvailable { count += 1 }
         if !isRemoteAgentRun { count += 1 }  // folder or configuration chip
@@ -2321,22 +2332,17 @@ extension FloatingInputCard {
         return count
     }
 
-    /// The interactive toggle chips (thinking, auto-speak, sandbox, folder,
-    /// clipboard) as one horizontal group. `compact` drops each chip's text
-    /// label to icon-only unless the chip has live state worth spelling out;
-    /// `selectorRow` renders one rendering of this cluster, choosing `compact`
-    /// from the measured region width so the row degrades gracefully as it
-    /// narrows without re-measuring layout candidates every frame.
+    /// The interactive toggle chips (auto-speak, sandbox, folder, clipboard)
+    /// as one horizontal group. The Thinking control lives in the model
+    /// picker's Model Options section, next to the rest of the per-model
+    /// options. `compact` drops each chip's text label to icon-only unless
+    /// the chip has live state worth spelling out; `selectorRow` renders one
+    /// rendering of this cluster, choosing `compact` from the measured
+    /// region width so the row degrades gracefully as it narrows without
+    /// re-measuring layout candidates every frame.
     @ViewBuilder
     private func toggleChipCluster(compact: Bool) -> some View {
         HStack(spacing: 6) {
-            // Mode 2 owns its own generation config (thinking + sampler
-            // options) server-side; the local toggles wouldn't reach the
-            // remote agent, so hide them rather than imply they apply.
-            if !isRemoteAgentRun {
-                thinkingToggleChip(compact: compact)
-            }
-
             if autoSpeakAssistant {
                 autoSpeakToggleChip(compact: compact)
             }
@@ -2927,6 +2933,24 @@ extension FloatingInputCard {
                                 .lineLimit(1)
                         }
 
+                        // Toggle-only thinking state as a glyph: accent while
+                        // on, muted while off. The switch itself lives in the
+                        // picker's Model Options section.
+                        if let thinkingOn = inlineThinkingEnabled {
+                            Image(systemName: "brain")
+                                .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .semibold))
+                                .foregroundColor(
+                                    thinkingOn ? theme.accentColor : theme.tertiaryText.opacity(0.55)
+                                )
+                                .localizedHelp(thinkingOn ? "Thinking on" : "Thinking off")
+                                .accessibilityLabel(Text("Thinking", bundle: .module))
+                                .accessibilityValue(
+                                    thinkingOn
+                                        ? Text("On", bundle: .module)
+                                        : Text("Off", bundle: .module)
+                                )
+                        }
+
                         // Show VLM indicator
                         if option.isVLM {
                             Image(systemName: "eye")
@@ -2986,7 +3010,8 @@ extension FloatingInputCard {
         }
     }
 
-    /// Inline options section for the model popover: every non-thinking
+    /// Inline "Model Options" section for the model popover: the semantic
+    /// Thinking row (when the model has a thinking toggle) plus every other
     /// option the selected model exposes (catalog-driven effort, static
     /// profile segments, toggles). Selecting persists an explicit value;
     /// resetting removes it so the default shows while the backend applies
@@ -2995,10 +3020,12 @@ extension FloatingInputCard {
         guard let model = selectedModel else { return nil }
         let capabilities = inlineEffortCapabilities
         let thinkingId = ModelProfileRegistry.profile(for: model)?.thinkingOption?.id
-        // The standalone Thinking chip owns the thinking toggle; the picker
-        // section renders everything else.
+        // The dedicated Thinking row owns the thinking option (semantic
+        // on/off, never the raw inverted bool); the generic rows render
+        // everything else.
         let options = activeProfileOptions.filter { $0.id != thinkingId }
-        guard !options.isEmpty else { return nil }
+        let thinking = modelPickerThinkingControl(for: model)
+        guard !options.isEmpty || thinking != nil else { return nil }
 
         // Display-only defaults: the catalog default for capability-enriched
         // effort, otherwise the static profile's defaults.
@@ -3015,11 +3042,12 @@ extension FloatingInputCard {
 
         return ModelPickerOptionsControl(
             capabilities: capabilities,
+            thinking: thinking,
             options: options,
             values: activeModelOptions,
             defaults: defaults,
             onChange: { optionId, newValue in
-                // Deferred write for the same reason as `toggleThinking`'s
+                // Deferred write for the same reason as the Thinking row's
                 // saved options: the popover's anchor (the model chip)
                 // renders the effort label from `activeModelOptions`, and
                 // resizing the anchor during the popover's own update
@@ -3040,56 +3068,51 @@ extension FloatingInputCard {
         )
     }
 
-    // MARK: - Thinking Toggle
+    // MARK: - Thinking Control (model picker)
 
-    @ViewBuilder
-    private func thinkingToggleChip(compact: Bool) -> some View {
-        if let model = selectedModel,
+    /// Semantic Thinking control for the picker's Model Options section.
+    /// Shows the effective state (explicit persisted choice, else the
+    /// model's chat-template default so the row never lies for default-on
+    /// models) and writes the profile-specific stored value through
+    /// `ModelProfileRegistry.thinkingStoredOption`, so inverted options like
+    /// `disableThinking` cannot flip the wrong way. Hidden in Mode 2
+    /// remote-agent runs: the remote agent owns its generation config
+    /// server-side, so a local toggle wouldn't reach it.
+    private func modelPickerThinkingControl(for model: String) -> ModelPickerThinkingControl? {
+        guard !isRemoteAgentRun,
             let thinkingOpt = ModelProfileRegistry.profile(for: model)?.thinkingOption
-        {
-            let isEnabled =
-                ModelProfileRegistry.thinkingEnabled(for: model, values: activeModelOptions)
-                ?? ModelProfileRegistry.thinkingDefaultOn(for: model)
-
-            SelectorChip(isActive: isEnabled) {
-                toggleThinking(id: thinkingOpt.id)
-            } content: {
-                HStack(spacing: 5) {
-                    // Collapsed, a lone checkbox is ambiguous — it reads as a
-                    // generic toggle, not "thinking". Swap in the brain glyph
-                    // (the same one NativeThinkingView uses) so the icon-only
-                    // chip is self-explanatory; on/off is carried by the accent
-                    // vs. muted color. Expanded, the checkbox + label pairing
-                    // already spells it out, so keep it.
-                    Image(
-                        systemName: compact
-                            ? "brain"
-                            : (isEnabled ? "checkmark.square.fill" : "square")
-                    )
-                    // The brain glyph reads visually heavier than the checkbox,
-                    // so drop it a point (to match the sandbox/folder icons at
-                    // captionSize - 2) when collapsed; keep the checkbox at its
-                    // original size when the label is showing.
-                    .font(
-                        theme.font(
-                            size: CGFloat(theme.captionSize) - (compact ? 2 : 1),
-                            weight: .semibold
+        else { return nil }
+        let explicitEnabled = ModelProfileRegistry.thinkingEnabled(
+            for: model,
+            values: activeModelOptions
+        )
+        return ModelPickerThinkingControl(
+            isEnabled: explicitEnabled ?? ModelProfileRegistry.thinkingDefaultOn(for: model),
+            isExplicit: explicitEnabled != nil,
+            onSetEnabled: { enabled in
+                // Deferred write for the same reason as the generic option
+                // rows: the popover's anchor (the model chip) renders the
+                // thinking suffix from `activeModelOptions`, and resizing the
+                // anchor during the popover's own update crashes NSPopover.
+                DispatchQueue.main.async {
+                    var updated = activeModelOptions
+                    if let enabled,
+                        let stored = ModelProfileRegistry.thinkingStoredOption(
+                            for: model,
+                            enabled: enabled
                         )
-                    )
-                    .foregroundColor(isEnabled ? theme.accentColor : theme.tertiaryText)
-                    .contentTransition(.symbolEffect(.replace))
-
-                    if !compact {
-                        Text("Thinking", bundle: .module)
-                            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                            .foregroundColor(isEnabled ? theme.secondaryText : theme.tertiaryText)
-                            .lineLimit(1)
-                            .fixedSize()
+                    {
+                        updated[stored.id] = stored.value
+                    } else {
+                        // Reset: remove the override so the model's template
+                        // default applies naturally (nothing on the wire).
+                        updated.removeValue(forKey: thinkingOpt.id)
                     }
+                    activeModelOptions = updated
+                    ModelOptionsStore.shared.saveOptions(updated, for: model)
                 }
             }
-            .localizedHelp("Toggle model reasoning mode")
-        }
+        )
     }
 
     // MARK: - Auto-Speak Toggle
@@ -3117,28 +3140,6 @@ extension FloatingInputCard {
             }
         }
         .localizedHelp("Auto-speak every reply in this chat")
-    }
-
-    private func toggleThinking(id: String) {
-        let thinkingOpt = selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption }
-        // Mirror the chip's displayed state (explicit choice, else the model's
-        // template default) so the first tap flips away from what the user sees
-        // rather than from a hardcoded "off".
-        let currentEnabled =
-            selectedModel.flatMap {
-                ModelProfileRegistry.thinkingEnabled(for: $0, values: activeModelOptions)
-                    ?? ModelProfileRegistry.thinkingDefaultOn(for: $0)
-            } ?? false
-        let newEnabled = !currentEnabled
-        let newVal = thinkingOpt?.inverted == true ? !newEnabled : newEnabled
-
-        withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
-            activeModelOptions[id] = .bool(newVal)
-        }
-
-        if let model = selectedModel {
-            ModelOptionsStore.shared.saveOptions(activeModelOptions, for: model)
-        }
     }
 
     // MARK: - Sandbox Toggle Chip

@@ -8,14 +8,36 @@
 
 import SwiftUI
 
+/// Semantic Thinking row state for the picker's options section. Carries
+/// only display state plus a semantic setter — the profile-specific stored
+/// boolean (including inverted options like `disableThinking`) is resolved
+/// by the owner through `ModelProfileRegistry.thinkingStoredOption`, never
+/// in the view.
+struct ModelPickerThinkingControl {
+    /// Effective on/off state the row shows: the explicit persisted choice
+    /// when present, otherwise the model's chat-template default.
+    let isEnabled: Bool
+    /// Whether an explicit persisted override exists. Drives the Default
+    /// pill vs. the reset affordance.
+    let isExplicit: Bool
+    /// Persist a semantic enabled state; nil removes the override so the
+    /// model's template default applies naturally again.
+    let onSetEnabled: (Bool?) -> Void
+}
+
 /// Inline model-options control state for the picker's currently selected
-/// model: every non-thinking option the model's profile (or live provider
-/// catalog) exposes, rendered as a section at the bottom of the picker.
+/// model: the semantic Thinking row (when the model has a thinking toggle)
+/// plus every other option the model's profile (or live provider catalog)
+/// exposes, rendered as a "Model Options" section at the bottom of the
+/// picker.
 struct ModelPickerOptionsControl {
     /// Catalog-driven reasoning capabilities (ChatGPT/Codex live catalog or
     /// the documented official OpenAI GPT-5.6 contract), when present. Used
     /// to surface per-level catalog descriptions on the effort row.
     let capabilities: ModelReasoningCapabilities?
+    /// Semantic Thinking row for models with a boolean thinking toggle.
+    /// Rendered first in the section, ahead of the generic rows.
+    var thinking: ModelPickerThinkingControl? = nil
     /// Non-thinking option definitions for the selected model, in profile
     /// order. When `capabilities` is present this is just the dynamic
     /// `reasoningEffort` definition.
@@ -30,7 +52,7 @@ struct ModelPickerOptionsControl {
     /// default applies naturally again.
     let onChange: (String, ModelOptionValue?) -> Void
 
-    var isEmpty: Bool { options.isEmpty }
+    var isEmpty: Bool { options.isEmpty && thinking == nil }
 
     /// The segment id the UI marks as selected for a segmented option:
     /// explicit choice first, then the display default, then the first
@@ -51,12 +73,24 @@ struct ModelPickerOptionsControl {
         return false
     }
 
-    /// Estimated rendered height of the options section, used for the
-    /// popover frame. Segmented rows account for chip wrapping in the
-    /// picker's fixed content width.
+    /// Height of the "Model Options" section header the view renders above
+    /// the rows, included in `estimatedHeight` for the popover frame.
+    static let headerHeight: CGFloat = 28
+
+    /// Estimated rendered height of the options section (header + rows),
+    /// used for the popover frame.
     var estimatedHeight: CGFloat {
+        Self.headerHeight + rowsEstimatedHeight
+    }
+
+    /// Estimated rendered height of the option rows alone (the scrollable
+    /// region once the section exceeds its cap). Segmented rows account for
+    /// chip wrapping in the picker's fixed content width.
+    var rowsEstimatedHeight: CGFloat {
         let availableWidth: CGFloat = 352
-        return options.reduce(CGFloat(0)) { total, option in
+        // Thinking row: icon container + title/description stack + padding.
+        let thinkingHeight: CGFloat = thinking != nil ? 50 : 0
+        return thinkingHeight + options.reduce(CGFloat(0)) { total, option in
             switch option.kind {
             case .segmented(let segments):
                 var lines: CGFloat = 1
@@ -77,7 +111,7 @@ struct ModelPickerOptionsControl {
                     (option.id == "reasoningEffort" && capabilities != nil) ? 16 : 0
                 return total + 28 + lines * 31 + 20 + descriptionHeight
             case .toggle:
-                return total + 40
+                return total + 44
             }
         }
     }
@@ -308,11 +342,14 @@ struct ModelPickerView: View {
     }
 
     /// Height budget the options section adds to the popover frame; the
-    /// section scrolls once it exceeds its cap so many-option models (e.g.
-    /// Gemini image profiles) can't crowd out the model list.
+    /// rows scroll once they exceed their cap so many-option models (e.g.
+    /// Gemini image profiles) can't crowd out the model list. The section
+    /// header stays pinned above the scroll region, so it is budgeted
+    /// separately.
     private var optionsSectionHeight: CGFloat {
         guard let optionsControl, !optionsControl.isEmpty else { return 0 }
-        return min(optionsControl.estimatedHeight, Self.optionsSectionMaxHeight)
+        return ModelPickerOptionsControl.headerHeight
+            + min(optionsControl.rowsEstimatedHeight, Self.optionsSectionMaxHeight)
     }
 
     private static let optionsSectionMaxHeight: CGFloat = 240
@@ -802,18 +839,27 @@ struct ModelPickerView: View {
 
     // MARK: - Options Section
 
-    /// Inline model-options section: every non-thinking option the selected
-    /// model exposes, in profile/catalog order. Scrolls once the estimated
-    /// content exceeds the section cap so many-option models can't crowd out
-    /// the model list.
+    /// Inline "Model Options" section: the semantic Thinking row first (when
+    /// the model has a thinking toggle), then every other option the selected
+    /// model exposes, in profile/catalog order. The rows scroll once their
+    /// estimated content exceeds the section cap so many-option models can't
+    /// crowd out the model list; the section header stays pinned.
     @ViewBuilder
     private func optionsSection(_ control: ModelPickerOptionsControl) -> some View {
-        let content = VStack(alignment: .leading, spacing: 0) {
+        let rows = VStack(alignment: .leading, spacing: 0) {
+            if let thinking = control.thinking {
+                thinkingOptionRow(thinking)
+                if !control.options.isEmpty {
+                    Divider()
+                        .background(theme.primaryBorder.opacity(0.15))
+                        .padding(.horizontal, 16)
+                }
+            }
             ForEach(Array(control.options.enumerated()), id: \.element.id) { index, option in
                 if index > 0 {
                     Divider()
                         .background(theme.primaryBorder.opacity(0.15))
-                        .padding(.horizontal, 14)
+                        .padding(.horizontal, 16)
                 }
                 switch option.kind {
                 case .segmented:
@@ -823,14 +869,115 @@ struct ModelPickerView: View {
                 }
             }
         }
-        if control.estimatedHeight > Self.optionsSectionMaxHeight {
-            ScrollView(.vertical, showsIndicators: true) {
-                content
+        VStack(alignment: .leading, spacing: 0) {
+            optionsSectionHeader
+            if control.rowsEstimatedHeight > Self.optionsSectionMaxHeight {
+                ScrollView(.vertical, showsIndicators: true) {
+                    rows
+                }
+                .frame(height: Self.optionsSectionMaxHeight)
+            } else {
+                rows
             }
-            .frame(height: Self.optionsSectionMaxHeight)
-        } else {
-            content
         }
+    }
+
+    /// Section title separating the model list above from the per-model
+    /// option rows below, so the section reads as one coherent group.
+    private var optionsSectionHeader: some View {
+        Text("Model Options", bundle: .module)
+            .font(.system(size: 10, weight: .semibold))
+            .kerning(0.8)
+            .textCase(.uppercase)
+            .foregroundColor(theme.tertiaryText)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 4)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    /// Dedicated Thinking row, in the settings-row idiom: a tinted icon
+    /// container that carries the on/off state at a glance, the title +
+    /// one-line explanation stacked beside it, and the switch on the
+    /// trailing edge. The model's template default is surfaced via the
+    /// Default pill; an explicit override swaps it for a compact reset
+    /// affordance.
+    @ViewBuilder
+    private func thinkingOptionRow(_ thinking: ModelPickerThinkingControl) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(
+                        thinking.isEnabled
+                            ? theme.accentColor.opacity(theme.isDark ? 0.18 : 0.12)
+                            : theme.secondaryBackground
+                    )
+                Image(systemName: "brain")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(thinking.isEnabled ? theme.accentColor : theme.tertiaryText)
+            }
+            .frame(width: 26, height: 26)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text("Thinking", bundle: .module)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+
+                    if !thinking.isExplicit {
+                        defaultPill
+                    }
+                }
+
+                Text("Let the model reason before it answers", bundle: .module)
+                    .font(.system(size: 10.5))
+                    .foregroundColor(theme.tertiaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            if thinking.isExplicit {
+                compactResetButton { thinking.onSetEnabled(nil) }
+            }
+
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { thinking.isEnabled },
+                    set: { thinking.onSetEnabled($0) }
+                )
+            )
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .labelsHidden()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: thinking.isEnabled)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text("Thinking", bundle: .module))
+        .accessibilityValue(
+            thinking.isEnabled
+                ? Text("On", bundle: .module)
+                : Text("Off", bundle: .module)
+        )
+    }
+
+    /// Icon-only reset affordance for compact rows where the labeled
+    /// `resetButton` would crowd the switch; the label moves to the tooltip.
+    private func compactResetButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "arrow.uturn.backward")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+                .frame(width: 20, height: 20)
+                .background(Circle().fill(theme.secondaryBackground))
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .help(String(localized: "Reset to default", bundle: .module))
+        .accessibilityLabel(Text("Reset to default", bundle: .module))
     }
 
     /// Segmented option row: the option's segments in declared order, the
@@ -880,7 +1027,7 @@ struct ModelPickerView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
 
@@ -907,10 +1054,11 @@ struct ModelPickerView: View {
                 defaultPill
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
             if isExplicit {
-                resetButton { control.onChange(option.id, nil) }
+                // Compact next to the switch: the labeled reset would crowd it.
+                compactResetButton { control.onChange(option.id, nil) }
             }
 
             Toggle(
@@ -924,8 +1072,8 @@ struct ModelPickerView: View {
             .controlSize(.mini)
             .labelsHidden()
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
     /// Shared header line for option rows: icon, label, "Default" pill while
@@ -960,11 +1108,12 @@ struct ModelPickerView: View {
 
     private var defaultPill: some View {
         Text("Default", bundle: .module)
-            .font(.system(size: 10, weight: .medium))
+            .font(.system(size: 9, weight: .medium))
             .foregroundColor(theme.tertiaryText)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1.5)
             .background(Capsule().fill(theme.secondaryBackground))
+            .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1))
     }
 
     private func resetButton(action: @escaping () -> Void) -> some View {
@@ -1137,8 +1286,71 @@ struct ModelPickerView: View {
             }
         }
 
+        /// Standalone picker with a Thinking-capable options section, for
+        /// visually validating the Model Options header, Thinking row, and
+        /// segmented effort row together. An explicit override toggles the
+        /// Default pill and reset affordance like the live picker.
+        struct ThinkingPreviewWrapper: View {
+            @State private var selected: String? = "qwen3.5-35b-a3b-4bit"
+            @State private var thinkingOverride: Bool? = nil
+            @State private var effortOverride: String? = nil
+
+            private var thinkingOptionsControl: ModelPickerOptionsControl {
+                ModelPickerOptionsControl(
+                    capabilities: nil,
+                    thinking: ModelPickerThinkingControl(
+                        isEnabled: thinkingOverride ?? true,
+                        isExplicit: thinkingOverride != nil,
+                        onSetEnabled: { thinkingOverride = $0 }
+                    ),
+                    options: [
+                        ModelOptionDefinition(
+                            id: "reasoningEffort",
+                            label: L("Reasoning Effort"),
+                            icon: "brain",
+                            kind: .segmented([
+                                ModelOptionSegment(id: "low", label: L("Low")),
+                                ModelOptionSegment(id: "medium", label: L("Medium")),
+                                ModelOptionSegment(id: "high", label: L("High")),
+                            ])
+                        )
+                    ],
+                    values: effortOverride.map { ["reasoningEffort": .string($0)] } ?? [:],
+                    defaults: ["reasoningEffort": .string("medium")],
+                    onChange: { _, newValue in
+                        effortOverride = newValue?.stringValue
+                    }
+                )
+            }
+
+            var body: some View {
+                ModelPickerView(
+                    options: [
+                        ModelPickerItem(
+                            id: "qwen3.5-35b-a3b-4bit",
+                            displayName: "Qwen3.5 35B A3B 4bit",
+                            source: .local,
+                            parameterCount: "35B",
+                            quantization: "4-bit",
+                            isVLM: false
+                        )
+                    ],
+                    selectedModel: $selected,
+                    agentId: nil,
+                    optionsControl: thinkingOptionsControl,
+                    onDismiss: {}
+                )
+                .padding()
+                .frame(width: 450, height: 620)
+                .background(Color.gray.opacity(0.2))
+            }
+        }
+
         static var previews: some View {
             PreviewWrapper()
+                .previewDisplayName("Model list")
+            ThinkingPreviewWrapper()
+                .previewDisplayName("Thinking-capable options")
         }
     }
 #endif

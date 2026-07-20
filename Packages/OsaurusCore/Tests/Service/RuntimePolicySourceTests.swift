@@ -1334,21 +1334,25 @@ struct RuntimePolicySourceTests {
         )
     }
 
-    @Test("Thinking chip toggles semantic thinking state, not raw inverted booleans")
-    func thinkingChipTogglesSemanticThinkingState() throws {
+    @Test("Thinking control persists semantic thinking state, not raw inverted booleans")
+    func thinkingControlPersistsSemanticThinkingState() throws {
         let floatingInput = try Self.source("Views/Chat/FloatingInputCard.swift")
 
         #expect(
-            floatingInput.contains("ModelProfileRegistry.thinkingEnabled(for: $0, values: activeModelOptions)"),
-            "FloatingInputCard.toggleThinking must derive the current semantic thinking state from the registry so inverted options like disableThinking do not flip the wrong way"
+            floatingInput.contains("ModelProfileRegistry.thinkingEnabled("),
+            "FloatingInputCard's picker Thinking control must derive the effective semantic thinking state from the registry so inverted options like disableThinking do not flip the wrong way"
         )
         #expect(
-            floatingInput.contains("let newVal = thinkingOpt?.inverted == true ? !newEnabled : newEnabled"),
-            "FloatingInputCard.toggleThinking must write the profile-specific stored value from the semantic enabled state"
+            floatingInput.contains("ModelProfileRegistry.thinkingStoredOption("),
+            "FloatingInputCard must persist thinking through the registry's single semantic-to-stored conversion point instead of re-deriving the inverted bool at the call site"
+        )
+        #expect(
+            !floatingInput.contains("inverted == true ?"),
+            "The semantic-to-stored conversion lives in ModelProfileRegistry.thinkingStoredOption; call sites must not re-implement the inversion"
         )
         #expect(
             !floatingInput.contains("let current = activeModelOptions[id]?.boolValue ?? false"),
-            "Thinking chip must not toggle the raw stored bool directly; that reintroduces first-click explicit no-thinking for inverted profiles"
+            "The Thinking control must not toggle the raw stored bool directly; that reintroduces first-click explicit no-thinking for inverted profiles"
         )
     }
 

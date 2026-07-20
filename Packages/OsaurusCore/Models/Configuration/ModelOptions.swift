@@ -330,12 +330,26 @@ enum ModelProfileRegistry {
         return option.inverted ? !value : value
     }
 
-    /// The reasoning state the chip should show when the user has made no
-    /// explicit choice. Requests intentionally send nothing in that case (see
+    /// The stored option id/value pair for a semantic "thinking enabled"
+    /// choice. This is the single conversion point between the UI's semantic
+    /// on/off state and the profile-specific stored boolean, so inverted
+    /// options like `disableThinking` cannot flip the wrong way at a call
+    /// site. Nil when the model has no thinking toggle.
+    static func thinkingStoredOption(
+        for modelId: String,
+        enabled: Bool
+    ) -> (id: String, value: ModelOptionValue)? {
+        guard let option = profile(for: modelId)?.thinkingOption else { return nil }
+        return (option.id, .bool(option.inverted ? !enabled : enabled))
+    }
+
+    /// The reasoning state the Thinking control (picker row + model-chip
+    /// suffix) should show when the user has made no explicit choice.
+    /// Requests intentionally send nothing in that case (see
     /// `normalizedOptions`), so the engine runs the model's chat-template
     /// default — ornith / qwen3.5 default thinking-ON, gemma-4 defaults OFF.
-    /// Reporting that here keeps the chip honest instead of the old hardcoded
-    /// "off" that lied for default-on models. Reads the local bundle's template
+    /// Reporting that here keeps the control honest instead of the old
+    /// hardcoded "off" that lied for default-on models. Reads the local bundle's template
     /// via `LocalReasoningCapability`, so it is a view-layer helper (potential
     /// disk touch) rather than part of the pure registry lookups above.
     static func thinkingDefaultOn(for modelId: String) -> Bool {
@@ -797,8 +811,8 @@ struct ZayaThinkingProfile: ModelProfile {
 // MARK: - Gemma 4 Runtime Profile
 
 /// Gemma-4 chat templates expose an `enable_thinking` kwarg and pipe-wrapped
-/// `<|think|>` markers. Expose the same chat-input Thinking chip as other
-/// local reasoning models, but do not synthesize a hidden request default:
+/// `<|think|>` markers. Expose the same Thinking control as other local
+/// reasoning models, but do not synthesize a hidden request default:
 /// omitted options still let the model bundle/runtime decide.
 struct Gemma4RuntimeProfile: ModelProfile {
     static let displayName = "Gemma 4"
