@@ -2879,6 +2879,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Chat handlers
 
+    /// `SessionToolStateStore` key for the `/agents/{id}/run` path.
+    ///
+    /// `session_id` is a CLIENT-CHOSEN string; keying the store on it raw
+    /// would let two agents given the same value cross-contaminate each
+    /// other's frozen SOUL / manifest / tool snapshots. Namespacing by the
+    /// agent UUID makes collisions structurally impossible. The chat and
+    /// plugin surfaces own their keys structurally (chat window UUIDs,
+    /// per-plugin session scoping) and don't need this.
+    static func agentSessionStoreKey(agentId: UUID, sessionId: String) -> String {
+        "agent:\(agentId.uuidString):\(sessionId)"
+    }
+
     /// Enrich an agent-loop request with the agent's system prompt and memory context.
     ///
     /// Goes through `composeChatContext` and injects the rendered prompt +
@@ -2900,15 +2912,99 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // Honor the global "Disable tools" switch on the HTTP path too —
         // `effectiveToolsDisabled` does not read it, so it must be folded
         // in here (the app chat path does the same via `chatCfg.disableTools`).
-        let globalToolsDisabled = await MainActor.run { ChatConfigurationStore.load().disableTools }
+        let (globalToolsDisabled, toolMode) = await MainActor.run {
+            (
+                ChatConfigurationStore.load().disableTools,
+                AgentManager.shared.effectiveToolSelectionMode(for: agentUUID)
+            )
+        }
+        // Session-frozen compose inputs (parity with the chat and plugin-host
+        // send paths): the first compose for a `session_id` snapshots the
+        // manifest / SOUL / always-loaded names, and every later compose
+        // echoes them so the static system-prompt prefix stays byte-identical
+        // across the session. The disk-L2 KV cache matches on an EXACT hash
+        // of the token prefix, so any drifting section (a tool registering
+        // late, a mid-session SOUL edit) previously moved the divergence
+        // point to token 0 and forced a full re-prefill on every
+        // `/agents/{id}/run` turn.
+        // The store key is namespaced by agent id: `session_id` is a
+        // CLIENT-CHOSEN string, and two agents given the same value must not
+        // cross-contaminate each other's frozen SOUL / manifest / tool
+        // snapshots (agent A's prompt echoed into agent B's session). The
+        // chat and plugin surfaces own their keys structurally (chat uses
+        // its own window UUIDs; the plugin host scopes sessions per plugin),
+        // so only this client-keyed HTTP path needs the explicit namespace.
+        var cachedSession: SessionToolState?
+        let sessionKey: String? = (request.session_id?.isEmpty == false)
+            ? request.session_id.map { Self.agentSessionStoreKey(agentId: agentUUID, sessionId: $0) }
+            : nil
+        if let sid = sessionKey {
+            let liveFp = SessionToolState.fingerprint(
+                executionMode: executionMode, toolMode: toolMode)
+            await SessionToolStateStore.shared.invalidateIfFingerprintChanged(
+                sid, liveFingerprint: liveFp)
+            cachedSession = await SessionToolStateStore.shared.get(sid)
+        }
+        // Delegation schemas are part of the session's `<tools>` block, so
+        // they are frozen with the rest of the compose inputs. Resolving the
+        // visible delegation set / image generation-only swap LIVE on every
+        // request re-introduced tool-block byte drift mid-session (a toggle
+        // flip or an image/edit model finishing a download rewrites the
+        // schema set between turns, moving the KV divergence point to
+        // token 0). Live resolution runs only when no snapshot exists —
+        // first compose of a session, or a stateless (no session_id)
+        // request; the first compose's result is recorded via `setInitial`
+        // below and echoed on every later request.
+        let (visibleDelegation, swapImageToGenerationOnly): (Set<String>, Bool)
+        if let cached = cachedSession,
+            let frozenDelegation = cached.frozenDelegationTools,
+            let frozenSwap = cached.frozenImageGenerationOnly
+        {
+            visibleDelegation = Set(frozenDelegation)
+            swapImageToGenerationOnly = frozenSwap
+        } else {
+            (visibleDelegation, swapImageToGenerationOnly) = await MainActor.run {
+                () -> (Set<String>, Bool) in
+                let snapshot = AgentConfigSnapshot.capture(agentId: agentUUID)
+                let cache = ModelPickerItemCache.shared
+                let names = SubagentToolVisibility.visibleDelegationToolNames(
+                    agentId: agentUUID,
+                    snapshot: snapshot,
+                    config: SubagentConfigurationStore.snapshot(),
+                    hasReadyImageModel: cache.hasReadyImageModel,
+                    hasReadyAppleScriptModel: cache.hasReadyAppleScriptModel
+                )
+                let swap = names.contains("image") && !cache.hasReadyImageEditModel
+                return (names, swap)
+            }
+        }
         let composed = await SystemPromptComposer.composeChatContext(
             agentId: agentUUID,
             executionMode: executionMode,
             model: modelOverride,
             query: query,
             messages: enriched.messages,
-            toolsDisabled: globalToolsDisabled
+            toolsDisabled: globalToolsDisabled,
+            additionalToolNames: cachedSession?.loadedToolNames ?? [],
+            frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
+            frozenManifest: cachedSession?.frozenManifest,
+            frozenSoul: cachedSession?.frozenSoul
         )
+        if let sid = sessionKey, cachedSession == nil {
+            await SessionToolStateStore.shared.setInitial(
+                sid,
+                alwaysLoadedNames: composed.alwaysLoadedNames,
+                fingerprint: SessionToolState.fingerprint(
+                    executionMode: executionMode, toolMode: toolMode),
+                manifest: composed.enabledManifest,
+                soul: composed.soul,
+                // Freeze the delegation-set + swap decision resolved above
+                // (an empty set is a valid snapshot — later turns must not
+                // grow tools the first turn didn't have).
+                delegationTools: visibleDelegation.sorted(),
+                imageGenerationOnly: swapImageToGenerationOnly
+            )
+        }
         if !composed.prompt.isEmpty {
             SystemPromptComposer.injectSystemContent(composed.prompt, into: &enriched.messages)
         }
@@ -2919,7 +3015,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // paged-KV prefix diverges at that message — re-prefilling the whole
         // last exchange). Without a session_id there is no cross-request
         // identity, so it falls back to plain latest-message injection.
-        if let sid = request.session_id, !sid.isEmpty {
+        // Uses the same agent-namespaced `sessionKey` as the freeze block so
+        // two agents sharing a client-chosen session_id cannot replay each
+        // other's memory prefixes.
+        if let sid = sessionKey {
             let frozen = await SessionToolStateStore.shared.frozenUserPrefixes(sid)
             if let recorded = SystemPromptComposer.applyFrozenMemoryPrefixes(
                 memorySection: composed.memorySection,
@@ -2959,20 +3058,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // withheld when no ready image model exists, and narrowed to a
         // generation-only schema when a gen model is present but no edit model
         // is (so the agent-run surface never advertises an edit it can't run).
-        let (visibleDelegation, swapImageToGenerationOnly) = await MainActor.run {
-            () -> (Set<String>, Bool) in
-            let snapshot = AgentConfigSnapshot.capture(agentId: agentUUID)
-            let cache = ModelPickerItemCache.shared
-            let names = SubagentToolVisibility.visibleDelegationToolNames(
-                agentId: agentUUID,
-                snapshot: snapshot,
-                config: SubagentConfigurationStore.snapshot(),
-                hasReadyImageModel: cache.hasReadyImageModel,
-                hasReadyAppleScriptModel: cache.hasReadyAppleScriptModel
-            )
-            let swap = names.contains("image") && !cache.hasReadyImageEditModel
-            return (names, swap)
-        }
+        // `visibleDelegation` / `swapImageToGenerationOnly` were resolved (or
+        // echoed from the session snapshot) before the compose above — the
+        // schemas built from them are part of the frozen `<tools>` block.
         let delegationSpecs =
             visibleDelegation.isEmpty
             ? []
@@ -4944,13 +5032,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
 
             // Enrich with agent context (system prompt + memory) and use the
-            // same composer-resolved tool surface for the model request. The
-            // endpoint is still stateless — no SessionToolStateStore,
-            // preflight LLM, or frozen per-session schema — but `/agents/{id}/run`
-            // is an agent surface, so per-agent gates (Default-agent configure
-            // tools, DB, scheduling, speak, render_chart, search_memory) must
-            // match the rendered prompt. Bare `alwaysLoadedSpecs` remains the
-            // contract for strict OpenAI-compatible `/chat/completions`.
+            // same composer-resolved tool surface for the model request. When
+            // the caller supplies a `session_id`, the composer inputs —
+            // manifest, SOUL, always-loaded snapshot, AND the delegation
+            // schema set / image generation-only swap — are session-frozen
+            // through SessionToolStateStore under an agent-namespaced key
+            // (same contract as the chat and plugin-host paths), so the
+            // static prompt prefix and the FULL `<tools>` block stay
+            // byte-identical across turns and the KV cache can reuse the
+            // prefix. The byte-stability claim covers everything composed
+            // here; client-sent `tools` remain the caller's responsibility.
+            // Without a session_id each request remains stateless.
+            // `/agents/{id}/run` is an agent surface, so
+            // per-agent gates (Default-agent configure tools, DB, scheduling,
+            // speak, render_chart, search_memory) must match the rendered
+            // prompt. Bare `alwaysLoadedSpecs` remains the contract for
+            // strict OpenAI-compatible `/chat/completions`.
             let enrichedReq = await Self.enrichWithAgentContext(
                 req,
                 agentId: agentId.uuidString,

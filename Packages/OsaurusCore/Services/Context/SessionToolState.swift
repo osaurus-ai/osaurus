@@ -47,6 +47,24 @@ struct SessionToolState: Sendable {
     /// and keeps the cached prefix byte-stable. `nil` means "no snapshot yet"
     /// (or no SOUL content) — the next compose reads it fresh.
     var frozenSoul: String?
+    /// Delegation-tool names (Subagent `spawn` / `image` / … schemas) that
+    /// were visible on the FIRST compose of this session, captured on the
+    /// HTTP `/agents/{id}/run` path. Echoed on turn 2+ instead of
+    /// re-resolving live: the live resolution reads mutable state (per-agent
+    /// toggles, whether an image model has finished downloading), so a
+    /// mid-session flip would add/remove `<tools>` entries and re-introduce
+    /// tool-block byte drift. `nil` means "no snapshot yet" — the next
+    /// compose resolves live and records one. An EMPTY array is a valid
+    /// frozen snapshot (no delegation tools were visible on turn 1).
+    var frozenDelegationTools: [String]?
+    /// Whether the `image` delegation schema was narrowed to generation-only
+    /// on the FIRST compose (no ready edit model at the time). Frozen with
+    /// `frozenDelegationTools` for the same byte-stability reason: an edit
+    /// model finishing a download mid-session must not rewrite the `image`
+    /// schema between turns. `nil` means "no snapshot yet" — the tri-state
+    /// is intentional (a frozen `false` must be distinguishable from
+    /// "resolve live").
+    var frozenImageGenerationOnly: Bool?  // swiftlint:disable:this discouraged_optional_boolean
     /// Frozen per-user-message memory prefixes for surfaces whose history is
     /// client-owned (HTTP `/agents/{id}/run`, plugin host). Keyed by
     /// content-hash + occurrence of the ORIGINAL user message (see
@@ -64,6 +82,9 @@ struct SessionToolState: Sendable {
         sessionFingerprint: String? = nil,
         frozenManifest: String? = nil,
         frozenSoul: String? = nil,
+        frozenDelegationTools: [String]? = nil,
+        // swiftlint:disable:next discouraged_optional_boolean
+        frozenImageGenerationOnly: Bool? = nil,
         frozenUserPrefixes: [String: String] = [:]
     ) {
         self.loadedToolNames = loadedToolNames
@@ -71,6 +92,8 @@ struct SessionToolState: Sendable {
         self.sessionFingerprint = sessionFingerprint
         self.frozenManifest = frozenManifest
         self.frozenSoul = frozenSoul
+        self.frozenDelegationTools = frozenDelegationTools
+        self.frozenImageGenerationOnly = frozenImageGenerationOnly
         self.frozenUserPrefixes = frozenUserPrefixes
     }
 
