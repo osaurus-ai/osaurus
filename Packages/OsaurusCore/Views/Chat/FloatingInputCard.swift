@@ -227,6 +227,10 @@ struct FloatingInputCard: View {
 
     private var slashRegistry = SlashCommandRegistry.shared
     @State private var slashSelectedIndex: Int = 0
+    /// Slash query the user dismissed with Escape. Suppresses the popup for
+    /// that exact query so the typed text survives; cleared as soon as the
+    /// query changes (typing resumes) so the popup can reappear.
+    @State private var dismissedSlashQuery: String?
 
     // MARK: - "@" File Menu State
 
@@ -277,7 +281,8 @@ struct FloatingInputCard: View {
     }
 
     private var showSlashPopup: Bool {
-        activeSlashQuery != nil && !slashFilteredCommands.isEmpty
+        guard let query = activeSlashQuery else { return false }
+        return query != dismissedSlashQuery && !slashFilteredCommands.isEmpty
     }
 
     /// Non-nil when the cursor is inside an "@" file token (e.g. "@src/ma" or
@@ -855,6 +860,10 @@ struct FloatingInputCard: View {
                 // Reset popup selection whenever the typed query changes
                 slashSelectedIndex = 0
                 atSelectedIndex = 0
+                // Typing after an Escape-dismissal re-arms the slash popup
+                if dismissedSlashQuery != nil, activeSlashQuery != dismissedSlashQuery {
+                    dismissedSlashQuery = nil
+                }
                 // Re-list the "@" menu off the main actor for the new query.
                 // (folds in the registry sync so it costs no extra body chain
                 // link — the whole chain is at the type-checker's limit.)
@@ -1889,12 +1898,12 @@ extension FloatingInputCard {
         return handleHistoryArrowDown()
     }
 
-    /// Escape while a popup is open: dismiss it. The slash popup clears the
-    /// prefix; the "@" menu removes just its token so surrounding text survives.
+    /// Escape while a popup is open: dismiss just the popup. The typed text
+    /// (including the slash/"@" token) is left intact; the "@" menu removes
+    /// only its token so surrounding text survives.
     private func handlePopupEscape() -> Bool {
         if showSlashPopup {
-            localText = ""
-            text = ""
+            dismissedSlashQuery = activeSlashQuery
             return true
         }
         if showAtPopup {
