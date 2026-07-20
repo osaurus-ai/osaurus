@@ -37,28 +37,45 @@ enum SubagentConfigurationStore {
         }
     }
 
+    /// Persist without blocking the caller. The snapshot cache updates and the
+    /// change notification posts immediately; the encode + atomic write happen
+    /// on a background serial queue (mirrors `ToolConfigurationStore`), so a
+    /// save from the main actor never stalls the UI on file I/O.
     nonisolated static func save(_ configuration: SubagentConfiguration) {
         let normalized = configuration.normalized
         let url = fileURL()
-        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
-        do {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(normalized)
-            try data.write(to: url, options: [.atomic])
-            snapshotLock.lock()
-            cachedSnapshot = normalized
-            snapshotLock.unlock()
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(
-                    name: .subagentConfigurationChanged,
-                    object: normalized
-                )
+        snapshotLock.lock()
+        cachedSnapshot = normalized
+        snapshotLock.unlock()
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: .subagentConfigurationChanged,
+                object: normalized
+            )
+        }
+        writeQueue.async {
+            OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
+            do {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                let data = try encoder.encode(normalized)
+                try data.write(to: url, options: [.atomic])
+            } catch {
+                print("[Osaurus] Failed to save SubagentConfiguration: \(error)")
             }
-        } catch {
-            print("[Osaurus] Failed to save SubagentConfiguration: \(error)")
         }
     }
+
+    /// Synchronously drain any pending background write. Call before process
+    /// exit (and in tests before reading the file back from disk).
+    nonisolated static func flushPendingWrites(timeout: TimeInterval = 1.5) {
+        let done = DispatchSemaphore(value: 0)
+        writeQueue.async { done.signal() }
+        _ = done.wait(timeout: .now() + timeout)
+    }
+
+    private static let writeQueue = DispatchQueue(
+        label: "com.osaurus.subagentconfig.write", qos: .utility)
 
     nonisolated static func snapshot() -> SubagentConfiguration {
         snapshotLock.lock()

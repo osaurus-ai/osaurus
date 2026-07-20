@@ -172,20 +172,39 @@ public struct SandboxConfigurationStore {
         return result
     }
 
+    /// Persist without blocking the caller. The in-memory cache updates
+    /// synchronously so `load()` stays coherent; the encode + atomic write
+    /// happen on a background serial queue (mirrors `ToolConfigurationStore`),
+    /// so a save from the main actor never stalls the UI on `rename(2)`.
+    /// Rapid bursts coalesce to a single last-writer-wins write.
     public static func save(_ config: SandboxConfiguration) {
-        OsaurusPaths.ensureExistsSilent(OsaurusPaths.config())
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        do {
-            let data = try encoder.encode(config)
-            try data.write(to: configURL, options: .atomic)
-            cacheLock.lock()
-            cachedValue = config
-            cacheLock.unlock()
-        } catch {
-            NSLog("[SandboxConfig] Failed to save: \(error)")
+        cacheLock.lock()
+        cachedValue = config
+        cacheLock.unlock()
+        let url = configURL
+        writeQueue.async {
+            OsaurusPaths.ensureExistsSilent(OsaurusPaths.config())
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            do {
+                let data = try encoder.encode(config)
+                try data.write(to: url, options: .atomic)
+            } catch {
+                NSLog("[SandboxConfig] Failed to save: \(error)")
+            }
         }
     }
+
+    /// Synchronously drain any pending background write. Call before process
+    /// exit so a save made moments before quitting still lands on disk.
+    public static func flushPendingWrites(timeout: TimeInterval = 1.5) {
+        let done = DispatchSemaphore(value: 0)
+        writeQueue.async { done.signal() }
+        _ = done.wait(timeout: .now() + timeout)
+    }
+
+    private static let writeQueue = DispatchQueue(
+        label: "com.osaurus.sandboxconfig.write", qos: .utility)
 
     private static func readFromDisk() -> SandboxConfiguration {
         guard let data = try? Data(contentsOf: configURL) else {

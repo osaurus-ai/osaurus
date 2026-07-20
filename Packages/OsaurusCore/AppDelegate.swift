@@ -1335,6 +1335,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Same for the Computer Use autonomy policy (its own coalescing writer).
         ComputerUsePolicyStore.flushPendingWrites()
 
+        // Same for the sandbox and agent-delegation stores.
+        SandboxConfigurationStore.flushPendingWrites()
+        SubagentConfigurationStore.flushPendingWrites()
+
         // Aptabase batches analytics in an in-memory queue and normally drains
         // it from its own `willTerminate` observer — but that flush is async and
         // the `_exit(0)` below skips it. Kick a final bounded, best-effort send
