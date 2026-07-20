@@ -150,8 +150,9 @@ struct OpenAICompatibleTTSClient: Sendable {
         return out
     }
 
-    /// Servers return either `{"error": {"message": ...}}` (OpenAI shape),
-    /// `{"detail": ...}` (FastAPI shape), or plain text.
+    /// Servers return `{"error": {"message": ...}}` (OpenAI shape),
+    /// `{"error": "..."}` (openai-edge-tts shape), `{"detail": ...}`
+    /// (FastAPI shape), or plain text.
     static func extractServerMessage(_ body: String) -> String {
         guard let data = body.data(using: .utf8),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -159,6 +160,7 @@ struct OpenAICompatibleTTSClient: Sendable {
         if let error = json["error"] as? [String: Any], let message = error["message"] as? String {
             return message
         }
+        if let error = json["error"] as? String { return error }
         if let detail = json["detail"] as? String { return detail }
         return body.trimmingCharacters(in: .whitespacesAndNewlines)
     }

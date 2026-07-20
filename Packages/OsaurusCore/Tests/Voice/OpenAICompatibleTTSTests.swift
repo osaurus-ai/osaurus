@@ -215,6 +215,12 @@ struct OpenAICompatibleTTSClientTests {
         #expect(OpenAICompatibleTTSClient.extractServerMessage(body) == "Invalid voice: xyz")
     }
 
+    @Test("extracts string-valued error message (openai-edge-tts shape)")
+    func stringErrorShape() {
+        let body = #"{"error": "Invalid API key"}"#
+        #expect(OpenAICompatibleTTSClient.extractServerMessage(body) == "Invalid API key")
+    }
+
     @Test("extracts FastAPI-shaped detail message")
     func fastAPIErrorShape() {
         let body = #"{"detail": "Not authenticated"}"#
