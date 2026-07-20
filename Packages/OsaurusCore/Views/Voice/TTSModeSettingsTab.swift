@@ -378,28 +378,9 @@ struct TTSModeSettingsTab: View {
 
     private var connectionTestRow: some View {
         HStack(spacing: 10) {
-            Button(action: runConnectionTest) {
-                Text("Test Connection", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(
-                                connectionTest == .testing
-                                    ? theme.tertiaryBackground : theme.accentColor)
-                    )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .disabled(connectionTest == .testing)
-
             switch connectionTest {
-            case .idle:
+            case .idle, .testing:
                 EmptyView()
-            case .testing:
-                ProgressView()
-                    .controlSize(.small)
             case .success:
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle.fill")
@@ -422,6 +403,32 @@ struct TTSModeSettingsTab: View {
             }
 
             Spacer()
+
+            Button(action: runConnectionTest) {
+                // The spinner replaces the label inside the button; the
+                // zero-opacity label keeps the button width stable so the
+                // layout doesn't jump while testing.
+                ZStack {
+                    Text("Test Connection", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
+                        .opacity(connectionTest == .testing ? 0 : 1)
+                    if connectionTest == .testing {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(
+                            connectionTest == .testing
+                                ? theme.tertiaryBackground : theme.accentColor)
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(connectionTest == .testing)
         }
     }
 
