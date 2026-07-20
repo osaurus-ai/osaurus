@@ -230,6 +230,22 @@ struct MLXBatchAdapterTests {
         #expect(!effective.compiledBatchDecode)
     }
 
+    @Test func lastEffectiveGenerationTelemetry_excludesChatPrefillWarmups() {
+        let visibleRequest = GenerationParameters(
+            temperature: nil,
+            maxTokens: 256,
+            maxTokensExplicit: false
+        )
+        let prefillWarmup = GenerationParameters(
+            temperature: 0,
+            maxTokens: 1,
+            warmupPrefill: true
+        )
+
+        #expect(MLXBatchAdapter.shouldRecordAsLastEffectiveGeneration(visibleRequest))
+        #expect(!MLXBatchAdapter.shouldRecordAsLastEffectiveGeneration(prefillWarmup))
+    }
+
     @Test func effectiveGenerationSettings_preservesNemotronUltraBundleDefaultsWithoutInventingTopK() {
         let generation = GenerationParameters(
             temperature: nil,

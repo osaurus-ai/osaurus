@@ -151,6 +151,12 @@ struct MLXBatchAdapter {
         runtimeDefaults: VMLXServerGenerationDefaults,
         maxBatchSize: Int
     ) async {
+        // `last_effective_generation` is user/API request telemetry. Chat
+        // prefill warm-ups deliberately submit `temperature=0, maxTokens=1`
+        // after a visible turn; letting that housekeeping request overwrite
+        // the row makes the admin endpoint describe the warm-up instead of
+        // the generation the user just observed.
+        guard shouldRecordAsLastEffectiveGeneration(generation) else { return }
         let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelName)
         let effective = Self.effectiveGenerationSettings(
             modelName: modelName,
@@ -164,6 +170,12 @@ struct MLXBatchAdapter {
             modelName: modelName,
             settings: effective
         )
+    }
+
+    static func shouldRecordAsLastEffectiveGeneration(
+        _ generation: GenerationParameters
+    ) -> Bool {
+        !generation.warmupPrefill
     }
 
     static func effectiveDraftStrategy(
@@ -1229,10 +1241,12 @@ struct MLXBatchAdapter {
             cacheTopology: cacheTopology,
             stage: "submitted_to_batch_engine"
         )
-        await Registry.shared.recordEffectiveGenerationSettings(
-            modelName: modelName,
-            settings: effective
-        )
+        if Self.shouldRecordAsLastEffectiveGeneration(generation) {
+            await Registry.shared.recordEffectiveGenerationSettings(
+                modelName: modelName,
+                settings: effective
+            )
+        }
         var mlxParams = ModelRuntime.makeGenerateParameters(
             temperature: effective.temperature,
             maxTokens: effective.maxTokens,
