@@ -14,6 +14,7 @@ struct TTSModeSettingsTab: View {
 
     @State private var config: TTSConfiguration = .default
     @State private var hasLoadedSettings = false
+    @State private var remoteAPIKey: String = ""
     @State private var previewText: String = "Hello from Osaurus. Text to speech is now ready."
     @State private var previewMessageId = UUID()
 
@@ -32,6 +33,7 @@ struct TTSModeSettingsTab: View {
 
     private func loadSettings() {
         config = TTSConfigurationStore.load()
+        remoteAPIKey = TTSRemoteAPIKeyStore.load() ?? ""
     }
 
     private func saveSettings() {
@@ -48,10 +50,16 @@ struct TTSModeSettingsTab: View {
             VStack(spacing: 24) {
                 enableCard
 
-                modelCard
+                if config.provider == .pocketTTS {
+                    modelCard
+                }
 
                 if config.enabled {
-                    voiceCard
+                    if config.provider == .pocketTTS {
+                        voiceCard
+                    } else {
+                        remoteServerCard
+                    }
                 }
 
                 if config.enabled && ttsService.isModelReady {
@@ -89,13 +97,34 @@ struct TTSModeSettingsTab: View {
                 )
                 .onChange(of: config.enabled) { _, _ in saveSettings() }
 
+                if config.enabled {
+                    HStack {
+                        Text("Engine", bundle: .module)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.secondaryText)
+                        Spacer()
+                        Picker("", selection: $config.provider) {
+                            Text("On-Device (PocketTTS)", bundle: .module)
+                                .tag(TTSProvider.pocketTTS)
+                            Text("OpenAI-Compatible Server", bundle: .module)
+                                .tag(TTSProvider.openAICompatible)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(MenuPickerStyle())
+                        .frame(maxWidth: 240)
+                        .onChange(of: config.provider) { _, _ in saveSettings() }
+                    }
+                }
+
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "info.circle")
                         .font(.system(size: 12))
                         .foregroundColor(theme.accentColor)
 
                     Text(
-                        "Powered by FluidAudio PocketTTS. English only. Streams audio as it's synthesized.",
+                        config.provider == .pocketTTS
+                            ? "Powered by FluidAudio PocketTTS. English only. Streams audio as it's synthesized."
+                            : "Sends text to any server implementing the OpenAI /v1/audio/speech API, such as openai-edge-tts or Kokoro.",
                         bundle: .module
                     )
                     .font(.system(size: 12))
@@ -264,6 +293,75 @@ struct TTSModeSettingsTab: View {
                 }
                 .settingsLandingAnchor("voice.tts.temperature")
             }
+        }
+    }
+
+    // MARK: - Remote Server Card
+
+    private var remoteServerCard: some View {
+        SettingsSection(title: "Server", icon: "network", anchorId: "voice.tts.remote") {
+            VStack(alignment: .leading, spacing: 16) {
+                labeledField(L("Endpoint")) {
+                    TextField(TTSConfiguration.defaultRemoteEndpoint, text: $config.remoteEndpoint)
+                        .onChange(of: config.remoteEndpoint) { _, _ in saveSettings() }
+                }
+
+                labeledField(L("Model")) {
+                    TextField(TTSConfiguration.defaultRemoteModel, text: $config.remoteModel)
+                        .onChange(of: config.remoteModel) { _, _ in saveSettings() }
+                }
+
+                labeledField(L("Voice")) {
+                    TextField(TTSConfiguration.defaultRemoteVoice, text: $config.remoteVoice)
+                        .onChange(of: config.remoteVoice) { _, _ in saveSettings() }
+                }
+
+                labeledField(L("API Key")) {
+                    SecureField(L("Optional"), text: $remoteAPIKey)
+                        .onChange(of: remoteAPIKey) { _, newValue in
+                            TTSRemoteAPIKeyStore.save(newValue)
+                        }
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Speed", bundle: .module)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.secondaryText)
+                        Spacer()
+                        Text(String(format: "%.2fx", config.remoteSpeed))
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                    Slider(value: $config.remoteSpeed, in: 0.25 ... 4.0, step: 0.05) { editing in
+                        if !editing { saveSettings() }
+                    }
+                }
+
+                if let error = ttsService.lastRemoteError {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.errorColor)
+                        Text(error)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.errorColor)
+                    }
+                }
+            }
+        }
+    }
+
+    private func labeledField(_ title: String, @ViewBuilder field: () -> some View) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+            Spacer()
+            field()
+                .textFieldStyle(RoundedBorderTextFieldStyle())
+                .font(.system(size: 12))
+                .frame(maxWidth: 260)
         }
     }
 
