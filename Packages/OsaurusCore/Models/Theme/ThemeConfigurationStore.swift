@@ -14,7 +14,9 @@ public enum ThemeConfigurationStore {
     private static let builtInThemeSchemaKey = "builtInThemeSchemaVersion"
     /// Increment this whenever the built-in Dark/Light palette changes so existing
     /// installations receive the updated colors on next launch.
-    private static let currentBuiltInThemeSchema = 5
+    /// Schema 6: canonical Dark/Light switched to the native macOS palettes
+    /// (issue #2102); previous palettes retained as Osaurus Dark/Light presets.
+    private static let currentBuiltInThemeSchema = 6
     private static var builtInThemesInstalled = false
 
     // MARK: - Active Theme
