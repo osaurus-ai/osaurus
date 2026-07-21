@@ -108,15 +108,16 @@ enum AppleScriptToolDispatch {
         task: String,
         literals: AppleScriptLiterals
     ) -> AppleScriptLiterals {
-        if literals.isEmpty {
-            if let inferred = exactTextEditReplacementLiterals(from: task) {
+        if let inferred = exactReplacementLiterals(from: task) {
+            if literals.isEmpty || suppliedLiteralsMatchReplacement(literals, inferred: inferred) {
                 debugLog(
-                    "[AppleScript] preserved exact TextEdit replacement values as oldText,newText"
+                    "[AppleScript] preserved exact replacement values as oldText,newText"
                 )
                 return inferred
             }
-            return literals
         }
+
+        if literals.isEmpty { return literals }
 
         let normalizedTask = task.lowercased()
         let explicitlyInsertingSource =
@@ -152,23 +153,21 @@ enum AppleScriptToolDispatch {
         return AppleScriptLiterals()
     }
 
-    /// Preserve the two exact user-visible values when a parent model sends a
-    /// plain-language TextEdit replacement task but omits `contents`. This is a
-    /// narrow recovery for the common `replace “old” with “new”` form: exactly
-    /// two quoted values, an explicit replacement verb, an explicit `with`
-    /// separator, and an explicit TextEdit target are all required. Ambiguous
-    /// tasks (extra quoted values, another app, or no replacement separator)
-    /// remain task-only rather than guessing which text is data.
+    /// Preserve the two exact user-visible values when a parent model puts a
+    /// replacement pair in `task` but omits `contents`, or supplies only one of
+    /// the values through the single `content` field. This recovers only the
+    /// common `replace “old” with “new”` and `change … from “old” to “new”`
+    /// forms: exactly two quoted values and an exact separator are required.
+    /// It extracts DATA only — it never guesses an app, document, or file.
+    /// Ambiguous tasks (extra quoted values or no replacement grammar) remain
+    /// unchanged.
     ///
     /// The recovered values still travel through the ordinary literal store
     /// and `taskForSubagent`, so the helper receives `{{oldText}}` and
     /// `{{newText}}` placeholders and never has to re-type the bytes.
-    private static func exactTextEditReplacementLiterals(
+    private static func exactReplacementLiterals(
         from task: String
     ) -> AppleScriptLiterals? {
-        let normalized = task.lowercased()
-        guard normalized.contains("textedit"), normalized.contains("replace") else { return nil }
-
         struct QuotedValue {
             let value: String
             let opening: String.Index
@@ -212,14 +211,39 @@ enum AppleScriptToolDispatch {
         let beforeOld = task[..<quoted[0].opening].lowercased()
         let separatorStart = task.index(after: quoted[0].closing)
         let separator = task[separatorStart..<quoted[1].opening].lowercased()
-        guard beforeOld.contains("replace"),
-            separator.trimmingCharacters(in: .whitespacesAndNewlines) == "with"
-        else { return nil }
+        let trimmedBeforeOld = beforeOld.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSeparator = separator.trimmingCharacters(in: .whitespacesAndNewlines)
+        let replaceForm =
+            trimmedSeparator == "with"
+            && trimmedBeforeOld.range(of: #"\breplace\b"#, options: .regularExpression) != nil
+        let changeForm =
+            trimmedSeparator == "to"
+            && trimmedBeforeOld.range(of: #"\bchange\b"#, options: .regularExpression) != nil
+            && trimmedBeforeOld.range(of: #"\bfrom$"#, options: .regularExpression) != nil
+        guard replaceForm || changeForm else { return nil }
 
         return AppleScriptLiterals([
             "oldText": quoted[0].value,
             "newText": quoted[1].value,
         ])
+    }
+
+    /// A partial literal map is safe to upgrade only when every supplied value
+    /// exactly matches one of the two values visibly present in the task. A
+    /// conflicting or extra value keeps the strict existing contract instead
+    /// of being silently discarded.
+    private static func suppliedLiteralsMatchReplacement(
+        _ supplied: AppleScriptLiterals,
+        inferred: AppleScriptLiterals
+    ) -> Bool {
+        let replacementValues = Set(
+            inferred.names.compactMap { inferred.value(for: $0) }
+        )
+        guard !replacementValues.isEmpty else { return false }
+        return supplied.names.allSatisfy { name in
+            guard let value = supplied.value(for: name) else { return false }
+            return replacementValues.contains(value)
+        }
     }
 
     /// Literal fields are an out-of-band DATA channel, not a second instruction

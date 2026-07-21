@@ -564,11 +564,47 @@ struct AppleScriptToolDispatchLiteralsTests {
         )
     }
 
-    @Test("ambiguous quoted replacement tasks remain task-only")
+    @Test("change-from-to replacement recovers both values from a partial content field")
+    func changeFromToReplacementCompletesPartialLiterals() {
+        let task = "Change the text in the file from “Hello from OracHQ” to “Hello again”."
+        let inferred = AppleScriptToolDispatch.literalsForDispatch(
+            task: task,
+            literals: AppleScriptLiterals(["content": "Hello from OracHQ"])
+        )
+        #expect(inferred.names == ["newText", "oldText"])
+        #expect(inferred.value(for: "oldText") == "Hello from OracHQ")
+        #expect(inferred.value(for: "newText") == "Hello again")
+        #expect(
+            AppleScriptToolDispatch.taskForSubagent(task, literals: inferred)
+                == "Change the text in the file from “{{oldText}}” to “{{newText}}”."
+        )
+
+        let alreadyNamed = AppleScriptLiterals([
+            "oldText": "Hello from OracHQ", "newText": "Hello again",
+        ])
+        #expect(
+            AppleScriptToolDispatch.literalsForDispatch(task: task, literals: alreadyNamed)
+                == alreadyNamed
+        )
+    }
+
+    @Test("exact replacement data is app-independent but ambiguous grammar remains task-only")
     func ambiguousReplacementDoesNotInferLiterals() {
+        let notes = AppleScriptToolDispatch.literalsForDispatch(
+            task: "Replace “one” with “two” in Notes.",
+            literals: AppleScriptLiterals()
+        )
+        #expect(notes.value(for: "oldText") == "one")
+        #expect(notes.value(for: "newText") == "two")
         #expect(
             AppleScriptToolDispatch.literalsForDispatch(
                 task: "Replace “one” with “two” in Notes.",
+                literals: AppleScriptLiterals(["content": "conflicting value"])
+            ).value(for: "content") == "conflicting value"
+        )
+        #expect(
+            AppleScriptToolDispatch.literalsForDispatch(
+                task: "Change “one” to “two” in TextEdit.",
                 literals: AppleScriptLiterals()
             ).isEmpty
         )
@@ -2201,6 +2237,7 @@ struct AppleScriptToolSelectionGuidanceTests {
     func parentSchemaReservesContentForUserText() throws {
         #expect(AppleScriptTool.toolDescription.contains("only for literal text supplied by the user"))
         #expect(AppleScriptTool.toolDescription.contains("REQUIRED for text replacement"))
+        #expect(AppleScriptTool.toolDescription.contains("does not imply saving"))
         let parametersValue = try #require(AppleScriptTool().parameters)
         guard case .object(let parameters) = parametersValue,
             case .object(let properties)? = parameters["properties"],
@@ -2211,6 +2248,22 @@ struct AppleScriptToolSelectionGuidanceTests {
             return
         }
         #expect(description.contains("never place AppleScript"))
+    }
+
+    @Test("parent and helper prompts forbid invented file and save workflows")
+    func promptsKeepExistingDocumentTargetAndSaveBoundaries() {
+        #expect(SystemPromptTemplates.appleScriptGuidance.contains("invented file picker"))
+        #expect(SystemPromptTemplates.appleScriptGuidance.contains("An edit does not imply saving"))
+        #expect(SystemPromptTemplates.appleScriptGuidanceCompact.contains("never invent a picker"))
+
+        let standard = AppleScriptLoop.systemPrompt(mode: .automate, variant: .standard)
+        #expect(standard.contains("named Frontmost app"))
+        #expect(standard.contains("do not open a chooser"))
+        #expect(standard.contains("never implies Save"))
+
+        let concise = AppleScriptLoop.systemPrompt(mode: .automate, variant: .concise)
+        #expect(concise.contains("named Frontmost app"))
+        #expect(concise.contains("Never invent a chooser"))
     }
 }
 

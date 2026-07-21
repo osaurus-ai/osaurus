@@ -41,7 +41,10 @@ final class AppleScriptTool: OsaurusTool, @unchecked Sendable {
         + "AppleScript or instructions you generated into it. When the task needs several exact blocks, "
         + "pass them in `contents` as a {name: text} map. This is REQUIRED for text replacement even "
         + "when the strings are short: pass the old and replacement text as separate named values and "
-        + "phrase `task` to use those provided values. Depending on the user's setting, "
+        + "phrase `task` to use those provided values. For an existing open document, name the app "
+        + "or exact path that the request or conversation identifies. If neither identifies the "
+        + "target, ask the user instead of telling the subagent to choose, create, or save a file. "
+        + "Editing an open document does not imply saving it. Depending on the user's setting, "
         + "each script is shown for approval or auto-run with a warning. Do NOT use it for shell, files, "
         + "or web requests — those have dedicated tools."
 
@@ -55,7 +58,9 @@ final class AppleScriptTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("string"),
                 "description": .string(
                     "The complete task to accomplish with AppleScript, in plain language, naming the app "
-                        + "when it matters. Example: \"Get the URL of the front Safari tab.\""
+                        + "when it matters. Existing-document edits must identify the app or exact path "
+                        + "from the request/conversation; never invent a file picker or save step. "
+                        + "Example: \"Get the URL of the front Safari tab.\""
                 ),
             ]),
             "content": .object([
