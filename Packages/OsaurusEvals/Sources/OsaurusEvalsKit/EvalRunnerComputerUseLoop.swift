@@ -49,6 +49,7 @@ extension EvalRunner {
         )
         let interrupt = InterruptToken()
         let limits = RunLimits(maxSteps: exp.maxSteps ?? 16, wallClockSeconds: 240)
+        let confirmationRecorder = ComputerUseEvalConfirmationRecorder()
 
         // Scripted-model harness: when the scene supplies `scriptedActions`,
         // the loop is driven deterministically via the `AgentStepProvider` seam
@@ -98,7 +99,10 @@ extension EvalRunner {
             gate: gate,
             feed: feed,
             interrupt: interrupt,
-            confirm: { _ in true },
+            confirm: { preview in
+                await confirmationRecorder.record(preview)
+                return true
+            },
             limits: limits,
             policySummary: "",
             vision: .none,
@@ -120,6 +124,7 @@ extension EvalRunner {
         let metrics = result.metrics
         let outcomeName = Self.outcomeName(result.outcome)
         let redactEvidenceValues = exp.redactEvidenceValues == true
+        let confirmationPreviews = await confirmationRecorder.all()
 
         var passed = true
         var notes: [String] = []
@@ -135,6 +140,26 @@ extension EvalRunner {
             pass: "outcome ok: \(outcomeName)",
             fail: "outcome '\(outcomeName)' not in allowed \(allowedOutcomes)"
         )
+
+        if let expectedSubmissionState = exp.expectSubmissionState {
+            let actual = result.formEvidence.submissionState.rawValue
+            check(
+                actual == expectedSubmissionState,
+                pass: "submission evidence reached '\(actual)'",
+                fail: "submission evidence expected '\(expectedSubmissionState)' but was '\(actual)'"
+            )
+        }
+        if exp.requireOneShotSubmissionApproval == true {
+            let sawOneShot = confirmationPreviews.contains { preview in
+                if case .oneShot = preview.approvalScope { return true }
+                return false
+            }
+            check(
+                sawOneShot,
+                pass: "submission used exact one-shot approval",
+                fail: "submission never requested exact one-shot approval"
+            )
+        }
 
         // 2. The substantive check — did the world reach the goal state.
         for predicate in exp.successValues ?? [] {
@@ -374,5 +399,17 @@ extension EvalRunner {
         return counts.keys.sorted().map {
             ToolUsageStat(tool: $0, calls: counts[$0] ?? 0, errors: 0, deduped: 0)
         }
+    }
+}
+
+private actor ComputerUseEvalConfirmationRecorder {
+    private var previews: [ActionPreview] = []
+
+    func record(_ preview: ActionPreview) {
+        previews.append(preview)
+    }
+
+    func all() -> [ActionPreview] {
+        previews
     }
 }

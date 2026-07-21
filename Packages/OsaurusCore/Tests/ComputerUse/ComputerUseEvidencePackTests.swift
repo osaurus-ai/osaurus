@@ -143,9 +143,10 @@ final class ComputerUseEvidencePackTests: XCTestCase {
     func testBrowserFormLoopFillsFieldsAndSubmitsDeterministically() async {
         let pid: Int32 = 5150
         // MockMacDriver advances one snapshot per capture: initial observe,
-        // one post-action verify per acting verb, then one final assertion read.
-        // Keep status as Draft through snapshot 5 so the submit click resolves
-        // against the pre-submit tree, then expose the submitted state on 6-7.
+        // one post-action verify per acting verb, one pre-submit freshness read,
+        // then one final assertion read. Keep status as Draft through snapshots
+        // 5-6 so exact approval revalidation sees the same filled form; expose
+        // the submitted state only after the driver click on snapshots 7-8.
         let snapshots = [
             browserFormSnapshot(snapshotId: 1, pid: pid),
             browserFormSnapshot(snapshotId: 2, pid: pid, team: "Synthetic Platform Team"),
@@ -176,11 +177,19 @@ final class ComputerUseEvidencePackTests: XCTestCase {
                 team: "Synthetic Platform Team",
                 email: "ops@example.com",
                 justification: "Automate a repetitive access request.",
+                termsAccepted: true
+            ),
+            browserFormSnapshot(
+                snapshotId: 7,
+                pid: pid,
+                team: "Synthetic Platform Team",
+                email: "ops@example.com",
+                justification: "Automate a repetitive access request.",
                 termsAccepted: true,
                 status: "Submitted"
             ),
             browserFormSnapshot(
-                snapshotId: 7,
+                snapshotId: 8,
                 pid: pid,
                 team: "Synthetic Platform Team",
                 email: "ops@example.com",
@@ -252,10 +261,15 @@ final class ComputerUseEvidencePackTests: XCTestCase {
         XCTAssertEqual(result.metrics.verifyChanged, 5)
         XCTAssertEqual(result.metrics.confirmsRequested, 1)
         XCTAssertEqual(result.metrics.confirmsApproved, 1)
+        XCTAssertEqual(result.formEvidence.fillActions, 3)
+        XCTAssertEqual(result.formEvidence.verifiedFillActions, 3)
+        XCTAssertEqual(result.formEvidence.preparationState, .readyForReview)
+        XCTAssertEqual(result.formEvidence.submissionState, .verified)
 
         let confirmed = await confirmationRecorder.previews()
         XCTAssertEqual(confirmed.map(\.effect), [.consequential])
         XCTAssertEqual(confirmed.first?.targetLabel, "button \"Submit request\"")
+        XCTAssertFalse(confirmed.first?.allowsApproveRemaining ?? true)
 
         let actions = await driver.elementActions
         XCTAssertEqual(
@@ -929,6 +943,8 @@ final class ComputerUseEvidencePackTests: XCTestCase {
             switch action {
             case .click(let id, _, _):
                 return "click:\(id)"
+            case .focus(let id):
+                return "focus:\(id)"
             case .setValue(let id, let value):
                 return "setValue:\(id):length=\(value.count)"
             case .typeText(let id, _, let text, let replace):

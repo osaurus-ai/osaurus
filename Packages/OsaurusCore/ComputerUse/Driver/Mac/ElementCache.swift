@@ -172,6 +172,23 @@ final class ElementInteraction: @unchecked Sendable {
         }
     }
 
+    /// Restore focus without activating the target. Submission approval must
+    /// never use the ordinary click fallback because that click could submit.
+    func focusElementWithoutActivation(id: String) -> ElementActionResult {
+        switch resolve(id: id) {
+        case .failure(let err): return err
+        case .ok(let element):
+            let result = AXUIElementSetAttributeValue(
+                element.axElement,
+                kAXFocusedAttribute as CFString,
+                true as CFTypeRef
+            )
+            return result == .success
+                ? .ok()
+                : .fail("The element could not be focused without activation")
+        }
+    }
+
     func rightClickElement(id: String) -> ElementActionResult {
         switch resolve(id: id) {
         case .failure(let err): return err
@@ -241,21 +258,41 @@ final class ElementInteraction: @unchecked Sendable {
             if result == .success {
                 return .ok(delta: computeFocusDelta(pid: element.pid))
             }
-            // Fallback: focus, select all, delete — routed per-pid so other
-            // apps don't see the Cmd+A.
-            let focusResult = focusElement(id: id)
-            if !focusResult.success { return focusResult }
-            if let aCode = keyCode(for: "a") {
-                _ = driver.pressKey(pid: element.pid, keyCode: aCode, modifiers: .maskCommand)
-            }
-            guard let delCode = keyCode(for: "delete") else {
-                return .fail("Failed to clear field: no delete key code available")
-            }
-            let del = driver.pressKey(pid: element.pid, keyCode: delCode, modifiers: [])
-            if del.success {
-                return .ok(delta: computeFocusDelta(pid: element.pid))
-            }
-            return .fail(del.error ?? "Failed to clear field")
+            // Clearing is not an activation action. Fail closed when AX focus
+            // cannot be set instead of clicking a control that may submit.
+            return Self.performClearFallback(
+                focusWithoutActivation: { self.focusElementWithoutActivation(id: id) },
+                selectAll: {
+                    guard let code = keyCode(for: "a") else { return false }
+                    return self.driver.pressKey(
+                        pid: element.pid,
+                        keyCode: code,
+                        modifiers: .maskCommand
+                    ).success
+                },
+                delete: {
+                    guard let code = keyCode(for: "delete") else { return false }
+                    return self.driver.pressKey(
+                        pid: element.pid,
+                        keyCode: code,
+                        modifiers: []
+                    ).success
+                },
+                delta: { computeFocusDelta(pid: element.pid) }
+            )
         }
+    }
+
+    nonisolated static func performClearFallback(
+        focusWithoutActivation: () -> ElementActionResult,
+        selectAll: () -> Bool,
+        delete: () -> Bool,
+        delta: () -> FocusDelta?
+    ) -> ElementActionResult {
+        let focusResult = focusWithoutActivation()
+        guard focusResult.success else { return focusResult }
+        guard selectAll() else { return .fail("Failed to clear field: select-all failed") }
+        guard delete() else { return .fail("Failed to clear field: delete failed") }
+        return .ok(delta: delta())
     }
 }

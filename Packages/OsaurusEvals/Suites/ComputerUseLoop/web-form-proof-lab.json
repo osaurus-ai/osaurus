@@ -3,7 +3,7 @@
   "domain": "computer_use_loop",
   "label": "CU loop • local web form proof lab",
   "query": "Fill every required field in the local access request fixture, accept the terms checkbox, submit the form, then finish.",
-  "notes": "Deterministic local fixture mirrored from Packages/OsaurusCore/Tests/ComputerUse/Fixtures/WebForm/request.html. The scripted driver exercises perceive -> gate -> act -> verify with AX-only controls; the submit button runs through the consequential confirmation path.",
+  "notes": "Deterministic local fixture mirrored from Packages/OsaurusCore/Tests/ComputerUse/Fixtures/WebForm/request.html. The scripted driver exercises fill -> verify -> ready-for-review -> exact one-shot approval -> snapshot revalidation -> submit with AX-only controls.",
   "fixtures": {},
   "expect": {
     "computerUseLoop": {
@@ -73,6 +73,8 @@
       "expectVerbsInOrder": ["set_value", "set_value", "set_value", "click", "click"],
       "scoredMaxModelTokens": 0,
       "redactEvidenceValues": true,
+      "expectSubmissionState": "verified",
+      "requireOneShotSubmissionApproval": true,
       "scriptedActions": [
         "{\"verb\":\"set_value\",\"target\":{\"mark\":1},\"text\":\"Synthetic Platform Team\"}",
         "{\"verb\":\"set_value\",\"target\":{\"mark\":2},\"text\":\"ops@example.com\"}",

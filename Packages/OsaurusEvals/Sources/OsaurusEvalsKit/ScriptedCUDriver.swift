@@ -215,6 +215,12 @@ public actor ScriptedCUDriver: MacDriver {
         switch action {
         case .click(let id, _, _):
             return applyClick(id: id, viaCoordinate: false)
+        case .focus(let id):
+            guard cells.contains(where: { $0.id == id }) else {
+                return .failure("The requested focus target is unavailable.")
+            }
+            focusedId = id
+            return .ok(delta: focusDelta())
         case .setValue(let id, let value):
             executedVerbs.append("set_value")
             return applyEdit(id: id, value: value)

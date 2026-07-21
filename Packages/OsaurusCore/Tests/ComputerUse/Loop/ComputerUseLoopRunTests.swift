@@ -30,11 +30,15 @@ final class ComputerUseLoopRunTests: XCTestCase {
 
     /// A driver with one focused app (so `currentPid` is non-nil from the
     /// start) serving a single steady-state snapshot.
-    private func driver(_ elements: [CUElement], pid: Int32 = 4242) -> MockMacDriver {
+    private func driver(
+        _ elements: [CUElement],
+        pid: Int32 = 4242,
+        app: String = "Demo"
+    ) -> MockMacDriver {
         let snap = CUSnapshot(
             snapshotId: 1,
             pid: pid,
-            app: "Demo",
+            app: app,
             focusedWindow: "Main",
             tier: .ax,
             truncated: false,
@@ -43,7 +47,7 @@ final class ComputerUseLoopRunTests: XCTestCase {
             image: nil
         )
         return MockMacDriver(
-            activeWindow: CUActiveWindow(pid: pid, app: "Demo", title: "Main", x: 0, y: 0, w: 800, h: 600),
+            activeWindow: CUActiveWindow(pid: pid, app: app, title: "Main", x: 0, y: 0, w: 800, h: 600),
             snapshots: [pid: [snap]]
         )
     }
@@ -54,14 +58,16 @@ final class ComputerUseLoopRunTests: XCTestCase {
         gate: ComputerUseGating = HardwiredGate(),
         confirm: @escaping @Sendable (ActionPreview) async -> Bool = { _ in true },
         interrupt: InterruptToken = InterruptToken(),
-        limits: RunLimits = RunLimits(wallClockSeconds: 30)
+        limits: RunLimits = RunLimits(wallClockSeconds: 30),
+        feed: SubagentFeed? = nil
     ) async -> ComputerUseRunResult {
-        await ComputerUseLoop.run(
+        let activityFeed = feed ?? SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "test goal")
+        return await ComputerUseLoop.run(
             goal: "test goal",
             modelId: "test-model",
             driver: driver,
             gate: gate,
-            feed: SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "test goal"),
+            feed: activityFeed,
             interrupt: interrupt,
             confirm: confirm,
             limits: limits,
@@ -97,6 +103,958 @@ final class ComputerUseLoopRunTests: XCTestCase {
             return XCTFail("Expected gaveUp; got \(result.outcome)")
         }
         XCTAssertEqual(reason, "cannot")
+    }
+
+    // MARK: - Browser submission boundary
+
+    func testAutonomousBrowserSubmitStillRequiresExactOneShotApproval() async {
+        let d = driver([el("submit", "button", "Submit request")], app: "Safari")
+        let recorder = ActionPreviewRecorder()
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+                AgentAction(verb: .done, reason: "submitted"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { preview in
+                await recorder.record(preview)
+                return true
+            }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let previews = await recorder.values
+        XCTAssertEqual(previews.count, 1)
+        guard case .oneShot(let binding) = previews.first?.approvalScope else {
+            return XCTFail("Submit approval must be exact and one-shot")
+        }
+        XCTAssertEqual(binding.snapshotId, 1)
+        XCTAssertEqual(binding.appName, "Safari")
+        XCTAssertEqual(binding.verb, .click)
+        XCTAssertEqual(binding.targetLabel, "button \"Submit request\"")
+        XCTAssertNotNil(binding.targetFingerprint)
+        XCTAssertFalse(previews[0].allowsApproveRemaining)
+        XCTAssertEqual(result.formEvidence.submissionState, .acted)
+        let actions = await d.elementActions
+        XCTAssertEqual(actions.count, 1)
+    }
+
+    func testDeclinedBrowserSubmitStopsReadyForReviewWithoutDriverAction() async {
+        let d = driver([el("submit", "button", "Submit request")], app: "Safari")
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+                AgentAction(verb: .done, reason: "must not reach"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { _ in false }
+        )
+
+        guard case .done(let summary) = result.outcome else {
+            return XCTFail("Declining submit should stop at a reviewable success state")
+        }
+        XCTAssertTrue(summary.localizedCaseInsensitiveContains("unsubmitted"))
+        XCTAssertEqual(result.formEvidence.submissionState, .readyForReview)
+        let actions = await d.elementActions
+        XCTAssertTrue(actions.isEmpty)
+    }
+
+    func testPlainReturnInBrowserRequiresOneShotApproval() async {
+        let focused = CUElement(
+            id: "email",
+            role: "textfield",
+            label: "Email",
+            focused: true
+        )
+        let d = driver([focused], app: "Google Chrome")
+        let recorder = ActionPreviewRecorder()
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .pressKey, key: "Return"),
+                AgentAction(verb: .done, reason: "submitted"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { preview in
+                await recorder.record(preview)
+                return true
+            }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let previews = await recorder.values
+        XCTAssertEqual(previews.count, 1)
+        XCTAssertFalse(previews[0].allowsApproveRemaining)
+        let actions = await d.elementActions
+        XCTAssertEqual(actions.count, 1)
+    }
+
+    func testTypedNewlineInBrowserRequiresOneShotApproval() async {
+        let field = CUElement(
+            id: "notes",
+            role: "textfield",
+            label: "Notes",
+            focused: true
+        )
+        let d = driver([field], app: "Safari")
+        let recorder = ActionPreviewRecorder()
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(
+                    verb: .type,
+                    target: AgentTarget(mark: 1),
+                    text: "First line\nSecond line"
+                ),
+                AgentAction(verb: .done, reason: "typed"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { preview in
+                await recorder.record(preview)
+                return false
+            }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let previews = await recorder.values
+        XCTAssertEqual(previews.count, 1)
+        XCTAssertFalse(previews[0].allowsApproveRemaining)
+        let actions = await d.elementActions
+        XCTAssertTrue(actions.isEmpty)
+        XCTAssertEqual(result.formEvidence.submissionState, .readyForReview)
+    }
+
+    func testSecureFieldValueIsNotExposedInSubmissionBinding() {
+        let secret = "correct horse battery staple"
+        let secureField = CUElement(
+            id: "password",
+            role: "AXSecureTextField",
+            value: secret,
+            focused: true
+        )
+        let snapshot = CUSnapshot(
+            snapshotId: 1,
+            pid: 4242,
+            app: "Safari",
+            focusedWindow: "Sign in",
+            tier: .ax,
+            truncated: false,
+            windows: [],
+            elements: [secureField],
+            image: nil
+        )
+
+        let binding = SubmissionBoundary.binding(
+            action: AgentAction(verb: .pressKey, key: "Return"),
+            element: secureField,
+            snapshot: snapshot,
+            appName: "Safari",
+            effect: .consequential
+        )
+
+        XCTAssertNotNil(binding)
+        XCTAssertFalse(binding?.targetLabel?.contains(secret) ?? false)
+        XCTAssertEqual(binding?.targetLabel, "AXSecureTextField")
+        let changedSecret = CUElement(
+            id: "password",
+            role: "AXSecureTextField",
+            value: "different secret",
+            focused: true
+        )
+        let changedSnapshot = CUSnapshot(
+            snapshotId: 2,
+            pid: 4242,
+            app: "Safari",
+            focusedWindow: "Sign in",
+            tier: .ax,
+            truncated: false,
+            windows: [],
+            elements: [changedSecret],
+            image: nil
+        )
+        XCTAssertNil(
+            binding.flatMap {
+                SubmissionBoundary.revalidatedElement(
+                    for: $0,
+                    action: AgentAction(verb: .pressKey, key: "Return"),
+                    snapshot: changedSnapshot
+                )
+            }
+        )
+    }
+
+    func testSpaceOnFocusedSubmitButtonRequiresOneShotApproval() async {
+        let focusedSubmit = CUElement(
+            id: "submit",
+            role: "button",
+            label: "Submit request",
+            focused: true
+        )
+        let d = driver([focusedSubmit], app: "Safari")
+        let recorder = ActionPreviewRecorder()
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .pressKey, key: "space"),
+                AgentAction(verb: .done, reason: "submitted"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { preview in
+                await recorder.record(preview)
+                return true
+            }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let previews = await recorder.values
+        XCTAssertEqual(previews.count, 1)
+        XCTAssertFalse(previews[0].allowsApproveRemaining)
+        let actions = await d.elementActions
+        XCTAssertEqual(actions.count, 1)
+    }
+
+    func testSpaceInFocusedBrowserTextFieldDoesNotBecomeSubmission() async {
+        let field = CUElement(id: "notes", role: "textfield", label: "Notes", focused: true)
+        let d = driver([field], app: "Safari")
+        let recorder = ActionPreviewRecorder()
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .pressKey, key: "space"),
+                AgentAction(verb: .done, reason: "inserted a space"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { preview in
+                await recorder.record(preview)
+                return true
+            }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let previews = await recorder.values
+        let actions = await d.elementActions
+        XCTAssertTrue(previews.isEmpty)
+        XCTAssertEqual(actions.count, 1)
+        XCTAssertEqual(result.formEvidence.submissionState, .notEncountered)
+    }
+
+    func testGenericContinueControlRequiresSubmissionApproval() async {
+        let control = CUElement(id: "continue", role: "group", label: "Continue")
+        let d = driver([control], app: "Safari")
+        let recorder = ActionPreviewRecorder()
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+                AgentAction(verb: .done, reason: "must not reach"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { preview in
+                await recorder.record(preview)
+                return false
+            }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let previews = await recorder.values
+        let actions = await d.elementActions
+        XCTAssertEqual(previews.count, 1)
+        XCTAssertTrue(actions.isEmpty)
+        XCTAssertEqual(result.formEvidence.submissionState, .readyForReview)
+    }
+
+    func testOrdinaryBrowserButtonDoesNotBecomeSubmissionBoundary() async {
+        let control = CUElement(id: "cancel", role: "button", label: "Cancel")
+        let d = driver([control], app: "Safari")
+        let recorder = ActionPreviewRecorder()
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+                AgentAction(verb: .done, reason: "cancelled"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { preview in
+                await recorder.record(preview)
+                return false
+            }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let previews = await recorder.values
+        let actions = await d.elementActions
+        XCTAssertTrue(previews.isEmpty)
+        XCTAssertEqual(actions.count, 1)
+        XCTAssertEqual(result.formEvidence.submissionState, .notEncountered)
+    }
+
+    func testMixedSubmitAndDismissalLabelStillRequiresApproval() async {
+        let control = CUElement(id: "save-close", role: "button", label: "Save and close")
+        let d = driver([control], app: "Safari")
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { _ in false }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let actions = await d.elementActions
+        XCTAssertTrue(actions.isEmpty)
+        XCTAssertEqual(result.formEvidence.submissionState, .readyForReview)
+    }
+
+    func testSecureTypedTextNeverAppearsInActivityFeed() async {
+        let canary = "activity-feed-secret-canary"
+        let field = CUElement(
+            id: "password",
+            role: "AXSecureTextField",
+            label: "Password",
+            focused: true
+        )
+        let d = driver([field], app: "Safari")
+        let feed = SubagentFeed(toolCallId: "secure", kindId: "computer_use", title: "secure input")
+        _ = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .type, target: AgentTarget(mark: 1), text: canary),
+                AgentAction(verb: .done, reason: "entered"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            feed: feed
+        )
+
+        let rendered = feed.currentEvents()
+            .flatMap { [$0.title, $0.detail ?? ""] }
+            .joined(separator: "\n")
+        XCTAssertFalse(rendered.contains(canary))
+    }
+
+    func testModelAuthoredNoteNeverAppearsInActivityFeed() async {
+        let canary = "note-secret-canary"
+        let d = driver([el("go", "button", "Go")])
+        let feed = SubagentFeed(toolCallId: "note", kindId: "computer_use", title: "note redaction")
+        _ = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1), note: canary),
+                AgentAction(verb: .done, reason: "complete"),
+            ]),
+            feed: feed
+        )
+
+        let rendered = feed.currentEvents()
+            .flatMap { [$0.title, $0.detail ?? ""] }
+            .joined(separator: "\n")
+        XCTAssertFalse(rendered.contains(canary))
+    }
+
+    func testBrowserSubmissionNoteNeverAppearsInActivityFeed() async {
+        let canary = "submission-note-secret-canary"
+        let d = driver([el("submit", "button", "Submit request")], app: "Safari")
+        let feed = SubagentFeed(toolCallId: "submit-note", kindId: "computer_use", title: "submit")
+        _ = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(
+                    verb: .click,
+                    target: AgentTarget(mark: 1),
+                    note: canary
+                ),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { _ in false },
+            feed: feed
+        )
+
+        let rendered = feed.currentEvents()
+            .flatMap { [$0.title, $0.detail ?? ""] }
+            .joined(separator: "\n")
+        XCTAssertFalse(rendered.contains(canary))
+    }
+
+    func testTypedNewlineSubmissionValueNeverAppearsInActivityFeedOrBindingLabel() async {
+        let canary = "typed-value-secret-canary\n"
+        let field = CUElement(
+            id: "message",
+            role: "AXTextField",
+            label: "Message",
+            focused: true
+        )
+        let d = driver([field], app: "Safari")
+        let feed = SubagentFeed(toolCallId: "typed-submit", kindId: "computer_use", title: "submit")
+        let recorder = ActionPreviewRecorder()
+        _ = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .type, target: AgentTarget(mark: 1), text: canary),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { preview in
+                await recorder.record(preview)
+                return false
+            },
+            feed: feed
+        )
+
+        let rendered = feed.currentEvents()
+            .flatMap { [$0.title, $0.detail ?? ""] }
+            .joined(separator: "\n")
+        XCTAssertFalse(rendered.contains(canary.trimmingCharacters(in: .newlines)))
+        let previews = await recorder.values
+        XCTAssertEqual(previews.first?.actionLabel, "Enter text")
+        guard case .oneShot(let binding) = previews.first?.approvalScope else {
+            return XCTFail("Typed newline submission must remain one-shot")
+        }
+        XCTAssertEqual(binding.actionLabel, "Enter text")
+        XCTAssertFalse(binding.actionLabel.contains(canary.trimmingCharacters(in: .newlines)))
+    }
+
+    func testAutonomousBrowserCommitControlsRequireOneShotApproval() async {
+        for (role, label) in [
+            ("button", "Buy now"),
+            ("button", "OK"),
+            ("button", "Save"),
+            ("button", "Done"),
+            ("button", "Subscribe"),
+            ("button", "Get started"),
+            ("button", "Login"),
+            ("button", "Go"),
+            ("button", "Search"),
+            ("button", "Signup"),
+            ("button", "送信"),
+            ("AXButton", nil),
+        ] as [(String, String?)] {
+            let d = driver([el("commit", role, label)], app: "Safari")
+            let recorder = ActionPreviewRecorder()
+            let result = await run(
+                d,
+                provider: ComputerUseLoop.scriptedProvider([
+                    AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+                    AgentAction(verb: .done, reason: "must not reach"),
+                ]),
+                gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+                confirm: { preview in
+                    await recorder.record(preview)
+                    return false
+                }
+            )
+
+            XCTAssertTrue(result.outcome.isSuccess, "Expected review stop for \(label ?? "icon-only control")")
+            let previews = await recorder.values
+            let actions = await d.elementActions
+            XCTAssertEqual(previews.count, 1)
+            XCTAssertTrue(actions.isEmpty)
+            XCTAssertEqual(result.formEvidence.submissionState, .readyForReview)
+        }
+    }
+
+    func testSetValueNewlineInBrowserRequiresOneShotApproval() async {
+        let d = driver([el("notes", "textfield", "Notes")], app: "Safari")
+        let recorder = ActionPreviewRecorder()
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .setValue, target: AgentTarget(mark: 1), text: "First line\nSecond line"),
+                AgentAction(verb: .done, reason: "must not reach"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { preview in
+                await recorder.record(preview)
+                return false
+            }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let previews = await recorder.values
+        let actions = await d.elementActions
+        XCTAssertEqual(previews.count, 1)
+        XCTAssertTrue(actions.isEmpty)
+        XCTAssertEqual(result.formEvidence.submissionState, .readyForReview)
+    }
+
+    func testApprovedNewlineEditDoesNotClaimSubmission() async {
+        let d = driver([el("notes", "textarea", "Notes")], app: "Safari")
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .setValue, target: AgentTarget(mark: 1), text: "First line\nSecond line"),
+                AgentAction(verb: .done, reason: "submitted"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { _ in true }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        XCTAssertEqual(result.formEvidence.submissionState, .actionExecutedUnverified)
+        let mapped = try? ComputerUseKind.mapOutcome(result, model: "test-model")
+        XCTAssertEqual(mapped?.payload["submission_performed"] as? Bool, false)
+        XCTAssertEqual(mapped?.payload["submission_verified"] as? Bool, false)
+        XCTAssertEqual(mapped?.payload["submission_may_have_occurred"] as? Bool, true)
+        XCTAssertTrue(mapped?.summary?.localizedCaseInsensitiveContains("may have submitted") == true)
+    }
+
+    func testGenericRoleSubmitSignalRequiresOneShotApproval() async {
+        let control = CUElement(id: "custom-submit", role: "AXGroup", label: "Submit request")
+        let d = driver([control], app: "Safari")
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { _ in false }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let actions = await d.elementActions
+        XCTAssertTrue(actions.isEmpty)
+        XCTAssertEqual(result.formEvidence.submissionState, .readyForReview)
+    }
+
+    func testLocalizedLinkInsideFormRequiresOneShotApproval() async {
+        let control = CUElement(
+            id: "localized-submit",
+            role: "link",
+            label: "Enviar",
+            path: "AXWebArea/form/actions"
+        )
+        let d = driver([control], app: "Safari")
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { _ in false }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let actions = await d.elementActions
+        XCTAssertTrue(actions.isEmpty)
+        XCTAssertEqual(result.formEvidence.submissionState, .readyForReview)
+    }
+
+    func testLocalizedRoleDescriptionButtonRequiresOneShotApproval() async {
+        let control = CUElement(
+            id: "localized-submit",
+            role: "AXGroup",
+            roleDescription: "button",
+            label: "Enviar"
+        )
+        let d = driver([control], app: "Safari")
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { _ in false }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let actions = await d.elementActions
+        XCTAssertTrue(actions.isEmpty)
+        XCTAssertEqual(result.formEvidence.submissionState, .readyForReview)
+    }
+
+    func testInterruptAfterApprovedActionPreservesSubmissionEvidence() async throws {
+        let d = driver([el("submit", "button", "Submit request")], app: "Safari")
+        let token = InterruptToken()
+        await d.setAfterNextAction { token.interrupt() }
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { _ in true },
+            interrupt: token
+        )
+
+        XCTAssertEqual(result.outcome, .interrupted)
+        XCTAssertEqual(result.formEvidence.submissionState, .acted)
+        do {
+            _ = try ComputerUseKind.mapOutcome(result, model: "test-model")
+            XCTFail("Interrupted run should map to a structured failure")
+        } catch let error as SubagentError {
+            let data = try XCTUnwrap(error.envelope(tool: "subagent").data(using: .utf8))
+            let envelope = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: data) as? [String: Any]
+            )
+            XCTAssertEqual(envelope["kind"] as? String, "user_denied")
+            XCTAssertEqual(envelope["retryable"] as? Bool, false)
+            XCTAssertEqual(envelope["submission_state"] as? String, "acted")
+            XCTAssertEqual(envelope["submission_performed"] as? Bool, true)
+            XCTAssertEqual(envelope["submission_may_have_occurred"] as? Bool, false)
+        }
+    }
+
+    func testFailureAfterApprovedActionPreservesSubmissionEvidence() async throws {
+        let d = driver([el("submit", "button", "Submit request")], app: "Safari")
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+                AgentAction(verb: .giveUp, reason: "verification unavailable"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { _ in true }
+        )
+
+        XCTAssertEqual(result.formEvidence.submissionState, .acted)
+        do {
+            _ = try ComputerUseKind.mapOutcome(result, model: "test-model")
+            XCTFail("Failed run should map to a structured failure")
+        } catch let error as SubagentError {
+            let data = try XCTUnwrap(error.envelope(tool: "subagent").data(using: .utf8))
+            let envelope = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: data) as? [String: Any]
+            )
+            XCTAssertEqual(envelope["kind"] as? String, "execution_error")
+            XCTAssertEqual(envelope["retryable"] as? Bool, false)
+            XCTAssertEqual(envelope["submission_state"] as? String, "acted")
+            XCTAssertEqual(envelope["submission_performed"] as? Bool, true)
+        }
+    }
+
+    func testSecureNewlinePreviewOmitsTypedSecret() async {
+        let secret = "correct horse\nbattery staple"
+        let secure = CUElement(
+            id: "password",
+            role: "AXSecureTextField",
+            label: "Password",
+            focused: true
+        )
+        let d = driver([secure], app: "Safari")
+        let recorder = ActionPreviewRecorder()
+        _ = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .type, target: AgentTarget(mark: 1), text: secret),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { preview in
+                await recorder.record(preview)
+                return false
+            }
+        )
+
+        let previews = await recorder.values
+        XCTAssertEqual(previews.count, 1)
+        XCTAssertNil(previews.first?.typedText)
+        XCTAssertFalse(previews.first?.summary.contains(secret) ?? false)
+    }
+
+    func testSecureEditConfirmationOmitsTypedSecretAndModelNote() async {
+        let secret = "ordinary-secure-edit-canary"
+        let secure = CUElement(
+            id: "password",
+            role: "AXSecureTextField",
+            label: "Password",
+            focused: true
+        )
+        let recorder = ActionPreviewRecorder()
+        _ = await run(
+            driver([secure], app: "Safari"),
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(
+                    verb: .type,
+                    target: AgentTarget(mark: 1),
+                    text: secret,
+                    note: "Use \(secret)"
+                ),
+            ]),
+            gate: HardwiredGate(),
+            confirm: { preview in
+                await recorder.record(preview)
+                return false
+            }
+        )
+
+        let preview = await recorder.values.first
+        XCTAssertNil(preview?.typedText)
+        XCTAssertNil(preview?.note)
+        XCTAssertFalse(preview?.summary.contains(secret) ?? false)
+        XCTAssertEqual(preview?.actionLabel, "Enter protected text")
+    }
+
+    func testKeyboardSubmissionRestoresApprovedTargetFocus() async {
+        let pid: Int32 = 4242
+        func snapshot(_ id: Int, focused: Bool) -> CUSnapshot {
+            CUSnapshot(
+                snapshotId: id,
+                pid: pid,
+                app: "Safari",
+                focusedWindow: "Request",
+                tier: .ax,
+                truncated: false,
+                windows: [],
+                elements: [
+                    CUElement(
+                        id: "submit",
+                        role: "button",
+                        label: "Submit request",
+                        focused: focused
+                    )
+                ],
+                image: nil
+            )
+        }
+        let d = MockMacDriver(
+            activeWindow: CUActiveWindow(
+                pid: pid,
+                app: "Safari",
+                title: "Request",
+                x: 0,
+                y: 0,
+                w: 800,
+                h: 600
+            ),
+            snapshots: [pid: [snapshot(1, focused: true), snapshot(2, focused: false)]]
+        )
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .pressKey, key: "space"),
+                AgentAction(verb: .done, reason: "submitted"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { _ in true }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let actions = await d.elementActions
+        XCTAssertEqual(actions.count, 2)
+        guard case .focus(let id) = actions[0] else {
+            return XCTFail("Expected the approved target to be focused before the key press")
+        }
+        XCTAssertEqual(id, "submit")
+        guard case .pressKey = actions[1] else {
+            return XCTFail("Expected the approved key press after focus restoration")
+        }
+    }
+
+    func testMappedReadyForReviewOutcomeReportsNoSubmission() throws {
+        var evidence = ComputerUseFormEvidence()
+        evidence.preparationState = .readyForReview
+        evidence.submissionState = .readyForReview
+        let runResult = ComputerUseRunResult(
+            outcome: .done(summary: "The form is ready for review."),
+            metrics: ComputerUseRunMetrics(),
+            formEvidence: evidence
+        )
+
+        let mapped = try ComputerUseKind.mapOutcome(runResult, model: "test-model")
+
+        XCTAssertEqual(mapped.payload["form_preparation_state"] as? String, "ready_for_review")
+        XCTAssertEqual(mapped.payload["submission_state"] as? String, "ready_for_review")
+        XCTAssertEqual(mapped.payload["submission_performed"] as? Bool, false)
+        XCTAssertEqual(mapped.payload["submission_verified"] as? Bool, false)
+    }
+
+    func testInterruptDuringSubmitApprovalPreventsPostCancelAction() async {
+        let d = driver([el("submit", "button", "Submit request")], app: "Safari")
+        let token = InterruptToken()
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1))
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { _ in
+                token.interrupt()
+                return true
+            },
+            interrupt: token
+        )
+
+        XCTAssertEqual(result.outcome, .interrupted)
+        let actions = await d.elementActions
+        XCTAssertTrue(actions.isEmpty)
+    }
+
+    func testChangedFormExpiresApprovalBeforeDriverAction() async {
+        let pid: Int32 = 4242
+        func snapshot(_ id: Int, submitLabel: String) -> CUSnapshot {
+            CUSnapshot(
+                snapshotId: id,
+                pid: pid,
+                app: "Safari",
+                focusedWindow: "Request",
+                tier: .ax,
+                truncated: false,
+                windows: [],
+                elements: [el("submit-\(id)", "button", submitLabel)],
+                image: nil
+            )
+        }
+        let d = MockMacDriver(
+            activeWindow: CUActiveWindow(
+                pid: pid,
+                app: "Safari",
+                title: "Request",
+                x: 0,
+                y: 0,
+                w: 800,
+                h: 600
+            ),
+            snapshots: [pid: [snapshot(1, submitLabel: "Submit request"), snapshot(2, submitLabel: "Pay now")]]
+        )
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+                AgentAction(verb: .done, reason: "stopped after refresh"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { _ in true }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        XCTAssertEqual(result.formEvidence.submissionState, .readyForReview)
+        let actions = await d.elementActions
+        XCTAssertTrue(actions.isEmpty)
+    }
+
+    func testTargetlessReturnCanExecuteAfterExactSnapshotApproval() async {
+        let field = CUElement(id: "email", role: "textfield", label: "Email", focused: false)
+        let d = driver([field], app: "Safari")
+        let recorder = ActionPreviewRecorder()
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .pressKey, key: "Return"),
+                AgentAction(verb: .done, reason: "submitted"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { preview in
+                await recorder.record(preview)
+                return true
+            }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let previews = await recorder.values
+        let actions = await d.elementActions
+        XCTAssertEqual(previews.count, 1)
+        XCTAssertEqual(actions.count, 1)
+        XCTAssertEqual(result.formEvidence.submissionState, .acted)
+    }
+
+    func testLocalizedUnknownSubmitLabelStopsWhenFormInputsArePresent() async {
+        let field = CUElement(id: "name", role: "textfield", label: "姓名")
+        let submit = CUElement(id: "submit", role: "button", label: "提交")
+        let d = driver([field, submit], app: "Safari")
+        let recorder = ActionPreviewRecorder()
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(describe: "提交")),
+                AgentAction(verb: .done, reason: "must not submit"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { preview in
+                await recorder.record(preview)
+                return false
+            }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let previews = await recorder.values
+        let actions = await d.elementActions
+        XCTAssertEqual(previews.count, 1)
+        XCTAssertTrue(actions.isEmpty)
+        XCTAssertEqual(result.formEvidence.submissionState, .readyForReview)
+    }
+
+    func testUnrelatedDynamicPageValueDoesNotExpireExactApproval() async {
+        let pid: Int32 = 4242
+        func snapshot(_ id: Int, clock: String) -> CUSnapshot {
+            CUSnapshot(
+                snapshotId: id,
+                pid: pid,
+                app: "Safari",
+                focusedWindow: "Checkout",
+                tier: .ax,
+                truncated: false,
+                windows: [],
+                elements: [
+                    CUElement(id: "name-\(id)", role: "textfield", label: "Name", value: "Ada"),
+                    CUElement(id: "submit-\(id)", role: "button", label: "Submit"),
+                    CUElement(id: "clock-\(id)", role: "statictext", label: "Clock", value: clock),
+                ],
+                image: nil
+            )
+        }
+        let d = MockMacDriver(
+            activeWindow: CUActiveWindow(
+                pid: pid,
+                app: "Safari",
+                title: "Checkout",
+                x: 0,
+                y: 0,
+                w: 800,
+                h: 600
+            ),
+            snapshots: [
+                pid: [
+                    snapshot(1, clock: "10:00"),
+                    snapshot(2, clock: "10:01"),
+                    snapshot(3, clock: "10:02"),
+                ],
+            ]
+        )
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(describe: "Submit")),
+                AgentAction(verb: .done, reason: "submitted"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { _ in true }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let actions = await d.elementActions
+        XCTAssertEqual(actions.count, 1)
+        XCTAssertEqual(result.formEvidence.submissionState, .acted)
+    }
+
+    func testApprovedStaleTargetNeverFallsBackToBlindCoordinates() async {
+        let submit = CUElement(
+            id: "submit",
+            role: "button",
+            label: "Submit",
+            x: 100,
+            y: 100,
+            w: 100,
+            h: 40
+        )
+        let d = driver([submit], app: "Safari")
+        await d.enqueueActionResults([
+            CUActionResult(success: false, error: "stale", stale: true),
+        ])
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .click, target: AgentTarget(mark: 1)),
+                AgentAction(verb: .done, reason: "stopped safely"),
+            ]),
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            confirm: { _ in true }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess)
+        let coordinateActions = await d.coordinateActions
+        let elementActions = await d.elementActions
+        XCTAssertTrue(coordinateActions.isEmpty)
+        XCTAssertEqual(elementActions.count, 1)
+        XCTAssertEqual(result.formEvidence.submissionState, .readyForReview)
     }
 
     // MARK: - Step cap
@@ -550,3 +1508,11 @@ private actor ModelStepInputRecorder {
 }
 
 private struct TestInferenceError: Error {}
+
+private actor ActionPreviewRecorder {
+    private(set) var values: [ActionPreview] = []
+
+    func record(_ preview: ActionPreview) {
+        values.append(preview)
+    }
+}

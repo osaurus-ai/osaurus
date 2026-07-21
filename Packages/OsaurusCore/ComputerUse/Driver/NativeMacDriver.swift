@@ -198,6 +198,11 @@ public struct NativeMacDriver: MacDriver {
                 }
                 return mapActionResult(r)
 
+            case let .focus(id):
+                return mapActionResult(
+                    ElementInteraction.shared.focusElementWithoutActivation(id: id)
+                )
+
             case let .setValue(id, value):
                 return mapActionResult(ElementInteraction.shared.setElementValue(id: id, value: value))
 
@@ -212,12 +217,11 @@ public struct NativeMacDriver: MacDriver {
                     ?? AccessibilityManager.shared.mostRecentPid()
 
                 if let elementId = id {
-                    let focusResult = ElementInteraction.shared.focusElement(id: elementId)
+                    let focusResult = ElementInteraction.shared.focusElementWithoutActivation(id: elementId)
                     if !focusResult.success { return mapActionResult(focusResult) }
                     if replace {
-                        // Best-effort clear; some fields aren't AX-clearable, in which
-                        // case typing simply appends.
-                        _ = ElementInteraction.shared.clearElement(id: elementId)
+                        let clearResult = ElementInteraction.shared.clearElement(id: elementId)
+                        if !clearResult.success { return mapActionResult(clearResult) }
                     }
                 }
 

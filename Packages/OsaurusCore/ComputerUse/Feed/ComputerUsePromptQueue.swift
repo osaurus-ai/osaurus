@@ -76,10 +76,10 @@ public final class ComputerUsePromptQueue: ObservableObject {
     /// this effect or higher. Cancellation-aware: if the run's Task is cancelled
     /// while suspended, the call resolves as denied so the loop never hangs.
     public func requestConfirmation(_ preview: ActionPreview, toolCallId: String) async -> Bool {
-        if let app = preview.appName, !app.isEmpty,
+        if preview.allowsApproveRemaining,
+            let app = preview.appName, !app.isEmpty,
             let ceiling = autoApprove[toolCallId]?[AutonomyPolicy.normalize(app)],
-            preview.effect <= ceiling
-        {
+            preview.effect <= ceiling {
             return true
         }
         let request = ConfirmRequest(toolCallId: toolCallId, preview: preview)
@@ -111,7 +111,8 @@ public final class ComputerUsePromptQueue: ObservableObject {
     /// preview has no app (nothing safe to scope the blanket approval to).
     public func resolveApprovingRest(id: UUID) {
         guard let request = pending.first(where: { $0.id == id }) else { return }
-        if let app = request.preview.appName, !app.isEmpty {
+        if request.preview.allowsApproveRemaining,
+            let app = request.preview.appName, !app.isEmpty {
             let key = AutonomyPolicy.normalize(app)
             var perApp = autoApprove[request.toolCallId] ?? [:]
             perApp[key] =
