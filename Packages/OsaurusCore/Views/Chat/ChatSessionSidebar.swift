@@ -210,6 +210,14 @@ struct ChatSessionSidebar: View {
             Divider()
                 .opacity(0.3)
 
+            // Batch action bar for the current multi-selection.
+            if !selectedIds.isEmpty {
+                selectionActionBar
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
             // Session list
             if sessions.isEmpty {
                 emptyState
@@ -232,6 +240,7 @@ struct ChatSessionSidebar: View {
         // sidebar's loadSession) is a context change — wipe per-window
         // filter state so the new agent starts on "All" with an empty
         // search instead of inheriting the previous agent's lens.
+        .animation(theme.animationQuick(), value: selectedIds)
         .onChange(of: searchQuery) { _, query in
             scheduleContentSearch(query)
         }
@@ -450,6 +459,106 @@ struct ChatSessionSidebar: View {
         .padding(.horizontal, 16)
         .padding(.top, 20)
         .padding(.bottom, 8)
+    }
+
+    // MARK: - Selection Action Bar
+
+    /// Batch actions for the current multi-selection: archive, delete, and a
+    /// trailing clear. Mirrors the per-row menu's destructive-delete flow but
+    /// operates on every selected id at once.
+    private var selectionActionBar: some View {
+        HStack(spacing: 8) {
+            Text("\(selectedIds.count) selected", bundle: .module)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+
+            Spacer(minLength: 4)
+
+            selectionBarButton(icon: "archivebox", help: "Archive", tint: theme.secondaryText) {
+                archiveSelected()
+            }
+            selectionBarButton(icon: "trash", help: "Delete", tint: .red) {
+                requestDeleteSelected()
+            }
+            selectionBarButton(icon: "xmark", help: "Clear Selection", tint: theme.secondaryText) {
+                clearSelection()
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous)
+                .fill(theme.accentColor.opacity(theme.isDark ? 0.16 : 0.10))
+        )
+    }
+
+    private func selectionBarButton(
+        icon: String,
+        help: String,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(tint)
+                .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
+                .background(
+                    RoundedRectangle(cornerRadius: SidebarStyle.actionButtonCornerRadius, style: .continuous)
+                        .fill(theme.secondaryBackground.opacity(0.5))
+                )
+        }
+        .buttonStyle(.plain)
+        .localizedHelp(help)
+    }
+
+    // MARK: - Batch Operations
+
+    /// Archives every selected session (idempotent per row) and clears the
+    /// selection. Archiving is non-destructive, so it skips the confirm.
+    private func archiveSelected() {
+        for id in selectedIds {
+            onSetArchived(id, true)
+        }
+        clearSelection()
+    }
+
+    /// Confirms once, then deletes every selected session. Honors the
+    /// per-session "don't ask again" opt-out just like the single-row flow.
+    private func requestDeleteSelected() {
+        let ids = selectedIds
+        guard !ids.isEmpty else { return }
+        if DeleteConfirmationPreference.shared.skipForSession {
+            performDelete(ids)
+            return
+        }
+        let requestId = UUID()
+        let scope = alertScope
+        let accessory = AnyView(DontAskAgainToggle())
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: "Delete Conversations?",
+                message: L("\(ids.count) conversations will be removed permanently. This can't be undone."),
+                accessory: accessory,
+                buttons: [
+                    .cancel(L("Cancel")),
+                    .destructive(L("Delete")) { performDelete(ids) },
+                ],
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
+    }
+
+    private func performDelete(_ ids: Set<UUID>) {
+        for id in ids {
+            onDelete(id)
+        }
+        clearSelection()
     }
 
     // MARK: - Empty State
