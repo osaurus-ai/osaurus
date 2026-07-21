@@ -156,8 +156,24 @@ public final class WindowManager: NSObject, ObservableObject {
         let originalLevel = isPinned ? NSWindow.Level.floating : NSWindow.Level.normal
         window.level = .screenSaver  // Higher than modalPanel
 
-        // Activate app and yank focus
-        NSApp.activate()
+        // Activate app and yank focus. Force activation (`ignoringOtherApps`)
+        // rather than the cooperative `NSApp.activate()`: as an `LSUIElement`
+        // accessory app whose main surface is a transient status-bar popover,
+        // Osaurus is usually not the active app when a window is opened from the
+        // popover (which since #2028 keys its own window instead of activating
+        // the app). Sequoia's stricter cooperative-activation rules then make
+        // `NSApp.activate()` a no-op, so the window is created but never comes
+        // to the front — the "Settings won't open" reports. Forcing activation
+        // is safe here because the popover is already closed by the time this
+        // runs (`closePopoverAndPerform`), so it can't retract a full-screen
+        // menu bar the way activating during popover-show would.
+        // Gated to the background case so behavior is unchanged whenever
+        // Osaurus is already frontmost (a no-op activation), and the forceful
+        // path only runs in the exact accessory-app-in-background scenario
+        // Sequoia was dropping.
+        if !NSApp.isActive {
+            NSApp.activate(ignoringOtherApps: true)
+        }
         if #available(macOS 14.0, *) {
             _ = NSRunningApplication.current.activate(options: .activateAllWindows)
         } else {
