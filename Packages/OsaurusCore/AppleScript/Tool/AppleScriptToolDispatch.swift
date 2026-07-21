@@ -45,8 +45,17 @@ enum AppleScriptToolDispatch {
         }
 
         let suppliedLiterals = literals(from: args)
-        let parsedLiterals = literalsForDispatch(task: request, literals: suppliedLiterals)
-        if let violation = literalContractViolation(task: request, literals: parsedLiterals) {
+        // The parent model may paraphrase a direct replacement request before
+        // calling this tool. The live 16B path proved that such a paraphrase
+        // can add an unrequested save and lose working-document anaphora. When
+        // (and only when) both texts encode the same exact two-value
+        // replacement, keep the persisted user turn authoritative.
+        let dispatchTask = authoritativeReplacementTask(
+            parentTask: request,
+            latestUserTask: latestUserTaskFromCurrentSession()
+        )
+        let parsedLiterals = literalsForDispatch(task: dispatchTask, literals: suppliedLiterals)
+        if let violation = literalContractViolation(task: dispatchTask, literals: parsedLiterals) {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message: violation.message,
@@ -74,7 +83,7 @@ enum AppleScriptToolDispatch {
         // the parent already supplied it through `content` / `contents`.
         // The helper now has one authoritative data channel and cannot
         // silently re-type or mutate the bytes while generating AppleScript.
-        let childRequest = taskForSubagent(request, literals: parsedLiterals)
+        let childRequest = taskForSubagent(dispatchTask, literals: parsedLiterals)
 
         return await SubagentSession.run(
             AppleScriptKind(
@@ -90,6 +99,38 @@ enum AppleScriptToolDispatch {
     struct LiteralContractViolation: Equatable {
         let field: String
         let message: String
+    }
+
+    /// Return the user's direct replacement wording when the parent tool task
+    /// describes the same exact old/new values. This prevents a model rewrite
+    /// from broadening side effects (for example, inventing `save`) while
+    /// preserving parent-resolved context for every ambiguous, anaphoric, or
+    /// non-replacement request. An explicit save in the user wording remains.
+    static func authoritativeReplacementTask(
+        parentTask: String,
+        latestUserTask: String?
+    ) -> String {
+        guard let latestUserTask else { return parentTask }
+        let userTask = latestUserTask.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !userTask.isEmpty,
+            let parentValues = exactReplacementLiterals(from: parentTask),
+            let userValues = exactReplacementLiterals(from: userTask),
+            replacementValues(parentValues) == replacementValues(userValues)
+        else { return parentTask }
+        debugLog("[AppleScript] kept matching latest user replacement task authoritative")
+        return userTask
+    }
+
+    private static func latestUserTaskFromCurrentSession() -> String? {
+        guard let rawSessionId = ChatExecutionContext.currentSessionId,
+            let sessionId = UUID(uuidString: rawSessionId),
+            let session = ChatHistoryDatabase.shared.loadSession(id: sessionId)
+        else { return nil }
+        return session.turns.last(where: { $0.role == .user })?.content
+    }
+
+    private static func replacementValues(_ literals: AppleScriptLiterals) -> Set<String> {
+        Set(literals.names.compactMap { literals.value(for: $0) })
     }
 
     /// Recover the confirmed parent-model failure where a complete generated
@@ -222,6 +263,13 @@ enum AppleScriptToolDispatch {
             trimmedSeparator == "to"
             && trimmedBeforeOld.range(of: #"\bchange\b"#, options: .regularExpression) != nil
             && trimmedBeforeOld.range(of: #"\bfrom$"#, options: .regularExpression) != nil
+        let changeOccurrenceForm =
+            trimmedSeparator == "to"
+            && trimmedBeforeOld.range(of: #"\bchange\b"#, options: .regularExpression) != nil
+            && trimmedBeforeOld.range(
+                of: #"\boccurrences?\s+of$"#,
+                options: .regularExpression
+            ) != nil
         let containingThenReplaceForm =
             trimmedBeforeOld.range(
                 of: #"\b(?:file|document)\s+containing$"#,
@@ -231,7 +279,9 @@ enum AppleScriptToolDispatch {
                 of: #"^(?:and\s+)?replace\s+(?:that|the|this)\s+(?:text|content|string|value)\s+with$"#,
                 options: .regularExpression
             ) != nil
-        guard replaceForm || changeForm || containingThenReplaceForm else { return nil }
+        guard replaceForm || changeForm || changeOccurrenceForm || containingThenReplaceForm else {
+            return nil
+        }
 
         return AppleScriptLiterals([
             "oldText": quoted[0].value,

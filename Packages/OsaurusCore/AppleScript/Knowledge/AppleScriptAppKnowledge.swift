@@ -133,6 +133,7 @@ public enum AppleScriptAppKnowledge {
     private static func mentionsWorkingDocument(_ task: String) -> Bool {
         let lower = task.lowercased()
         return lower.contains("the file") || lower.contains("this file")
+            || lower.contains("the text file") || lower.contains("this text file")
             || lower.contains("current file") || lower.contains("open file")
             || lower.contains("the document") || lower.contains("this document")
             || lower.contains("current document") || lower.contains("open document")

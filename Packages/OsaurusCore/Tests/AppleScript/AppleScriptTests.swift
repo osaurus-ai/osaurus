@@ -607,6 +607,53 @@ struct AppleScriptToolDispatchLiteralsTests {
         )
     }
 
+    @Test("matching direct user replacement overrides a parent rewrite that invents save")
+    func directUserReplacementStaysAuthoritative() {
+        let userTask = "Change the text in the file from “Hello from OracHQ” to “Hello again”."
+        let parentTask =
+            "Open the text file, change every occurrence of \"Hello from OracHQ\" to "
+            + "\"Hello again\", and save."
+        #expect(
+            AppleScriptToolDispatch.authoritativeReplacementTask(
+                parentTask: parentTask,
+                latestUserTask: userTask
+            ) == userTask
+        )
+
+        let inferred = AppleScriptToolDispatch.literalsForDispatch(
+            task: parentTask,
+            literals: AppleScriptLiterals()
+        )
+        #expect(inferred.value(for: "oldText") == "Hello from OracHQ")
+        #expect(inferred.value(for: "newText") == "Hello again")
+    }
+
+    @Test("authoritative replacement reconciliation is exact and preserves explicit user save")
+    func authoritativeReplacementDoesNotBroaden() {
+        let parentTask =
+            "Open the text file, change every occurrence of \"one\" to \"two\", and save."
+        #expect(
+            AppleScriptToolDispatch.authoritativeReplacementTask(
+                parentTask: parentTask,
+                latestUserTask: "Please open it."
+            ) == parentTask
+        )
+        #expect(
+            AppleScriptToolDispatch.authoritativeReplacementTask(
+                parentTask: parentTask,
+                latestUserTask: "Change the text in the file from “other” to “two”."
+            ) == parentTask
+        )
+
+        let explicitSave = "Change the text in the file from “one” to “two”, then save it."
+        #expect(
+            AppleScriptToolDispatch.authoritativeReplacementTask(
+                parentTask: parentTask,
+                latestUserTask: explicitSave
+            ) == explicitSave
+        )
+    }
+
     @Test("exact replacement data is app-independent but ambiguous grammar remains task-only")
     func ambiguousReplacementDoesNotInferLiterals() {
         let notes = AppleScriptToolDispatch.literalsForDispatch(
@@ -2825,6 +2872,13 @@ struct AppleScriptAppKnowledgeTests {
             runningAppNames: ["TextEdit", "Finder"]
         )
         #expect(fileTask == ["TextEdit"])
+
+        let textFileTask = AppleScriptAppKnowledge.detectTargetApps(
+            task: "Open the text file and replace its contents",
+            frontmost: "TextEdit",
+            runningAppNames: ["TextEdit", "Finder"]
+        )
+        #expect(textFileTask == ["TextEdit"])
 
         let documentTask = AppleScriptAppKnowledge.detectTargetApps(
             task: "Replace the document text without saving",
