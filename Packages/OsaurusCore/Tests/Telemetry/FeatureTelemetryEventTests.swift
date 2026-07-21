@@ -386,6 +386,31 @@ struct FeatureTelemetryEventTests {
         #expect(event.props["is_vlm"] as? Bool == true)
     }
 
+    @Test func computerUseRun_carries_context_preflight_flags() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        var metrics = ComputerUseRunMetrics()
+        metrics.contextPreflightChecks = 1
+        metrics.contextPreflightConfirms = 1
+        metrics.contextPreflightBlocks = 1
+        metrics.blocked = 1
+
+        FeatureTelemetry.computerUseRun(metrics, outcome: "failed", service: service)
+
+        let event = rec.events[0]
+        #expect(event.name == "computer_use_run")
+        let props = business(event.props)
+        #expect(props["outcome"] as? String == "failed")
+        #expect(props["had_block"] as? Bool == true)
+        #expect(props["preflight_checked"] as? Bool == true)
+        #expect(props["preflight_confirmed"] as? Bool == true)
+        #expect(props["preflight_blocked"] as? Bool == true)
+        #expect(props["cloud_vision_used"] as? Bool == false)
+        #expect(props["goal"] == nil)
+        #expect(props["app"] == nil)
+    }
+
     @Test func providerAdded_events_carry_only_type_and_transport() {
         let (service, rec, cleanup) = makeRecordingService()
         defer { cleanup() }
