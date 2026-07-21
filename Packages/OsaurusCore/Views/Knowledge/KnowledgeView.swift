@@ -477,6 +477,7 @@ struct KnowledgeView: View {
 
 private struct KnowledgeCollectionCard: View {
     @Environment(\.theme) private var theme
+    @ObservedObject private var agentManager = AgentManager.shared
 
     let collection: KnowledgeCollection
     let animationDelay: Double
@@ -521,6 +522,60 @@ private struct KnowledgeCollectionCard: View {
         case .nonconforming: return .orange
         case .unknown: return theme.secondaryText
         }
+    }
+
+    /// Agents that can actually reach this collection: knowledge on and the
+    /// collection granted. Keeps the manager's display order so the stacked
+    /// avatars stay stable across redraws.
+    private var grantedAgents: [Agent] {
+        agentManager.agents
+            .filter { $0.settings.knowledgeEnabled && $0.settings.knowledgeCollectionIds.contains(collection.id) }
+    }
+
+    /// Overlapping avatars of the agents with access, capped so the row stays
+    /// compact, followed by an "N agents" count. Surfaces the grant at a
+    /// glance instead of hiding it inside each agent's settings.
+    @ViewBuilder
+    private var grantedAgentsRow: some View {
+        let agents = grantedAgents
+        let shown = Array(agents.prefix(4))
+        HStack(spacing: 6) {
+            if agents.isEmpty {
+                Image(systemName: "person.slash")
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+                Text("No agents with access", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            } else {
+                HStack(spacing: -8) {
+                    ForEach(shown) { agent in
+                        AgentAvatarView(
+                            mascotId: agent.avatar,
+                            name: agent.name,
+                            tint: theme.accentColor,
+                            diameter: 20,
+                            customImageURL: agent.customAvatarURL,
+                            monogramFontSize: 9,
+                            borderWidth: 0
+                        )
+                        .overlay(Circle().stroke(theme.secondaryBackground, lineWidth: 1.5))
+                    }
+                }
+                Text(
+                    agents.count == 1
+                        ? L("1 agent")
+                        : String(format: L("%lld agents"), agents.count)
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+            }
+        }
+        .help(
+            agents.isEmpty
+                ? L("No agents can use this collection yet")
+                : L("Agents with access: \(agents.map(\.name).joined(separator: ", "))")
+        )
     }
 
     private var okfHelp: String {
@@ -592,6 +647,7 @@ private struct KnowledgeCollectionCard: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
+            grantedAgentsRow
             Button(action: {
                 onValidateOKF()
                 Task { await refreshOKFStatus() }

@@ -3407,6 +3407,40 @@
         }
       }
     },
+    "%lld agents" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Agenten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트 %lld개"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld агентов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个智能体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 個智能體"
+          }
+        }
+      }
+    },
     "%lld artifacts" : {
       "localizations" : {
         "de" : {
@@ -8755,6 +8789,40 @@
         }
       },
       "shouldTranslate" : false
+    },
+    "1 agent" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 Agent"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트 1개"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 агент"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 个智能体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 個智能體"
+          }
+        }
+      }
     },
     "1 artifact" : {
       "localizations" : {
@@ -15981,6 +16049,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "智能體會安全地運行 shell 命令"
+          }
+        }
+      }
+    },
+    "Agents with access: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agenten mit Zugriff: %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "접근 권한이 있는 에이전트: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агенты с доступом: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有访问权限的智能体：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有存取權限的智能體：%@"
           }
         }
       }
@@ -101394,6 +101496,40 @@
         }
       }
     },
+    "No agents can use this collection yet" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch kann kein Agent diese Sammlung verwenden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아직 이 컬렉션을 사용할 수 있는 에이전트가 없습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока ни один агент не может использовать эту коллекцию"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无智能体可以使用此集合"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚無智能體可以使用此集合"
+          }
+        }
+      }
+    },
     "No agents configured. Create an agent first." : {
       "localizations" : {
         "de" : {
@@ -101458,6 +101594,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "尚無可授予的智能體。請先建立智能體，然後在其「特性」部分中為其啟用知識。"
+          }
+        }
+      }
+    },
+    "No agents with access" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kein Agent hat Zugriff"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "접근 권한이 있는 에이전트 없음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет агентов с доступом"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无有权限的智能体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無有權限的智能體"
           }
         }
       }
