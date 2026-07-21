@@ -1,0 +1,43 @@
+{
+  "id": "browseruse.form-fill",
+  "domain": "subagent",
+  "label": "BrowserUse • fill and submit a contact form",
+  "query": "Go to https://fixtures.local/contact and submit the contact form with name 'Ada Lovelace' and email 'ada@example.com'.",
+  "notes": "LIVE. The run model drives the REAL browser_use host against FixtureBrowserWorld — pages and snapshots are deterministic, so a failure attributes to the model's planning/ref use, not network or rendering. The core harness signal: navigate, type into both fields (refs from the snapshot), submit, and confirm the thanks page.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "browser_use",
+      "maxSteps": 12,
+      "pages": [
+        {
+          "url": "https://fixtures.local/contact",
+          "title": "Contact Us",
+          "bodyText": "Contact us. Fill in your name and email, then press Send.",
+          "elements": [
+            { "id": "name", "type": "input", "text": "Name", "placeholder": "Your name" },
+            { "id": "email", "type": "input", "text": "Email", "placeholder": "you@example.com" },
+            { "id": "newsletter", "type": "checkbox", "text": "Subscribe to newsletter" },
+            { "id": "send", "type": "button", "text": "Send", "goto": "https://fixtures.local/thanks" }
+          ]
+        },
+        {
+          "url": "https://fixtures.local/thanks",
+          "title": "Thank You",
+          "bodyText": "Thanks! Your message has been sent.",
+          "elements": []
+        }
+      ],
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "browser_use",
+      "successValues": [
+        { "id": "name", "contains": "Ada Lovelace" },
+        { "id": "email", "contains": "ada@example.com" }
+      ],
+      "successClicked": ["send"],
+      "failIfClicked": ["newsletter"],
+      "expectVerbsInOrder": ["navigate", "type"]
+    }
+  }
+}

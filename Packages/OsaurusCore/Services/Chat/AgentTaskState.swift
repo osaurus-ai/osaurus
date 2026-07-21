@@ -177,7 +177,7 @@ public final class AgentTaskState {
     /// configuration deliberately do not reset the search budget: the live
     /// Bonsai loop used those as a detour and resumed rephrased discovery.
     private static let webDiscoveryProgressTools: Set<String> = [
-        "search_and_extract", "render_chart", "browser_do", "http_request",
+        "search_and_extract", "render_chart", "browser_use", "http_request",
         "file_read", "sandbox_read_file", "shell_run", "sandbox_exec",
     ]
 

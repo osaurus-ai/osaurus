@@ -168,7 +168,7 @@ struct OpenAICompatibleStreamParserTests {
         #expect(invocation.jsonArguments.utf8.count > contentBytes)
     }
 
-    @Test func parser_doesNotDispatchNamedToolSlotWithNoArgumentBytes() {
+    @Test func parser_doesNotDispatchNamedToolSlotWithNoArgumentBytesOnAbruptEnd() {
         let accumulated: [Int: RemoteProviderService.StreamingState.ToolSlot] = [
             0: (
                 id: "call_empty",
@@ -178,9 +178,11 @@ struct OpenAICompatibleStreamParserTests {
             )
         ]
 
+        // Abrupt end (no declared finish): zero argument bytes means the
+        // stream was cut before the first argument event — quarantine.
         let result = OpenAICompatibleToolCallAccumulator.resolveAccumulatedToolCall(
             from: accumulated,
-            finishMarker: "tool_calls"
+            finishMarker: "stream-end"
         )
 
         guard case .truncated(let error) = result else {
@@ -188,6 +190,65 @@ struct OpenAICompatibleStreamParserTests {
             return
         }
         #expect(error.localizedDescription.contains("received 0 bytes"))
+    }
+
+    @Test func parser_dispatchesNoArgumentToolCallOnDeclaredFinish() {
+        // Anthropic-style upstreams emit a no-input tool_use with ZERO
+        // argument deltas. When the provider declares the finish, that is a
+        // real no-argument call — `{}` — not a truncated stream. (Observed
+        // live: Claude calling `browser_read_page` failed every retry with
+        // "received 0 bytes" until declared finishes were distinguished.)
+        let accumulated: [Int: RemoteProviderService.StreamingState.ToolSlot] = [
+            0: (
+                id: "call_noargs",
+                name: "browser_read_page",
+                args: "",
+                thoughtSignature: nil
+            )
+        ]
+
+        let result = OpenAICompatibleToolCallAccumulator.resolveAccumulatedToolCall(
+            from: accumulated,
+            finishMarker: "finish_reason=tool_calls",
+            emptyArgsAreComplete: true
+        )
+
+        guard case .ready(let invocations) = result, let invocation = invocations.first else {
+            Issue.record("Expected a no-argument call to dispatch on a declared finish, got \(result)")
+            return
+        }
+        #expect(invocation.toolName == "browser_read_page")
+        #expect(invocation.jsonArguments == "{}")
+    }
+
+    /// The full router wire shape that failed live: a name-only tool-call
+    /// delta (no `arguments` field at all) followed by a clean
+    /// `finish_reason=tool_calls` must dispatch the call with `{}` args.
+    @Test func parser_nameOnlyToolCallDeltaThenToolCallsFinishDispatches() throws {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        let start =
+            #"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"toolu_01","type":"function","function":{"name":"browser_read_page"}}]},"finish_reason":null}]}"#
+        _ = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(start.utf8),
+            options: .routerCompatible,
+            state: &state,
+            yield: { _ in }
+        )
+
+        let finish = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(#"{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#.utf8),
+            options: .routerCompatible,
+            state: &state,
+            yield: { _ in }
+        )
+
+        guard case .finishWithToolCall(let invocations) = finish, let invocation = invocations.first
+        else {
+            Issue.record("Expected the no-argument tool call to dispatch, got \(finish)")
+            return
+        }
+        #expect(invocation.toolName == "browser_read_page")
+        #expect(invocation.jsonArguments == "{}")
     }
 
     @Test func parser_lengthFinishRejectsEvenSyntacticallyCompletePendingTool() throws {

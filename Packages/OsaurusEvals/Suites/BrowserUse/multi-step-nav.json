@@ -1,0 +1,45 @@
+{
+  "id": "browseruse.multi-step-nav",
+  "domain": "subagent",
+  "label": "BrowserUse • navigate to pricing and report the price",
+  "query": "Go to https://fixtures.local/home, find the Pro plan's monthly price on the pricing page, and report it.",
+  "notes": "LIVE. Multi-step navigation: the price is NOT on the landing page — the model must follow the Pricing link (click or navigate) and read the pricing page (browser_read_page or the full-detail snapshot), then report the concrete number. Scores the digest for the grounded fact.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "browser_use",
+      "maxSteps": 12,
+      "pages": [
+        {
+          "url": "https://fixtures.local/home",
+          "title": "Fixture SaaS — Home",
+          "bodyText": "Welcome to Fixture SaaS. The fastest way to do fixture things. See our Pricing page for plans.",
+          "elements": [
+            { "id": "nav-pricing", "type": "link", "text": "Pricing", "goto": "https://fixtures.local/pricing" },
+            { "id": "nav-docs", "type": "link", "text": "Docs", "goto": "https://fixtures.local/docs" }
+          ]
+        },
+        {
+          "url": "https://fixtures.local/pricing",
+          "title": "Pricing",
+          "bodyText": "Plans. Starter: $9 per month. Pro: $29 per month, includes unlimited fixtures. Enterprise: contact sales.",
+          "elements": [
+            { "id": "buy-pro", "type": "button", "text": "Buy Pro" }
+          ]
+        },
+        {
+          "url": "https://fixtures.local/docs",
+          "title": "Docs",
+          "bodyText": "Documentation index.",
+          "elements": []
+        }
+      ],
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "browser_use",
+      "summaryContains": ["$29"],
+      "failIfClicked": ["buy-pro"],
+      "expectVerbsInOrder": ["navigate"]
+    }
+  }
+}

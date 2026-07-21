@@ -777,6 +777,22 @@ public enum SystemPromptTemplates {
         - Use it for desktop UI automation (filling a form, navigating an app, extracting on-screen content), NOT for shell, files, or web requests — those have dedicated tools.
         """
 
+    /// Browser Use grounding. Rendered only when the `browser_use` tool
+    /// actually resolves into the schema (per-agent opt-in via
+    /// `browserUseEnabled`; the Default agent opts in from Settings →
+    /// Browser). Mirrors the tool's contract: one whole-task `goal`, a
+    /// persistent per-agent signed-in session, and the read-auto /
+    /// edit-confirm autonomy gate — stated plainly, not coerced.
+    public static let browserUseGuidance = """
+        ## Browser use
+
+        - You can browse the web for the user with `browser_use` — it drives a real, persistent browser session that belongs to this agent (cookies and sign-ins survive across chats), navigating, reading pages, clicking, and filling forms.
+        - Describe the WHOLE task in a single `goal`. It runs a self-contained subagent that perceives each page, acts, and verifies on its own and returns a summary — do not try to script individual clicks from here.
+        - Reads and ordinary navigation run automatically; typing into pages and anything consequential (submitting, purchasing, sending, deleting, signing in) pause for the user to approve. Write the goal plainly and let that gate handle confirmation.
+        - If a site needs the user to sign in, the subagent opens a secure sign-in window — NEVER ask the user for passwords or 2FA codes in chat.
+        - Use it for interacting with websites (checking a dashboard, filling a web form, extracting page content behind a login), NOT for simple lookups — `web_search` is faster for those.
+        """
+
     /// Authoritative image directive (generate + edit). Schema-gated on `image`
     /// in the composer, so it only renders when the tool is actually callable;
     /// the composer swaps in the generation-only variant below when no ready

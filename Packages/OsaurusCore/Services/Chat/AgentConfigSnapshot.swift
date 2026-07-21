@@ -107,6 +107,11 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// `resolveTools` — `computer_use` is stripped in BOTH auto and manual
     /// mode unless the agent has opted in.
     public let computerUseEnabled: Bool
+    /// Per-agent opt-in for Browser Use. Enforced authoritatively in
+    /// `resolveTools` like `computer_use` — `browser_use` is stripped in BOTH
+    /// auto and manual mode unless the agent has opted in. The Default agent's
+    /// value comes from `BrowserConfigurationStore` (Settings → Browser).
+    public let browserUseEnabled: Bool
     /// Per-agent opt-in for `spawn`. Enforced authoritatively in `resolveTools`
     /// — stripped unless the agent has opted in AND has at least one spawnable
     /// agent (`spawnableAgentNames`), ANDed with the global master gate. The
@@ -163,6 +168,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         webSearchEnabled: Bool = true,
         selfSchedulingEnabled: Bool = false,
         computerUseEnabled: Bool = false,
+        browserUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
         appleScriptEnabled: Bool = false,
@@ -189,6 +195,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.webSearchEnabled = webSearchEnabled
         self.selfSchedulingEnabled = selfSchedulingEnabled
         self.computerUseEnabled = computerUseEnabled
+        self.browserUseEnabled = browserUseEnabled
         self.spawnDelegationEnabled = spawnDelegationEnabled
         self.imageEnabled = imageEnabled
         self.appleScriptEnabled = appleScriptEnabled
@@ -237,6 +244,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             webSearchEnabled: caps.webSearchEnabled,
             selfSchedulingEnabled: caps.selfSchedulingEnabled,
             computerUseEnabled: caps.computerUseEnabled,
+            browserUseEnabled: caps.browserUseEnabled,
             spawnDelegationEnabled: caps.spawnDelegationEnabled,
             imageEnabled: caps.imageEnabled,
             appleScriptEnabled: caps.appleScriptEnabled,

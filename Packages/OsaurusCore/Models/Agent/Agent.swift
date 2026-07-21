@@ -500,6 +500,11 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// Use: `computerUseEnabled && AgentSettings.screenContextEnabled`, so it
     /// is always false when Computer Use is off (including the Default agent).
     public var screenContextEnabled: Bool
+    /// Browser Use (`browser_use` entry tool) exposed to the model. Custom
+    /// agents opt in per-agent (`AgentSettings.browserUseEnabled`); the
+    /// Default agent's opt-in lives in `BrowserConfigurationStore` (edited
+    /// from Settings → Browser).
+    public var browserUseEnabled: Bool
     /// Spawn (`spawn`) exposed to the model — per-agent opt-in.
     public var spawnDelegationEnabled: Bool
     /// Image (`image`) exposed to the model — per-agent opt-in, split from
@@ -546,6 +551,7 @@ public struct AgentCapabilities: Sendable, Equatable {
         selfSchedulingEnabled: Bool,
         computerUseEnabled: Bool = false,
         screenContextEnabled: Bool = false,
+        browserUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
         appleScriptEnabled: Bool = false,
@@ -566,6 +572,7 @@ public struct AgentCapabilities: Sendable, Equatable {
         self.selfSchedulingEnabled = selfSchedulingEnabled
         self.computerUseEnabled = computerUseEnabled
         self.screenContextEnabled = screenContextEnabled
+        self.browserUseEnabled = browserUseEnabled
         self.spawnDelegationEnabled = spawnDelegationEnabled
         self.imageEnabled = imageEnabled
         self.appleScriptEnabled = appleScriptEnabled
@@ -817,6 +824,13 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// `computerUseEnabled` (see `AgentManager.effectiveCapabilities`), so it is
     /// inert while Computer Use is off — including the Default agent.
     public var screenContextEnabled: Bool
+    /// Per-agent opt-in for Browser Use (the `browser_use` entry tool that
+    /// drives an isolated per-agent WebKit session). Default off; gated
+    /// authoritatively in `resolveTools` (stripped in BOTH auto and manual
+    /// mode unless enabled). The built-in Default agent has no per-agent
+    /// settings editor, so its opt-in lives in `BrowserConfigurationStore`
+    /// (Settings → Browser) instead of here.
+    public var browserUseEnabled: Bool
     /// Per-agent opt-in for the `spawn` tool. Default off; gated
     /// authoritatively in `resolveTools` (stripped unless enabled AND the agent
     /// has at least one spawnable agent). The global `SubagentConfiguration`
@@ -911,6 +925,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         computerUseEnabled: Bool = false,
         computerUseCeiling: AutonomyCeiling? = nil,
         screenContextEnabled: Bool = true,
+        browserUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
         appleScriptEnabled: Bool = false,
@@ -942,6 +957,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.computerUseEnabled = computerUseEnabled
         self.computerUseCeiling = computerUseCeiling
         self.screenContextEnabled = screenContextEnabled
+        self.browserUseEnabled = browserUseEnabled
         self.spawnDelegationEnabled = spawnDelegationEnabled
         self.imageEnabled = imageEnabled
         self.appleScriptEnabled = appleScriptEnabled
@@ -1002,6 +1018,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         // context unless explicitly turned off. Older agent JSON predates the
         // flag (the feature was global), so missing decodes to on.
         screenContextEnabled = try c.decodeIfPresent(Bool.self, forKey: .screenContextEnabled) ?? true
+        // Default off; back-compat for agents that predate native Browser Use.
+        browserUseEnabled = try c.decodeIfPresent(Bool.self, forKey: .browserUseEnabled) ?? false
         spawnDelegationEnabled =
             try c.decodeIfPresent(Bool.self, forKey: .spawnDelegationEnabled) ?? false
         // Default off; spawn/image delegation is pre-release so there is no
@@ -1089,6 +1107,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case computerUseEnabled
         case computerUseCeiling
         case screenContextEnabled
+        case browserUseEnabled
         case spawnDelegationEnabled
         case imageEnabled
         case appleScriptEnabled
@@ -1125,6 +1144,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(computerUseEnabled, forKey: .computerUseEnabled)
         try c.encodeIfPresent(computerUseCeiling, forKey: .computerUseCeiling)
         try c.encode(screenContextEnabled, forKey: .screenContextEnabled)
+        try c.encode(browserUseEnabled, forKey: .browserUseEnabled)
         try c.encode(spawnDelegationEnabled, forKey: .spawnDelegationEnabled)
         try c.encode(imageEnabled, forKey: .imageEnabled)
         try c.encode(appleScriptEnabled, forKey: .appleScriptEnabled)

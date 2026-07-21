@@ -450,6 +450,20 @@ public enum SettingsSearchIndex {
             title: "Computer Use",
             keywords: ["screen control", "cursor", "automation", "accessibility", "per-app"]
         ),
+        .init(
+            id: "browser.enable",
+            tab: .browser,
+            title: "Browser Use",
+            keywords: [
+                "browser", "web", "browse", "session", "sign in", "login", "cookies", "webkit",
+            ]
+        ),
+        .init(
+            id: "browser.sessions",
+            tab: .browser,
+            title: "Browser Sessions",
+            keywords: ["sessions", "profiles", "signed in", "reset browser", "browsing data"]
+        ),
 
         // MARK: Channels / Integrations
         .init(

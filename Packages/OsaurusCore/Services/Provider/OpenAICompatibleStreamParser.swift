@@ -238,9 +238,13 @@ struct OpenAICompatibleToolCallAccumulator {
 
     static func resolveAccumulatedToolCall(
         from accumulated: [Int: RemoteProviderService.StreamingState.ToolSlot],
-        finishMarker: String
+        finishMarker: String,
+        emptyArgsAreComplete: Bool = false
     ) -> RemoteProviderService.AccumulatedToolCallResult {
-        let resolved = makeToolInvocations(from: accumulated)
+        let resolved = makeToolInvocations(
+            from: accumulated,
+            emptyArgsAreComplete: emptyArgsAreComplete
+        )
         guard !resolved.isEmpty else { return .none }
         // Repaired args on ANY slot mean the stream was cut mid-argument —
         // dispatching a partial batch would lock a half-real parallel call
@@ -263,13 +267,17 @@ struct OpenAICompatibleToolCallAccumulator {
     /// all of them are dispatched, matching the local vmlx path. Slots that
     /// never received a function name cannot be dispatched and are skipped.
     static func makeToolInvocations(
-        from accumulated: [Int: RemoteProviderService.StreamingState.ToolSlot]
+        from accumulated: [Int: RemoteProviderService.StreamingState.ToolSlot],
+        emptyArgsAreComplete: Bool = false
     ) -> [(invocation: ServiceToolInvocation, wasRepaired: Bool)] {
         accumulated
             .sorted { $0.key < $1.key }
             .compactMap { _, slot in
                 guard let name = slot.name else { return nil }
-                let validated = validateToolCallJSON(slot.args)
+                let validated = validateToolCallJSON(
+                    slot.args,
+                    emptyArgsAreComplete: emptyArgsAreComplete
+                )
                 return (
                     ServiceToolInvocation(
                         toolName: name,
@@ -309,15 +317,23 @@ struct OpenAICompatibleToolCallAccumulator {
         return idx
     }
 
-    static func validateToolCallJSON(_ json: String) -> ValidatedToolCallJSON {
+    static func validateToolCallJSON(
+        _ json: String,
+        emptyArgsAreComplete: Bool = false
+    ) -> ValidatedToolCallJSON {
         let trimmed = json.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Providers represent a real no-argument call as the explicit JSON
-        // object `{}`. A named slot that reaches finish with zero argument
-        // bytes instead means its argument event was buffered, dropped, or
-        // truncated. Mark it repaired so dispatch quarantines the call instead
-        // of inventing `{}` and producing a misleading schema error.
+        // Zero argument bytes on a named slot is ambiguous. On an ABRUPT end
+        // (connection cut before any argument event; `emptyArgsAreComplete`
+        // false) it means truncation — mark it repaired so dispatch
+        // quarantines the call instead of inventing `{}` and producing a
+        // misleading schema error. But when the provider DECLARED the finish
+        // (`finish_reason=tool_calls`, Anthropic `message_stop`, …) it is a
+        // real no-argument call: Anthropic-style upstreams emit a no-input
+        // `tool_use` with no argument deltas at all (observed live: Claude
+        // calling the zero-required-parameter `browser_read_page` failed
+        // every retry with "received 0 bytes" until this distinction).
         guard !trimmed.isEmpty else {
-            return ValidatedToolCallJSON(json: "{}", wasRepaired: true)
+            return ValidatedToolCallJSON(json: "{}", wasRepaired: !emptyArgsAreComplete)
         }
 
         if let data = trimmed.data(using: .utf8),
@@ -660,7 +676,11 @@ struct OpenAICompatibleStreamParser {
             }
             switch OpenAICompatibleToolCallAccumulator.resolveAccumulatedToolCall(
                 from: state.accumulatedToolCalls,
-                finishMarker: "finish_reason=\(finishReason)"
+                finishMarker: "finish_reason=\(finishReason)",
+                // The provider declared this finish (length was handled
+                // above), so a zero-byte argument slot is a genuine
+                // no-argument call, not a cut stream.
+                emptyArgsAreComplete: true
             ) {
             case .none: break
             case .ready(let inv):

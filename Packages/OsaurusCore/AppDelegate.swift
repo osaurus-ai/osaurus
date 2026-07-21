@@ -372,6 +372,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 // of osaurus.search plugin keys runs at launch, not lazily on
                 // the first web_search call / Settings visit.
                 _ = SearchProviderManager.shared
+                // Same for the superseded osaurus.browser plugin: copy each
+                // agent's exact WebKit profile UUID into the native session
+                // catalog so existing sign-ins carry over to Browser Use.
+                BrowserPluginMigration.migrateIfNeeded()
             }
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
@@ -1326,6 +1330,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         PluginRepositoryService.shared.stopBackgroundRefresh()
         ToastWindowController.shared.teardown()
         NotchWindowController.shared.teardown()
+        // Detach live browser WebViews and close their windows so WebKit's
+        // networking XPC processes wind down before `_exit` (stored profiles
+        // and the session catalog survive for the next run).
+        BrowserSessionManager.shared.shutdownAll()
         SharedConfigurationService.shared.remove()
         SharedConfigurationService.shared.flushPendingWork()
         // `applicationWillTerminate` is sync and the process exits as

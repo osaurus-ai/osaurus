@@ -84,6 +84,7 @@ struct SystemPromptComposerToolResolutionTests {
         toolMode: ToolSelectionMode = .auto,
         manualToolNames: [String]? = nil,
         computerUseEnabled: Bool = false,
+        browserUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
         spawnableAgentNames: [String] = [],
@@ -100,6 +101,7 @@ struct SystemPromptComposerToolResolutionTests {
             systemPrompt: "",
             dbEnabled: false,
             computerUseEnabled: computerUseEnabled,
+            browserUseEnabled: browserUseEnabled,
             spawnDelegationEnabled: spawnDelegationEnabled,
             imageEnabled: imageEnabled,
             spawnableAgentNames: spawnableAgentNames,
@@ -352,6 +354,78 @@ struct SystemPromptComposerToolResolutionTests {
         #expect(ToolRegistry.nonDiscoverableBuiltInToolNames.contains(ComputerUseTool.toolName))
         let dynamicNames = Set(ToolRegistry.shared.listDynamicTools().map(\.name))
         #expect(!dynamicNames.contains(ComputerUseTool.toolName))
+    }
+
+    // MARK: - Browser Use gate (authoritative; auto-injected, never discovered)
+
+    @Test
+    func autoMode_injectsBrowserUseWhenEnabled() {
+        // Opting in must auto-inject `browser_use` into the baseline schema —
+        // the user should never have to discover/load it via capabilities.
+        let tools = SystemPromptComposer.resolveTools(
+            snapshot: makeSnapshot(browserUseEnabled: true),
+            executionMode: .none
+        )
+        let names = Set(tools.map { $0.function.name })
+        #expect(names.contains(BrowserUseTool.toolName))
+    }
+
+    @Test
+    func autoMode_stripsBrowserUseWhenDisabled() {
+        let tools = SystemPromptComposer.resolveTools(
+            snapshot: makeSnapshot(browserUseEnabled: false),
+            executionMode: .none
+        )
+        let names = Set(tools.map { $0.function.name })
+        #expect(!names.contains(BrowserUseTool.toolName))
+    }
+
+    @Test
+    func browserUseHasNoCapabilitiesLoadCarveOut() {
+        // Like `computer_use`, `browser_use` is stripped even when a stray
+        // `capabilities_load` names it — the per-agent gate is authoritative.
+        let tools = SystemPromptComposer.resolveTools(
+            snapshot: makeSnapshot(browserUseEnabled: false),
+            executionMode: .none,
+            additionalToolNames: [BrowserUseTool.toolName]
+        )
+        let names = Set(tools.map { $0.function.name })
+        #expect(!names.contains(BrowserUseTool.toolName))
+    }
+
+    @Test
+    func browserUseIsBuiltInButExcludedFromDiscovery() {
+        #expect(ToolRegistry.shared.builtInToolNames.contains(BrowserUseTool.toolName))
+        #expect(ToolRegistry.nonDiscoverableBuiltInToolNames.contains(BrowserUseTool.toolName))
+        let dynamicNames = Set(ToolRegistry.shared.listDynamicTools().map(\.name))
+        #expect(!dynamicNames.contains(BrowserUseTool.toolName))
+    }
+
+    /// Like `computer_use`, Browser Use is a custom-agent capability: the
+    /// Default agent must NEVER see `browser_use` — even if a stray snapshot
+    /// carries the flag, the configure-surface allowlist strips it.
+    @Test
+    func defaultAgent_neverGetsBrowserUse() {
+        for strayFlag in [true, false] {
+            let snapshot = AgentConfigSnapshot(
+                agentId: Agent.defaultId,
+                toolsDisabled: false,
+                memoryDisabled: true,
+                autonomousConfig: nil,
+                toolMode: .auto,
+                model: nil,
+                manualToolNames: nil,
+                systemPrompt: "",
+                dbEnabled: false,
+                browserUseEnabled: strayFlag
+            )
+            let tools = SystemPromptComposer.resolveTools(snapshot: snapshot, executionMode: .none)
+            let names = Set(tools.map { $0.function.name })
+            #expect(
+                !names.contains(BrowserUseTool.toolName),
+                "the Default agent must never get browser_use (flag=\(strayFlag))"
+            )
+        }
     }
 
     @Test

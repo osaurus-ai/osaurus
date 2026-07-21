@@ -277,7 +277,7 @@ struct SubagentCapabilityRegistryTests {
     @Test("the registry represents every shipped kind")
     func allRepresentsEveryKind() {
         let ids = Set(SubagentCapabilityRegistry.all.map(\.id))
-        #expect(ids == ["computer_use", "spawn", "image", "applescript"])
+        #expect(ids == ["computer_use", "browser_use", "spawn", "image", "applescript"])
     }
 
     @Test("the modelSource axis records how each kind resolves its model")
@@ -322,15 +322,17 @@ struct SubagentCapabilityRegistryTests {
         }
     }
 
-    @Test("per-agent toggle flags are computer_use, spawn, image, applescript (each independent)")
+    @Test(
+        "per-agent toggle flags are computer_use, browser_use, spawn, image, applescript (each independent)"
+    )
     func perAgentToggleFlagsAreDistinct() {
-        // One card per *flag*: computer_use, spawn, image, and applescript are
-        // each their own per-agent toggle (image split out of the old shared
-        // spawn flag; applescript is its own kind), so the Subagents tab renders
-        // exactly four cards in registry order.
+        // One card per *flag*: computer_use, browser_use, spawn, image, and
+        // applescript are each their own per-agent toggle (image split out of
+        // the old shared spawn flag; applescript is its own kind), so the
+        // Subagents tab renders exactly five cards in registry order.
         #expect(
             SubagentCapabilityRegistry.perAgentToggleFlags
-                == [.computerUse, .spawn, .image, .appleScript]
+                == [.computerUse, .browserUse, .spawn, .image, .appleScript]
         )
     }
 

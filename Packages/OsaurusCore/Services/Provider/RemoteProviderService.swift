@@ -1465,13 +1465,21 @@ public actor RemoteProviderService: ToolCapableService {
     /// OpenAI `finish_reason`, and the post-loop drain) so a single call site
     /// honours `wasRepaired` consistently — repaired args mean truncation, not
     /// a successful call to lock into history.
+    /// `emptyArgsAreComplete`: pass `true` when the provider DECLARED this
+    /// finish (Anthropic `message_stop`, Gemini `STOP`, Responses
+    /// `response.completed`, OpenAI `finish_reason=tool_calls`) — there a
+    /// zero-byte argument slot is a real no-argument call. Leave `false` for
+    /// abrupt ends (stream cut without a finish reason), where zero bytes
+    /// means truncation and the call must be quarantined.
     static func resolveAccumulatedToolCall(
         from accumulated: [Int: StreamingState.ToolSlot],
-        finishMarker: String
+        finishMarker: String,
+        emptyArgsAreComplete: Bool = false
     ) -> AccumulatedToolCallResult {
         OpenAICompatibleToolCallAccumulator.resolveAccumulatedToolCall(
             from: accumulated,
-            finishMarker: finishMarker
+            finishMarker: finishMarker,
+            emptyArgsAreComplete: emptyArgsAreComplete
         )
     }
 
@@ -1837,7 +1845,10 @@ public actor RemoteProviderService: ToolCapableService {
             if finishReason == "STOP" || finishReason == "MAX_TOKENS" {
                 switch resolveAccumulatedToolCall(
                     from: state.accumulatedToolCalls,
-                    finishMarker: "gemini=\(finishReason)"
+                    finishMarker: "gemini=\(finishReason)",
+                    // Only a clean STOP proves the call was fully delivered;
+                    // MAX_TOKENS may have cut the arguments.
+                    emptyArgsAreComplete: finishReason == "STOP"
                 ) {
                 case .none: return .finishNormal
                 case .ready(let inv): return .finishWithToolCall(inv)
@@ -1994,7 +2005,11 @@ public actor RemoteProviderService: ToolCapableService {
             }
             switch resolveAccumulatedToolCall(
                 from: state.accumulatedToolCalls,
-                finishMarker: "anthropic message_stop"
+                finishMarker: "anthropic message_stop",
+                // Anthropic represents a no-input tool_use with zero
+                // input_json_delta events; message_stop declares the turn
+                // complete (max_tokens was handled above).
+                emptyArgsAreComplete: true
             ) {
             case .none: return .finishNormal
             case .ready(let inv): return .finishWithToolCall(inv)
@@ -2131,7 +2146,9 @@ public actor RemoteProviderService: ToolCapableService {
             }
             switch resolveAccumulatedToolCall(
                 from: state.accumulatedToolCalls,
-                finishMarker: "response.completed"
+                finishMarker: "response.completed",
+                // response.completed is the Responses API's declared finish.
+                emptyArgsAreComplete: true
             ) {
             case .none: return .finishNormal
             case .ready(let inv): return .finishWithToolCall(inv)
@@ -2253,7 +2270,13 @@ public actor RemoteProviderService: ToolCapableService {
 
         switch resolveAccumulatedToolCall(
             from: state.accumulatedToolCalls,
-            finishMarker: finishMarker
+            finishMarker: finishMarker,
+            // The drain path runs for both declared and abrupt ends. A prior
+            // `finish_reason=tool_calls` (deferred dispatch for usage-enabled
+            // upstreams) proves the provider finished the call cleanly; a
+            // stream that just stopped without one keeps the truncation
+            // quarantine for zero-byte argument slots.
+            emptyArgsAreComplete: state.lastFinishReason == "tool_calls"
         ) {
         case .ready(let invocations):
             print(

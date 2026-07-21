@@ -90,12 +90,11 @@ once both assets are in place. Skip it with `OSAURUS_EVALS_SKIP_PREP=1` (or run
 directly, the CLI falls back to colocating the metallib at startup and logs a
 loud warning if the embedder is missing.
 
-The `CapabilityClaims` browser cases additionally need the `osaurus.browser`
-native plugin installed. Because installing it mutates `~/.osaurus`, the prep
-step does it only when you opt in with `OSAURUS_EVALS_INSTALL_BROWSER=1`
-(`osaurus` CLI required); otherwise those cases skip as "missing plugins". When
-a selected case declares `fixtures.requirePlugins`, the runner now
-auto-bootstraps installed plugins (no `--bootstrap-plugins` needed); pass
+The `CapabilityClaims` browser cases run against the built-in `browser_use`
+tool (the browser is now a native Osaurus capability; the `osaurus.browser`
+plugin is superseded), so no plugin install is needed for them. When a
+selected case declares `fixtures.requirePlugins`, the runner auto-bootstraps
+installed plugins (no `--bootstrap-plugins` needed); pass
 `--no-plugin-bootstrap` to force-skip them.
 
 Or call the CLI directly if you need flags the Makefile doesn't expose:
@@ -547,8 +546,7 @@ Agent-loop behaviour evals for the "do you have X" problem. Drives `CapabilityCl
   "label": "capability claims • confirm an enabled-but-unloaded tool",
   "query": "Do you have a tool that can open and navigate web pages?",
   "fixtures": {
-    "requirePlugins": ["osaurus.browser"],
-    "enableTools": ["browser_navigate"]
+    "enableTools": ["browser_use"]
   },
   "expect": {
     "capabilityClaims": {
@@ -556,7 +554,7 @@ Agent-loop behaviour evals for the "do you have X" problem. Drives `CapabilityCl
         "Confirms that it has a tool or capability for opening / navigating web pages.",
         "Does not claim it lacks any web-browsing capability."
       ],
-      "mustNotCallTools": ["browser_navigate"],
+      "mustNotCallTools": ["browser_use"],
       "maxIterations": 4
     }
   }
@@ -646,7 +644,7 @@ Field notes:
 - `expect.agentLoop.files` — `{ path, exists?, contains?, equals? }` assertions on the workspace after the loop ends. `exists` defaults to true; set `false` to pin that a file was NOT created.
 - `expect.agentLoop.commands` — `{ command, expectExitCode }` verification commands run in the workspace after the loop ends (e.g. `grep`, a test runner).
 - `expect.agentLoop.mustCallTools` / `mustNotCallTools` / `maxToolCalls` — deterministic transcript assertions. `maxToolCalls` counts processed calls (executed + deduped) and pins navigation discipline.
-- `expect.agentLoop.mustCallAnyTools` — OR semantics: at least one of the listed tools must be called. Use when several tools legitimately satisfy the same contract (e.g. `shell_run` curl vs `browser_navigate` for a fetch attempt) so the case doesn't over-pin one surface.
+- `expect.agentLoop.mustCallAnyTools` — OR semantics: at least one of the listed tools must be called. Use when several tools legitimately satisfy the same contract (e.g. `shell_run` curl vs `browser_use` for a fetch attempt) so the case doesn't over-pin one surface.
 - `expect.agentLoop.noDuplicateExecutedCalls` — no identical `(name, arguments)` pair may *execute* twice; dedupe replays are fine (that's the loop's dedupe working). Duplicate keys use the loop's own argument canonicalisation (sorted-key JSON), so the scorer and the dedupe agree on what "identical" means.
 - `expect.agentLoop.minDedupedReplays` — minimum number of dedupe replays (`wasDeduped`) the transcript must contain. Asserts the replay mechanism actually FIRED, not just that nothing executed twice.
 - `expect.agentLoop.noToolErrors` — opt-in: no processed call may return an error envelope. Off by default; recovery cases legitimately route through tool errors.

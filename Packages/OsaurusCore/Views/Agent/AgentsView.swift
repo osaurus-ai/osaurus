@@ -1154,6 +1154,7 @@ struct AgentDetailView: View {
     /// Convenience reads over `subagentToggles` so the save path and the
     /// inline config rows keep their existing call sites.
     private var computerUseEnabled: Bool { subagentToggles[.computerUse] ?? false }
+    private var browserUseEnabled: Bool { subagentToggles[.browserUse] ?? false }
     private var spawnDelegationEnabled: Bool { subagentToggles[.spawn] ?? false }
     private var imageEnabled: Bool { subagentToggles[.image] ?? false }
     private var appleScriptEnabled: Bool { subagentToggles[.appleScript] ?? false }
@@ -3563,6 +3564,13 @@ struct AgentDetailView: View {
                     subtitle:
                         "Let the agent automate this Mac by writing and running AppleScript with an on-device model. Each script is shown for your approval or auto-run with a warning, per the mode below."
                 )
+            case .browserUse:
+                return PerAgentFeature(
+                    flag: .browserUse,
+                    title: "Browser Use",
+                    subtitle:
+                        "Let the agent browse the web in its own persistent browser session — sign-ins stick around between chats. Reads and navigation run automatically; typing and anything consequential pause for your approval."
+                )
             }
         }
     }
@@ -3826,6 +3834,14 @@ struct AgentDetailView: View {
             appleScriptExecutionModeRow
             subagentFootnote(
                 "AppleScript runs on this Mac. The first time the agent controls an app, macOS asks you to allow Automation for Osaurus. Download AppleScript models in Settings → Computer Use → Models."
+            )
+        case .browserUse:
+            // The model-override row is rendered generically above (registry
+            // `supportsModelOverride`). Approval behavior follows the shared
+            // Autonomy policy (same read/navigate/edit/consequential gate as
+            // Computer Use), so there is no per-agent permission row here.
+            subagentFootnote(
+                "This agent gets its own isolated browser profile. View sessions and sign-in status in Settings → Browser."
             )
         }
     }
@@ -6685,6 +6701,7 @@ struct AgentDetailView: View {
                 computerUseEnabled: computerUseEnabled,
                 computerUseCeiling: computerUseEnabled ? computerUseCeiling : nil,
                 screenContextEnabled: screenContextEnabled,
+                browserUseEnabled: browserUseEnabled,
                 spawnDelegationEnabled: spawnDelegationEnabled,
                 imageEnabled: imageEnabled,
                 // AppleScript enable + model + execution mode, declared right

@@ -2305,6 +2305,9 @@ public struct SystemPromptComposer: Sendable {
             // when its pool is non-empty, image when the global switch is on).
             // The first actual call prompts for permission + spawn-model choice.
             allowed.formUnion(visibleDelegation)
+            // Browser Use is a custom-agent capability (like `computer_use`):
+            // the Default agent never gets it, so it stays off this allowlist
+            // even if a stray snapshot carries the flag.
 
             // Small local models: the per-domain configure WRITE tools are
             // the bulk of this agent's turn-1 schema (~60%+ of prefill). On a

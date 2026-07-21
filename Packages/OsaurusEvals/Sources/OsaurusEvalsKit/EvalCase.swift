@@ -12,7 +12,7 @@
 //      (required plugins, seeded methods, enabled skills/tools). The
 //      runner uses `requirePlugins` to skip cases the local install
 //      can't satisfy instead of failing them — a contributor without
-//      `osaurus.browser` should still be able to run the rest of the suite.
+//      `osaurus.calendar` should still be able to run the rest of the suite.
 //    - `expect` is what we'd score against. All matchers are optional
 //      so a case can scope to just the components it cares about.
 //
@@ -2241,6 +2241,66 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     /// Live lanes SKIP (not fail) when the host can't satisfy them (no
     /// spawnable agent/model / image delegation off / model not ready),
     /// mirroring `requirePlugins`. Every present matcher must pass.
+    /// One deterministic page in the `browser_use` fixture world.
+    public struct BrowserFixturePage: Sendable, Codable {
+        /// The page's canonical URL — `browser_navigate` matches on it
+        /// (exact, or the navigated URL has this as a prefix).
+        public let url: String
+        public let title: String?
+        /// Readable page text (`browser_read_page` returns it; snapshots show
+        /// a 500-char prefix at `full` detail — plugin parity).
+        public let bodyText: String?
+        /// When true, navigating here without a completed `browser_open_login`
+        /// returns the structured LOGIN_REQUIRED failure — the login-wall lane.
+        public let loginRequired: Bool?
+        public let elements: [BrowserFixtureElement]?
+
+        public init(
+            url: String,
+            title: String? = nil,
+            bodyText: String? = nil,
+            loginRequired: Bool? = nil,
+            elements: [BrowserFixtureElement]? = nil
+        ) {
+            self.url = url
+            self.title = title
+            self.bodyText = bodyText
+            self.loginRequired = loginRequired
+            self.elements = elements
+        }
+    }
+
+    /// One interactive element on a fixture page. `id` is the stable key the
+    /// case's `successValues` / `successClicked` predicates read back.
+    public struct BrowserFixtureElement: Sendable, Codable {
+        public let id: String
+        /// Snapshot type tag: `input` / `button` / `link` / `select` / …
+        public let type: String
+        /// Visible text / label.
+        public let text: String?
+        public let placeholder: String?
+        /// Initial value (inputs/selects).
+        public let value: String?
+        /// Clicking (or type+submit on) this element navigates to this URL.
+        public let goto: String?
+
+        public init(
+            id: String,
+            type: String,
+            text: String? = nil,
+            placeholder: String? = nil,
+            value: String? = nil,
+            goto: String? = nil
+        ) {
+            self.id = id
+            self.type = type
+            self.text = text
+            self.placeholder = placeholder
+            self.value = value
+            self.goto = goto
+        }
+    }
+
     public struct SubagentExpectations: Sendable, Codable {
         /// `"scripted"` | `"spawn"` | `"spawn_model"` | `"image"`. Selects the lane.
         public let lane: String
@@ -2389,6 +2449,17 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// (subsequence). Encodes a required plan shape.
         public let expectVerbsInOrder: [String]?
 
+        // --- live browser_use lane inputs (fixture web world) ---
+        /// The deterministic pages `FixtureBrowserWorld` serves. The child
+        /// model drives the REAL `browser_use` host against these instead of
+        /// live WebKit, so a failure attributes to planning/tool use. Reuses
+        /// `successValues` / `successClicked` / `failIfClicked` /
+        /// `expectVerbsInOrder` for world read-back.
+        public let pages: [BrowserFixturePage]?
+        /// URL of the page the world treats as current before the first
+        /// navigate (rarely needed; navigation normally comes first).
+        public let startURL: String?
+
         // --- expectations (any subset; an empty set just records) ---
         /// Whether the run must end in a success envelope.
         public let expectSuccess: Bool?
@@ -2482,6 +2553,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             successClicked: [String]? = nil,
             failIfClicked: [String]? = nil,
             expectVerbsInOrder: [String]? = nil,
+            pages: [BrowserFixturePage]? = nil,
+            startURL: String? = nil,
             expectSuccess: Bool? = nil,
             expectEnvelopeKind: String? = nil,
             expectResultKind: String? = nil,
@@ -2539,6 +2612,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.successClicked = successClicked
             self.failIfClicked = failIfClicked
             self.expectVerbsInOrder = expectVerbsInOrder
+            self.pages = pages
+            self.startURL = startURL
             self.expectSuccess = expectSuccess
             self.expectEnvelopeKind = expectEnvelopeKind
             self.expectResultKind = expectResultKind

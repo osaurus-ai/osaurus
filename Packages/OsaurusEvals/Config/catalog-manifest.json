@@ -154,6 +154,12 @@
       "argument_coercion.string-array-from-bare-string",
       "argument_coercion.string-array-from-json-string"
     ],
+    "BrowserUse": [
+      "browseruse.form-fill",
+      "browseruse.login-wall",
+      "browseruse.multi-step-nav",
+      "browseruse.stale-ref-recovery"
+    ],
     "CacheProof": [
       "cache_proof.disk-l2-lane-persists",
       "cache_proof.five-turn-footprint-growth",
@@ -179,7 +185,6 @@
     ],
     "CapabilitySearch": [
       "capability_search.abstain-greeting",
-      "capability_search.browser-prefix",
       "capability_search.extract-webpage-natural",
       "capability_search.method-abstain",
       "capability_search.method-backup-precision",

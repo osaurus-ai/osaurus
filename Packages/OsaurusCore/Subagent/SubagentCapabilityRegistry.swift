@@ -50,6 +50,7 @@ public struct SubagentCapability: Sendable {
     /// write through the descriptor instead of hardcoding field names.
     public enum PerAgentFlag: Sendable, Hashable {
         case computerUse
+        case browserUse
         case spawn
         case image
         case appleScript
@@ -58,6 +59,7 @@ public struct SubagentCapability: Sendable {
         public func enabled(in snapshot: AgentConfigSnapshot) -> Bool {
             switch self {
             case .computerUse: return snapshot.computerUseEnabled
+            case .browserUse: return snapshot.browserUseEnabled
             case .spawn: return snapshot.spawnDelegationEnabled
             case .image: return snapshot.imageEnabled
             case .appleScript: return snapshot.appleScriptEnabled
@@ -68,6 +70,7 @@ public struct SubagentCapability: Sendable {
         public func read(from settings: AgentSettings) -> Bool {
             switch self {
             case .computerUse: return settings.computerUseEnabled
+            case .browserUse: return settings.browserUseEnabled
             case .spawn: return settings.spawnDelegationEnabled
             case .image: return settings.imageEnabled
             case .appleScript: return settings.appleScriptEnabled
@@ -78,6 +81,7 @@ public struct SubagentCapability: Sendable {
         public func write(_ value: Bool, into settings: inout AgentSettings) {
             switch self {
             case .computerUse: settings.computerUseEnabled = value
+            case .browserUse: settings.browserUseEnabled = value
             case .spawn: settings.spawnDelegationEnabled = value
             case .image: settings.imageEnabled = value
             case .appleScript: settings.appleScriptEnabled = value
@@ -188,6 +192,26 @@ public enum SubagentCapabilityRegistry {
         guidanceLabelKey: "Computer Use"
     )
 
+    /// Browser Use — the `browser_use` entry tool that drives an isolated,
+    /// persistent per-agent WebKit session (the native replacement for the
+    /// `osaurus.browser` plugin). `.perAgent` like computer_use, but unlike
+    /// computer_use the Default agent CAN opt in — via the Browser settings
+    /// tab (`BrowserConfigurationStore`), which the snapshot folds into
+    /// `browserUseEnabled`.
+    public static let browserUse = SubagentCapability(
+        id: "browser_use",
+        toolNames: [BrowserUseTool.toolName],
+        gate: .perAgent,
+        perAgentFlag: .browserUse,
+        modelSource: .inheritsParent,
+        supportsModelOverride: true,
+        displayLabel: "Browser Use",
+        iconName: "globe",
+        guidance: SystemPromptTemplates.browserUseGuidance,
+        guidanceSectionId: "browserUse",
+        guidanceLabelKey: "Browser Use"
+    )
+
     /// Stable tool name for the agent-context spawn (`spawn_agent(input,
     /// agent)`). SSOT so the tool, registry gating, and visibility resolver agree.
     public static let spawnAgentToolName = "spawn_agent"
@@ -261,10 +285,10 @@ public enum SubagentCapabilityRegistry {
         guidanceLabelKey: "AppleScript"
     )
 
-    /// Every capability, in guidance-render order (computer_use, then image,
-    /// then applescript; spawn renders its own dynamic guidance block in the
-    /// composer).
-    public static let all: [SubagentCapability] = [computerUse, spawn, image, appleScript]
+    /// Every capability, in guidance-render order (computer_use, then
+    /// browser_use, then image, then applescript; spawn renders its own
+    /// dynamic guidance block in the composer).
+    public static let all: [SubagentCapability] = [computerUse, browserUse, spawn, image, appleScript]
 
     /// The delegation-gated capabilities (spawn + image + applescript).
     public static let delegationFamily: [SubagentCapability] = [spawn, image, appleScript]
