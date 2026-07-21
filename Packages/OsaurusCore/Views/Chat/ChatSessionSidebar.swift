@@ -495,7 +495,7 @@ struct ChatSessionSidebar: View {
 
     private func selectionBarButton(
         icon: String,
-        help: String,
+        help: LocalizedStringKey,
         tint: Color,
         action: @escaping () -> Void
     ) -> some View {
