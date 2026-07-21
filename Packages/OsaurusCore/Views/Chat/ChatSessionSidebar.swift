@@ -31,6 +31,7 @@ struct ChatSessionSidebar: View {
     let onDelete: (UUID) -> Void
     let onRename: (UUID, String) -> Void
     let onSetArchived: (UUID, Bool) -> Void
+    let onSetPinned: (UUID, Bool) -> Void
     let onExport: (ChatSessionData, ExportFormat) -> Void
     /// Optional callback for opening a session in a new window
     var onOpenInNewWindow: ((ChatSessionData) -> Void)? = nil
@@ -105,9 +106,9 @@ struct ChatSessionSidebar: View {
             byFilter = sessions.filter { $0.archived }
         }
         guard !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty else {
-            return byFilter
+            return pinnedFirst(byFilter)
         }
-        return byFilter.filter { session in
+        let matched = byFilter.filter { session in
             if SearchService.matches(query: searchQuery, in: session.title) { return true }
             if let key = session.externalSessionKey,
                 SearchService.matches(query: searchQuery, in: key)
@@ -122,6 +123,16 @@ struct ChatSessionSidebar: View {
                 SearchService.matches(query: searchQuery, in: cap.label)
             }
         }
+        return pinnedFirst(matched)
+    }
+
+    /// Stable partition floating pinned sessions to the top while preserving
+    /// the incoming (recency-descending) order within each group. The
+    /// `.archived` lens keeps its own order — pins are a default-view concern
+    /// — but partitioning there too is harmless and keeps the rule uniform.
+    private func pinnedFirst(_ list: [ChatSessionData]) -> [ChatSessionData] {
+        guard list.contains(where: { $0.pinned }) else { return list }
+        return list.filter { $0.pinned } + list.filter { !$0.pinned }
     }
 
     /// Debounced full-text lookup for the search query. The in-memory
@@ -455,6 +466,9 @@ struct ChatSessionSidebar: View {
                         onToggleArchive: {
                             onSetArchived(session.id, !session.archived)
                         },
+                        onTogglePin: {
+                            onSetPinned(session.id, !session.pinned)
+                        },
                         onExport: { format in
                             onExport(session, format)
                         },
@@ -488,6 +502,7 @@ private struct SessionRow: View {
     var onBufferChange: ((String) -> Void)? = nil
     let onDelete: () -> Void
     let onToggleArchive: () -> Void
+    let onTogglePin: () -> Void
     let onExport: (ChatSessionSidebar.ExportFormat) -> Void
     /// Optional callback for opening in a new window
     var onOpenInNewWindow: (() -> Void)? = nil
@@ -535,6 +550,13 @@ private struct SessionRow: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 5) {
+                        if session.pinned {
+                            Image(systemName: "pin.fill")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(theme.secondaryText.opacity(0.85))
+                                .rotationEffect(.degrees(45))
+                        }
+
                         Text(session.title)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(theme.primaryText)
@@ -596,6 +618,9 @@ private struct SessionRow: View {
                     Divider()
                 }
                 Button(action: onStartRename) { Text("Rename", bundle: .module) }
+                Button(action: onTogglePin) {
+                    Text(session.pinned ? "Unpin" : "Pin", bundle: .module)
+                }
                 Divider()
                 Button(action: requestExport) { Text("Export…", bundle: .module) }
                 Divider()
@@ -614,6 +639,14 @@ private struct SessionRow: View {
             ActionsPopoverButton(icon: "pencil", label: "Rename", isDestructive: false) {
                 showActionsPopover = false
                 onStartRename()
+            }
+            ActionsPopoverButton(
+                icon: session.pinned ? "pin.slash" : "pin",
+                label: session.pinned ? "Unpin" : "Pin",
+                isDestructive: false
+            ) {
+                showActionsPopover = false
+                onTogglePin()
             }
             Divider().padding(.vertical, 2)
             ActionsPopoverButton(icon: "square.and.arrow.up", label: "Export…", isDestructive: false) {
