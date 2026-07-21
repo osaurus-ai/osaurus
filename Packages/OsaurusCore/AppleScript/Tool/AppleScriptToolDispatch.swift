@@ -15,6 +15,35 @@ enum AppleScriptToolDispatch {
     /// Hard ceiling on `max_steps` regardless of what the model requests.
     private static let maxStepCap = 50
 
+    /// Remove exactly one known sibling-tool field when the selected tool's
+    /// own required field is already present. The live Ornith row emitted a
+    /// valid `applescript` payload plus the sibling `mac_query.question`
+    /// property; rejecting that entire call caused a worse retry with an
+    /// invented path and save. This repair happens before schema validation,
+    /// does not advertise or consume the sibling value, and leaves malformed
+    /// JSON, missing-required-field calls, and every unknown property strict.
+    static func removingSiblingField(
+        _ argumentsJSON: String,
+        siblingField: String,
+        requiredField: String
+    ) -> String {
+        guard let data = argumentsJSON.data(using: .utf8),
+            var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            object[requiredField] != nil,
+            object[siblingField] != nil
+        else { return argumentsJSON }
+        object.removeValue(forKey: siblingField)
+        guard let cleaned = try? JSONSerialization.data(
+            withJSONObject: object,
+            options: [.sortedKeys]
+        ), let text = String(data: cleaned, encoding: .utf8)
+        else { return argumentsJSON }
+        debugLog(
+            "[AppleScript] removed sibling field `\(siblingField)` before schema validation"
+        )
+        return text
+    }
+
     /// Parse the single natural-language argument (`field`) + optional
     /// `max_steps` + optional verbatim literals (`content` and/or `contents`),
     /// then run a configured `AppleScriptKind` on the subagent host. Returns the

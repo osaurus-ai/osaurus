@@ -775,7 +775,12 @@ public final class ToolRegistry: ObservableObject {
         // Coerce + preflight against the tool's schema. Returns either
         // a (possibly rewritten) `argumentsJSON` ready for dispatch, or
         // a structured failure envelope to short-circuit with.
-        switch Self.preflight(argumentsJSON: argumentsJSON, schema: tool.parameters, toolName: name) {
+        let normalizedArguments = tool.normalizeArgumentsBeforeValidation(argumentsJSON)
+        switch Self.preflight(
+            argumentsJSON: normalizedArguments,
+            schema: tool.parameters,
+            toolName: name
+        ) {
         case .rejected(let envelopeJSON):
             return envelopeJSON
         case .ready(let effectiveArgumentsJSON):

@@ -384,6 +384,41 @@ struct AppleScriptLiteralsTests {
 
 @Suite("AppleScriptToolDispatch.literals")
 struct AppleScriptToolDispatchLiteralsTests {
+    @Test("only the known sibling field is removed when the required field exists")
+    func siblingFieldNormalizationIsNarrow() throws {
+        let merged =
+            #"{"task":"Replace the text","question":"What files exist?","contents":{"oldText":"old","newText":"new"}}"#
+        let cleaned = AppleScriptToolDispatch.removingSiblingField(
+            merged,
+            siblingField: "question",
+            requiredField: "task"
+        )
+        let data = try #require(cleaned.data(using: .utf8))
+        let object = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        #expect(object["task"] as? String == "Replace the text")
+        #expect(object["question"] == nil)
+        #expect((object["contents"] as? [String: String])?["oldText"] == "old")
+
+        let siblingOnly = #"{"question":"What files exist?"}"#
+        #expect(
+            AppleScriptToolDispatch.removingSiblingField(
+                siblingOnly,
+                siblingField: "question",
+                requiredField: "task"
+            ) == siblingOnly
+        )
+        let unknown = #"{"task":"Do it","unexpected":true}"#
+        #expect(
+            AppleScriptToolDispatch.removingSiblingField(
+                unknown,
+                siblingField: "question",
+                requiredField: "task"
+            ) == unknown
+        )
+    }
+
     @Test("a single `content` string becomes the {{content}} literal")
     func singleContent() {
         let lits = AppleScriptToolDispatch.literals(from: ["content": "hello world"])

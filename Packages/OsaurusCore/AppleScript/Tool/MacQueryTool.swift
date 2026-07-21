@@ -85,6 +85,14 @@ final class MacQueryTool: OsaurusTool, @unchecked Sendable {
     // out of the registry's 120s race and relies on its own `RunLimits`.
     var bypassRegistryTimeout: Bool { true }
 
+    func normalizeArgumentsBeforeValidation(_ argumentsJSON: String) -> String {
+        AppleScriptToolDispatch.removingSiblingField(
+            argumentsJSON,
+            siblingField: "task",
+            requiredField: "question"
+        )
+    }
+
     init() {}
 
     // A read converges faster than an automation task, so default to a tighter

@@ -113,6 +113,14 @@ final class AppleScriptTool: OsaurusTool, @unchecked Sendable {
     // user's stop control instead.
     var bypassRegistryTimeout: Bool { true }
 
+    func normalizeArgumentsBeforeValidation(_ argumentsJSON: String) -> String {
+        AppleScriptToolDispatch.removingSiblingField(
+            argumentsJSON,
+            siblingField: "question",
+            requiredField: "task"
+        )
+    }
+
     init() {}
 
     // Default to a tighter step cap than Computer Use — an automation task
