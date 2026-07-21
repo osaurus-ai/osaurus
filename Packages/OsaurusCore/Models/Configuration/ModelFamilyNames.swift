@@ -135,6 +135,16 @@ enum ModelFamilyNames {
             || matches(#"(^|/)nemotron[\-_]omni($|[\-_/\.0-9])"#, in: lower)
     }
 
+    /// NVIDIA Nemotron-Labs-Audex audio-input/text-output checkpoints. Keep
+    /// this separate from `isNemotronThinkingFamily`: several legacy media
+    /// guards deliberately treat non-Omni Nemotron thinking models as text
+    /// only, while Audex must remain routed through the VLM/audio processor.
+    static func isAudexFamily(_ modelId: String) -> Bool {
+        let lower = modelId.lowercased()
+        return lower.contains("nemotron-labs-audex")
+            || lower.contains("nemotron_labs_audex")
+    }
+
     /// Nemotron bundles whose native template exposes an `enable_thinking`
     /// switch. Keep this broader than Omni media support but narrower than all
     /// historical Nemotron lineages.

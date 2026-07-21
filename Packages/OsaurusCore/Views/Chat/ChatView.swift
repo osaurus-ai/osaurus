@@ -1180,7 +1180,10 @@ final class ChatSession: ObservableObject {
     /// model rejects the image part with a visible provider error.
     static func modelSupportsImages(modelId: String, pickerItems: [ModelPickerItem]) -> Bool {
         if modelId.lowercased() == "foundation" { return false }
-        if ModelMediaCapabilities.from(modelId: modelId).supportsImage { return true }
+        let declaredCapabilities = ModelMediaCapabilities.from(modelId: modelId)
+        if declaredCapabilities != .textOnly {
+            return declaredCapabilities.supportsImage
+        }
         guard let option = pickerItems.first(where: { $0.id == modelId }) else { return false }
         // Image-edit models accept image input (osaurus image-edit feature).
         if option.imageCapabilities?.imageEdit == true { return true }

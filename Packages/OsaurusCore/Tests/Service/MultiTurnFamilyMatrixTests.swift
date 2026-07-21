@@ -196,6 +196,19 @@ struct CapabilityFromDirectoryTests {
         #expect(cap == .omni, "config_omni.json must resolve to omni")
     }
 
+    @Test(arguments: ["nemotron_dense_audex", "nemotron_h_audex"])
+    func audexModelTypeIsAudioOnlyWithoutVisionConfig(modelType: String) throws {
+        let dir = try makeBundle(
+            modelType: modelType,
+            hasVisionConfig: false,
+            hasOmniSidecar: false
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let cap = ModelMediaCapabilities.from(directory: dir, modelId: "local-audex")
+        #expect(cap == .audioOnly)
+    }
+
     /// Vision config + video-capable model_type → imageVideo.
     @Test(arguments: [
         "qwen2_vl", "qwen2_5_vl", "qwen3_vl",

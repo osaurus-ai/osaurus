@@ -77,6 +77,33 @@ struct MLXModelTests {
         #expect(!model.isVLM)
     }
 
+    @Test(
+        "Downloaded Audex model types retain multimodal runtime identity",
+        arguments: ["nemotron_dense_audex", "nemotron_h_audex"]
+    )
+    func downloadedAudexModelTypeIsVLM(modelType: String) async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let model = MLXModel(
+            id: "local/runtime-bundle",
+            name: "runtime-bundle",
+            description: "",
+            downloadURL: "https://example.com/repo",
+            rootDirectory: tempDir
+        )
+        let dir = model.localDirectory
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"{"model_type":"\#(modelType)"}"#.utf8)
+            .write(to: dir.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: dir.appendingPathComponent("tokenizer.json"))
+        try Data([0x00]).write(to: dir.appendingPathComponent("model.safetensors"))
+
+        #expect(model.isDownloaded)
+        #expect(model.isVLM)
+    }
+
     @Test func isDownloaded_falseWhenMissingConfig() async throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)

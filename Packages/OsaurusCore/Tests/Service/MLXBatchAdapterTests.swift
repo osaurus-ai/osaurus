@@ -2080,6 +2080,39 @@ struct MLXBatchAdapterTests {
         }
     }
 
+    @Test func additionalContext_honorsExplicitAudexInstructAndThinkingModes() {
+        for modelName in [
+            "OsaurusAI/Nemotron-Labs-Audex-2B-4bit",
+            "OsaurusAI/Nemotron-Labs-Audex-30B-A3B-6bit",
+        ] {
+            let unspecified = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(temperature: nil, maxTokens: 16),
+                modelName: modelName
+            )
+            #expect(unspecified["enable_thinking"] == nil)
+
+            let instruct = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["disableThinking": .bool(true)]
+                ),
+                modelName: modelName
+            )
+            #expect(instruct["enable_thinking"] as? Bool == false)
+
+            let thinking = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["disableThinking": .bool(false)]
+                ),
+                modelName: modelName
+            )
+            #expect(thinking["enable_thinking"] as? Bool == true)
+        }
+    }
+
     /// MiniMax M2/M2.7 bundles are reasoning-capable. Live post-tool proof on
     /// `minimax-m2.7-jang_k-crack` showed the omitted-template-default path can
     /// spend the whole response in hidden reasoning after a tool result. Keep

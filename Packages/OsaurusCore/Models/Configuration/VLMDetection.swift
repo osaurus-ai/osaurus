@@ -71,6 +71,10 @@ enum VLMDetection {
                 return true
             }
             guard let json = readConfigJSON(at: directory) else { return false }
+            let modelType = (json["model_type"] as? String)?.lowercased()
+            if modelType == "nemotron_dense_audex" || modelType == "nemotron_h_audex" {
+                return true
+            }
             return json["vision_config"] != nil
         }
     }

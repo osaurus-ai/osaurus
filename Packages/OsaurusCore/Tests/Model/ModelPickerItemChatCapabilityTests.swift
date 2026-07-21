@@ -142,6 +142,18 @@ struct ModelPickerItemChatCapabilityTests {
         #expect(localLooksLikeEmbedding.isLikelyChatCapable)
     }
 
+    @Test func audexVLMFactoryIdentityDoesNotAdvertiseImages() {
+        let audex = ModelPickerItem(
+            id: "nvidia/Nemotron-Labs-Audex-2B",
+            displayName: "Nemotron-Labs-Audex-2B",
+            source: .local,
+            isVLM: true
+        )
+
+        #expect(!ChatSession.modelSupportsImages(modelId: audex.id, pickerItems: [audex]))
+        #expect(ModelMediaCapabilities.from(modelId: audex.id) == .audioOnly)
+    }
+
     @Test func localEmbeddingModelsAreNotChatCapable() {
         // An embedding bundle imported from the HF cache (e.g.
         // minishlab/potion-base-4M downloaded by the memory feature) is not

@@ -5,6 +5,7 @@
 // must independently flip its flag based on regex/substring matching.
 //
 // Decision tree from the implementation:
+//   D0: contains `nemotron-labs-audex`                        → .audioOnly
 //   D1: matches `nemotron-3-nano-omni|nemotron_h_omni`        → .omni
 //   D2: matches `qwen[2-3](\.\d+|_\d+)?[-_]?vl`               → .imageVideo
 //   D3: matches `qwen3\.[5-6].*[-_]vl|holo3.*[-_]vl`          → .imageVideo
@@ -24,6 +25,22 @@ import Testing
 
 @Suite("ModelMediaCapabilities — MC/DC coverage")
 struct ModelMediaCapabilitiesMCDCTests {
+
+    @Test("D0: Audex advertises audio without image or video")
+    func d0_audexAudioOnly() {
+        for modelId in [
+            "nvidia/Nemotron-Labs-Audex-2B",
+            "Nemotron-Labs-Audex-2B-4bit-vMLX",
+            "OsaurusAI/Nemotron-Labs-Audex-30B-A3B-6bit",
+            "nemotron_labs_audex_local",
+        ] {
+            let cap = ModelMediaCapabilities.from(modelId: modelId)
+            #expect(cap == .audioOnly)
+            #expect(cap.supportsAudio)
+            #expect(!cap.supportsImage)
+            #expect(!cap.supportsVideo)
+        }
+    }
 
     // MARK: - D1: Nemotron-3 omni (audio + video + image)
 
@@ -378,6 +395,13 @@ struct ModelMediaCapabilitiesMCDCTests {
                 modelId: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
                 fallbackSupportsImages: false
             ) == .omni
+        )
+        #expect(
+            ModelMediaCapabilities.composerCapabilities(
+                modelId: "nvidia/Nemotron-Labs-Audex-2B",
+                fallbackSupportsImages: true
+            ) == .audioOnly,
+            "generic VLM fallback must not add image support to known audio-only Audex"
         )
     }
 

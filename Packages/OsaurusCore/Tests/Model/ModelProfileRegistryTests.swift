@@ -183,6 +183,26 @@ struct ModelProfileRegistryTests {
         }
     }
 
+    @Test("Audex exposes the explicit Nemotron thinking toggle without changing media identity")
+    func audexMatchesNemotronProfileWithoutThinkingFamilyMediaFallback() {
+        for id in [
+            "OsaurusAI/Nemotron-Labs-Audex-2B-4bit",
+            "OsaurusAI/Nemotron-Labs-Audex-30B-A3B-8bit",
+            "nemotron_labs_audex_local",
+        ] {
+            let profile = ModelProfileRegistry.profile(for: id)
+            #expect(profile?.displayName == NemotronThinkingProfile.displayName)
+            #expect(ModelFamilyNames.isAudexFamily(id))
+            #expect(!ModelFamilyNames.isNemotronThinkingFamily(id))
+            #expect(ModelMediaCapabilities.from(modelId: id) == .audioOnly)
+            #expect(
+                ModelProfileRegistry.normalizedOptions(for: id, persisted: nil)[
+                    "disableThinking"
+                ] == nil
+            )
+        }
+    }
+
     /// Older "Nemotron-Cascade-2" / "Nemotron-Hyper" bundles use a different
     /// model-type lineage (deprecated NeMo style) and shouldn't accidentally
     /// pick up the new profile. Locks the matcher specificity to `nemotron-3`.

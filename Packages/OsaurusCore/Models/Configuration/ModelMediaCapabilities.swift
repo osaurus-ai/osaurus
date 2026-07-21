@@ -16,8 +16,8 @@
 //   - Per-family video support is config-parametric. Mistral 3 / 3.5
 //     have a vision_config but no video preprocessor. Qwen 3 VL hardcodes
 //     `targetFPS=2` in the model class.
-//   - Audio support today is exclusively Nemotron-3-Nano-Omni — gated by
-//     the `config_omni.json` sidecar.
+//   - Nemotron-3-Nano-Omni is gated by `config_omni.json`; Audex is a
+//     distinct audio-in/text-out family and must not inherit image/video.
 //
 //  The matrix here mirrors `vmlx-swift/Libraries/MLXLMCommon/
 //  BatchEngine/MEDIA-MODEL-MATRIX.md`. Keep them in sync — when vmlx
@@ -123,6 +123,12 @@ public enum ModelMediaCapabilities {
             supportsAudio: false
         )
 
+        public static let audioOnly = Capabilities(
+            supportsImage: false,
+            supportsVideo: false,
+            supportsAudio: true
+        )
+
         public static let omni = Capabilities(
             supportsImage: true,
             supportsVideo: true,
@@ -157,10 +163,16 @@ public enum ModelMediaCapabilities {
     /// video accept slots. After load, `from(directory:modelId:)`
     /// can refine via the bundle's `config_omni.json` sidecar.
     public static func from(modelId: String) -> Capabilities {
+        // NVIDIA Nemotron-Labs-Audex: native audio-in/text-out. This is
+        // intentionally audio-only, not Nemotron Omni (no image/video path).
+        if ModelFamilyNames.isAudexFamily(modelId) {
+            return .audioOnly
+        }
+
         let lower = modelId.lowercased()
 
-        // Nemotron-3-Nano-Omni / Nemotron-Omni-Nano — only family with
-        // native audio today.
+        // Nemotron-3-Nano-Omni / Nemotron-Omni-Nano — native audio plus
+        // image/video (unlike audio-only Audex above).
         // Matches:
         //   OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4 / -JANGTQ4 / -JANGTQ
         //   nemotron-3-nano-omni-* (case-folded picker form)
@@ -271,6 +283,13 @@ public enum ModelMediaCapabilities {
         }
 
         let detected = from(modelId: modelId)
+        // A known media family is authoritative. In particular, Audex is a
+        // VLM-factory model because it splices audio embeddings, but that must
+        // not let the generic `isVLM` image fallback widen `.audioOnly` into
+        // image + audio support.
+        if detected != .textOnly {
+            return detected
+        }
         if detected == .textOnly,
             ModelFamilyNames.isNemotronThinkingFamily(modelId),
             !ModelFamilyNames.isNemotronOmniFamily(modelId)
@@ -368,8 +387,12 @@ public enum ModelMediaCapabilities {
         let modelType = (json["model_type"] as? String)?.lowercased() ?? ""
         let hasVisionConfig = json["vision_config"] != nil
 
+        if ["nemotron_dense_audex", "nemotron_h_audex"].contains(modelType) {
+            return .audioOnly
+        }
+
         // No vision config → not even image-capable. (Audio without
-        // vision is only the omni path, already handled above.)
+        // vision is Audex, handled above.)
         guard hasVisionConfig else {
             return .textOnly
         }
