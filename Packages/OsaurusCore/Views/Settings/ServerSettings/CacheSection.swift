@@ -35,7 +35,7 @@ struct CacheSection: View {
                     SettingsToggle(
                         title: L("Enable GPU Cache"),
                         description:
-                            "Block-based KV cache held in GPU memory. Required for cross-request sharing.",
+                            "Optional hot tier held in GPU memory. SSD cache can still restore prefixes across requests when this is off.",
                         isOn: $draft.cache.pagedKV.enabled
                     )
 
@@ -114,7 +114,7 @@ struct CacheSection: View {
             SettingsToggle(
                 title: L("Disk Cache"),
                 description:
-                    "Persist reusable cache blocks on SSD. Works with paged RAM cache off and restores the longest matching prefix after restart; turn off to disable disk reuse.",
+                    "Persist content-addressed prompt checkpoints on SSD. Works with paged RAM cache off and restores the longest matching prefix after restart; turn off to disable disk reuse.",
                 isOn: $draft.cache.blockDisk.enabled
             )
             OptionalDoubleField(
@@ -127,7 +127,7 @@ struct CacheSection: View {
             OptionalStringField(
                 label: "Disk Cache Directory",
                 placeholder: "Blank = Osaurus default cache directory",
-                help: "Absolute path or ~/... path for persisted block-cache entries.",
+                help: "Absolute path or ~/... path for persisted disk-cache entries.",
                 value: $draft.cache.blockDisk.directory
             )
         }

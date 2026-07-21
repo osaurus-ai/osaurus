@@ -14,6 +14,22 @@ enum PrefillProgressStage: String, Codable, Sendable, Equatable {
     case cacheRestore
     case prefill
     case complete
+
+    /// Short, user-facing title for the runtime stage. Keeping cache lookup
+    /// and restore distinct from transformer prefill prevents an initial
+    /// `.cacheLookup(0/N)` event from being presented as a cold `Prefill 0/N`.
+    var localizedDisplayTitle: String {
+        switch self {
+        case .queued:
+            return L("Queued")
+        case .cacheLookup:
+            return L("Checking cache")
+        case .cacheRestore:
+            return L("Restored")
+        case .prefill, .complete:
+            return L("Prefill")
+        }
+    }
 }
 
 struct PrefillProgressState: Codable, Sendable, Equatable {

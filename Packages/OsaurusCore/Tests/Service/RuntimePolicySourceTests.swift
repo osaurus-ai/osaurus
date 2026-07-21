@@ -752,7 +752,7 @@ struct RuntimePolicySourceTests {
         // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
         // xcworkspace Package.resolved files. Miss one and the app resolves a
         // revision nobody proved.
-        let expectedRuntimeHardenedRevision = "a37e09d2e4304e3eaa0836b4cb1941da86bcaeb7"
+        let expectedRuntimeHardenedRevision = "feb35555900398dc638c82a3e13e98f8b1adbf41"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -1128,6 +1128,8 @@ struct RuntimePolicySourceTests {
         #expect(!cacheSection.contains(#"isOn: $draft.cache.legacyDisk.enabled"#))
         #expect(!cacheSection.contains(#"value: $draft.cache.legacyDisk.directory"#))
         #expect(cacheSection.contains("Works with paged RAM cache off"))
+        #expect(cacheSection.contains("SSD cache can still restore prefixes"))
+        #expect(!cacheSection.contains("Required for cross-request sharing"))
     }
 
     @Test("Server settings cache changes clear loaded model runtime")
