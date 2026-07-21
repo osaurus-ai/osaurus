@@ -44,7 +44,8 @@ enum AppleScriptToolDispatch {
             )
         }
 
-        let parsedLiterals = literals(from: args)
+        let suppliedLiterals = literals(from: args)
+        let parsedLiterals = literalsForDispatch(task: request, literals: suppliedLiterals)
         if let violation = literalContractViolation(task: request, literals: parsedLiterals) {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
@@ -89,6 +90,58 @@ enum AppleScriptToolDispatch {
     struct LiteralContractViolation: Equatable {
         let field: String
         let message: String
+    }
+
+    /// Recover the confirmed parent-model failure where a complete generated
+    /// AppleScript program is placed in an otherwise unreferenced literal
+    /// field while `task` already contains the whole requested outcome. The
+    /// literal is neither user data nor part of the instruction, so it must not
+    /// be executed, shown as a successful attempt, or bounced back to the
+    /// parent for another model/tool round. Discard it and let the dedicated
+    /// AppleScript helper implement the plain-language task.
+    ///
+    /// This deliberately does NOT repair mixed literal maps, referenced
+    /// literals, or requests to insert AppleScript source as text. Those keep
+    /// the strict validation path so real user data can never be silently
+    /// removed.
+    static func literalsForDispatch(
+        task: String,
+        literals: AppleScriptLiterals
+    ) -> AppleScriptLiterals {
+        guard !literals.isEmpty else { return literals }
+
+        let normalizedTask = task.lowercased()
+        let explicitlyInsertingSource =
+            normalizedTask.contains("applescript source")
+            || normalizedTask.contains("applescript code")
+            || normalizedTask.contains("script source")
+            || normalizedTask.contains("script text")
+            || normalizedTask.contains("code as text")
+        guard !explicitlyInsertingSource else { return literals }
+
+        let names = literals.names
+        let allGeneratedSource = names.allSatisfy { name in
+            guard let value = literals.value(for: name) else { return false }
+            return looksLikeAppleScriptSource(value)
+        }
+        let referencesLiteralValue = names.contains { name in
+            guard let value = literals.value(for: name), !value.isEmpty else { return false }
+            return task.range(of: value, options: [.literal, .caseInsensitive]) != nil
+        }
+        let referencesLiteral =
+            normalizedTask.contains("provided")
+            || normalizedTask.contains("content")
+            || normalizedTask.contains("literal")
+            || normalizedTask.contains("{{")
+            || names.contains(where: { normalizedTask.contains($0.lowercased()) })
+            || referencesLiteralValue
+
+        guard allGeneratedSource, !referencesLiteral else { return literals }
+        debugLog(
+            "[AppleScript] discarded unreferenced generated-script literal fields "
+                + names.joined(separator: ",")
+        )
+        return AppleScriptLiterals()
     }
 
     /// Literal fields are an out-of-band DATA channel, not a second instruction

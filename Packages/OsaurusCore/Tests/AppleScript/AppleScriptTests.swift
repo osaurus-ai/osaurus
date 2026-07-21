@@ -518,6 +518,34 @@ struct AppleScriptToolDispatchLiteralsTests {
         #expect(violation?.message.contains("generated AppleScript source") == true)
     }
 
+    @Test("unreferenced generated script is discarded before helper dispatch")
+    func unreferencedGeneratedScriptFallsBackToTask() {
+        let generated = """
+            tell application "TextEdit"
+                set text of front document to "Hello again"
+            end tell
+            """
+        let supplied = AppleScriptLiterals(["content": generated])
+        let sanitized = AppleScriptToolDispatch.literalsForDispatch(
+            task: "Replace the entire text in the front TextEdit document.",
+            literals: supplied
+        )
+        #expect(sanitized.isEmpty)
+
+        #expect(
+            AppleScriptToolDispatch.literalsForDispatch(
+                task: "Set the document to the provided content.",
+                literals: supplied
+            ) == supplied
+        )
+        #expect(
+            AppleScriptToolDispatch.literalsForDispatch(
+                task: "Insert the provided AppleScript source as text.",
+                literals: supplied
+            ) == supplied
+        )
+    }
+
     @Test("literal AppleScript source remains valid when the user wants code inserted as text")
     func requestedScriptTextAllowed() {
         let source = "tell application \"Finder\"\nreturn name\nend tell"
