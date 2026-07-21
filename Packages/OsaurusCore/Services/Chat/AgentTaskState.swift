@@ -33,6 +33,12 @@ public enum ToolResultClass: Equatable, Sendable {
     case partialListing
     /// File content (`kind: "file"`).
     case fileContent
+    /// File content whose RENDERED output was cut by the character cap
+    /// and which carries an exact continuation range (`next_start_line`
+    /// / `next_end_line`). Distinct from `.fileContent` so the harness
+    /// can stage a continuation notice instead of letting the model
+    /// review a truncated file as if it were complete (issue #2098).
+    case partialFileContent(path: String, nextStartLine: Int, nextEndLine: Int)
     /// A referenced path does not exist (`kind: "not_found"`).
     case notFound
     /// Any other failure envelope.
@@ -448,11 +454,14 @@ public final class AgentTaskState {
         case .emptyListing, .populatedListing, .partialListing:
             consecutiveListingsWithoutRead += 1
             lastListing = parseListing(result)
-        case .fileContent:
+        case .fileContent, .partialFileContent:
+            // A partial read is still a successful descent into a file —
+            // progress for the wandering counter; its continuation steer is
+            // handled by `nextStepBias`, not here.
             consecutiveListingsWithoutRead = 0
         case .notFound, .error, .nativeImageGeneration, .other:
             break
-        }  // nativeImageGeneration carries associated values; matched without binding
+        }  // associated-value cases matched without binding
 
         // Mark a successful read-like result as fresh (with its exact
         // envelope) so a re-issue replays it until a write invalidates it.
@@ -554,6 +563,12 @@ public final class AgentTaskState {
                 + "without `source_paths` again (that produces a brand-new unrelated image, not an "
                 + "edit of this one). Only if no such follow-up was requested should you give a brief "
                 + "final confirmation. Do not narrate the edit as the final answer instead of calling the tool."
+        case .partialFileContent(let path, let nextStart, let nextEnd):
+            // Reactive by nature — the read is observed incomplete. Without
+            // this steer, models treated the truncated render as the whole
+            // file and reviewed 426 of 499 lines as complete (issue #2098).
+            return
+                "The `file_read` of `\(path)` was truncated by the output cap — you have only seen part of the requested range. Before drawing conclusions about the whole file, call `file_read` again with {\"path\": \"\(path)\", \"start_line\": \(nextStart), \"end_line\": \(nextEnd)} to read the rest."
         case .fileContent, .error, .other:
             return nil
         }
@@ -583,6 +598,24 @@ public final class AgentTaskState {
             if payload["truncated"] as? Bool == true { return .partialListing }
             return .populatedListing
         case "file":
+            // A rendered-cap truncation with an exact continuation range is
+            // its own state: the tool read the whole file but the model only
+            // saw a prefix, and `next_start_line`/`next_end_line` say exactly
+            // how to resume. Raw byte-capped reads (`raw_bytes_truncated`)
+            // deliberately carry no continuation fields — a line-ranged
+            // re-read cannot reach bytes that were never loaded — so they
+            // stay plain `.fileContent` and keep the tool's own split-the-
+            // file guidance.
+            if payload["truncated"] as? Bool == true,
+                let nextStart = payload["next_start_line"] as? Int,
+                let nextEnd = payload["next_end_line"] as? Int
+            {
+                return .partialFileContent(
+                    path: payload["path"] as? String ?? "",
+                    nextStartLine: nextStart,
+                    nextEndLine: nextEnd
+                )
+            }
             return .fileContent
         case "native_image_generation_job":
             let paths = nativeImagePaths(from: payload)

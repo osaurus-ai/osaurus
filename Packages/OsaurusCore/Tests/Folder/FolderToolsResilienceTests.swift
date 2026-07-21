@@ -174,6 +174,69 @@ struct FolderToolsResilienceTests {
         #expect(payload["partial_line"] as? Int == 1)
         #expect(payload["truncated"] as? Bool == true)
         #expect(payload["raw_bytes_truncated"] as? Bool == false)
+        // No continuation offer: re-reading from the same start line cannot
+        // advance past a single line longer than the cap — advertising one
+        // would send the model into a same-args loop.
+        #expect(payload["next_start_line"] == nil)
+        #expect(payload["next_end_line"] == nil)
+    }
+
+    /// Issue #2098 regression: a ~14KB, 499-line source file is fully read
+    /// from disk, but the line-number gutters push the RENDERED output past
+    /// the 15K character cap, so the model only sees a prefix (~line 426).
+    /// The payload must report truthful truncation plus an exact
+    /// continuation range, and the suggested second ranged read must reach
+    /// the end of the file.
+    @Test func fileRead_renderedCapTruncationCarriesExactContinuation() async throws {
+        let root = tmpRoot()
+        // 498 content lines with unicode (the reporter's file had unicode
+        // characters) + a final sentinel line. ~28 chars/line ≈ 14K chars,
+        // rendered at +8 chars/line of gutter ≈ 18K > the 15K cap.
+        var lines = (1 ... 498).map { String(format: "línea %03d — carga de la tira", $0) }
+        lines.append("FINAL_SENTINEL_LINE_499 ✓")
+        let content = lines.joined(separator: "\n")
+        let path = root.appendingPathComponent("BeatStrip.ino")
+        try content.write(to: path, atomically: true, encoding: .utf8)
+
+        let tool = FileReadTool(rootPath: root)
+        let first = try await tool.execute(argumentsJSON: #"{"path": "BeatStrip.ino"}"#)
+        #expect(ToolEnvelope.isSuccess(first))
+        let payload = try #require(EnvelopeAssertions.successPayload(first))
+
+        // The whole file was loaded — only the render was cut.
+        #expect(payload["raw_bytes_truncated"] as? Bool == false)
+        #expect(payload["total_lines"] as? Int == 499)
+        #expect(payload["total_lines_exact"] as? Bool == true)
+        #expect(payload["truncated"] as? Bool == true)
+
+        // Exact, range-safe continuation boundary.
+        let nextStart = try #require(payload["next_start_line"] as? Int)
+        let nextEnd = try #require(payload["next_end_line"] as? Int)
+        #expect(nextEnd == 499)
+        let endLine = try #require(payload["end_line"] as? Int)
+        if let partial = payload["partial_line"] as? Int {
+            #expect(nextStart == partial)
+        } else {
+            #expect(nextStart == endLine + 1)
+        }
+        // The truncation notice names the exact next range, not just a
+        // generic "use start_line/end_line" hint.
+        let text = try #require(payload["text"] as? String)
+        #expect(text.contains("start_line=\(nextStart), end_line=\(nextEnd)"))
+        #expect(text.contains("FINAL_SENTINEL_LINE_499") == false)
+
+        // The suggested continuation read reaches the end of the file.
+        let second = try await tool.execute(
+            argumentsJSON:
+                #"{"path": "BeatStrip.ino", "start_line": \#(nextStart), "end_line": \#(nextEnd)}"#
+        )
+        #expect(ToolEnvelope.isSuccess(second))
+        let secondPayload = try #require(EnvelopeAssertions.successPayload(second))
+        #expect(secondPayload["truncated"] as? Bool == false)
+        #expect(secondPayload["end_line"] as? Int == 499)
+        #expect(secondPayload["next_start_line"] == nil)
+        let secondText = try #require(secondPayload["text"] as? String)
+        #expect(secondText.contains("FINAL_SENTINEL_LINE_499"))
     }
 
     /// Raw text / CSV reads are part of the prompt-building hot path. A
@@ -204,6 +267,10 @@ struct FolderToolsResilienceTests {
         #expect(payload["total_lines_exact"] as? Bool == false)
         #expect(payload["truncated"] as? Bool == true)
         #expect(text.contains("raw read capped at 5 MiB"))
+        // A byte-capped read must NOT advertise a line continuation: line
+        // numbers cannot reach bytes that were never loaded.
+        #expect(payload["next_start_line"] == nil)
+        #expect(payload["next_end_line"] == nil)
     }
 
     /// The success payload carries a single line-numbered `text` field — no

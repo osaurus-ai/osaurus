@@ -988,15 +988,40 @@ struct FileReadTool: OsaurusTool {
             return ToolEnvelope.success(tool: name, text: "(empty file)")
         }
 
-        // If truncated, inform the model and suggest using line ranges
-        if outputTruncated || lastLineIncluded < validEnd {
+        let renderedTruncated = outputTruncated || lastLineIncluded < validEnd
+        // Exact continuation boundary when the RENDERED character cap cut the
+        // output (issue #2098: a 13.9KB source file whose gutters pushed the
+        // render past the cap read "complete" to the model, which reviewed
+        // 426 of 499 lines as if it had the whole file). Only offered when:
+        //   - the whole file was loaded (a raw byte-capped read cannot reach
+        //     unloaded bytes by line number, so a line continuation would lie);
+        //   - progress past `validStart` was made (a single line longer than
+        //     the cap can never advance — re-reading the same start would loop).
+        // The continuation never extends past the caller's requested range end.
+        let continuationStart: Int? = {
+            guard renderedTruncated, content.rawRead?.truncatedByByteLimit != true else {
+                return nil
+            }
+            let next = partialLine ?? (lastLineIncluded + 1)
+            guard next > validStart, next <= validEnd else { return nil }
+            return next
+        }()
+
+        // If truncated, inform the model and name the exact next range
+        if renderedTruncated {
             let totalLabel = Self.lineCountLabel(lines.count, rawRead: content.rawRead)
+            let rangeHint: String
+            if let continuationStart {
+                rangeHint = "continue with start_line=\(continuationStart), end_line=\(validEnd)"
+            } else {
+                rangeHint = "use start_line/end_line for specific ranges"
+            }
             if let partialLine {
                 output +=
-                    "\n... (truncated mid-line: line \(partialLine) is only PARTIALLY shown; complete lines end at \(lastLineIncluded) of \(totalLabel) — use start_line/end_line for specific ranges)"
+                    "\n... (truncated mid-line: line \(partialLine) is only PARTIALLY shown; complete lines end at \(lastLineIncluded) of \(totalLabel) — \(rangeHint))"
             } else {
                 output +=
-                    "\n... (truncated at \(lastLineIncluded) of \(totalLabel) lines — use start_line/end_line for specific ranges)"
+                    "\n... (truncated at \(lastLineIncluded) of \(totalLabel) lines — \(rangeHint))"
             }
         }
         if let rawRead = content.rawRead, rawRead.truncatedByByteLimit {
@@ -1032,9 +1057,16 @@ struct FileReadTool: OsaurusTool {
             "end_line": lastLineIncluded,
             "total_lines": lines.count,
             "total_lines_exact": content.rawRead?.truncatedByByteLimit != true,
-            "truncated": outputTruncated || lastLineIncluded < validEnd
-                || content.rawRead?.truncatedByByteLimit == true,
+            "truncated": renderedTruncated || content.rawRead?.truncatedByByteLimit == true,
         ]
+        // Machine-readable continuation: the exact `start_line`/`end_line`
+        // pair that resumes this read where the rendered cap cut it. The
+        // harness (`AgentTaskState`) turns these into a next-step notice so
+        // a truncated read becomes a continuation action, not a silent gap.
+        if let continuationStart {
+            result["next_start_line"] = continuationStart
+            result["next_end_line"] = validEnd
+        }
         // The numbered gutter cannot express whether the file's last line is
         // terminated — a byte-exact reconstruction (backup copies, `equals`
         // contracts) needs to know if a final `\n` belongs at the end
