@@ -3854,7 +3854,8 @@ final class ChatSession: ObservableObject {
     /// `frozenSoul` freeze the static prompt side.
     private func freezeInjectedContextOntoLatestUserTurn(
         memorySection: String?,
-        screenContext: String?
+        screenContext: String?,
+        automationContext: String?
     ) {
         guard let turn = turns.last(where: { $0.role == .user }) else { return }
         // Regeneration re-runs an already-sent turn: keep the original
@@ -3877,7 +3878,8 @@ final class ChatSession: ObservableObject {
         guard
             let prefix = SystemPromptComposer.composeInjectedUserPrefix(
                 memorySection: memorySection,
-                screenContext: screenContext
+                screenContext: screenContext,
+                automationContext: automationContext
             )
         else { return }
         turn.injectedContextPrefix = prefix
@@ -4319,7 +4321,7 @@ final class ChatSession: ObservableObject {
                     budgetTracker.snapshot(context: context)
                     budgetTracker.updateScreenContext(tokens: cachedScreenContextTokens)
 
-                    // Freeze this turn's memory + screen-context prefix into
+                    // Freeze this turn's memory + screen/automation-context prefix into
                     // the turn history BEFORE any messages are rendered: the
                     // injected bytes become part of the turn's permanent
                     // rendering, so turn N+1 replays turn N byte-identically
@@ -4329,10 +4331,20 @@ final class ChatSession: ObservableObject {
                     // history on the next turn, re-prefilling the last
                     // exchange every turn.) Skipped in Mode 2: requests stay
                     // bare and the remote agent applies its own context.
+                    let appleScriptWorkingContext =
+                        !isRemoteAgentTarget
+                        && toolSpecs.contains(where: {
+                            $0.function.name == AppleScriptTool.toolName
+                        })
+                        ? SystemPromptComposer.appleScriptWorkingAppContext(
+                            appName: FrontmostAppTracker.shared.lastNonSelfAppName
+                        )
+                        : nil
                     if !isRemoteAgentTarget {
                         freezeInjectedContextOntoLatestUserTurn(
                             memorySection: context.memorySection,
-                            screenContext: screenContextEnabled ? frozenScreenContext : nil
+                            screenContext: screenContextEnabled ? frozenScreenContext : nil,
+                            automationContext: appleScriptWorkingContext
                         )
                     }
 
@@ -5029,11 +5041,19 @@ final class ChatSession: ObservableObject {
                                 self.turns.last(where: { $0.role == .user })?
                                 .injectedContextPrefix
                                 .map { ContextBudgetManager.estimateTokens(for: $0) } ?? 0
+                            // The dedicated AppleScript app-name hint is part of
+                            // the conversation, not the opt-in Screen Context
+                            // budget row. Add its tokens back after excluding
+                            // the memory/screen prefix from Conversation.
+                            let automationContextTokens =
+                                appleScriptWorkingContext.map {
+                                    ContextBudgetManager.estimateTokens(for: $0)
+                                } ?? 0
                             let convTokens =
                                 msgs
                                 .filter { $0.role != "system" }
                                 .reduce(0) { $0 + ContextBudgetManager.estimateTokens(for: $1.content) }
-                                - currentInjectedTokens
+                                - max(0, currentInjectedTokens - automationContextTokens)
                             self.budgetTracker.updateConversation(
                                 tokens: max(0, convTokens),
                                 finishedOutputTurn: assistantTurn

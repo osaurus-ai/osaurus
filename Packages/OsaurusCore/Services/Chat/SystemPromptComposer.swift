@@ -2541,7 +2541,7 @@ public struct SystemPromptComposer: Sendable {
         )
     }
 
-    /// Render the memory + screen-context block exactly as the per-turn
+    /// Render the memory + screen/automation-context blocks exactly as the per-turn
     /// injectors (`injectMemoryPrefix` + `injectScreenContextPrefix`) would
     /// prepend it to a non-empty user message, INCLUDING the trailing
     /// separator — so `prefix + originalContent` reproduces the legacy
@@ -2552,7 +2552,8 @@ public struct SystemPromptComposer: Sendable {
     /// Returns nil when both inputs are nil/blank.
     static func composeInjectedUserPrefix(
         memorySection: String?,
-        screenContext: String?
+        screenContext: String?,
+        automationContext: String? = nil
     ) -> String? {
         var prefix = ""
         if let memorySection {
@@ -2563,7 +2564,29 @@ public struct SystemPromptComposer: Sendable {
             let trimmed = screenContext.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { prefix = "\(trimmed)\n\n" + prefix }
         }
+        if let automationContext {
+            let trimmed = automationContext.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { prefix = "\(trimmed)\n\n" + prefix }
+        }
         return prefix.isEmpty ? nil : prefix
+    }
+
+    /// Minimal app identity needed by the parent to route working-document
+    /// anaphora to AppleScript. This is not Screen Context: it carries no UI,
+    /// window, draft, or accessibility content, and callers include it only
+    /// when `applescript` is actually exposed in the frozen tool schema.
+    static func appleScriptWorkingAppContext(appName: String?) -> String? {
+        guard let appName else { return nil }
+        let app = appName
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !app.isEmpty else { return nil }
+        return """
+            [Mac Automation Context]
+            Working app before this message: \(app)
+            If the request says `the file` or `the document`, it means that app's front open document. Use `applescript`; do not ask for a path or create a separate artifact.
+            [/Mac Automation Context]
+            """
     }
 
     /// Session-stable memory injection for surfaces whose history is owned
