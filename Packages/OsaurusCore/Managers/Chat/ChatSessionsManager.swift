@@ -151,6 +151,20 @@ final class ChatSessionsManager: ObservableObject {
         upsertInMemory(session)
     }
 
+    /// Toggle a session's pin flag. Like `setArchived`, this does not touch
+    /// `updatedAt`: pinning is a display-ordering concern handled by the
+    /// sidebar and must not bubble the row up the recency list.
+    func setPinned(id: UUID, pinned: Bool) {
+        guard
+            var session = sessions.first(where: { $0.id == id })
+                ?? ChatSessionStore.load(id: id)
+        else { return }
+        guard session.pinned != pinned else { return }
+        session.pinned = pinned
+        ChatSessionStore.save(session)
+        upsertInMemory(session)
+    }
+
     /// Get a session by ID
     func session(for id: UUID) -> ChatSessionData? {
         sessions.first { $0.id == id }
