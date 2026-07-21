@@ -11,8 +11,10 @@
 //  Detection is deliberately conservative: an app is a target only when its
 //  name appears in the task text (word-boundary, case-insensitive), or — when
 //  the task names no app but asks about the "frontmost"/"current" app — the
-//  frontmost app. No match → no injection (a battery query gets no Safari
-//  dictionary just because Safari is frontmost).
+//  frontmost app. The same fallback covers narrow working-document anaphora
+//  ("the file" / "the document") because users must switch into Osaurus to
+//  submit those tasks. No match → no injection (a battery query gets no Safari
+//  dictionary just because Safari was the working app).
 //
 
 import Foundation
@@ -49,8 +51,8 @@ public enum AppleScriptAppKnowledge {
     /// The app names `task` targets, in task order, capped at `limit`.
     /// Candidates are the running apps plus the recipe catalog's known names
     /// (so "Notes" matches even when Notes isn't running yet — the model may
-    /// launch it). Falls back to the frontmost app only when the task names no
-    /// app but refers to the frontmost/current/active app.
+    /// launch it). Falls back to the frontmost/working app only when the task
+    /// names no app but refers to that app or its current file/document.
     public static func detectTargetApps(
         task: String,
         frontmost: String?,
@@ -80,7 +82,7 @@ public enum AppleScriptAppKnowledge {
                 result.append(match.name)
             }
         }
-        if result.isEmpty, let frontmost, !frontmost.isEmpty, mentionsFrontmost(task) {
+        if result.isEmpty, let frontmost, !frontmost.isEmpty, mentionsWorkingApp(task) {
             result = [frontmost]
         }
         return result
@@ -95,11 +97,15 @@ public enum AppleScriptAppKnowledge {
         )
     }
 
-    private static func mentionsFrontmost(_ task: String) -> Bool {
+    private static func mentionsWorkingApp(_ task: String) -> Bool {
         let lower = task.lowercased()
         return lower.contains("frontmost") || lower.contains("front app")
             || lower.contains("current app") || lower.contains("active app")
             || lower.contains("front window") || lower.contains("this app")
+            || lower.contains("the file") || lower.contains("this file")
+            || lower.contains("current file") || lower.contains("open file")
+            || lower.contains("the document") || lower.contains("this document")
+            || lower.contains("current document") || lower.contains("open document")
     }
 
     // MARK: - Composition

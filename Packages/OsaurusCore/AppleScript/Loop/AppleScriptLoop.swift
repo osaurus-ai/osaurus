@@ -549,6 +549,50 @@ public enum AppleScriptLoop {
             // value, so the parent gets a REAL result instead of "completed".
             guard let call = stepResult.call else {
                 let text = stepResult.text?.trimmingCharacters(in: .whitespacesAndNewlines)
+                // A few dedicated AppleScript bundles occasionally emit the
+                // complete script as assistant text instead of wrapping it in
+                // `run_applescript`. Treat only structurally script-like text
+                // as a malformed call and ask for the required envelope. A
+                // normal plain-text explanation still ends the run. This is a
+                // protocol repair, not an execution shortcut: the raw text is
+                // never run or counted as successful work.
+                if let text, looksLikeUncalledScript(text) {
+                    consecutiveInvalid += 1
+                    let reason =
+                        "You wrote AppleScript as plain text, so nothing ran. Call `run_applescript` "
+                        + "with that complete script in its `script` argument. Do not print the script."
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step,
+                            kind: .retry,
+                            title: "Script was not called; requesting the tool envelope",
+                            detail: scriptPreview(text)
+                        )
+                    )
+                    steps.append(
+                        AppleScriptStepRecord(
+                            n: steps.count + 1,
+                            intent: "unknown",
+                            status: "invalid",
+                            error: reason,
+                            scriptPreview: scriptPreview(text)
+                        )
+                    )
+                    if consecutiveInvalid >= limits.maxConsecutiveInvalid {
+                        return terminate(
+                            .failed(
+                                reason:
+                                    "The model kept writing AppleScript without calling "
+                                    + "run_applescript."
+                            )
+                        )
+                    }
+                    messages.append(ChatMessage(role: "assistant", content: text))
+                    messages.append(ChatMessage(role: "user", content: reason))
+                    lastToolResult = reason
+                    step += 1
+                    continue
+                }
                 let haveValue = !(lastReadOutput?.isEmpty ?? true)
                 if harness.verifyReadBack, !verifyAttempted, !haveValue, scriptsExecuted > 0,
                     shouldVerify(mode: mode, task: task)
@@ -735,6 +779,59 @@ public enum AppleScriptLoop {
                 )
             )
 
+            // Compile every proposal before ANY gate or execution path. The
+            // effect classifier is intentionally structural and can classify a
+            // malformed script as read-only when its attempted mutation uses
+            // invented syntax. Restricting preflight to `.confirm` therefore
+            // let those scripts auto-run, compile-fail in the executor, and
+            // consume the full step cap. Universal preflight keeps malformed
+            // reads and writes out of both the executor and confirmation UI and
+            // applies the same bounded correction budget to each.
+            if let dryCompile,
+                let compileFailure = await dryCompile(script, language),
+                compileFailure.status == .compileError
+            {
+                consecutiveCompileFailures += 1
+                let message = compileFailure.errorMessage ?? "syntax error"
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .retry,
+                        title: "Script did not compile; asking for a correction",
+                        detail: message
+                    )
+                )
+                record(
+                    intent: effect,
+                    status: "compile_error",
+                    error: message,
+                    errorNumber: compileFailure.errorNumber,
+                    script: script
+                )
+                if consecutiveCompileFailures >= limits.maxConsecutiveInvalid {
+                    return terminate(
+                        .failed(
+                            reason: "The model could not produce a script that compiles: \(message)"
+                        )
+                    )
+                }
+                let toolResult =
+                    "The script was NOT run — it does not compile: \(message). Fix the "
+                    + "\(language.displayLabel) syntax and call run_applescript again."
+                messages.append(
+                    ChatMessage(
+                        role: "tool",
+                        content: toolResult,
+                        tool_calls: nil,
+                        tool_call_id: call.id
+                    )
+                )
+                lastToolResult = toolResult
+                step += 1
+                continue
+            }
+            consecutiveCompileFailures = 0
+
             // Accessibility preflight: System Events UI scripting cannot run
             // without the user's Accessibility grant. Catch it BEFORE the gate
             // so the user is never asked to approve a script that can't run,
@@ -823,56 +920,6 @@ public enum AppleScriptLoop {
                 step += 1
                 continue
             case .confirm:
-                // Compile-before-confirm dry run: never ask the user to
-                // approve a script that cannot compile. On a syntax error,
-                // feed the REAL compile error back for correction (the same
-                // feedback executing it would have produced) — the user only
-                // ever sees scripts that can actually run.
-                if let dryCompile,
-                    let compileFailure = await dryCompile(script, language),
-                    compileFailure.status == .compileError
-                {
-                    consecutiveCompileFailures += 1
-                    let message = compileFailure.errorMessage ?? "syntax error"
-                    feed.emit(
-                        SubagentActivityEvent(
-                            step: step,
-                            kind: .retry,
-                            title: "Script did not compile; asking for a correction",
-                            detail: message
-                        )
-                    )
-                    record(
-                        intent: effect,
-                        status: "compile_error",
-                        error: message,
-                        errorNumber: compileFailure.errorNumber,
-                        script: script
-                    )
-                    if consecutiveCompileFailures >= limits.maxConsecutiveInvalid {
-                        return terminate(
-                            .failed(
-                                reason:
-                                    "The model could not produce a script that compiles: \(message)"
-                            )
-                        )
-                    }
-                    let toolResult =
-                        "The script was NOT run — it does not compile: \(message). Fix the "
-                        + "\(language.displayLabel) syntax and call run_applescript again."
-                    messages.append(
-                        ChatMessage(
-                            role: "tool",
-                            content: toolResult,
-                            tool_calls: nil,
-                            tool_call_id: call.id
-                        )
-                    )
-                    lastToolResult = toolResult
-                    step += 1
-                    continue
-                }
-                consecutiveCompileFailures = 0
                 // Surface the target app so the confirm card names it AND the
                 // shared prompt queue can offer "don't ask again in {app} this
                 // run" (it scopes that blanket approval on `appName`).
@@ -974,6 +1021,19 @@ public enum AppleScriptLoop {
                 if let trimmedOutput, !trimmedOutput.isEmpty {
                     lastOutput = trimmedOutput
                     if effect == .read { lastReadOutput = trimmedOutput }
+                }
+                // A task that names a readable postcondition (replace/change/
+                // exact content, a requested value, etc.) must not execute a
+                // second mutation before that state is read back. The small
+                // AppleScript models can otherwise interpret a successful OS
+                // execution as permission to repeat or embellish the same
+                // edit. Enter the existing verification gate immediately:
+                // subsequent reads are allowed, while another write is
+                // rejected before approval/execution. If the model stops
+                // instead of reading, the no-tool path below emits the bounded
+                // read-only verification nudge.
+                if effect != .read, shouldVerify(mode: mode, task: task) {
+                    verifying = true
                 }
             } else {
                 failed += 1
@@ -1152,6 +1212,7 @@ public enum AppleScriptLoop {
             // classify them as fire-and-forget only because they are phrased
             // as commands rather than questions.
             "exactly", "contain", "insert ", "write ", "type ",
+            "replace", "change the text", "edit the text", "remove the text",
         ]
         return dataIntent.contains { t.contains($0) }
     }
@@ -1299,6 +1360,23 @@ public enum AppleScriptLoop {
             .replacingOccurrences(of: "\t", with: " ")
         let squeezed = collapsed.split(whereSeparator: { $0 == " " }).joined(separator: " ")
         return squeezed.count > 200 ? String(squeezed.prefix(200)) + "…" : squeezed
+    }
+
+    /// Detect the confirmed protocol failure where a helper prints executable
+    /// AppleScript instead of calling `run_applescript`. Keep this deliberately
+    /// structural and multi-line so normal summaries that mention AppleScript
+    /// or quote a short command are not converted into tool attempts.
+    static func looksLikeUncalledScript(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.contains("\n") else { return false }
+        let lower = trimmed.lowercased()
+        let hasTellBlock =
+            (lower.contains("tell application \"") || lower.contains("tell process \""))
+            && lower.contains("end tell")
+        let hasHandler = lower.contains("\non ") && lower.contains("\nend ")
+        let fencedScript =
+            lower.hasPrefix("```applescript") || lower.hasPrefix("```osascript")
+        return hasTellBlock || hasHandler || fencedScript
     }
 
     // MARK: - Literal placeholders

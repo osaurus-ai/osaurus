@@ -455,6 +455,79 @@ struct AppleScriptToolDispatchLiteralsTests {
                 == "true"
         )
     }
+
+    @Test("referenced user literals satisfy the parent-to-child contract")
+    func referencedLiteralContract() {
+        let content = AppleScriptLiterals(["content": "Hello from OracHQ"])
+        #expect(
+            AppleScriptToolDispatch.literalContractViolation(
+                task: "Set the TextEdit document to the provided content.",
+                literals: content
+            ) == nil
+        )
+
+        let values = AppleScriptLiterals(["old": "Hello World", "replacement": "Hello again"])
+        #expect(
+            AppleScriptToolDispatch.literalContractViolation(
+                task: "Replace the provided old value with the provided replacement value.",
+                literals: values
+            ) == nil
+        )
+
+        let exactValues = AppleScriptLiterals([
+            "oldText": "Hello from OracHQ", "newText": "Hello again",
+        ])
+        let exactTask =
+            "Replace the entire exact text \"Hello from OracHQ\" with \"Hello again\" "
+            + "in the front TextEdit document."
+        #expect(
+            AppleScriptToolDispatch.literalContractViolation(
+                task: exactTask,
+                literals: exactValues
+            ) == nil
+        )
+        #expect(
+            AppleScriptToolDispatch.taskForSubagent(exactTask, literals: exactValues)
+                == "Replace the entire exact text \"{{oldText}}\" with \"{{newText}}\" "
+                    + "in the front TextEdit document."
+        )
+    }
+
+    @Test("orphaned literal fields are rejected instead of silently ignored")
+    func orphanedLiteralRejected() {
+        let violation = AppleScriptToolDispatch.literalContractViolation(
+            task: "Select all text in TextEdit.",
+            literals: AppleScriptLiterals(["content": "Hello again"])
+        )
+        #expect(violation?.field == "content")
+        #expect(violation?.message.contains("does not tell") == true)
+    }
+
+    @Test("generated AppleScript cannot masquerade as literal user content")
+    func generatedScriptLiteralRejected() {
+        let generated = """
+            tell application "TextEdit"
+                keystroke "Hello again"
+            end tell
+            """
+        let violation = AppleScriptToolDispatch.literalContractViolation(
+            task: "Set the document to the provided content.",
+            literals: AppleScriptLiterals(["content": generated])
+        )
+        #expect(violation?.field == "content")
+        #expect(violation?.message.contains("generated AppleScript source") == true)
+    }
+
+    @Test("literal AppleScript source remains valid when the user wants code inserted as text")
+    func requestedScriptTextAllowed() {
+        let source = "tell application \"Finder\"\nreturn name\nend tell"
+        #expect(
+            AppleScriptToolDispatch.literalContractViolation(
+                task: "Insert the provided AppleScript source as text in TextEdit.",
+                literals: AppleScriptLiterals(["content": source])
+            ) == nil
+        )
+    }
 }
 
 // MARK: - Effect classifier
@@ -485,6 +558,11 @@ struct AppleScriptEffectClassifierTests {
         #expect(
             AppleScriptEffectClassifier.classify(
                 "tell application \"System Events\" to keystroke \"a\""
+            ) == .edit
+        )
+        #expect(
+            AppleScriptEffectClassifier.classify(
+                "tell application \"TextEdit\" to save front document"
             ) == .edit
         )
         // A `{{content}}` placeholder classifies on the STRUCTURE, not the
@@ -670,6 +748,22 @@ struct AppleScriptTargetAppNameTests {
 
 @Suite("AppleScriptLoop gate + termination")
 struct AppleScriptLoopTests {
+    @Test("plain AppleScript text is re-asked as a required tool call")
+    func rawScriptTextRequiresToolEnvelope() {
+        let raw = """
+            tell application "TextEdit"
+                set text of front document to {{newText}}
+            end tell
+            """
+        #expect(AppleScriptLoop.looksLikeUncalledScript(raw))
+        #expect(AppleScriptLoop.looksLikeUncalledScript("Done. The document now says Hello again.") == false)
+        #expect(
+            AppleScriptLoop.looksLikeUncalledScript(
+                #"I used `tell application "TextEdit" to get text of front document`."#
+            ) == false
+        )
+    }
+
     // A MUTATING script so the confirm / deny / auto-run-with-warning gate
     // tests below exercise the gate: a pure read now auto-runs in automate mode
     // (see `automateReadAutoRuns`), so the shared "valid" script must be an edit
@@ -856,6 +950,54 @@ struct AppleScriptLoopTests {
         #expect(await exec.count == 2)
         // The mutating write is confirmed; the read-back is auto-run.
         #expect(await confirm.count == 1)
+    }
+
+    @Test("TextEdit replacement enters read-only verification before another mutation")
+    func textEditReplacementRequiresReadBack() async {
+        let feed = SubagentFeed(
+            toolCallId: "t-replace-readback", kindId: "applescript", title: "task")
+        let exec = ScriptedExec(results: [
+            successResult("Hello from OracHQ"),
+            successResult("Hello from OracHQ• malformed helper text"),
+        ])
+        let confirm = ConfirmCounter(approve: true)
+        let malformedWrite = call(
+            #"tell application "TextEdit" to set text of front document to oldText & "• malformed helper text""#,
+            id: "write"
+        )
+        let forbiddenRepeat = call(
+            #"tell application "TextEdit" to set text of front document to "Hello again""#,
+            id: "repeat-write"
+        )
+        let read = call(
+            #"tell application "TextEdit" to get text of front document"#,
+            id: "verify-read"
+        )
+        let seq = ScriptSequencer([malformedWrite, forbiddenRepeat, read, nil])
+
+        let result = await AppleScriptLoop.run(
+            task:
+                "Replace the entire text \"Hello from OracHQ\" with \"Hello again\" "
+                + "in the front TextEdit document.",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .autoRunWithWarning,
+            confirm: { _ in await confirm.confirm() },
+            sessionId: "s",
+            mode: .automate,
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { _ in await seq.next() }
+        )
+
+        #expect(result.outcome.isSuccess)
+        #expect(result.scriptsExecuted == 2)
+        #expect(result.succeeded == 2)
+        #expect(result.lastOutput == "Hello from OracHQ• malformed helper text")
+        #expect(result.steps.contains { $0.status == "blocked" })
+        // Only the initial write and read-back execute; the repeated write is
+        // rejected by verification mode before it can mutate TextEdit again.
+        #expect(await exec.count == 2)
     }
 
     private static let uiScriptingScript =
@@ -1056,7 +1198,7 @@ struct AppleScriptLoopTests {
         )
     }
 
-    @Test("compile-before-confirm: a syntax error is fed back, the user is never asked")
+    @Test("compile-before-gate: a syntax error is fed back, the user is never asked")
     func compileFailureSkipsConfirm() async {
         let feed = SubagentFeed(toolCallId: "t-dryc", kindId: "applescript", title: "task")
         let exec = ExecRecorder(result: successResult())
@@ -1105,7 +1247,7 @@ struct AppleScriptLoopTests {
         )
     }
 
-    @Test("compile-before-confirm: repeated syntax failures terminate with the real reason")
+    @Test("compile-before-gate: repeated syntax failures terminate with the real reason")
     func compileFailureBudgetTerminates() async {
         let feed = SubagentFeed(toolCallId: "t-dryc2", kindId: "applescript", title: "task")
         let exec = ExecRecorder(result: successResult())
@@ -1136,6 +1278,46 @@ struct AppleScriptLoopTests {
         }
         #expect(reason.contains("compile"))
         #expect(await exec.count == 0)
+    }
+
+    @Test("compile-before-gate also bounds malformed scripts classified as reads")
+    func compileFailureBudgetCoversReadClassification() async {
+        let feed = SubagentFeed(toolCallId: "t-dryc-read", kindId: "applescript", title: "task")
+        let exec = ExecRecorder(result: successResult())
+        let confirm = ConfirmCounter(approve: true)
+        // Local assignments classify as read-only. This mirrors the live ZAYA
+        // failure where invented replacement syntax otherwise bypassed the
+        // confirm-only compile check and ran until the global step cap.
+        let seq = ScriptSequencer(repeating: call("set bodyText to text at index 1 of bodyText"))
+        let compileFailure = AppleScriptExecutionResult(
+            status: .compileError,
+            output: nil,
+            errorNumber: -2741,
+            errorMessage: "A at:index can't go after this text."
+        )
+
+        let result = await AppleScriptLoop.run(
+            task: "read the current text",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in await confirm.confirm() },
+            limits: RunLimits(maxSteps: 12, maxConsecutiveInvalid: 3),
+            sessionId: "s",
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { _ in await seq.next() },
+            compileCheck: { _, _ in compileFailure }
+        )
+
+        guard case .failed(let reason) = result.outcome else {
+            Issue.record("expected .failed, got \(result.outcome)")
+            return
+        }
+        #expect(reason.contains("compile"))
+        #expect(result.steps.count == 3)
+        #expect(await exec.count == 0)
+        #expect(await confirm.count == 0)
     }
 
     @Test("an invalid call followed by completion stays failed")
@@ -1946,12 +2128,97 @@ struct AppleScriptToolSelectionGuidanceTests {
         #expect(prompt.contains("`task` is still required when `content`/`contents` is present"))
         #expect(prompt.contains("applescript(task="))
     }
+
+    @Test("parent schema reserves content for user-supplied literal text")
+    func parentSchemaReservesContentForUserText() throws {
+        #expect(AppleScriptTool.toolDescription.contains("only for literal text supplied by the user"))
+        #expect(AppleScriptTool.toolDescription.contains("REQUIRED for text replacement"))
+        let parametersValue = try #require(AppleScriptTool().parameters)
+        guard case .object(let parameters) = parametersValue,
+            case .object(let properties)? = parameters["properties"],
+            case .object(let content)? = properties["content"],
+            case .string(let description)? = content["description"]
+        else {
+            Issue.record("applescript.content must keep a string description in its object schema")
+            return
+        }
+        #expect(description.contains("never place AppleScript"))
+    }
+}
+
+@Suite("AppleScript model routing")
+struct AppleScriptModelRoutingTests {
+    @Test("curated and upstream task-model ids are dedicated AppleScript models")
+    func recognizesDedicatedBundleNames() {
+        #expect(AppleScriptModelCatalog.isAppleScriptModel(id: AppleScriptModelCatalog.model8BId))
+        #expect(
+            AppleScriptModelCatalog.isAppleScriptModel(
+                id: "JANGQ-AI/AppleScript-16B-A4B-JANG_4M"
+            )
+        )
+        #expect(
+            AppleScriptModelCatalog.isAppleScriptModel(
+                id: "jangq-ai/applescript-8b-jang_6m"
+            )
+        )
+        #expect(!AppleScriptModelCatalog.isAppleScriptModel(id: "other/AppleScript-8B-JANG_6M"))
+        #expect(!AppleScriptModelCatalog.isAppleScriptModel(id: "example/NotAppleScript-8B"))
+        #expect(!AppleScriptModelCatalog.isAppleScriptModel(id: "example/general-chat-model"))
+    }
+
+    @Test("upstream task models are excluded from ordinary chat candidates")
+    func upstreamTaskModelIsNotAChatCandidate() {
+        let item = ModelPickerItem(
+            id: "JANGQ-AI/AppleScript-16B-A4B-JANG_4M",
+            displayName: "AppleScript 16B",
+            source: .local
+        )
+        #expect(item.isAppleScriptCatalogModel)
+        #expect(!item.isLikelyChatCapable)
+    }
 }
 
 @Suite("AppleScript external model availability")
 struct AppleScriptExternalModelAvailabilityTests {
-    @Test("a Settings-selected model folder satisfies the AppleScript availability gate")
-    func externalJANG6MIsInstalledAndResolves() async {
+    @Test("an upstream model in the primary Models Directory is selectable but never silently becomes default")
+    func primaryModelsDirectoryUpstreamModelIsInstalledAndResolves() async {
+        await OsaurusTestGlobals.withPathsLock {
+            let fm = FileManager.default
+            let modelsRoot = fm.temporaryDirectory.appendingPathComponent(
+                "osaurus-applescript-primary-models-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let upstreamId = "JANGQ-AI/AppleScript-8B-JANG_6M"
+            let bundle = modelsRoot.appendingPathComponent(upstreamId, isDirectory: true)
+            let previousScanOverride = ModelManager.scanLocalModelsOverrideForTests
+            ModelManager.invalidateLocalModelsCache()
+            defer {
+                ModelManager.scanLocalModelsOverrideForTests = previousScanOverride
+                ModelManager.invalidateLocalModelsCache()
+                try? fm.removeItem(at: modelsRoot)
+            }
+
+            try? fm.createDirectory(at: bundle, withIntermediateDirectories: true)
+            try? Data("{}".utf8).write(to: bundle.appendingPathComponent("config.json"))
+            try? Data("{}".utf8).write(to: bundle.appendingPathComponent("tokenizer.json"))
+            try? Data("w".utf8).write(to: bundle.appendingPathComponent("model.safetensors"))
+
+            ModelManager.scanLocalModelsOverrideForTests = { _ in
+                ModelManager.scanLocalModels(at: modelsRoot)
+            }
+            _ = await ModelManager.discoverLocalModelsOffMain()
+
+            #expect(AppleScriptModelCatalog.installedModels().map(\.id).contains(upstreamId))
+            #expect(AppleScriptModelCatalog.hasInstalledModel)
+            #expect(
+                AppleScriptModelCatalog.resolveInstalledModelId(preferred: upstreamId) == upstreamId
+            )
+            #expect(AppleScriptModelCatalog.resolveInstalledModelId(preferred: nil) == nil)
+        }
+    }
+
+    @Test("an upstream model in External Models is selectable but never silently becomes default")
+    func externalUpstreamModelIsInstalledAndResolves() async {
         await OsaurusTestGlobals.withPathsLock {
             let fm = FileManager.default
             let manifestRoot = fm.temporaryDirectory.appendingPathComponent(
@@ -1962,10 +2229,8 @@ struct AppleScriptExternalModelAvailabilityTests {
                 "osaurus-applescript-models-\(UUID().uuidString)",
                 isDirectory: true
             )
-            let bundle = modelsRoot.appendingPathComponent(
-                AppleScriptModelCatalog.model8BId,
-                isDirectory: true
-            )
+            let upstreamId = "JANGQ-AI/AppleScript-16B-A4B-JANG_4M"
+            let bundle = modelsRoot.appendingPathComponent(upstreamId, isDirectory: true)
             let previousRoot = OsaurusPaths.overrideRoot
             let previousOverride = ExternalModelLocator.testRootsOverride
             OsaurusPaths.overrideRoot = manifestRoot
@@ -1989,20 +2254,21 @@ struct AppleScriptExternalModelAvailabilityTests {
             ExternalModelLocator.rescan()
 
             #expect(
-                ExternalModelLocator.path(forId: AppleScriptModelCatalog.model8BId)?
+                ExternalModelLocator.path(forId: upstreamId)?
                     .standardizedFileURL.path == bundle.standardizedFileURL.path
             )
             #expect(
                 AppleScriptModelCatalog.installedModels().map(\.id).contains(
-                    AppleScriptModelCatalog.model8BId
+                    upstreamId
                 )
             )
             #expect(AppleScriptModelCatalog.hasInstalledModel)
             #expect(
                 AppleScriptModelCatalog.resolveInstalledModelId(
-                    preferred: AppleScriptModelCatalog.model8BId
-                ) == AppleScriptModelCatalog.model8BId
+                    preferred: upstreamId
+                ) == upstreamId
             )
+            #expect(AppleScriptModelCatalog.resolveInstalledModelId(preferred: nil) == nil)
         }
     }
 }
@@ -2396,11 +2662,52 @@ struct AppleScriptAppKnowledgeTests {
         #expect(withoutCue.isEmpty)
     }
 
+    @Test("working file or document anaphora targets the last non-Osaurus app")
+    func workingDocumentFallback() {
+        let fileTask = AppleScriptAppKnowledge.detectTargetApps(
+            task: "Change the text in the file from Hello to Goodbye",
+            frontmost: "TextEdit",
+            runningAppNames: ["TextEdit", "Finder"]
+        )
+        #expect(fileTask == ["TextEdit"])
+
+        let documentTask = AppleScriptAppKnowledge.detectTargetApps(
+            task: "Replace the document text without saving",
+            frontmost: "TextEdit",
+            runningAppNames: ["TextEdit"]
+        )
+        #expect(documentTask == ["TextEdit"])
+
+        let unrelatedTask = AppleScriptAppKnowledge.detectTargetApps(
+            task: "What is the battery percentage?",
+            frontmost: "TextEdit",
+            runningAppNames: ["TextEdit"]
+        )
+        #expect(unrelatedTask.isEmpty)
+    }
+
     @Test("recipe catalog matches by app name, case-insensitively")
     func recipeMatching() {
         #expect(!AppleScriptRecipeCatalog.recipes(for: "safari").isEmpty)
+        #expect(!AppleScriptRecipeCatalog.recipes(for: "textedit").isEmpty)
         #expect(!AppleScriptRecipeCatalog.recipes(for: "Shortcuts Events").isEmpty)
         #expect(AppleScriptRecipeCatalog.recipes(for: "NoSuchApp").isEmpty)
+    }
+
+    @Test("TextEdit recipe anchors scoped editing and forbids implicit save")
+    func textEditRecipe() {
+        let apps = AppleScriptAppKnowledge.detectTargetApps(
+            task: "Change the text in TextEdit",
+            frontmost: nil,
+            runningAppNames: []
+        )
+        #expect(apps == ["TextEdit"])
+        let sections = AppleScriptAppKnowledge.compose(apps: apps, runningApps: [])
+        let recipes = try! #require(sections.recipes)
+        #expect(recipes.contains("tell application \"TextEdit\""))
+        #expect(recipes.contains("replace it directly"))
+        #expect(recipes.contains("Do not use `save`"))
+        #expect(recipes.contains("text item delimiters"))
     }
 
     @Test("a task phrased 'run my … shortcut' surfaces the Shortcuts recipe")

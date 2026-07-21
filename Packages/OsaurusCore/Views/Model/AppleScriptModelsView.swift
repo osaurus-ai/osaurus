@@ -37,6 +37,11 @@ struct AppleScriptModelsView: View {
     /// finish so the rows re-segment into Installed vs Available without each
     /// row re-reading the disk during a render pass.
     @State private var installedIds: Set<String> = []
+    /// Curated plus locally discovered dedicated AppleScript bundles (primary
+    /// Models Directory and External Models). Kept separate from
+    /// `installedModels` below so an upstream bundle is selectable without
+    /// presenting a destructive catalog Delete action for its source.
+    @State private var selectableInstalledModels: [MLXModel] = []
 
     private var catalog: [MLXModel] { AppleScriptModelCatalog.models }
     private var installedModels: [MLXModel] { catalog.filter { installedIds.contains($0.id) } }
@@ -259,11 +264,11 @@ struct AppleScriptModelsView: View {
             Text("Choose automatically", bundle: .module).tag("")
             if let current = configuration.defaultAppleScriptModelId,
                 !current.isEmpty,
-                !installedModels.contains(where: { $0.id == current })
+                !selectableInstalledModels.contains(where: { $0.id == current })
             {
                 Text("\(current) (unavailable)", bundle: .module).tag(current)
             }
-            ForEach(installedModels) { model in
+            ForEach(selectableInstalledModels) { model in
                 Text(verbatim: model.name).tag(model.id)
             }
         }
@@ -379,7 +384,8 @@ struct AppleScriptModelsView: View {
     }
 
     private func refreshInstalled() {
-        installedIds = Set(AppleScriptModelCatalog.installedModels().map(\.id))
+        selectableInstalledModels = AppleScriptModelCatalog.installedModels()
+        installedIds = Set(selectableInstalledModels.map(\.id))
     }
 
     private func normalized(_ value: String) -> String? {

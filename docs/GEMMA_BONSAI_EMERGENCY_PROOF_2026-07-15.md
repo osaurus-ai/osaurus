@@ -80,11 +80,123 @@ real UI:
 | P1 | Gemma/Bonsai tool correctness regressions | NOT YET RUN on clean head |
 | P1 | TurboQuant default-off, explicit toggle, persistence, Gemma rotating-SWA topology | NOT YET RUN on clean head |
 | P1 | Qwen 3.5 text/VL hybrid rederive, prefix/L2 disk restore, cache growth in GB | NOT YET RUN on clean head |
+| P1 | New chat repeatedly prefills the stable initial prefix from zero instead of restoring its compatible SSD checkpoint | VERIFIED-SOURCE + VERIFIED-LIVE for Ornith MXFP8 new-chat/restart with default SSD On, paged Off, native codec: safe 1,731/1,734 and 1,734/1,752 KV+48-state SSM restores, only 3/18 suffix tokens prefilled, exact coherent output, 0.33-0.50s visible TTFT. Other families/settings remain PARTIAL. |
 | P1 | Memory Safety warning, setting change, larger-model load, restore refusal | NOT YET RUN on clean head |
 | P1 | Image generation/editing and spawn/delegation RAM admission/notifications | NOT YET RUN on clean head |
 | P1 | MiniMax M2.7 JANGTQ/JANG_K runtime plus native reasoning-mode behavior | DOCUMENTED; SEPARATE LIVE MATRIX OPEN |
 | P1 | DSV4 Flash mixed SWA/HCA/CSA/DSA/MLA prefix/partial/L2 cache behavior | DOCUMENTED; SEPARATE LIVE MATRIX OPEN |
 | P2 | MXFP4 structurally incomplete answer/reasoning/tool-envelope recovery | DOCUMENTED ONLY; no MXFP4 runtime claim and excluded from the emergency diff without a later exact-model reproduction |
+
+### 2026-07-20 new-session initial-prefix SSD report
+
+Reported behavior: after a user finishes one session and starts a new session,
+the initial prompt warmup appears to restart from zero even when the model and
+configuration are unchanged. Expected behavior is a fresh chat transcript with
+physical reuse of the longest byte/token-identical SSD prefix checkpoint. Only
+an inference-affecting configuration or prefix change should invalidate the
+corresponding cached blocks; a new chat id alone must not.
+
+This row is separate from model residency. An unloaded model may still need to
+mmap/load weights and prepare kernels, while the compatible prompt KV/recurrent
+state should restore from SSD after the model is ready. Proof therefore needs
+both the UI timing and runtime cache boundaries, not only a subjective warmup
+spinner or an aggregate TTFT.
+
+Required live tests use the development Release app and visible Server ->
+Settings -> Cache controls:
+
+1. Confirm the visible/effective defaults rather than assuming them: Prefix
+   and SSD intended On; paged RAM/GPU cache and TurboQuant intended Off.
+2. For Gemma 4 rotating SWA/full-attention and Qwen 3.5 hybrid GDN/SSM models
+   (including exact local Ornith and Bonsai bundles), record cold chat, second
+   new chat, partial-prefix new chat, model unload/reload, and app restart.
+3. Require `disk_l2_hits` and the exact restored token boundary to increase on
+   compatible new chats, with fewer raw-prefill tokens and improved TTFT.
+   A disk file existing or `stores > 0` is not reuse proof.
+4. Require Gemma rotating/full state and Qwen SSM/GDN companion hit/rederive
+   telemetry to agree with the restored KV boundary. Any hit without matching
+   typed companion state is a failed row even if short output looks plausible.
+5. Repeat Qwen 3.5 VL with same media and different media; media salt must
+   permit the first and invalidate at the changed boundary for the second.
+6. Toggle paged RAM On as a separate opt-in control: hot RAM blocks win,
+   evicted blocks fall back to SSD, and a fresh process proves SSD-only reuse.
+7. Toggle TurboQuant On only as an explicit supported-path control. Cache keys
+   must isolate native and TQ representations; only eligible KV layers encode,
+   while rotating/SSM/GDN/media companion state retains its typed contract.
+8. Change reasoning mode, tool/ability schemas, system prompt, codec, and one
+   topology-affecting setting separately. Each must invalidate only its
+   affected prefix/representation; restoring the old setting must make its old
+   compatible checkpoint reusable again.
+
+Every row records visible model/settings, cache directory byte growth, cold and
+warm TTFT, token/s, restored/remaining token counts, disk hit/miss/store and
+eviction counters, paged counters, companion hit/rederive/sync counters,
+reasoning/tool/content deltas, and final coherence. No prompt coercion, hidden
+sampler change, forced reasoning marker, or session-context carryover is an
+acceptable substitute for a real cache-key/restore fix.
+
+### Current Ornith SSD reproduction and candidate root (2026-07-20 evening)
+
+The isolated Release app at
+`/private/tmp/osaurus-applescript-emergency-release-derived-20260720/Build/Products/Release/osaurus.app`
+used bundle id `com.dinoki.osaurus.applescriptemergency20260720`, SHA-256
+`114fbe282e9e2872abe88ca8c991da6ebc1b7c9e19f0ef5029bd94c54511fd9b`,
+isolated root
+`/private/tmp/osaurus-applescript-emergency-live-root-20260720`, exact vMLX
+pin `f2b184841e98d969e46dec83109f27cd7bb57357`, and exact local parent
+`Ornith 1.0 9B MXFP8`. The real Settings UI showed Prefix On, paged GPU/RAM
+Off, Disk Cache On, Engine Selected/native codec, SSM rederive On, and parent
+Thinking Off.
+
+A fresh process restored SSD boundary 2,201 with zero remaining and 48
+recurrent states; the warmup log was 2,910 ms. A new chat restored the same
+boundary and logged 1,197 ms. The first reported TextEdit prompt then logged
+`HIT disk boundary=2234 remaining=0 ssm=48 fmtV=2 ...
+skipExactDisk=true`, while the UI subsequently showed raw prefill beginning at
+0/2,234 and advancing in 512-token chunks. This is a real restore followed by
+a rollback, not an absent cache file and not proof that the UI alone is wrong.
+
+Current vMLX source supplies the owning control flow. `BatchEngine` requests
+`skipExactDiskBoundary` for path-dependent hybrid caches. The preferred probe
+omits N, but `CacheCoordinator.fetch` then loops over indexed candidates and
+admits N again. The exact GDN/Arrays state cannot use the standard trim plus
+last-token seed; without a matching N-1 SSM boundary, `BatchEngine` discards
+the restored cache and full-prefills. The candidate excludes N from the
+indexed loop, allowing the longest safe partial boundary to win. It also
+avoids rewriting a file that this process has just successfully loaded or
+written when its fingerprint and SQLite row are unchanged. Before the
+candidate, the live run repeatedly rewrote 125-143 MB KV payloads and 26 MB
+SSM payloads and evicted entries at the 10 GB quota.
+
+The scoped Ornith MXFP8 row is now **VERIFIED-SOURCE + VERIFIED-LIVE** on the
+rebuilt candidate, while the broader family/setting matrix remains
+**PARTIAL**. Exact app:
+`/private/tmp/Osaurus SSD Cache Proof 20260720.app`, bundle id
+`com.dinoki.osaurus.ssdcacheproof20260720`, Release executable SHA-256
+`8dcb022e282b28a2b800a7cdef858a86f300c3999db12c1fdb97f67f24ba3516`,
+resolved vMLX pin
+`74caefd907e6df15780a454d8523b78bf889964c`.
+
+Computer Use drove fresh onboarding, model selection, cache inspection, two
+new chats, full app quit, and process restart. The real Settings UI showed
+Prefix On, Disk On, paged GPU/RAM Off, Engine Selected, and SSM rederive On;
+the chat model showed Ornith 9B MXFP8 and Thinking Off. The first chat restored
+boundary 1,734 of 1,752 with all 48 companion states and returned exact
+`CACHE PROOF ONE.` at TTFT 0.50s, 49.0 tok/s. Starting a brand-new chat caused
+the background warmup itself to restore 1,731 of 1,734 (3-token suffix) and
+emit validated no-rewrite telemetry for both KV files and both SSM pairs. The
+repeated exact answer measured TTFT 0.33s, 49.1 tok/s. After a complete app
+quit/restart, warmup again restored 1,731 of 1,734 from SSD; the first visible
+post-restart answer was exact at TTFT 0.39s, 49.4 tok/s.
+
+This proves the reported new-session warmup failure is fixed for the exact
+Ornith hybrid path: a new chat and fresh process no longer full-prefill the
+unchanged stable prefix. It does not prove Gemma 4, Bonsai, Qwen VL,
+paged-On hot-to-SSD fallback, TurboQuant-On, or configuration-change rows.
+One conservative behavior remains documented rather than hidden: because the
+unsafe exact GDN boundary is intentionally excluded, a fresh process validates
+the restored N-3 payload but rewrites the exact N payload once after warmup;
+same-process repeated stores of both validated KV and SSM payloads are skipped.
 
 ## 2026-07-20 Ornith agent reasoning emergency
 
