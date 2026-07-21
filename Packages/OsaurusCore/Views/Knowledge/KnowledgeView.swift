@@ -236,6 +236,11 @@ struct KnowledgeView: View {
                     // same runloop tick drops the second one.
                     DispatchQueue.main.async { editingCollection = collection }
                 },
+                onDelete: {
+                    detailCollection = nil
+                    knowledgeManager.delete(id: collection.id)
+                    showSuccess("Deleted \"\(collection.name)\"")
+                },
                 onClose: { detailCollection = nil }
             )
         }
@@ -1344,8 +1349,10 @@ private struct KnowledgeCollectionDetailSheet: View {
 
     let collection: KnowledgeCollection
     let onEdit: () -> Void
+    let onDelete: () -> Void
     let onClose: () -> Void
 
+    @State private var confirmingDelete = false
     @State private var documents: [KnowledgeDocument] = []
     @State private var docsLoaded = false
     @State private var nonconformingCount = 0
@@ -1422,7 +1429,32 @@ private struct KnowledgeCollectionDetailSheet: View {
     }
 
     private var footer: some View {
-        HStack {
+        HStack(spacing: 10) {
+            Button(role: .destructive) {
+                confirmingDelete = true
+            } label: {
+                Text("Delete", bundle: .module)
+            }
+            .buttonStyle(SettingsButtonStyle(isDestructive: true))
+            .confirmationDialog(
+                Text(String(format: L("Delete \"%@\"?"), live.name)),
+                isPresented: $confirmingDelete,
+                titleVisibility: .visible
+            ) {
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    Text("Delete Collection", bundle: .module)
+                }
+                Button(role: .cancel) {} label: {
+                    Text("Cancel", bundle: .module)
+                }
+            } message: {
+                Text(
+                    "This removes the collection and its search index from Osaurus. The folder and its files on disk are not touched.",
+                    bundle: .module
+                )
+            }
             Button(action: onEdit) {
                 Text("Edit", bundle: .module)
             }

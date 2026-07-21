@@ -51753,6 +51753,40 @@
         }
       }
     },
+    "Delete \"%@\"?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„%@“ löschen?"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%@\"을(를) 삭제하시겠습니까?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить «%@»?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除\"%@\"？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刪除「%@」？"
+          }
+        }
+      }
+    },
     "Delete %lld" : {
       "comment" : "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
       "extractionState" : "manual",
@@ -51999,6 +52033,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "刪除所有数据…"
+          }
+        }
+      }
+    },
+    "Delete Collection" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sammlung löschen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "컬렉션 삭제"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить коллекцию"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除集合"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刪除集合"
           }
         }
       }
@@ -173533,6 +173601,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "這將從設定檔中移除 \"%@\" 頻道定義。其引用的鑰匙圈金鑰不會被刪除。"
+          }
+        }
+      }
+    },
+    "This removes the collection and its search index from Osaurus. The folder and its files on disk are not touched." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dies entfernt die Sammlung und ihren Suchindex aus Osaurus. Der Ordner und seine Dateien auf der Festplatte bleiben unberührt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 작업은 Osaurus에서 컬렉션과 검색 색인을 제거합니다. 디스크의 폴더와 파일은 그대로 유지됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это удалит коллекцию и её поисковый индекс из Osaurus. Папка и её файлы на диске останутся нетронутыми."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这将从 Osaurus 中移除该集合及其搜索索引。磁盘上的文件夹及其文件不会受到影响。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這將從 Osaurus 中移除該集合及其搜尋索引。磁碟上的資料夾及其檔案不會受到影響。"
           }
         }
       }
