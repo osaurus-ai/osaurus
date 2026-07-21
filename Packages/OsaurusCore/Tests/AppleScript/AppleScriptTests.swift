@@ -546,6 +546,46 @@ struct AppleScriptToolDispatchLiteralsTests {
         )
     }
 
+    @Test("task-only TextEdit replacement preserves the exact quoted values")
+    func taskOnlyTextEditReplacementPreservesLiterals() {
+        let task =
+            "In the front TextEdit document, replace the entire text “Hello from OracHQ” "
+            + "with “Hello again”."
+        let inferred = AppleScriptToolDispatch.literalsForDispatch(
+            task: task,
+            literals: AppleScriptLiterals()
+        )
+        #expect(inferred.value(for: "oldText") == "Hello from OracHQ")
+        #expect(inferred.value(for: "newText") == "Hello again")
+        #expect(
+            AppleScriptToolDispatch.taskForSubagent(task, literals: inferred)
+                == "In the front TextEdit document, replace the entire text “{{oldText}}” "
+                    + "with “{{newText}}”."
+        )
+    }
+
+    @Test("ambiguous quoted replacement tasks remain task-only")
+    func ambiguousReplacementDoesNotInferLiterals() {
+        #expect(
+            AppleScriptToolDispatch.literalsForDispatch(
+                task: "Replace “one” with “two” in Notes.",
+                literals: AppleScriptLiterals()
+            ).isEmpty
+        )
+        #expect(
+            AppleScriptToolDispatch.literalsForDispatch(
+                task: "In TextEdit replace “one” with “two” in document “three”.",
+                literals: AppleScriptLiterals()
+            ).isEmpty
+        )
+        #expect(
+            AppleScriptToolDispatch.literalsForDispatch(
+                task: "In TextEdit compare “one” with “two”.",
+                literals: AppleScriptLiterals()
+            ).isEmpty
+        )
+    }
+
     @Test("literal AppleScript source remains valid when the user wants code inserted as text")
     func requestedScriptTextAllowed() {
         let source = "tell application \"Finder\"\nreturn name\nend tell"

@@ -108,7 +108,15 @@ enum AppleScriptToolDispatch {
         task: String,
         literals: AppleScriptLiterals
     ) -> AppleScriptLiterals {
-        guard !literals.isEmpty else { return literals }
+        if literals.isEmpty {
+            if let inferred = exactTextEditReplacementLiterals(from: task) {
+                debugLog(
+                    "[AppleScript] preserved exact TextEdit replacement values as oldText,newText"
+                )
+                return inferred
+            }
+            return literals
+        }
 
         let normalizedTask = task.lowercased()
         let explicitlyInsertingSource =
@@ -142,6 +150,76 @@ enum AppleScriptToolDispatch {
                 + names.joined(separator: ",")
         )
         return AppleScriptLiterals()
+    }
+
+    /// Preserve the two exact user-visible values when a parent model sends a
+    /// plain-language TextEdit replacement task but omits `contents`. This is a
+    /// narrow recovery for the common `replace “old” with “new”` form: exactly
+    /// two quoted values, an explicit replacement verb, an explicit `with`
+    /// separator, and an explicit TextEdit target are all required. Ambiguous
+    /// tasks (extra quoted values, another app, or no replacement separator)
+    /// remain task-only rather than guessing which text is data.
+    ///
+    /// The recovered values still travel through the ordinary literal store
+    /// and `taskForSubagent`, so the helper receives `{{oldText}}` and
+    /// `{{newText}}` placeholders and never has to re-type the bytes.
+    private static func exactTextEditReplacementLiterals(
+        from task: String
+    ) -> AppleScriptLiterals? {
+        let normalized = task.lowercased()
+        guard normalized.contains("textedit"), normalized.contains("replace") else { return nil }
+
+        struct QuotedValue {
+            let value: String
+            let opening: String.Index
+            let closing: String.Index
+        }
+
+        var quoted: [QuotedValue] = []
+        var cursor = task.startIndex
+        while cursor < task.endIndex {
+            let character = task[cursor]
+            let closingQuote: Character?
+            switch character {
+            case "\"": closingQuote = "\""
+            case "“": closingQuote = "”"
+            default: closingQuote = nil
+            }
+            guard let closingQuote else {
+                cursor = task.index(after: cursor)
+                continue
+            }
+
+            let valueStart = task.index(after: cursor)
+            guard let close = task[valueStart...].firstIndex(of: closingQuote) else { return nil }
+            quoted.append(
+                QuotedValue(
+                    value: String(task[valueStart..<close]),
+                    opening: cursor,
+                    closing: close
+                )
+            )
+            cursor = task.index(after: close)
+        }
+
+        guard quoted.count == 2,
+            !quoted[0].value.isEmpty,
+            !quoted[1].value.isEmpty,
+            !quoted[0].value.contains("{{"),
+            !quoted[1].value.contains("{{")
+        else { return nil }
+
+        let beforeOld = task[..<quoted[0].opening].lowercased()
+        let separatorStart = task.index(after: quoted[0].closing)
+        let separator = task[separatorStart..<quoted[1].opening].lowercased()
+        guard beforeOld.contains("replace"),
+            separator.trimmingCharacters(in: .whitespacesAndNewlines) == "with"
+        else { return nil }
+
+        return AppleScriptLiterals([
+            "oldText": quoted[0].value,
+            "newText": quoted[1].value,
+        ])
     }
 
     /// Literal fields are an out-of-band DATA channel, not a second instruction
