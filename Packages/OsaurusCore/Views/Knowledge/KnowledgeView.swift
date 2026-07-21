@@ -28,6 +28,9 @@ struct KnowledgeView: View {
     /// grant access inline instead of hunting through each agent's settings.
     @State private var grantingCollection: KnowledgeCollection?
 
+    /// The collection whose detail sheet is open (tap a card to set it).
+    @State private var detailCollection: KnowledgeCollection?
+
     // Curation review state (Phase 2).
     @State private var openTickets: [KnowledgeTicket] = []
     @State private var pendingProposals: [KnowledgeProposal] = []
@@ -133,6 +136,9 @@ struct KnowledgeView: View {
                                     onDelete: {
                                         knowledgeManager.delete(id: collection.id)
                                         showSuccess("Deleted \"\(collection.name)\"")
+                                    },
+                                    onOpenDetail: {
+                                        detailCollection = collection
                                     }
                                 )
                             }
@@ -218,6 +224,19 @@ struct KnowledgeView: View {
                         )
                     }
                 }
+            )
+        }
+        .sheet(item: $detailCollection) { collection in
+            KnowledgeCollectionDetailSheet(
+                collection: collection,
+                onEdit: {
+                    detailCollection = nil
+                    // Defer so the detail sheet finishes dismissing before the
+                    // editor sheet is presented — presenting two sheets in the
+                    // same runloop tick drops the second one.
+                    DispatchQueue.main.async { editingCollection = collection }
+                },
+                onClose: { detailCollection = nil }
             )
         }
         .sheet(item: $reviewingProposal) { proposal in
@@ -489,6 +508,7 @@ private struct KnowledgeCollectionCard: View {
     let onValidateOKF: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
+    let onOpenDetail: () -> Void
 
     /// OKF conformance, computed on appear so the badge shows status at a
     /// glance rather than hiding it behind a click.
@@ -700,6 +720,11 @@ private struct KnowledgeCollectionCard: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(theme.primaryBorder, lineWidth: 1)
         )
+        // Tapping empty areas of the card opens its detail. The inner
+        // Buttons and Toggle consume their own taps, so this fires only on
+        // the non-control regions and never fights the row actions.
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .onTapGesture { onOpenDetail() }
         .opacity(hasAppeared ? 1 : 0)
         .offset(y: hasAppeared ? 0 : 10)
         .animation(
@@ -1302,5 +1327,346 @@ private struct KnowledgeGrantAgentsSheet: View {
             granted += 1
         }
         onDone(granted)
+    }
+}
+
+// MARK: - Collection Detail Sheet
+
+/// Opened by tapping a collection card. Gathers everything about one
+/// collection in a single place: its source/status, index stats, the agents
+/// that can reach it (grant/revoke inline), and the indexed documents —
+/// closing the gap where this all lived across separate screens.
+private struct KnowledgeCollectionDetailSheet: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var knowledgeManager = KnowledgeManager.shared
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    let collection: KnowledgeCollection
+    let onEdit: () -> Void
+    let onClose: () -> Void
+
+    @State private var documents: [KnowledgeDocument] = []
+    @State private var docsLoaded = false
+    @State private var nonconformingCount = 0
+
+    /// Re-read from the manager so edits/toggles made elsewhere while this is
+    /// open stay reflected; falls back to the captured value if it vanished.
+    private var live: KnowledgeCollection {
+        knowledgeManager.collection(for: collection.id) ?? collection
+    }
+    private var isIndexing: Bool {
+        knowledgeManager.indexingCollectionIds.contains(collection.id)
+    }
+    /// Built-in agents are omitted: their grants can't be persisted.
+    private var editableAgents: [Agent] {
+        agentManager.agents.filter { !$0.isBuiltIn }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    infoSection
+                    statsSection
+                    accessSection
+                    documentsSection
+                }
+                .padding(20)
+            }
+            Divider()
+            footer
+        }
+        .frame(width: 560, height: 640)
+        .background(theme.primaryBackground)
+        .environment(\.theme, themeManager.currentTheme)
+        .onAppear(perform: loadData)
+    }
+
+    // MARK: Header / Footer
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "books.vertical.fill")
+                .font(.system(size: 20))
+                .foregroundColor(theme.accentColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(live.name)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                if !live.summary.isEmpty {
+                    Text(live.summary)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { live.isEnabled },
+                    set: { enabled in
+                        var updated = live
+                        updated.isEnabled = enabled
+                        knowledgeManager.update(updated)
+                    }
+                )
+            )
+            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+            .labelsHidden()
+        }
+        .padding(20)
+    }
+
+    private var footer: some View {
+        HStack {
+            Button(action: onEdit) {
+                Text("Edit", bundle: .module)
+            }
+            .buttonStyle(SettingsButtonStyle())
+            Spacer()
+            Button(action: onClose) {
+                Text("Done", bundle: .module)
+            }
+            .buttonStyle(SettingsButtonStyle(isPrimary: true))
+            .keyboardShortcut(.defaultAction)
+        }
+        .padding(20)
+    }
+
+    // MARK: Sections
+
+    private func sectionHeader(_ title: LocalizedStringKey) -> some View {
+        Text(title, bundle: .module)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(theme.secondaryText)
+            .textCase(.uppercase)
+    }
+
+    private var infoSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Location")
+            HStack(spacing: 6) {
+                Image(systemName: live.folderExists ? "folder.fill" : "folder.badge.questionmark")
+                    .font(.system(size: 11))
+                    .foregroundColor(live.folderExists ? theme.tertiaryText : .orange)
+                Text(live.folderPath)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(theme.secondaryText)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if live.isGitRepository {
+                    Text("git", bundle: .module)
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(theme.accentColor.opacity(0.18)))
+                        .foregroundColor(theme.accentColor)
+                }
+            }
+            if live.isGitRepository, let remote = live.gitRemoteURL {
+                Text(remote)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            if !live.folderExists {
+                Text("Folder not found. Search serves the last indexed state.", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(.orange)
+            }
+            Text(
+                String(
+                    format: L("Created %@ · Updated %@"),
+                    live.createdAt.formatted(date: .abbreviated, time: .shortened),
+                    live.updatedAt.formatted(date: .abbreviated, time: .shortened)
+                )
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+        }
+    }
+
+    private var statsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Status")
+            HStack(spacing: 8) {
+                statPill(
+                    icon: "doc.text",
+                    text: docsLoaded
+                        ? (documents.count == 1
+                            ? L("1 document")
+                            : String(format: L("%lld documents"), documents.count))
+                        : L("Loading…"),
+                    color: theme.secondaryText
+                )
+                if docsLoaded && !documents.isEmpty {
+                    let categorized = documents.count - nonconformingCount
+                    statPill(
+                        icon: nonconformingCount == 0 ? "checkmark.seal.fill" : "exclamationmark.triangle.fill",
+                        text: nonconformingCount == 0
+                            ? L("All categorized")
+                            : String(format: L("%lld of %lld categorized"), categorized, documents.count),
+                        color: nonconformingCount == 0 ? .green : .orange
+                    )
+                }
+                if isIndexing {
+                    statPill(icon: "arrow.triangle.2.circlepath", text: L("Indexing…"), color: theme.accentColor)
+                }
+            }
+        }
+    }
+
+    private func statPill(icon: String, text: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+            Text(verbatim: text)
+                .font(.system(size: 11, weight: .medium))
+        }
+        .foregroundColor(color)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(color.opacity(0.12)))
+    }
+
+    private var accessSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Agents with access")
+            if editableAgents.isEmpty {
+                Text("No agents with access", bundle: .module)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.tertiaryText)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(editableAgents) { agent in
+                        accessRow(agent)
+                    }
+                }
+                .background(RoundedRectangle(cornerRadius: 8).fill(theme.secondaryBackground))
+            }
+        }
+    }
+
+    private func accessRow(_ agent: Agent) -> some View {
+        let granted = agent.settings.knowledgeCollectionIds.contains(collection.id)
+        return HStack(spacing: 10) {
+            AgentAvatarView(
+                mascotId: agent.avatar,
+                name: agent.name,
+                tint: theme.accentColor,
+                diameter: 24,
+                customImageURL: agent.customAvatarURL,
+                monogramFontSize: 11,
+                borderWidth: 0
+            )
+            VStack(alignment: .leading, spacing: 1) {
+                Text(agent.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                if !agent.description.isEmpty {
+                    Text(agent.description)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 8)
+            Toggle("", isOn: Binding(get: { granted }, set: { _ in toggleAccess(agent) }))
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .labelsHidden()
+        }
+        .padding(10)
+    }
+
+    private var documentsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Documents")
+            if !docsLoaded {
+                Text("Loading…", bundle: .module)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.tertiaryText)
+            } else if documents.isEmpty {
+                Text("No documents indexed yet", bundle: .module)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.tertiaryText)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(documents, id: \.id) { doc in
+                        documentRow(doc)
+                    }
+                }
+                .background(RoundedRectangle(cornerRadius: 8).fill(theme.secondaryBackground))
+            }
+        }
+    }
+
+    private func documentRow(_ doc: KnowledgeDocument) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "doc.text")
+                .font(.system(size: 12))
+                .foregroundColor(theme.tertiaryText)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(doc.title.isEmpty ? doc.relPath : doc.title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                Text(doc.relPath)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 8)
+            Text(verbatim: doc.docType.isEmpty ? L("Uncategorized") : doc.docType)
+                .font(.system(size: 9, weight: .bold))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .background(
+                    Capsule().fill(
+                        doc.docType.isEmpty ? Color.orange.opacity(0.15) : theme.accentColor.opacity(0.15)
+                    )
+                )
+                .foregroundColor(doc.docType.isEmpty ? .orange : theme.accentColor)
+        }
+        .padding(10)
+    }
+
+    // MARK: Actions
+
+    private func toggleAccess(_ agent: Agent) {
+        var updated = agent
+        if updated.settings.knowledgeCollectionIds.contains(collection.id) {
+            updated.settings.knowledgeCollectionIds.removeAll { $0 == collection.id }
+        } else {
+            updated.settings.knowledgeEnabled = true
+            updated.settings.knowledgeCollectionIds.append(collection.id)
+        }
+        agentManager.update(updated)
+    }
+
+    /// Read documents + OKF conformance off the main thread (the knowledge DB
+    /// serializes on its own queue and must not be touched from main).
+    private func loadData() {
+        let collectionId = collection.id.uuidString
+        Task.detached(priority: .userInitiated) {
+            if !KnowledgeDatabase.shared.isOpen {
+                try? KnowledgeDatabase.shared.open()
+            }
+            let docs: [KnowledgeDocument] =
+                (try? KnowledgeDatabase.shared.listDocuments(collectionIds: [collectionId], limit: 2000)) ?? []
+            let failing = await KnowledgeIndexService.shared.okfNonconformingDocuments(collectionId: collectionId)
+            await MainActor.run {
+                documents = docs
+                nonconformingCount = failing.count
+                docsLoaded = true
+            }
+        }
     }
 }
