@@ -3860,8 +3860,9 @@ struct AgentDetailView: View {
     }
 
     /// AppleScript model picker for the AppleScript card. `nil` (Choose
-    /// automatically) resolves to the first installed catalog model at run time;
-    /// a stored id no longer on disk shows an "(unavailable)" row.
+    /// automatically) inherits the global Computer Use AppleScript model, then
+    /// falls back to the first installed catalog model when no global model is
+    /// configured. A stored id no longer on disk shows an "(unavailable)" row.
     private var appleScriptModelPickerRow: some View {
         VStack(alignment: .leading, spacing: 8) {
             AgentSheetSectionLabel("Model")

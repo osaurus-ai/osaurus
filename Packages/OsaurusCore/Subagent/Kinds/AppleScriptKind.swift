@@ -98,8 +98,9 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             throw SubagentError.denied("AppleScript is not enabled for this agent.")
         }
 
-        // Dedicated model: the configured per-agent / global id, else the first
-        // installed catalog model. `nil` → none installed → fail cleanly.
+        // Dedicated model: an explicit per-agent id, otherwise the global
+        // Computer Use default, otherwise the first installed catalog model.
+        // `nil` after catalog resolution → none installed → fail cleanly.
         let preferred = SubagentToolVisibility.effectiveAppleScriptModel(
             isDefault: isDefault,
             config: config,

@@ -74,10 +74,13 @@ let package = Package(
         // enables safe image/audio hybrid-prefix restore. The paged-cache
         // follow-up separates typed-disk persistence from paged compatibility,
         // restores recurrent companions at the exact matched boundary, and
-        // keeps every unproven cache topology fail-closed.
+        // keeps every unproven cache topology fail-closed. PR #171 persists
+        // stable system/tool warm-up boundaries in SSD L2 and excludes unsafe
+        // exact hybrid/GDN candidates while preserving their matched recurrent
+        // companion state.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "2fad1f6847461f159c2e21b98de7d26f3358ba3c"
+            revision: "b87cdd6b2a9f05f600461e41b239b7197151d9ff"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

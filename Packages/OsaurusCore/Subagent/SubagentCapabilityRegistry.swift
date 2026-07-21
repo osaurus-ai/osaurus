@@ -540,18 +540,24 @@ public enum SubagentToolVisibility {
         return isEdit ? settings?.imageEditModelId : settings?.imageGenerationModelId
     }
 
-    /// The configured AppleScript model id for an agent — Default / main chat
-    /// uses the global default; a custom agent uses its own. `nil` falls through
-    /// to the catalog's first-installed fallback (so an agent that enabled
-    /// AppleScript without picking a model still works).
+    /// The configured AppleScript model id for an agent. Default / main chat
+    /// uses the global default. A custom agent's explicit model wins, while
+    /// "Choose automatically" inherits that same visible global default before
+    /// falling through to the catalog's first-installed model. This matches the
+    /// Settings contract and keeps an unconfigured custom agent from silently
+    /// loading a different helper than the user selected globally.
     static func effectiveAppleScriptModel(
         isDefault: Bool,
         config: SubagentConfiguration,
         settings: AgentSettings?
     ) -> String? {
-        let raw = isDefault ? config.defaultAppleScriptModelId : settings?.appleScriptModelId
-        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (trimmed?.isEmpty ?? true) ? nil : trimmed
+        func normalized(_ value: String?) -> String? {
+            let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (trimmed?.isEmpty ?? true) ? nil : trimmed
+        }
+        if isDefault { return normalized(config.defaultAppleScriptModelId) }
+        return normalized(settings?.appleScriptModelId)
+            ?? normalized(config.defaultAppleScriptModelId)
     }
 
     /// The AppleScript execution mode for an agent — Default / main chat uses

@@ -423,6 +423,7 @@ public enum AppleScriptLoop {
         // result, but only a read step can verify requested state.
         var lastReadOutput: String? = nil
         var consecutiveInvalid = 0
+        var consecutiveLiteralFailures = 0
         var consecutiveBlocked = 0
         // Consecutive confirm-gate dry-compile failures. Bounded separately so
         // a model stuck on syntax terminates with the real reason (the compile
@@ -444,6 +445,11 @@ public enum AppleScriptLoop {
         // that follow-up so it never silently mutates or prompts the user.
         var verifyAttempted = false
         var verifying = false
+        // One empty/EOS response immediately after a real execution failure
+        // gets one bounded chance to emit a corrected tool call. This stays in
+        // automate mode: a failed script is not evidence that the requested
+        // state changed, so it must never enter read-only verification.
+        var executionRecoveryAttempted = false
 
         func record(
             intent: EffectClass,
@@ -594,7 +600,29 @@ public enum AppleScriptLoop {
                     continue
                 }
                 let haveValue = !(lastReadOutput?.isEmpty ?? true)
-                if harness.verifyReadBack, !verifyAttempted, !haveValue, scriptsExecuted > 0,
+                let emptyCompletion = text?.isEmpty ?? true
+                if succeeded == 0, failed > 0, !executionRecoveryAttempted, emptyCompletion {
+                    executionRecoveryAttempted = true
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step,
+                            kind: .retry,
+                            title: "Execution failed; requesting one corrected tool call"
+                        )
+                    )
+                    let nudge =
+                        "The prior script reported failure and the requested result is not verified. "
+                        + "Do not assume either that it completed or that state is unchanged. Call "
+                        + "run_applescript ONE more time with an idempotent corrected script that "
+                        + "reads current state and applies only the missing requested change. Use every "
+                        + "required {{name}} placeholder instead of typing its name or value. If you "
+                        + "cannot correct it, reply with a short explanation."
+                    messages.append(ChatMessage(role: "user", content: nudge))
+                    lastToolResult = nudge
+                    step += 1
+                    continue
+                }
+                if harness.verifyReadBack, !verifyAttempted, !haveValue, succeeded > 0,
                     shouldVerify(mode: mode, task: task)
                 {
                     verifyAttempted = true
@@ -699,12 +727,71 @@ public enum AppleScriptLoop {
             }
             consecutiveInvalid = 0
             messages.append(assistantMessage)
+            let proposedEffect = AppleScriptEffectClassifier.classify(
+                proposedScript,
+                language: language
+            )
+
+            // Exact replacement values are deliberately withheld from the
+            // helper and exposed only as placeholders. A script that writes
+            // the word `newText` instead of {{newText}} would mutate the app
+            // with model-invented bytes. Reject it before compile, approval, or
+            // execution; this is data-contract validation, not script repair.
+            if !verifying, proposedEffect != .read,
+                let missingName = missingRequiredReplacementPlaceholder(
+                    in: proposedScript,
+                    literals: literals
+                )
+            {
+                consecutiveLiteralFailures += 1
+                let reason =
+                    "The script omitted the required {{\(missingName)}} placeholder. Put "
+                    + "{{\(missingName)}} exactly where that provided value belongs; do not type "
+                    + "the placeholder name or reconstruct its value."
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .retry,
+                        title: "Required replacement placeholder missing",
+                        detail: reason
+                    )
+                )
+                steps.append(
+                    AppleScriptStepRecord(
+                        n: steps.count + 1,
+                        intent: "unknown",
+                        status: "invalid",
+                        error: reason,
+                        scriptPreview: scriptPreview(proposedScript)
+                    )
+                )
+                if consecutiveLiteralFailures >= limits.maxConsecutiveInvalid {
+                    return terminate(
+                        .failed(
+                            reason:
+                                "The model kept omitting the required replacement placeholder "
+                                + "{{\(missingName)}}."
+                        )
+                    )
+                }
+                messages.append(
+                    ChatMessage(
+                        role: "tool",
+                        content: reason,
+                        tool_calls: nil,
+                        tool_call_id: call.id
+                    )
+                )
+                lastToolResult = reason
+                step += 1
+                continue
+            }
 
             // Classify the proposed script's effect (read / edit / consequential).
             // Escalate-biased + surfaced to the user, never used to fake safety.
             // A JXA script floors at `.edit` (its mutations are statically
             // opaque to the AppleScript verb vocabulary).
-            let effect = AppleScriptEffectClassifier.classify(proposedScript, language: language)
+            let effect = proposedEffect
 
             // Expand any {{name}} placeholders into exact, correctly-escaped
             // AppleScript string literals BEFORE preview / gate / execution, so
@@ -713,7 +800,7 @@ public enum AppleScriptLoop {
             // so user content can't trip the escalate-biased classifier.
             let expansion = literals.expand(proposedScript)
             if let undefinedName = expansion.undefinedName {
-                consecutiveInvalid += 1
+                consecutiveLiteralFailures += 1
                 let reason = undefinedPlaceholderReason(undefinedName, literals: literals)
                 feed.emit(
                     SubagentActivityEvent(
@@ -723,7 +810,7 @@ public enum AppleScriptLoop {
                         detail: reason
                     )
                 )
-                if consecutiveInvalid >= limits.maxConsecutiveInvalid {
+                if consecutiveLiteralFailures >= limits.maxConsecutiveInvalid {
                     return terminate(
                         .failed(
                             reason:
@@ -751,6 +838,7 @@ public enum AppleScriptLoop {
                 lastToolResult = reason
                 continue
             }
+            consecutiveLiteralFailures = 0
             // Downstream preview / gate / execution all operate on the EXPANDED
             // script (the user sees and approves the real content that runs).
             let script = expansion.script
@@ -1392,6 +1480,18 @@ public enum AppleScriptLoop {
         let fencedScript =
             lower.hasPrefix("```applescript") || lower.hasPrefix("```osascript")
         return hasTellBlock || hasHandler || fencedScript
+    }
+
+    /// Exact replacement runs cannot safely reconstruct the requested new
+    /// bytes: the helper sees only the placeholder name and length. Require
+    /// the authoritative new-value token while allowing the old-value token to
+    /// be omitted for the valid whole-document direct-set idiom.
+    static func missingRequiredReplacementPlaceholder(
+        in script: String,
+        literals: AppleScriptLiterals
+    ) -> String? {
+        guard literals.value(for: "newText") != nil else { return nil }
+        return script.contains("{{newText}}") ? nil : "newText"
     }
 
     // MARK: - Literal placeholders

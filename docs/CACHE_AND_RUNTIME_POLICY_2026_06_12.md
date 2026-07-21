@@ -223,3 +223,66 @@ dev-built Osaurus app** (pinned to the exact code) confirms: real tool calls,
 clean coherent text (no missing/garbled/random-char output), no marker leaks,
 correct cache telemetry, and RAM verdicts. CI + unit tests are necessary but
 not sufficient.
+
+## 2026-07-21 merged-pin new-chat and restart evidence
+
+Status: **VERIFIED-LIVE for the named Gemma and Ornith/Qwen-derived native-SSD
+rows only; PARTIAL for every other family, TurboQuant, paged-On, and media
+row.**
+
+The exact ad-hoc-signed Release app was
+`/private/tmp/osaurus-ssd-stable-release-derived-20260721/Build/Products/Release/osaurus.app`,
+bundle id `com.dinoki.osaurus.ssdstableproof20260721`, executable SHA-256
+`e28cc1a1aad58514fa2cb325cf7f95bb098b6a93cd2a82f7e4f1ceae9244fb7d`,
+isolated root
+`/private/tmp/osaurus-ssd-stable-finalproof-root-20260721-0320`, and exact
+resolved vMLX revision
+`b87cdd6b2a9f05f600461e41b239b7197151d9ff`. Server -> Settings -> Cache
+visibly showed Prefix Cache On, GPU/Paged Cache Off, Disk Cache On, Codec
+Engine Selected, and SSM Re-derive On; the UI confirmed that the changes were
+saved. Thinking was visibly Off for both text models.
+
+Current Osaurus source supplies the byte/token-identical warmup intersection
+as both a stable boundary and an ordinary store boundary. That is essential:
+merely identifying a stable boundary without placing it in the persisted
+boundary list would still make each new session prefill it from zero. Current
+vMLX source excludes an unsafe exact hybrid/GDN candidate when
+`skipExactDiskBoundary` is requested and restores the corresponding recurrent
+companion only at the matched partial boundary.
+
+Observed real-UI rows:
+
+- **Ornith 1.0 9B MXFP8 / Qwen-derived hybrid:** a brand-new chat returned the
+  exact visible answer `ORNITH-CACHE-OK`, TTFT 0.46 seconds, 49.8 tok/s, and 6
+  tokens. The same request restored SSD boundary 2,325 with 276 suffix tokens
+  remaining and all 48 SSM/recurrent states. Background warmup separately
+  restored boundary 2,322 with only 3 tokens remaining. The disk store enforced
+  the configured 10 GiB quota and evicted complete KV/companion records.
+- **Gemma 4 E2B QAT JANG_4M / rotating plus full attention:** after selection,
+  warmup persisted stable boundary 2,263. A new chat returned exact
+  `GEMMA-CACHE-OK`, TTFT 0.30 seconds, 94.9 tok/s, and 6 tokens. The user turn
+  restored boundary 2,266 with 255 tokens remaining and persisted 2,521/2,527.
+- **Fresh-process Gemma restore:** the app was quit completely and relaunched
+  with the same isolated root. The valid source-defined model-root override is
+  `OSU_MODELS_DIR`; one discarded diagnostic accidentally used the nonexistent
+  `OSAURUS_MODELS_DIR` key and therefore saw only the fallback image models.
+  With the correct key, the UI immediately showed the exact Gemma model warm
+  and Thinking Off. Warmup restored SSD boundary 2,263 with only 3 tokens
+  remaining. The first visible post-restart response was coherent at TTFT 0.37
+  seconds and 92.6 tok/s; its request restored boundary 2,266 with 242 tokens
+  remaining. It added an unrequested explanatory sentence, so that single row
+  is not promoted as exact-instruction compliance.
+
+These rows prove that the scoped native SSD cache is more than a populated
+directory: a new semantic chat and a new process restore a byte-identical
+stable prefix, retain architecture-specific companion state where required,
+prefill only the novel suffix, stream coherent output, and write the extended
+boundary back. The AppleScript helper in the same binary also used progressive
+SSD partial hits across its clean per-job transcript and completed coherently.
+
+Not proven by these rows: Bonsai itself, base Qwen 3.5 or Qwen VL/media salt,
+Gemma 4 VL/media, LFM, MiniMax, DSV4, Nemotron, explicit paged RAM On and
+hot-to-SSD fallback, explicit TurboQuant On, corruption recovery, cache-key
+configuration invalidation, or Activity Monitor physical-footprint limits.
+TurboQuant remained Off/default-native throughout and no TurboQuant topology
+claim is made.

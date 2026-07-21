@@ -425,6 +425,55 @@ struct SubagentCapabilityRegistryTests {
         )
     }
 
+    @Test("effectiveAppleScriptModel: automatic custom agents inherit the global default")
+    func effectiveAppleScriptModelResolves() {
+        let config = SubagentConfiguration(
+            defaultAppleScriptModelId: "global-applescript"
+        )
+        var custom = AgentSettings.defaultDisabled
+        custom.appleScriptModelId = "agent-applescript"
+
+        #expect(
+            SubagentToolVisibility.effectiveAppleScriptModel(
+                isDefault: true,
+                config: config,
+                settings: custom
+            ) == "global-applescript"
+        )
+        #expect(
+            SubagentToolVisibility.effectiveAppleScriptModel(
+                isDefault: false,
+                config: config,
+                settings: custom
+            ) == "agent-applescript"
+        )
+
+        custom.appleScriptModelId = nil
+        #expect(
+            SubagentToolVisibility.effectiveAppleScriptModel(
+                isDefault: false,
+                config: config,
+                settings: custom
+            ) == "global-applescript"
+        )
+        #expect(
+            SubagentToolVisibility.effectiveAppleScriptModel(
+                isDefault: false,
+                config: config,
+                settings: nil
+            ) == "global-applescript"
+        )
+
+        let emptyGlobal = SubagentConfiguration(defaultAppleScriptModelId: "  ")
+        #expect(
+            SubagentToolVisibility.effectiveAppleScriptModel(
+                isDefault: false,
+                config: emptyGlobal,
+                settings: AgentSettings.defaultDisabled
+            ) == nil
+        )
+    }
+
     @Test("effectivePermission: Default uses the global map; a custom agent its own; missing → .ask")
     func effectivePermissionResolves() {
         var globalPerms = SubagentPermissionDefaults()

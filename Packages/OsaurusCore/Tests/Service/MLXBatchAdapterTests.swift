@@ -2460,6 +2460,39 @@ struct MLXBatchAdapterTests {
         )
     }
 
+    @Test func warmupStableBoundaries_requireBothProbesAndFitInsideInvariantPrefix() {
+        #expect(
+            MLXBatchAdapter.agreedWarmupStableBoundaries(
+                probeA: [20, 80, 120, 160],
+                probeB: [20, 120, 160, 200],
+                invariantPrefixCount: 160
+            ) == [20, 120]
+        )
+        #expect(
+            MLXBatchAdapter.agreedWarmupStableBoundaries(
+                probeA: [120],
+                probeB: [],
+                invariantPrefixCount: 160
+            ).isEmpty
+        )
+        #expect(
+            MLXBatchAdapter.agreedWarmupStableBoundaries(
+                probeA: [1],
+                probeB: [1],
+                invariantPrefixCount: 1
+            ).isEmpty
+        )
+    }
+
+    @Test func warmupStableBoundaries_areAlsoPersistedAsOrdinaryBoundaries() {
+        let boundaries = MLXBatchAdapter.warmupCacheBoundaryLists(
+            stableBoundaries: [120, 20, 120, 0, -1]
+        )
+
+        #expect(boundaries.all == [20, 120])
+        #expect(boundaries.stable == [20, 120])
+    }
+
     /// Simulates the Ornith / qwen3_5 failure: the native template REQUIRES
     /// a user message, so a history-only render silently falls back to a
     /// different template whose bytes share nothing with the real send.

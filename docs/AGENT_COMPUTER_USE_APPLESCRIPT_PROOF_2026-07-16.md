@@ -1120,3 +1120,68 @@ follow-up source now uses `ModelManager.localModelsSnapshotNonBlocking()` with
 the same strict dedicated AppleScript id prefixes. Both primary-directory and
 external-source fixtures pass, but the rebuilt picker has not yet been checked
 visually.
+
+### Fifth Release candidate: exact 16B completion and feedback regression
+
+Status for this narrow row: **VERIFIED-LIVE**. Broader AppleScript, Computer
+Use, reasoning-policy, cache-codec, and model-family rows remain separately
+PARTIAL unless named below.
+
+The exact app was the ad-hoc-signed Release build at
+`/private/tmp/osaurus-ssd-stable-release-derived-20260721/Build/Products/Release/osaurus.app`,
+bundle id `com.dinoki.osaurus.ssdstableproof20260721`, executable SHA-256
+`e28cc1a1aad58514fa2cb325cf7f95bb098b6a93cd2a82f7e4f1ceae9244fb7d`,
+isolated root
+`/private/tmp/osaurus-ssd-stable-finalproof-root-20260721-0320`, and exact
+resolved vMLX revision
+`b87cdd6b2a9f05f600461e41b239b7197151d9ff`. The visible parent was
+`Ornith 1.0 9B MXFP8` with Thinking Off. The global native AppleScript helper
+was exact `JANGQ-AI/AppleScript-16B-A4B-JANG_4M`; the agent's AppleScript
+choice was visibly `Choose automatically`, exercising inheritance rather than
+a hard-coded per-agent helper.
+
+The first build of this merged-pin candidate was a real failed live row. Its
+16B proposal compiled but used invalid TextEdit runtime semantics. After the
+runtime error the helper returned empty/EOS, while `AppleScriptLoop` entered
+verification merely because one script had been attempted. That blocked a
+corrective mutation and ended `Failed: Applescript`; TextEdit remained exactly
+`Hello from OracHQ`. The owning state bug was the use of
+`scriptsExecuted > 0` instead of successful execution. Current source enters
+verification only after `succeeded > 0`, permits one bounded idempotent
+correction after a real execution failure, and requires the authoritative
+`{{newText}}` data placeholder before any proposed replacement can reach
+compile, approval, or execution. It does not rewrite or execute a model script
+automatically.
+
+The final candidate was then operated through the real UI as follows:
+
+1. TextEdit visibly contained exactly `Hello from OracHQ` and was marked
+   Edited. The user sent the exact reported prompt, `Change the text in the
+   file from “Hello from OracHQ” to “Hello again”.`
+2. Dispatch recorded frontmost/working app `TextEdit`, a grounded task, and
+   authoritative `oldText`/`newText` literals. The exact 16B helper emitted
+   one bounded delimiter-based replacement using both placeholders. The
+   approval card visibly contained no Save, shell, file, keystroke, formatting,
+   or unrelated-app action.
+3. After approval, TextEdit visibly contained exactly `Hello again` once and
+   remained Edited/unsaved. The helper made one mutating call followed by one
+   read-only verification, then stopped. Osaurus visibly finalized success in
+   25.3 seconds; the parent answer reported TTFT 1.42 seconds, 50.8 tok/s, and
+   25 tokens. There was no duplicate write and no Save workflow.
+4. In the same chat the user sent only informational feedback: `For your
+   information, the TextEdit edit completed successfully.` The parent replied
+   with a plain acknowledgement at TTFT 1.65 seconds and 50.9 tok/s. No
+   `mac_query`, time/date query, AppleScript, or other tool was invoked.
+
+The final focused Xcode run includes the new
+`replacementRequiresNewTextPlaceholder`,
+`failedReplacementCanCorrectBeforeReadBack`, global-helper inheritance, and
+stable-warmup-boundary controls. It completed with 176 passed, 0 failed, 0
+skipped at
+`/private/tmp/osaurus-ssd-stable-release-derived-20260721/Logs/Test/Test-OsaurusCoreTests-2026.07.21_04-35-44--0700.xcresult`.
+
+This proves the reported common 16B TextEdit replacement, successful-action
+finalization, no-unrequested-Save behavior, and feedback-only no-tool behavior
+for this exact configuration. JANGQ 8B, requested Save, denial/cancellation,
+larger-document and Unicode/quote replacement, generic Computer Use, Spawn,
+and every reasoning-on control remain PARTIAL / NOT RUN in this candidate.

@@ -269,6 +269,27 @@ enum AppleScriptToolDispatch {
                 )
                 return inferred
             }
+
+            // The live Ornith parent sometimes supplied a complete generated
+            // script in `content` even though the authoritative task itself
+            // carried an exact old/new replacement pair. That `content` is not
+            // user data and must still be discarded, but doing so must not also
+            // discard the exact values independently recovered from the user's
+            // task. Preserve only the inferred pair when every conflicting
+            // supplied value is generated source; mixed/user-data maps remain
+            // strict below.
+            let names = literals.names
+            let allGeneratedSource = !names.isEmpty && names.allSatisfy { name in
+                guard let value = literals.value(for: name) else { return false }
+                return looksLikeAppleScriptSource(value)
+            }
+            if allGeneratedSource {
+                debugLog(
+                    "[AppleScript] discarded generated-script literals and preserved exact "
+                        + "replacement values as oldText,newText"
+                )
+                return inferred
+            }
         }
 
         if literals.isEmpty { return literals }

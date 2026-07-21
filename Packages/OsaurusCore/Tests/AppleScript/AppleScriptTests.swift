@@ -610,6 +610,35 @@ struct AppleScriptToolDispatchLiteralsTests {
         )
     }
 
+    @Test("generated parent script cannot erase exact replacement literals")
+    func generatedScriptConflictKeepsRecoveredReplacement() {
+        let task = "Change the text in the file from “Hello from OracHQ” to “Hello again”."
+        let generated = """
+            tell application "TextEdit"
+                set text of front document to "Hello again"
+            end tell
+            """
+        let inferred = AppleScriptToolDispatch.literalsForDispatch(
+            task: task,
+            literals: AppleScriptLiterals(["content": generated])
+        )
+        #expect(inferred.names == ["newText", "oldText"])
+        #expect(inferred.value(for: "oldText") == "Hello from OracHQ")
+        #expect(inferred.value(for: "newText") == "Hello again")
+        #expect(
+            AppleScriptToolDispatch.taskForSubagent(task, literals: inferred)
+                == "Change the text in the file from {{oldText}} to {{newText}}."
+        )
+
+        let mixed = AppleScriptLiterals([
+            "content": generated,
+            "userValue": "unrelated literal",
+        ])
+        #expect(
+            AppleScriptToolDispatch.literalsForDispatch(task: task, literals: mixed) == mixed
+        )
+    }
+
     @Test("task-only TextEdit replacement preserves the exact quoted values")
     func taskOnlyTextEditReplacementPreservesLiterals() {
         let task =
@@ -1049,6 +1078,32 @@ struct AppleScriptLoopTests {
         )
     }
 
+    @Test("replacement scripts must consume the authoritative newText placeholder")
+    func replacementRequiresNewTextPlaceholder() {
+        let literals = AppleScriptLiterals([
+            "oldText": "Hello from OracHQ",
+            "newText": "Hello again",
+        ])
+        #expect(
+            AppleScriptLoop.missingRequiredReplacementPlaceholder(
+                in: #"tell application "TextEdit" to set text of front document to "newText""#,
+                literals: literals
+            ) == "newText"
+        )
+        #expect(
+            AppleScriptLoop.missingRequiredReplacementPlaceholder(
+                in: #"tell application "TextEdit" to set text of front document to {{newText}}"#,
+                literals: literals
+            ) == nil
+        )
+        #expect(
+            AppleScriptLoop.missingRequiredReplacementPlaceholder(
+                in: #"tell application "TextEdit" to activate"#,
+                literals: AppleScriptLiterals()
+            ) == nil
+        )
+    }
+
     // A MUTATING script so the confirm / deny / auto-run-with-warning gate
     // tests below exercise the gate: a pure read now auto-runs in automate mode
     // (see `automateReadAutoRuns`), so the shared "valid" script must be an edit
@@ -1283,6 +1338,69 @@ struct AppleScriptLoopTests {
         // Only the initial write and read-back execute; the repeated write is
         // rejected by verification mode before it can mutate TextEdit again.
         #expect(await exec.count == 2)
+    }
+
+    @Test("a failed replacement stays writable for one bounded correction before verification")
+    func failedReplacementCanCorrectBeforeReadBack() async {
+        let feed = SubagentFeed(
+            toolCallId: "t-replace-correct",
+            kindId: "applescript",
+            title: "task"
+        )
+        let exec = ScriptedExec(results: [
+            AppleScriptExecutionResult(
+                status: .runtimeError,
+                output: nil,
+                errorNumber: -1700,
+                errorMessage: "Can’t make newText into type reference."
+            ),
+            successResult(nil),
+            successResult("Hello again"),
+        ])
+        let confirm = ConfirmCounter(approve: true)
+        let failedWrite = call(
+            #"tell application "TextEdit" to set text of front document to {{newText}}"#,
+            id: "failed-write"
+        )
+        let correctedWrite = call(
+            #"tell application "TextEdit" to set text of front document to {{newText}}"#,
+            id: "corrected-write"
+        )
+        let read = call(
+            #"tell application "TextEdit" to get text of front document"#,
+            id: "verify-read"
+        )
+        let seq = ScriptSequencer([failedWrite, nil, correctedWrite, read, nil])
+
+        let result = await AppleScriptLoop.run(
+            task: "Change the text in the file from “Hello from OracHQ” to “Hello again”.",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in await confirm.confirm() },
+            sessionId: "s",
+            mode: .automate,
+            literals: AppleScriptLiterals([
+                "oldText": "Hello from OracHQ",
+                "newText": "Hello again",
+            ]),
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { _ in await seq.next() }
+        )
+
+        #expect(result.outcome.isSuccess)
+        #expect(result.scriptsExecuted == 3)
+        #expect(result.succeeded == 2)
+        #expect(result.failed == 1)
+        #expect(result.lastOutput == "Hello again")
+        #expect(await exec.count == 3)
+        #expect(await confirm.count == 2)
+        #expect(
+            feed.currentEvents().contains {
+                $0.title == "Execution failed; requesting one corrected tool call"
+            }
+        )
     }
 
     private static let uiScriptingScript =

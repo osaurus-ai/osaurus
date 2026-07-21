@@ -1481,6 +1481,7 @@ struct MLXBatchAdapter {
         }
         guard !hasMedia else { return nil }
 
+        var probeStableBoundaries: [[Int]] = []
         let prefix = await warmupSendInvariantPrefixTokens(chat: chat) { probeText in
             var probeChat = chat
             probeChat.append(.user(probeText))
@@ -1493,6 +1494,7 @@ struct MLXBatchAdapter {
             guard let prepared = try? await processor.prepare(input: input),
                 !prepared.hasMediaContent
             else { return nil }
+            probeStableBoundaries.append(prepared.cacheStablePrefixTokenCounts)
             return prepared.text.tokenIds
                 ?? MLXCacheIOLock.withSerializedMLXCacheIO {
                     prepared.text.tokens.asArray(Int.self)
@@ -1509,8 +1511,19 @@ struct MLXBatchAdapter {
         // The scope salt is derived from additionalContext alone, so the
         // probe render's salt matches the real send's.
         let scopeSalt = MLXLMCommon.cacheScopeSalt(from: additionalContext)
+        let stableBoundaries =
+            probeStableBoundaries.count == 2
+            ? agreedWarmupStableBoundaries(
+                probeA: probeStableBoundaries[0],
+                probeB: probeStableBoundaries[1],
+                invariantPrefixCount: prefix.count
+            )
+            : []
+        let cacheBoundaries = warmupCacheBoundaryLists(
+            stableBoundaries: stableBoundaries
+        )
         batchAdapterLog.info(
-            "warmupPrefill: truncated prompt to send-invariant prefix of \(prefix.count, privacy: .public) tokens"
+            "warmupPrefill: truncated prompt to send-invariant prefix of \(prefix.count, privacy: .public) tokens; stable boundaries \(stableBoundaries, privacy: .public)"
         )
         // Prompt tokens are batch-shaped [1, N] by processor contract (see
         // `truncatingToCanonicalCacheBoundary`).
@@ -1518,9 +1531,35 @@ struct MLXBatchAdapter {
             tokens: MLXArray(prefix).expandedDimensions(axis: 0),
             tokenIds: prefix,
             cacheScopeSalt: scopeSalt,
-            cachePrefixTokenCounts: [],
+            cachePrefixTokenCounts: cacheBoundaries.all,
+            cacheStablePrefixTokenCounts: cacheBoundaries.stable,
             toolSchemas: toolsSpec
         )
+    }
+
+    /// vMLX stores boundaries by iterating `cachePrefixTokenCounts`; the
+    /// stable list is metadata that selects the safe re-derive path. A stable
+    /// warm-up boundary must therefore be present in both lists or it can be
+    /// preferred for lookup but is never persisted.
+    static func warmupCacheBoundaryLists(
+        stableBoundaries: [Int]
+    ) -> (all: [Int], stable: [Int]) {
+        let stable = Array(Set(stableBoundaries.filter { $0 > 0 })).sorted()
+        return (all: stable, stable: stable)
+    }
+
+    /// Keep only stable cache boundaries independently derived by both probe
+    /// renders and contained strictly inside their send-invariant prefix.
+    /// A one-probe-only boundary is discarded: warm-up must not persist a
+    /// supposedly cross-chat checkpoint unless both template renders agree.
+    static func agreedWarmupStableBoundaries(
+        probeA: [Int],
+        probeB: [Int],
+        invariantPrefixCount: Int
+    ) -> [Int] {
+        guard invariantPrefixCount > 1 else { return [] }
+        let agreed = Set(probeA).intersection(probeB)
+        return agreed.filter { $0 > 0 && $0 < invariantPrefixCount }.sorted()
     }
 
     /// Token-level core of ``prepareWarmupInputAtSendInvariantPrefix``:
