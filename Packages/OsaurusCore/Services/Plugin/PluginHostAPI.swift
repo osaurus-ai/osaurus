@@ -969,6 +969,7 @@ final class PluginHostContext: @unchecked Sendable {
             )
             cachedSession = await SessionToolStateStore.shared.get(sid)
         }
+        await PluginManager.shared.ensurePromptCatalogReady()
         let composed = await SystemPromptComposer.composeChatContext(
             agentId: agentId,
             executionMode: execMode,

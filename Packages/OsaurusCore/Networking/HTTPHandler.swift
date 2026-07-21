@@ -2903,6 +2903,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // `effectiveToolsDisabled` does not read it, so it must be folded
         // in here (the app chat path does the same via `chatCfg.disableTools`).
         let globalToolsDisabled = await MainActor.run { ChatConfigurationStore.load().disableTools }
+        await PluginManager.shared.ensurePromptCatalogReady()
         let composed = await SystemPromptComposer.composeChatContext(
             agentId: agentUUID,
             executionMode: executionMode,

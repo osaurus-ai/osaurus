@@ -61,6 +61,37 @@ struct RuntimePolicySourceTests {
         }
     }
 
+    @Test("production prompt entry points wait for the initial plugin catalog")
+    func promptCompositionWaitsForPluginCatalog() throws {
+        let manager = try Self.source("Managers/Plugin/PluginManager.swift")
+        #expect(manager.contains("private var isPromptCatalogReady = false"))
+        #expect(manager.contains("func ensurePromptCatalogReady() async"))
+        #expect(manager.contains("if let task = activeReloadTask"))
+        #expect(manager.contains("isPromptCatalogReady = true"))
+
+        for path in [
+            "Services/Chat/ChatSessionWarmup.swift",
+            "Views/Chat/ChatView.swift",
+            "Networking/HTTPHandler.swift",
+            "Services/Plugin/PluginHostAPI.swift",
+        ] {
+            let source = try Self.source(path)
+            let readiness = try #require(
+                source.range(of: "await PluginManager.shared.ensurePromptCatalogReady()")
+            )
+            let compose = try #require(
+                source.range(
+                    of: "SystemPromptComposer.composeChatContext",
+                    range: readiness.upperBound ..< source.endIndex
+                )
+            )
+            #expect(
+                readiness.lowerBound < compose.lowerBound,
+                "\(path) must await plugin readiness before composing a cacheable prompt"
+            )
+        }
+    }
+
     @Test("Makefile builds through workspace resolver mirrors")
     func makefileUsesWorkspaceResolver() throws {
         let source = try Self.source("../../Makefile")
@@ -1917,7 +1948,9 @@ struct RuntimePolicySourceTests {
             successfulStartBody.range(of: "guard !hasCompletedFirstServerStartWork else { return }")
         )
         let startupComplete = try #require(successfulStartBody.range(of: startupCompleteCall))
-        let pluginLoad = try #require(successfulStartBody.range(of: "await PluginManager.shared.loadAll()"))
+        let pluginLoad = try #require(
+            successfulStartBody.range(of: "await PluginManager.shared.ensurePromptCatalogReady()")
+        )
         let pluginRepositoryRefresh = try #require(
             successfulStartBody.range(of: "PluginRepositoryService.shared.startBackgroundRefresh()")
         )

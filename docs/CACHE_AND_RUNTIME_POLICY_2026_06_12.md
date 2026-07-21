@@ -65,6 +65,76 @@ TurboQuant Off, but no current-version default is promoted solely from this
 document; it must be observed in the development Release app and confirmed by
 the next request's effective counters.
 
+#### Launch-time prompt-catalog stability (2026-07-21)
+
+Status: **VERIFIED-LIVE for Gemma 4 12B MXFP8, Ornith 9B MXFP8, and Bonsai
+27B 1-bit JANG native-SSD text rows; PARTIAL for every other topology and
+setting row.** A current-main Release app reproduced a distinct
+reason that an otherwise valid SSD checkpoint can miss on restart: plugin
+loading raced model warmup. The first process composed a 650-token static
+prefix whose capability manifest named `plugin/osaurus.browser` as `Browser`;
+after restart, warmup ran before that plugin manifest was loaded and composed
+652 tokens naming the same capability `osaurus.browser`. The static-prefix
+hash changed from `098112c4c4d65328` to `dc3b73b7d7b77196`, so vMLX correctly
+reported `MISS all tiers` and performed full prefill. This was a prompt-identity
+race above the cache engine, not an SSD lookup failure.
+
+The candidate makes initial warmup, local UI send, enriched HTTP agent
+requests, and plugin-host inference await one completed plugin/tool/skill
+catalog snapshot before composing the static prompt. It does not force a raw
+plugin ID or otherwise change the established user-visible prompt contract.
+On the same isolated root that reproduced the miss, the patched Release app
+returned to the 650-token prefix/hash and restored SSD boundary 1,643 with
+only three warmup tokens remaining. A real UI request returned exact
+`GEMMA12-RESTART-HIT` at TTFT 0.65 seconds and 32.0 tok/s; its 1,747-token
+prompt restored boundary 1,646 with 101 suffix tokens remaining. Settings
+visibly showed Prefix and SSD On, paged GPU cache Off, Codec Engine Selected,
+SSM re-derive On, and `All changes saved`.
+
+The clean-profile gate used the ad-hoc-signed Release app
+`/private/tmp/Osaurus Cache Catalog Fresh Proof 20260721.app`, bundle id
+`com.dinoki.osaurus.cachecatalogfreshproof20260721`, executable SHA-256
+`d43ce37c923bacc6e169e713f87654bffebf75a38dc53a60469480682fc23efd`,
+isolated root
+`/private/tmp/osaurus-cache-catalog-fresh-proof-root-20260721-0636`, and exact
+resolved vMLX revision
+`b87cdd6b2a9f05f600461e41b239b7197151d9ff`. Before launch the root was empty
+and the custom bundle had no UserDefaults domain. Onboarding, Browser plugin
+installation, model selection, new-chat creation, and every quit/relaunch were
+performed in the real UI. Settings visibly showed Prefix Cache On, Disk Cache
+On, GPU/Paged Cache Off, Codec Engine Selected, SSM re-derive On, and `All
+changes saved`; Thinking remained visibly Off for all three models.
+
+Observed clean-profile rows:
+
+- **Gemma 4 12B it MXFP8 (40 rotating + 8 full KV layers):** cold warmup
+  persisted the 1,643-token stable boundary. A new chat restored 1,643 of
+  1,646 warmup tokens, then returned exact `FRESH-GEMMA-NEWCHAT` at TTFT 0.61s
+  and 32.4 tok/s. Full app restart again restored 1,643/1,646 and returned
+  exact `FRESH-GEMMA-RESTART` at TTFT 0.61s and 32.4 tok/s. The initial cold
+  answer was coherent but omitted a requested final period, so it is not
+  counted as exact-instruction proof.
+- **Ornith 1.0 9B MXFP8 / Qwen 3.5 hybrid (24 Mamba/GDN + 8 full KV
+  layers):** the one-time Gemma-to-Ornith model switch and first Ornith-only
+  chat were cold as expected. The next new chat restored SSD boundary 1,743
+  of 1,746 with all 48 recurrent companion arrays and returned exact
+  `ORNITH-NEWCHAT` at TTFT 0.35s and 52.0 tok/s. Full app restart restored the
+  same partial KV/companion checkpoint and returned exact `ORNITH-RESTART` at
+  TTFT 0.36s and 51.8 tok/s.
+- **Bonsai 27B 1-bit JANG CRACK / Qwen 3.5 hybrid (48 Mamba/GDN + 16 full KV
+  layers):** the second Bonsai-only chat restored SSD boundary 3,795 of 3,798
+  with all 96 recurrent companion arrays and returned exact
+  `BONSAI-NEWCHAT` at TTFT 0.84s and 36.6 tok/s. Full app restart restored the
+  same checkpoint and returned exact `BONSAI-RESTART` at TTFT 0.85s and 36.7
+  tok/s. The 10 GiB quota evicted complete KV/companion records during later
+  writes; a subsequent new chat still restored 3,795/3,798 and both current
+  KV/SSM entries were reported as already validated.
+
+These rows do not generalize to base Qwen 3.5, Qwen VL/media salt, Gemma VL,
+LFM, MiniMax, Nemotron, DSV4, explicit paged RAM On, explicit TurboQuant On,
+corruption recovery, or configuration-change invalidation. TurboQuant stayed
+Off/default-native throughout; no TurboQuant topology claim is made.
+
 Current Ornith evidence from the isolated Release app
 `com.dinoki.osaurus.applescriptemergency20260720` (SHA-256
 `114fbe282e9e2872abe88ca8c991da6ebc1b7c9e19f0ef5029bd94c54511fd9b`)

@@ -4229,6 +4229,15 @@ final class ChatSession: ObservableObject {
                         self.isScreenContextFrozen = true
                     }
 
+                    // Keep the first real send byte-identical to warmup and
+                    // restart restore: plugin tools/skills are part of the
+                    // static prompt and must come from a completed catalog
+                    // snapshot, not launch-task timing.
+                    if !isRemoteAgentTarget {
+                        await PluginManager.shared.ensurePromptCatalogReady()
+                        guard isRunActive(runId) else { return }
+                    }
+
                     let context = await SystemPromptComposer.composeChatContext(
                         agentId: effectiveAgentId,
                         executionMode: executionMode,

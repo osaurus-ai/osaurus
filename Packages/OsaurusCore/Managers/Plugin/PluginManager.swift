@@ -133,6 +133,12 @@ final class PluginManager {
     /// calls from overwriting and deallocating each other's host contexts.
     private var activeReloadTask: Task<Void, Never>?
 
+    /// True while PluginManager, ToolRegistry, and SkillManager expose one
+    /// complete catalog snapshot. A reload clears it until registry mutation
+    /// finishes. Prompt composition uses this readiness boundary so a
+    /// persisted KV prefix can never depend on launch/reload task timing.
+    private var isPromptCatalogReady = false
+
     private init() {}
 
     /// Returns the load error for a specific plugin, if any
@@ -181,6 +187,19 @@ final class PluginManager {
 
     // MARK: - Loading
 
+    /// Wait for the process's initial plugin catalog snapshot without turning
+    /// every prompt into a rescan. Concurrent launch/warmup/send callers join
+    /// the same `activeReloadTask`; later install/uninstall paths still call
+    /// `loadAll()` directly to refresh the catalog.
+    func ensurePromptCatalogReady() async {
+        if isPromptCatalogReady { return }
+        if let task = activeReloadTask {
+            await task.value
+            return
+        }
+        await loadAll()
+    }
+
     /// Result of heavy plugin scanning performed on a background thread.
     private struct PluginScanResult: @unchecked Sendable {
         let allURLs: [URL]
@@ -204,6 +223,7 @@ final class PluginManager {
             }
         }
 
+        isPromptCatalogReady = false
         let task = Task {
             await _loadAll(forceReload: forceReload)
         }
@@ -338,6 +358,11 @@ final class PluginManager {
         }
 
         observeTunnelStatus()
+        // Every model-facing tool/skill registry mutation is complete here.
+        // Publish readiness before first-delivery callbacks: a plugin is
+        // allowed to invoke host inference from a callback, and making that
+        // nested request await its own active reload task would deadlock.
+        isPromptCatalogReady = true
         // Per-plugin first-delivery sweep, each step bracketed by the
         // `.currently_loading` marker. A SIGABRT inside the plugin's
         // `on_config_changed` (e.g. misaligned ABI mirror calling

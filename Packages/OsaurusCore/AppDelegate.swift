@@ -1531,7 +1531,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // Keep plugin and repository work off the initial bind path;
             // crashes here are handled by the plugin loading marker.
             Task { @MainActor in
-                await PluginManager.shared.loadAll()
+                await PluginManager.shared.ensurePromptCatalogReady()
             }
             PluginRepositoryService.shared.startBackgroundRefresh()
         }

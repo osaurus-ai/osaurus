@@ -1464,7 +1464,9 @@ public struct SystemPromptComposer: Sendable {
 
     /// Friendly plugin name for the manifest. Native plugins carry a
     /// `name` in their manifest; MCP / sandbox-plugin groups don't, so we
-    /// fall back to the raw group id.
+    /// fall back to the raw group id. Production prompt entry points wait for
+    /// `PluginManager.ensurePromptCatalogReady()` before reaching here, so
+    /// launch scheduling cannot alternate between the two representations.
     @MainActor
     private static func pluginDisplayName(for pluginId: String) -> String {
         if let loaded = PluginManager.shared.loadedPlugin(for: pluginId),
