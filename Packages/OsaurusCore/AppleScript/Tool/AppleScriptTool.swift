@@ -114,11 +114,7 @@ final class AppleScriptTool: OsaurusTool, @unchecked Sendable {
     var bypassRegistryTimeout: Bool { true }
 
     func normalizeArgumentsBeforeValidation(_ argumentsJSON: String) -> String {
-        AppleScriptToolDispatch.removingSiblingField(
-            argumentsJSON,
-            siblingField: "question",
-            requiredField: "task"
-        )
+        AppleScriptToolDispatch.normalizeAutomationArguments(argumentsJSON)
     }
 
     init() {}

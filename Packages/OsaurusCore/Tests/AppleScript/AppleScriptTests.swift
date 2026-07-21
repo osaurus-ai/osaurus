@@ -419,6 +419,35 @@ struct AppleScriptToolDispatchLiteralsTests {
         )
     }
 
+    @Test("observed keyed contents string is recovered only from a matching exact task")
+    func observedContentsStringNormalizationIsNarrow() throws {
+        let observed =
+            #"{"contents":"oldText:Hello from OracHQ,newText:Hello again","task":"Replace \"Hello from OracHQ\" with \"Hello again\" in the file"}"#
+        let cleaned = AppleScriptToolDispatch.normalizeAutomationArguments(observed)
+        let data = try #require(cleaned.data(using: .utf8))
+        let object = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        let contents = try #require(object["contents"] as? [String: String])
+        #expect(contents == [
+            "oldText": "Hello from OracHQ",
+            "newText": "Hello again",
+        ])
+
+        let mismatched =
+            #"{"contents":"oldText:other,newText:values","task":"Replace \"Hello from OracHQ\" with \"Hello again\" in the file"}"#
+        #expect(AppleScriptToolDispatch.normalizeAutomationArguments(mismatched) == mismatched)
+        let arbitrary =
+            #"{"contents":"title:one,body:two","task":"Create a note"}"#
+        #expect(AppleScriptToolDispatch.normalizeAutomationArguments(arbitrary) == arbitrary)
+        let merelyContainsBoth =
+            #"{"contents":"prefix oldText:Hello from OracHQ,newText:Hello again suffix","task":"Replace \"Hello from OracHQ\" with \"Hello again\" in the file"}"#
+        #expect(
+            AppleScriptToolDispatch.normalizeAutomationArguments(merelyContainsBoth)
+                == merelyContainsBoth
+        )
+    }
+
     @Test("a single `content` string becomes the {{content}} literal")
     func singleContent() {
         let lits = AppleScriptToolDispatch.literals(from: ["content": "hello world"])

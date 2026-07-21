@@ -44,6 +44,38 @@ enum AppleScriptToolDispatch {
         return text
     }
 
+    /// Normalize the two concrete cross-schema shapes observed from the parent
+    /// Ornith tool call while keeping the public schema strict:
+    /// 1. remove a leaked `mac_query.question` when `task` exists;
+    /// 2. recover `contents` encoded as `oldText:<old>,newText:<new>` only when
+    ///    the task independently contains the same exact replacement pair.
+    /// The second condition prevents an arbitrary colon/comma string from
+    /// being reinterpreted as user data.
+    static func normalizeAutomationArguments(_ argumentsJSON: String) -> String {
+        let withoutSibling = removingSiblingField(
+            argumentsJSON,
+            siblingField: "question",
+            requiredField: "task"
+        )
+        guard let data = withoutSibling.data(using: .utf8),
+            var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let task = object["task"] as? String,
+            let encoded = object["contents"] as? String,
+            let inferred = exactReplacementLiterals(from: task),
+            let oldText = inferred.value(for: "oldText"),
+            let newText = inferred.value(for: "newText"),
+            encoded == "oldText:\(oldText),newText:\(newText)"
+        else { return withoutSibling }
+        object["contents"] = ["oldText": oldText, "newText": newText]
+        guard let cleaned = try? JSONSerialization.data(
+            withJSONObject: object,
+            options: [.sortedKeys]
+        ), let text = String(data: cleaned, encoding: .utf8)
+        else { return withoutSibling }
+        debugLog("[AppleScript] recovered exact replacement contents object")
+        return text
+    }
+
     /// Parse the single natural-language argument (`field`) + optional
     /// `max_steps` + optional verbatim literals (`content` and/or `contents`),
     /// then run a configured `AppleScriptKind` on the subagent host. Returns the
