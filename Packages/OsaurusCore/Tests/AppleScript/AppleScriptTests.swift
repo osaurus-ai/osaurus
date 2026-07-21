@@ -2810,6 +2810,39 @@ struct AppleScriptAppKnowledgeTests {
         #expect(unrelatedTask.isEmpty)
     }
 
+    @Test("working-document task is grounded with the live resolved app")
+    func workingDocumentTaskGrounding() {
+        let task = "Change the text in the file from {{oldText}} to {{newText}}."
+        let grounded = AppleScriptAppKnowledge.groundingWorkingAppReference(
+            task: task,
+            resolvedApp: "TextEdit"
+        )
+        #expect(grounded.hasPrefix(task))
+        #expect(grounded.contains("Working app resolved from the live desktop: TextEdit"))
+        #expect(grounded.contains("front open document"))
+        #expect(grounded.contains("Do not search for another file"))
+        #expect(grounded.contains("do not save unless the task explicitly asks"))
+
+        #expect(
+            AppleScriptAppKnowledge.groundingWorkingAppReference(
+                task: "Replace text in TextEdit's front document.",
+                resolvedApp: "TextEdit"
+            ) == "Replace text in TextEdit's front document."
+        )
+        #expect(
+            AppleScriptAppKnowledge.groundingWorkingAppReference(task: task, resolvedApp: nil)
+                == task
+        )
+
+        let appQuery = AppleScriptAppKnowledge.groundingWorkingAppReference(
+            task: "What is the current app doing?",
+            resolvedApp: "Safari"
+        )
+        #expect(appQuery.contains("Use that app as the frontmost/current/active app"))
+        #expect(!appQuery.contains("file/document"))
+        #expect(!appQuery.contains("do not save"))
+    }
+
     @Test("recipe catalog matches by app name, case-insensitively")
     func recipeMatching() {
         #expect(!AppleScriptRecipeCatalog.recipes(for: "safari").isEmpty)

@@ -88,6 +88,31 @@ public enum AppleScriptAppKnowledge {
         return result
     }
 
+    /// Resolve narrow working-app anaphora into the child task once the live
+    /// desktop snapshot has identified exactly one target app. The parent may
+    /// legitimately say "the file" because that is how a user refers to the
+    /// document they just left to open Osaurus; leaving the app name only in a
+    /// separate system section proved too weak for small AppleScript models,
+    /// which could reinterpret the old text as a filename and search disk.
+    ///
+    /// This does not guess an app and does not change an explicitly named
+    /// target. It only adds the app identity already resolved from the live
+    /// frontmost-app handoff, while preserving the original task and literals.
+    public static func groundingWorkingAppReference(task: String, resolvedApp: String?) -> String {
+        guard mentionsWorkingApp(task), let resolvedApp else { return task }
+        let app = resolvedApp
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !app.isEmpty, wordRange(of: app, in: task) == nil else { return task }
+        let grounding = "\nWorking app resolved from the live desktop: \(app). "
+        if mentionsWorkingDocument(task) {
+            return task + grounding
+                + "Interpret the file/document as that app's front open document. "
+                + "Do not search for another file, and do not save unless the task explicitly asks."
+        }
+        return task + grounding + "Use that app as the frontmost/current/active app in this task."
+    }
+
     /// Word-boundary, case-insensitive occurrence of `name` in `text`.
     private static func wordRange(of name: String, in text: String) -> Range<String.Index>? {
         let escaped = NSRegularExpression.escapedPattern(for: name)
@@ -97,12 +122,17 @@ public enum AppleScriptAppKnowledge {
         )
     }
 
-    private static func mentionsWorkingApp(_ task: String) -> Bool {
+    static func mentionsWorkingApp(_ task: String) -> Bool {
         let lower = task.lowercased()
         return lower.contains("frontmost") || lower.contains("front app")
             || lower.contains("current app") || lower.contains("active app")
             || lower.contains("front window") || lower.contains("this app")
-            || lower.contains("the file") || lower.contains("this file")
+            || mentionsWorkingDocument(task)
+    }
+
+    private static func mentionsWorkingDocument(_ task: String) -> Bool {
+        let lower = task.lowercased()
+        return lower.contains("the file") || lower.contains("this file")
             || lower.contains("current file") || lower.contains("open file")
             || lower.contains("the document") || lower.contains("this document")
             || lower.contains("current document") || lower.contains("open document")

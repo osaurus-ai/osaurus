@@ -255,12 +255,23 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             frontmost: desktop.frontmost,
             runningAppNames: desktop.running.map(\.name)
         )
+        let groundedTask = AppleScriptAppKnowledge.groundingWorkingAppReference(
+            task: task,
+            resolvedApp: targetApps.count == 1 ? targetApps[0] : nil
+        )
+        AppleScriptTraceLog.recordDispatchContext(
+            frontmost: desktop.frontmost,
+            targetApps: targetApps,
+            workingReference: AppleScriptAppKnowledge.mentionsWorkingApp(task),
+            taskGrounded: groundedTask != task,
+            literalKeys: literals.names
+        )
         let knowledge = AppleScriptAppKnowledge.compose(
             apps: targetApps,
             runningApps: desktop.running
         )
         let result = await AppleScriptLoop.run(
-            task: task,
+            task: groundedTask,
             modelId: resolved.name,
             feed: feed,
             interrupt: interrupt,
