@@ -2252,9 +2252,12 @@ struct AppleScriptToolSelectionGuidanceTests {
 
     @Test("parent and helper prompts forbid invented file and save workflows")
     func promptsKeepExistingDocumentTargetAndSaveBoundaries() {
-        #expect(SystemPromptTemplates.appleScriptGuidance.contains("invented file picker"))
+        #expect(SystemPromptTemplates.appleScriptGuidance.contains("tracked-frontmost"))
+        #expect(SystemPromptTemplates.appleScriptGuidance.contains("do not ask for a path first"))
         #expect(SystemPromptTemplates.appleScriptGuidance.contains("An edit does not imply saving"))
-        #expect(SystemPromptTemplates.appleScriptGuidanceCompact.contains("never invent a picker"))
+        #expect(SystemPromptTemplates.appleScriptGuidanceCompact.contains("Never invent a picker"))
+        #expect(SystemPromptTemplates.appleScriptGuidanceCompact.contains("do not ask for a path first"))
+        #expect(AppleScriptTool.toolDescription.contains("working-app anaphora"))
 
         let standard = AppleScriptLoop.systemPrompt(mode: .automate, variant: .standard)
         #expect(standard.contains("named Frontmost app"))

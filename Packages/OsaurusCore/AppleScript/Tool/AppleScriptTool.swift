@@ -42,8 +42,10 @@ final class AppleScriptTool: OsaurusTool, @unchecked Sendable {
         + "pass them in `contents` as a {name: text} map. This is REQUIRED for text replacement even "
         + "when the strings are short: pass the old and replacement text as separate named values and "
         + "phrase `task` to use those provided values. For an existing open document, name the app "
-        + "or exact path that the request or conversation identifies. If neither identifies the "
-        + "target, ask the user instead of telling the subagent to choose, create, or save a file. "
+        + "or exact path that the request or conversation identifies. A request that explicitly says "
+        + "`the file` or `the document` is working-app anaphora: keep that phrase in `task` so the "
+        + "subagent can resolve the tracked frontmost app, and do not ask for a path first. Never tell "
+        + "the subagent to choose, create, or save a file to make up for a missing target. "
         + "Editing an open document does not imply saving it. Depending on the user's setting, "
         + "each script is shown for approval or auto-run with a warning. Do NOT use it for shell, files, "
         + "or web requests — those have dedicated tools."
@@ -59,7 +61,9 @@ final class AppleScriptTool: OsaurusTool, @unchecked Sendable {
                 "description": .string(
                     "The complete task to accomplish with AppleScript, in plain language, naming the app "
                         + "when it matters. Existing-document edits must identify the app or exact path "
-                        + "from the request/conversation; never invent a file picker or save step. "
+                        + "from the request/conversation, except explicit `the file`/`the document` "
+                        + "working-app anaphora, which must be passed through unchanged for tracked-"
+                        + "frontmost resolution. Never invent a file picker or save step. "
                         + "Example: \"Get the URL of the front Safari tab.\""
                 ),
             ]),
