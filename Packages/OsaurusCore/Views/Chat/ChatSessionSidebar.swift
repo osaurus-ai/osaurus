@@ -332,18 +332,19 @@ struct ChatSessionSidebar: View {
     // MARK: - Multi-Select
 
     /// Routes a row tap by the modifier keys held at click time. ⌘ toggles
-    /// the row in the multi-selection, ⇧ extends a contiguous range from the
-    /// anchor, and a plain click clears any multi-selection and navigates.
+    /// the row in the multi-selection and ⇧ extends a contiguous range from
+    /// the anchor. With no modifier: while a selection is active a plain click
+    /// toggles the row (so a chat can be deselected as easily as it was
+    /// selected); otherwise it navigates to the chat as usual.
     private func handleTap(_ session: ChatSessionData) {
         let flags = NSEvent.modifierFlags
         if flags.contains(.command) {
             toggleSelection(session.id)
         } else if flags.contains(.shift) {
             extendSelection(to: session.id)
+        } else if !selectedIds.isEmpty {
+            toggleSelection(session.id)
         } else {
-            if !selectedIds.isEmpty {
-                selectedIds.removeAll()
-            }
             selectionAnchorId = session.id
             handleSelect(session)
         }
