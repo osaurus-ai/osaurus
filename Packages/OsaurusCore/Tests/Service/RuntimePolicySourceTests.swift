@@ -92,6 +92,18 @@ struct RuntimePolicySourceTests {
         }
     }
 
+    @Test("chat warm-up uses atomic background load intent instead of a stale load probe")
+    func chatWarmupDoesNotSkipSameModelLoadInFlight() throws {
+        let warmup = try Self.source("Services/Chat/ChatWarmupController.swift")
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+
+        #expect(!warmup.contains("ModelRuntime.shared.hasLoadInFlight()"))
+        #expect(warmup.contains("request.backgroundModelLoad = !userIntent"))
+        #expect(runtime.contains("Diagnostics only. Do **not** gate a load on this"))
+        #expect(runtime.contains("if let existingRecord = loadingTasks[name]"))
+        #expect(runtime.contains("refuseBackgroundLoadIfItWouldDisturb"))
+    }
+
     @Test("Makefile builds through workspace resolver mirrors")
     func makefileUsesWorkspaceResolver() throws {
         let source = try Self.source("../../Makefile")
@@ -740,7 +752,7 @@ struct RuntimePolicySourceTests {
         // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
         // xcworkspace Package.resolved files. Miss one and the app resolves a
         // revision nobody proved.
-        let expectedRuntimeHardenedRevision = "b87cdd6b2a9f05f600461e41b239b7197151d9ff"
+        let expectedRuntimeHardenedRevision = "a37e09d2e4304e3eaa0836b4cb1941da86bcaeb7"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -1152,8 +1164,11 @@ struct RuntimePolicySourceTests {
         #expect(concurrency.contains("Concurrent Sessions"))
         #expect(concurrency.contains("Continuous Batching"))
         #expect(concurrency.contains("Prompt Prefill Chunk Size"))
-        #expect(concurrency.contains(
-            "draft.concurrency.maxConcurrentSequences != nil || clamped != 1"))
+        #expect(
+            concurrency.contains(
+                "draft.concurrency.maxConcurrentSequences != nil || clamped != 1"
+            )
+        )
     }
 
     @Test("Tools settings panel separates wired parser overrides from planned host bridges")
@@ -1926,7 +1941,10 @@ struct RuntimePolicySourceTests {
         let serverBind = try #require(launchBody.range(of: "await serverStartupTask.value"))
         let keychainBranch = try #require(launchBody.range(of: "if keychainDisabledTestMode {"))
         let safeModeBranch = try #require(
-            launchBody.range(of: "} else if !shouldLoadPluginsAtStartup {", range: keychainBranch.upperBound ..< launchBody.endIndex)
+            launchBody.range(
+                of: "} else if !shouldLoadPluginsAtStartup {",
+                range: keychainBranch.upperBound ..< launchBody.endIndex
+            )
         )
         let keychainStartupComplete = try #require(
             launchBody.range(of: startupCompleteCall, range: keychainBranch.upperBound ..< safeModeBranch.lowerBound)
@@ -1934,7 +1952,10 @@ struct RuntimePolicySourceTests {
         let runningCheck = try #require(launchBody.range(of: "if serverController.isRunning {"))
         let completionHook = try #require(launchBody.range(of: "completeFirstSuccessfulServerStart()"))
         let handledStartupErrorComplete = try #require(
-            launchBody.range(of: "LaunchGuard.markStartupComplete()", range: completionHook.upperBound ..< launchBody.endIndex)
+            launchBody.range(
+                of: "LaunchGuard.markStartupComplete()",
+                range: completionHook.upperBound ..< launchBody.endIndex
+            )
         )
         let isRunningSink = try #require(observerBody.range(of: "serverController.$isRunning"))
         let runningObserverHook = try #require(
@@ -2244,6 +2265,49 @@ struct RuntimePolicySourceTests {
         #expect(
             health.contains("\"automatic_memory_limits_disabled\":")
                 && health.contains("f.automaticMemoryLimitsDisabled")
+        )
+    }
+
+    @Test("coalesced model load installs cache policy before publishing its holder")
+    func modelLoadInstallsCacheCoordinatorBeforePublication() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let taskStart = try #require(
+            runtime.range(of: "let task = Task<SessionHolder, Error>")
+        )
+        let taskEnd = try #require(
+            runtime.range(
+                of: "loadingTasks[name] = LoadingTaskRecord",
+                range: taskStart.upperBound ..< runtime.endIndex
+            )
+        )
+        let taskBody = String(runtime[taskStart.lowerBound ..< taskEnd.lowerBound])
+        let install = try #require(
+            taskBody.range(of: "await Self.installCacheCoordinator(on: holder)")
+        )
+        let returnHolder = try #require(
+            taskBody.range(of: "return holder", range: install.upperBound ..< taskBody.endIndex)
+        )
+
+        #expect(install.lowerBound < returnHolder.lowerBound)
+        #expect(
+            runtime.contains(
+                "private nonisolated static func installCacheCoordinator(on holder: SessionHolder) async"
+            )
+        )
+
+        let finishStart = try #require(
+            runtime.range(of: "private func finishLoadedContainer(")
+        )
+        let finishEnd = try #require(
+            runtime.range(
+                of: "/// Unload `name`",
+                range: finishStart.upperBound ..< runtime.endIndex
+            )
+        )
+        let finishBody = String(runtime[finishStart.lowerBound ..< finishEnd.lowerBound])
+        #expect(
+            !finishBody.contains("installCacheCoordinator"),
+            "Actor-reentrant post-load finalization must not publish a holder before its cache coordinator is attached."
         )
     }
 
@@ -2644,7 +2708,11 @@ struct RuntimePolicySourceTests {
     func residentSameModelTurnsDoNotFlashModelLoadingUI() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
 
-        #expect(runtime.contains("let shouldReportModelLoad = modelCache[modelName] == nil && !parameters.suppressProgressUI"))
+        #expect(
+            runtime.contains(
+                "let shouldReportModelLoad = modelCache[modelName] == nil && !parameters.suppressProgressUI"
+            )
+        )
         #expect(
             runtime.contains(
                 "if shouldReportModelLoad {\n            InferenceProgressManager.shared.modelLoadWillStartAsync()"

@@ -356,3 +356,76 @@ hot-to-SSD fallback, explicit TurboQuant On, corruption recovery, cache-key
 configuration invalidation, or Activity Monitor physical-footprint limits.
 TurboQuant remained Off/default-native throughout and no TurboQuant topology
 claim is made.
+
+## 2026-07-21 physical-footprint budget and pre-publication cache proof
+
+Status: **VERIFIED-LIVE for Qwen 3.6 27B JANG_4M CRACK and Gemma 4 12B it
+MXFP8 with native SSD cache, paged RAM Off, and TurboQuant Off; PARTIAL for all
+other families and cache modes.**
+
+This follow-up fixes two independent ways that an enabled SSD cache could
+behave like a cold cache:
+
+1. vMLX's store admission compared cache bytes only with MLX active bytes. A
+   memory-mapped model can have a low MLX-active count while the process already
+   has a large physical footprint, so the admission calculation understated
+   occupancy. vMLX revision
+   `a37e09d2e4304e3eaa0836b4cb1941da86bcaeb7` now budgets stores from Darwin
+   `task_vm_info.phys_footprint`, using MLX active bytes only as a failure
+   fallback. The trace records `source=phys_footprint` or
+   `source=mlx_active_fallback` instead of making the source implicit.
+2. Osaurus published a loaded `SessionHolder` before its cache coordinator was
+   installed. A user who sent immediately after model selection could generate
+   a coherent response through a `BatchEngine` that had no prefix/paged/L2
+   coordinator, producing no SSD fetch or store at all. The single coalesced
+   load task now installs the coordinator before returning the holder to any
+   waiter. New-chat warmup also relies on the atomic background-load intent
+   instead of a stale `hasLoadInFlight()` preflight snapshot.
+
+The exact ad-hoc-signed Release app was
+`/private/tmp/Osaurus Cache Publication Proof 20260721-0854.app`, bundle id
+`com.dinoki.osaurus.physfootprintproof2`, executable SHA-256
+`be5ec47406c0647368bf23e87d19cef0e31b096476583f680ad937e432132896`, and
+isolated root
+`/private/tmp/osaurus-cache-publication-proof-root-20260721-0854`. The first
+process trace is
+`/private/tmp/osaurus-cache-publication-proof-20260721-0854.log`; the complete
+quit/relaunch trace is
+`/private/tmp/osaurus-cache-publication-restart-proof-20260721-0859.log`.
+Computer Use visibly confirmed Prefix Cache On, GPU/Paged Cache Off, SSD Disk
+Cache On, Codec Engine Selected, SSM Re-derive On, Safe Auto memory safety, and
+Thinking Off.
+
+Observed real-UI rows:
+
+- **Qwen 3.6 27B JANG_4M CRACK, rapid model-select/send:** immediately after
+  selecting the model, a new chat and send were issued while the UI still said
+  Warming up. The visible response was exactly `QWEN36-PUBLICATION`, TTFT 1.26
+  seconds, 23.4 tok/s, and 8 tokens. The first request missed 2,993 tokens, then
+  persisted 2,993 and the stable 2,990 boundary under
+  `source=phys_footprint`. Later partial requests restored 2,993/3,017 and
+  3,010/3,026 tokens with the hybrid topology reported as 48 `MambaCache` plus
+  16 `KVCacheSimple` layers and 96 recurrent companion states.
+- **Qwen complete-process restart:** after Cmd-Q and relaunch with the same
+  isolated root, startup warmup restored SSD boundary 2,990 of 2,993 tokens.
+  The first visible request returned exactly `QWEN36-RESTART`, TTFT 0.86
+  seconds, 22.9 tok/s, and 8 tokens; it restored boundary 2,993 with 82 novel
+  suffix tokens and subsequently restored boundary 3,068 with 16 remaining.
+  The macOS `footprint` sample reported 15 GiB current and 17 GiB peak physical
+  footprint for the first proof process.
+- **Gemma 4 12B it MXFP8 fresh chat after the same process restart:** changing
+  the existing Qwen conversation to Gemma correctly missed because the rendered
+  1,911-token prefix differed. Creating a real new chat then restored the prior
+  Gemma SSD boundary 1,630 of 1,633 tokens. Its visible request returned exactly
+  `GEMMA4-RESTART`, TTFT 0.63 seconds, 27.4 tok/s, and 10 tokens; it restored
+  boundary 1,633 of 1,740 tokens, then 1,740 of 1,751. Telemetry reported 40
+  `RotatingKVCache` layers and 8 `KVCacheSimple` layers.
+
+The cache index contained complete Qwen KV/companion records at boundaries
+2,990, 2,993, 3,010, 3,017, 3,023, 3,025, and 3,026 plus Gemma records at
+1,630 and 1,633. The Qwen companion payloads held 96 recurrent states. These
+rows establish persisted partial reuse and coherent warmup/request behavior for
+the two named native-cache bundles only. They do not establish Qwen VL/media
+salt, Bonsai, Ornith, LFM, MiniMax, DSV4, Nemotron, explicit paged-RAM On
+hot-to-SSD fallback, explicit TurboQuant On, cache corruption recovery, or
+configuration-change invalidation.
