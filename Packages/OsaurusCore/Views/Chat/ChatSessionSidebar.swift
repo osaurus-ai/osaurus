@@ -1023,6 +1023,7 @@ private struct DontAskAgainToggle: View {
                 onDelete: { _ in },
                 onRename: { _, _ in },
                 onSetArchived: { _, _ in },
+                onSetPinned: { _, _ in },
                 onExport: { _, _ in }
             )
             .frame(height: 400)
