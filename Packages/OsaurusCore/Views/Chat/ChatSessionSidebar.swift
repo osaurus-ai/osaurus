@@ -5,6 +5,7 @@
 //  Sidebar showing chat session history
 //
 
+import AppKit
 import SwiftUI
 
 /// In-memory toggle for the delete-conversation confirmation. Resets on
@@ -47,6 +48,11 @@ struct ChatSessionSidebar: View {
     @ObservedObject private var agentManager = AgentManager.shared
     @State private var editingSessionId: UUID?
     @State private var editingBuffer: String = ""
+    /// IDs the user has multi-selected (⌘-click to toggle, ⇧-click to
+    /// range-select). Empty means normal single-select navigation is active.
+    @State private var selectedIds: Set<UUID> = []
+    /// The row a ⇧-click range extends from. Set on every plain or ⌘ click.
+    @State private var selectionAnchorId: UUID?
     @State private var searchQuery: String = ""
     @State private var sourceFilter: SourceFilter = .all
     @State private var hoveredFilter: SourceFilter?
@@ -233,6 +239,7 @@ struct ChatSessionSidebar: View {
             sourceFilter = .all
             searchQuery = ""
             hoveredFilter = nil
+            clearSelection()
         }
     }
 
@@ -311,6 +318,58 @@ struct ChatSessionSidebar: View {
     private func dismissEditing() {
         editingSessionId = nil
         editingBuffer = ""
+    }
+
+    // MARK: - Multi-Select
+
+    /// Routes a row tap by the modifier keys held at click time. ⌘ toggles
+    /// the row in the multi-selection, ⇧ extends a contiguous range from the
+    /// anchor, and a plain click clears any multi-selection and navigates.
+    private func handleTap(_ session: ChatSessionData) {
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) {
+            toggleSelection(session.id)
+        } else if flags.contains(.shift) {
+            extendSelection(to: session.id)
+        } else {
+            if !selectedIds.isEmpty {
+                selectedIds.removeAll()
+            }
+            selectionAnchorId = session.id
+            handleSelect(session)
+        }
+    }
+
+    private func toggleSelection(_ id: UUID) {
+        if selectedIds.contains(id) {
+            selectedIds.remove(id)
+        } else {
+            selectedIds.insert(id)
+        }
+        selectionAnchorId = id
+    }
+
+    /// Adds every row between the anchor and `id` (inclusive) in the
+    /// currently-visible order. Falls back to a single toggle when there is
+    /// no usable anchor yet.
+    private func extendSelection(to id: UUID) {
+        let ids = filteredSessions.map(\.id)
+        guard
+            let anchor = selectionAnchorId ?? currentSessionId,
+            let anchorIndex = ids.firstIndex(of: anchor),
+            let targetIndex = ids.firstIndex(of: id)
+        else {
+            selectedIds.insert(id)
+            selectionAnchorId = id
+            return
+        }
+        let range = anchorIndex <= targetIndex ? anchorIndex...targetIndex : targetIndex...anchorIndex
+        selectedIds.formUnion(ids[range])
+    }
+
+    private func clearSelection() {
+        selectedIds.removeAll()
+        selectionAnchorId = nil
     }
 
     // MARK: - Navigate-Away Rename Guard
@@ -435,9 +494,10 @@ struct ChatSessionSidebar: View {
                         session: session,
                         agent: agentManager.agent(for: session.agentId ?? Agent.defaultId),
                         isSelected: session.id == currentSessionId,
+                        isMultiSelected: selectedIds.contains(session.id),
                         isEditing: editingSessionId == session.id,
                         onSelect: {
-                            handleSelect(session)
+                            handleTap(session)
                         },
                         onStartRename: {
                             if editingSessionId != nil && editingSessionId != session.id {
@@ -492,6 +552,9 @@ private struct SessionRow: View {
     let session: ChatSessionData
     let agent: Agent?
     let isSelected: Bool
+    /// Whether this row is part of an active multi-selection. Drives the
+    /// accent background and the leading checkmark.
+    var isMultiSelected: Bool = false
     let isEditing: Bool
     let onSelect: () -> Void
     let onStartRename: () -> Void
@@ -541,6 +604,15 @@ private struct SessionRow: View {
                 .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
         } else {
             HStack(spacing: 10) {
+                // Multi-select check, shown in place of leading padding so the
+                // row doesn't shift when selection toggles.
+                if isMultiSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.accentColor)
+                        .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                }
+
                 // Agent indicator
                 if isDefaultAgent {
                     defaultAgentIndicator
@@ -592,12 +664,13 @@ private struct SessionRow: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
+            .background(SidebarRowBackground(isSelected: isSelected || isMultiSelected, isHovered: isHovered))
             .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
             .onTapGesture {
                 onSelect()
             }
+            .animation(theme.springAnimation(responseMultiplier: 0.8), value: isMultiSelected)
             .onHover { hovering in
                 withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
                     isHovered = hovering
