@@ -197,7 +197,7 @@ enum AppleScriptToolDispatch {
         return userTask
     }
 
-    private static func latestUserTaskFromCurrentSession() -> String? {
+    static func latestUserTaskFromCurrentSession() -> String? {
         guard let rawSessionId = ChatExecutionContext.currentSessionId,
             let sessionId = UUID(uuidString: rawSessionId),
             let session = ChatHistoryDatabase.shared.loadSession(id: sessionId)
@@ -223,6 +223,23 @@ enum AppleScriptToolDispatch {
             "`mac_query` is read-only, but the current user request is an exact text replacement. "
             + "Call `applescript` with the user's replacement task and exact old/new values. Do not "
             + "invent a filesystem query or a save step."
+    }
+
+    /// Reject a separate chat attachment when the persisted user request is
+    /// specifically an exact replacement in the frontmost/current document.
+    /// `share_artifact` cannot mutate that app state; allowing it to succeed
+    /// would create an unrelated file and let the parent falsely report the
+    /// requested edit as complete. Ordinary artifact creation and path-based
+    /// file delivery remain unchanged.
+    static func artifactConflictMessage(latestUserTask: String?) -> String? {
+        guard let latestUserTask,
+            exactReplacementLiterals(from: latestUserTask) != nil,
+            AppleScriptAppKnowledge.mentionsWorkingApp(latestUserTask)
+        else { return nil }
+        return
+            "`share_artifact` only presents a separate chat attachment; it cannot edit the current "
+            + "open file/document. Call `applescript` with the user's replacement task and exact "
+            + "old/new values. Do not create an output file or claim the existing document changed."
     }
 
     private static func replacementValues(_ literals: AppleScriptLiterals) -> Set<String> {

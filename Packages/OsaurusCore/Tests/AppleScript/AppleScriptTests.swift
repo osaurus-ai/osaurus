@@ -2430,6 +2430,9 @@ struct AppleScriptToolSelectionGuidanceTests {
         #expect(SystemPromptTemplates.appleScriptGuidanceCompact.contains("Never invent a picker"))
         #expect(SystemPromptTemplates.appleScriptGuidanceCompact.contains("do not ask for a path first"))
         #expect(AppleScriptTool.toolDescription.contains("working-app anaphora"))
+        #expect(AppleScriptTool.toolDescription.contains("documents open in Mac apps"))
+        #expect(SystemPromptTemplates.appleScriptGuidance.contains("path-addressed files"))
+        #expect(SystemPromptTemplates.appleScriptGuidanceCompact.contains("path-addressed files"))
 
         let standard = AppleScriptLoop.systemPrompt(mode: .automate, variant: .standard)
         #expect(standard.contains("named Frontmost app"))
@@ -2439,6 +2442,26 @@ struct AppleScriptToolSelectionGuidanceTests {
         let concise = AppleScriptLoop.systemPrompt(mode: .automate, variant: .concise)
         #expect(concise.contains("named Frontmost app"))
         #expect(concise.contains("Never invent a chooser"))
+    }
+
+    @Test("working-document replacement cannot be completed as a separate artifact")
+    func workingDocumentReplacementRejectsArtifactRoute() {
+        let conflict = AppleScriptToolDispatch.artifactConflictMessage(
+            latestUserTask: "Change the text in the file from “Hello from OracHQ” to “Hello again”."
+        )
+        #expect(conflict?.contains("separate chat attachment") == true)
+        #expect(conflict?.contains("Call `applescript`") == true)
+
+        #expect(
+            AppleScriptToolDispatch.artifactConflictMessage(
+                latestUserTask: "Create output.txt replacing “old” with “new”."
+            ) == nil
+        )
+        #expect(
+            AppleScriptToolDispatch.artifactConflictMessage(
+                latestUserTask: "Share a file.txt containing Hello again."
+            ) == nil
+        )
     }
 }
 

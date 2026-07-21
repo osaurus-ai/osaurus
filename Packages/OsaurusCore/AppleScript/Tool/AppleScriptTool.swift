@@ -47,8 +47,9 @@ final class AppleScriptTool: OsaurusTool, @unchecked Sendable {
         + "subagent can resolve the tracked frontmost app, and do not ask for a path first. Never tell "
         + "the subagent to choose, create, or save a file to make up for a missing target. "
         + "Editing an open document does not imply saving it. Depending on the user's setting, "
-        + "each script is shown for approval or auto-run with a warning. Do NOT use it for shell, files, "
-        + "or web requests — those have dedicated tools."
+        + "each script is shown for approval or auto-run with a warning. Use AppleScript for documents "
+        + "open in Mac apps. Do NOT use it for shell commands, path-addressed files in a selected "
+        + "folder/sandbox, or web requests — those have dedicated tools."
 
     let description = AppleScriptTool.toolDescription
 
