@@ -156,8 +156,10 @@ enum AppleScriptToolDispatch {
     /// Preserve the two exact user-visible values when a parent model puts a
     /// replacement pair in `task` but omits `contents`, or supplies only one of
     /// the values through the single `content` field. This recovers only the
-    /// common `replace “old” with “new”` and `change … from “old” to “new”`
-    /// forms: exactly two quoted values and an exact separator are required.
+    /// common `replace “old” with “new”`, `change … from “old” to “new”`, and
+    /// the observed parent rewrite `file containing “old” and replace that
+    /// text with “new”` forms: exactly two quoted values and a narrow
+    /// replacement grammar are required.
     /// It extracts DATA only — it never guesses an app, document, or file.
     /// Ambiguous tasks (extra quoted values or no replacement grammar) remain
     /// unchanged.
@@ -220,7 +222,16 @@ enum AppleScriptToolDispatch {
             trimmedSeparator == "to"
             && trimmedBeforeOld.range(of: #"\bchange\b"#, options: .regularExpression) != nil
             && trimmedBeforeOld.range(of: #"\bfrom$"#, options: .regularExpression) != nil
-        guard replaceForm || changeForm else { return nil }
+        let containingThenReplaceForm =
+            trimmedBeforeOld.range(
+                of: #"\b(?:file|document)\s+containing$"#,
+                options: .regularExpression
+            ) != nil
+            && trimmedSeparator.range(
+                of: #"^(?:and\s+)?replace\s+(?:that|the|this)\s+(?:text|content|string|value)\s+with$"#,
+                options: .regularExpression
+            ) != nil
+        guard replaceForm || changeForm || containingThenReplaceForm else { return nil }
 
         return AppleScriptLiterals([
             "oldText": quoted[0].value,

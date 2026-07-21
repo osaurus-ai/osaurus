@@ -588,6 +588,25 @@ struct AppleScriptToolDispatchLiteralsTests {
         )
     }
 
+    @Test("observed parent file-containing rewrite preserves exact replacement data")
+    func parentFileContainingRewritePreservesReplacementData() {
+        let task =
+            "Find the file containing \"Hello from OracHQ\" and replace that text with "
+            + "\"Hello again\", then save the changes."
+        let inferred = AppleScriptToolDispatch.literalsForDispatch(
+            task: task,
+            literals: AppleScriptLiterals()
+        )
+        #expect(inferred.names == ["newText", "oldText"])
+        #expect(inferred.value(for: "oldText") == "Hello from OracHQ")
+        #expect(inferred.value(for: "newText") == "Hello again")
+        #expect(
+            AppleScriptToolDispatch.taskForSubagent(task, literals: inferred)
+                == "Find the file containing \"{{oldText}}\" and replace that text with "
+                    + "\"{{newText}}\", then save the changes."
+        )
+    }
+
     @Test("exact replacement data is app-independent but ambiguous grammar remains task-only")
     func ambiguousReplacementDoesNotInferLiterals() {
         let notes = AppleScriptToolDispatch.literalsForDispatch(
@@ -617,6 +636,18 @@ struct AppleScriptToolDispatchLiteralsTests {
         #expect(
             AppleScriptToolDispatch.literalsForDispatch(
                 task: "In TextEdit compare “one” with “two”.",
+                literals: AppleScriptLiterals()
+            ).isEmpty
+        )
+        #expect(
+            AppleScriptToolDispatch.literalsForDispatch(
+                task: "Compare the file containing “one” with “two”.",
+                literals: AppleScriptLiterals()
+            ).isEmpty
+        )
+        #expect(
+            AppleScriptToolDispatch.literalsForDispatch(
+                task: "Find the note containing “one” and replace that text with “two”.",
                 literals: AppleScriptLiterals()
             ).isEmpty
         )
