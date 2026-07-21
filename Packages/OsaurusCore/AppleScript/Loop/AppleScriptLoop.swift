@@ -886,12 +886,27 @@ public enum AppleScriptLoop {
             //  • query / verification → run reads automatically, BLOCK writes.
             //  • automate → the user's confirm-each / auto-run-with-warning policy.
             let approved: Bool
-            switch gateDecision(
+            let gate = gateDecision(
                 mode: mode,
                 executionMode: executionMode,
                 effect: effect,
                 verifying: verifying
-            ) {
+            )
+            let gateLabel: String
+            switch gate {
+            case .autoRunReadOnly: gateLabel = "auto_read"
+            case .autoRunWithWarning: gateLabel = "auto_warning"
+            case .confirm: gateLabel = "confirm"
+            case .block: gateLabel = "block"
+            }
+            AppleScriptTraceLog.recordGate(
+                mode: mode,
+                executionMode: executionMode,
+                effect: effect,
+                verifying: verifying,
+                decision: gateLabel
+            )
+            switch gate {
             case .block(let reason):
                 consecutiveBlocked += 1
                 feed.emit(

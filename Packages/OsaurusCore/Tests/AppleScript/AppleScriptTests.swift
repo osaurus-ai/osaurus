@@ -654,6 +654,36 @@ struct AppleScriptToolDispatchLiteralsTests {
         )
     }
 
+    @Test("read-only sibling rejects an exact replacement but preserves genuine reads")
+    func readOnlySiblingRejectsReplacement() {
+        let replacement =
+            "Change the text in the file from “Hello from OracHQ” to “Hello again”."
+        let conflict = AppleScriptToolDispatch.readOnlyConflictMessage(
+            latestUserTask: replacement,
+            mode: .query
+        )
+        #expect(conflict?.contains("`mac_query` is read-only") == true)
+        #expect(conflict?.contains("Do not invent a filesystem query or a save step") == true)
+        #expect(
+            AppleScriptToolDispatch.readOnlyConflictMessage(
+                latestUserTask: replacement,
+                mode: .automate
+            ) == nil
+        )
+        #expect(
+            AppleScriptToolDispatch.readOnlyConflictMessage(
+                latestUserTask: "What is the URL of the front Safari tab?",
+                mode: .query
+            ) == nil
+        )
+        #expect(
+            AppleScriptToolDispatch.readOnlyConflictMessage(
+                latestUserTask: "Thanks for the update.",
+                mode: .query
+            ) == nil
+        )
+    }
+
     @Test("exact replacement data is app-independent but ambiguous grammar remains task-only")
     func ambiguousReplacementDoesNotInferLiterals() {
         let notes = AppleScriptToolDispatch.literalsForDispatch(

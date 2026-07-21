@@ -47,6 +47,24 @@ enum AppleScriptTraceLog {
         )
     }
 
+    /// Record the effective user setting and the gate selected for a proposed
+    /// script. This is trace-only evidence that the UI setting reached the
+    /// runtime; it never changes the decision.
+    static func recordGate(
+        mode: AppleScriptRunMode,
+        executionMode: AppleScriptExecutionMode,
+        effect: EffectClass,
+        verifying: Bool,
+        decision: String
+    ) {
+        guard isEnabled else { return }
+        write(
+            "gate mode=\(mode.rawValue) execution_mode=\(executionMode.rawValue) "
+                + "effect=\(String(describing: effect)) verifying=\(verifying) "
+                + "decision=\(decision)"
+        )
+    }
+
     /// Record one model step: request message shapes + the full raw response
     /// surface (content, tool-call arguments, finish reason, usage).
     static func record(

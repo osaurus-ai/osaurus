@@ -44,6 +44,21 @@ enum AppleScriptToolDispatch {
             )
         }
 
+        let latestUserTask = latestUserTaskFromCurrentSession()
+        if let conflict = readOnlyConflictMessage(
+            latestUserTask: latestUserTask,
+            mode: mode
+        ) {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: conflict,
+                field: field,
+                expected: "a read-only Mac/app-state question grounded in the current user request",
+                tool: tool.name,
+                retryable: true
+            )
+        }
+
         let suppliedLiterals = literals(from: args)
         // The parent model may paraphrase a direct replacement request before
         // calling this tool. The live 16B path proved that such a paraphrase
@@ -52,7 +67,7 @@ enum AppleScriptToolDispatch {
         // replacement, keep the persisted user turn authoritative.
         let dispatchTask = authoritativeReplacementTask(
             parentTask: request,
-            latestUserTask: latestUserTaskFromCurrentSession()
+            latestUserTask: latestUserTask
         )
         let parsedLiterals = literalsForDispatch(task: dispatchTask, literals: suppliedLiterals)
         if let violation = literalContractViolation(task: dispatchTask, literals: parsedLiterals) {
@@ -127,6 +142,26 @@ enum AppleScriptToolDispatch {
             let session = ChatHistoryDatabase.shared.loadSession(id: sessionId)
         else { return nil }
         return session.turns.last(where: { $0.role == .user })?.content
+    }
+
+    /// Reject the confirmed parent-routing failure where a state-changing
+    /// replacement request is rewritten into an unrelated `mac_query`. The
+    /// read tool must never run a fabricated filesystem/state question merely
+    /// because the parent selected the wrong sibling tool. Returning a
+    /// retryable contract error lets the parent choose `applescript`; it does
+    /// not execute, rewrite, or silently reroute the user's task.
+    static func readOnlyConflictMessage(
+        latestUserTask: String?,
+        mode: AppleScriptRunMode
+    ) -> String? {
+        guard mode == .query,
+            let latestUserTask,
+            exactReplacementLiterals(from: latestUserTask) != nil
+        else { return nil }
+        return
+            "`mac_query` is read-only, but the current user request is an exact text replacement. "
+            + "Call `applescript` with the user's replacement task and exact old/new values. Do not "
+            + "invent a filesystem query or a save step."
     }
 
     private static func replacementValues(_ literals: AppleScriptLiterals) -> Set<String> {
