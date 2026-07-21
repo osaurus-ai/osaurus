@@ -552,7 +552,7 @@ struct AppleScriptToolDispatchLiteralsTests {
         )
         #expect(
             AppleScriptToolDispatch.taskForSubagent(exactTask, literals: exactValues)
-                == "Replace the entire exact text \"{{oldText}}\" with \"{{newText}}\" "
+                == "Replace the entire exact text {{oldText}} with {{newText}} "
                     + "in the front TextEdit document."
         )
     }
@@ -623,8 +623,8 @@ struct AppleScriptToolDispatchLiteralsTests {
         #expect(inferred.value(for: "newText") == "Hello again")
         #expect(
             AppleScriptToolDispatch.taskForSubagent(task, literals: inferred)
-                == "In the front TextEdit document, replace the entire text “{{oldText}}” "
-                    + "with “{{newText}}”."
+                == "In the front TextEdit document, replace the entire text {{oldText}} "
+                    + "with {{newText}}."
         )
     }
 
@@ -640,8 +640,17 @@ struct AppleScriptToolDispatchLiteralsTests {
         #expect(inferred.value(for: "newText") == "Hello again")
         #expect(
             AppleScriptToolDispatch.taskForSubagent(task, literals: inferred)
-                == "Change the text in the file from “{{oldText}}” to “{{newText}}”."
+                == "Change the text in the file from {{oldText}} to {{newText}}."
         )
+        let childTask = AppleScriptToolDispatch.taskForSubagent(task, literals: inferred)
+        #expect(!childTask.contains("“"))
+        #expect(!childTask.contains("”"))
+
+        let quotedGeneric = AppleScriptToolDispatch.taskForSubagent(
+            "Set the body to \"hello\".",
+            literals: AppleScriptLiterals(["content": "hello"])
+        )
+        #expect(quotedGeneric == "Set the body to \"{{content}}\".")
 
         let alreadyNamed = AppleScriptLiterals([
             "oldText": "Hello from OracHQ", "newText": "Hello again",
@@ -666,8 +675,8 @@ struct AppleScriptToolDispatchLiteralsTests {
         #expect(inferred.value(for: "newText") == "Hello again")
         #expect(
             AppleScriptToolDispatch.taskForSubagent(task, literals: inferred)
-                == "Find the file containing \"{{oldText}}\" and replace that text with "
-                    + "\"{{newText}}\", then save the changes."
+                == "Find the file containing {{oldText}} and replace that text with "
+                    + "{{newText}}, then save the changes."
         )
     }
 

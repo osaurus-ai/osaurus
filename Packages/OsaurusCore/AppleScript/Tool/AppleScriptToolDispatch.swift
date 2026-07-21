@@ -510,6 +510,27 @@ enum AppleScriptToolDispatch {
                 options: [.literal, .caseInsensitive]
             )
         }
+        // In the narrow two-value replacement grammar, quotation marks in the
+        // parent/user prose delimit the old/new values; they are not part of
+        // those values. Once named placeholders occupy the slots, retaining
+        // those marks is both redundant and hazardous: the live 16B path
+        // copied typographic quotes from `“{{oldText}}”` / `“{{newText}}”`
+        // into generated AppleScript source, which OSA rejects as an unknown
+        // token. Strip only complete matching pairs around those two inferred
+        // replacement placeholders. Generic content tasks may intentionally
+        // ask for wrapper quotes, so their punctuation remains untouched.
+        if exactReplacementLiterals(from: task) != nil {
+            for name in ["oldText", "newText"] {
+                let token = "{{\(name)}}"
+                for (opening, closing) in [("\"", "\""), ("“", "”"), ("‘", "’")] {
+                    result = result.replacingOccurrences(
+                        of: opening + token + closing,
+                        with: token,
+                        options: .literal
+                    )
+                }
+            }
+        }
         return result
     }
 
