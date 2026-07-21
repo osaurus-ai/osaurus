@@ -23,6 +23,11 @@ struct KnowledgeView: View {
     @State private var hasAppeared = false
     @State private var successMessage: String?
 
+    /// A freshly created collection awaiting the "grant to agents" prompt.
+    /// Set right after `create`/`createFromGit` succeeds so the user can
+    /// grant access inline instead of hunting through each agent's settings.
+    @State private var grantingCollection: KnowledgeCollection?
+
     // Curation review state (Phase 2).
     @State private var openTickets: [KnowledgeTicket] = []
     @State private var pendingProposals: [KnowledgeProposal] = []
@@ -165,6 +170,7 @@ struct KnowledgeView: View {
                                     remoteURL: remoteURL
                                 )
                                 showSuccess("Cloned \"\(created.name)\", indexing in the background")
+                                grantingCollection = created
                             } catch {
                                 showSuccess("Clone failed: \(error.localizedDescription)")
                             }
@@ -177,6 +183,7 @@ struct KnowledgeView: View {
                                 folderPath: folderPath
                             )
                             showSuccess("Added \"\(created.name)\", indexing in the background")
+                            grantingCollection = created
                         }
                     }
                 },
@@ -196,6 +203,21 @@ struct KnowledgeView: View {
                     showSuccess("Updated \"\(name)\"")
                 },
                 onCancel: { editingCollection = nil }
+            )
+        }
+        .sheet(item: $grantingCollection) { collection in
+            KnowledgeGrantAgentsSheet(
+                collection: collection,
+                onDone: { grantedCount in
+                    grantingCollection = nil
+                    if grantedCount > 0 {
+                        showSuccess(
+                            grantedCount == 1
+                                ? L("Granted \"\(collection.name)\" to 1 agent")
+                                : L("Granted \"\(collection.name)\" to \(grantedCount) agents")
+                        )
+                    }
+                }
             )
         }
         .sheet(item: $reviewingProposal) { proposal in
@@ -1068,5 +1090,161 @@ private struct KnowledgeProposalReviewSheet: View {
                 diffLoaded = true
             }
         }
+    }
+}
+
+// MARK: - Grant To Agents Sheet
+
+/// Shown right after a collection is created so the user can grant it to
+/// agents without leaving Knowledge. Closes the UX gap where a new
+/// collection was invisible to every agent until the user dug through each
+/// agent's Features → Knowledge section. Granting flips `knowledgeEnabled`
+/// on and adds the collection id; built-in agents are omitted because
+/// `AgentManager.update` refuses to persist them.
+private struct KnowledgeGrantAgentsSheet: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    let collection: KnowledgeCollection
+    /// Passes the number of agents actually granted (0 when none/skipped).
+    let onDone: (Int) -> Void
+
+    /// Editable agents, in display order. Built-in agents are excluded up
+    /// front since their grants can't be saved.
+    private let agents: [Agent]
+    @State private var selectedIds: Set<UUID>
+
+    init(collection: KnowledgeCollection, onDone: @escaping (Int) -> Void) {
+        self.collection = collection
+        self.onDone = onDone
+        let editable = AgentManager.shared.agents.filter { !$0.isBuiltIn }
+        self.agents = editable
+        // Pre-select agents that already have knowledge on, so the common
+        // "grant this to my knowledge-using agents" path is one click.
+        _selectedIds = State(
+            initialValue: Set(editable.filter { $0.settings.knowledgeEnabled }.map(\.id))
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Grant \"\(collection.name)\" to agents", bundle: .module)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text(
+                    "Pick which agents can search and read this collection. You can change this later in each agent's Features → Knowledge section.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if agents.isEmpty {
+                Text(
+                    "No agents to grant yet. Create an agent, then enable Knowledge for it in its Features section.",
+                    bundle: .module
+                )
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 24)
+            } else {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(agents) { agent in
+                            agentRow(agent)
+                        }
+                    }
+                }
+                .frame(minHeight: 160, maxHeight: 320)
+                .background(RoundedRectangle(cornerRadius: 8).fill(theme.secondaryBackground))
+            }
+
+            HStack {
+                Spacer()
+                Button {
+                    onDone(0)
+                } label: {
+                    Text(agents.isEmpty ? "Close" : "Skip", bundle: .module)
+                }
+                .buttonStyle(SettingsButtonStyle())
+                .keyboardShortcut(.cancelAction)
+                if !agents.isEmpty {
+                    Button {
+                        grant()
+                    } label: {
+                        Text("Grant Access", bundle: .module)
+                    }
+                    .buttonStyle(SettingsButtonStyle(isPrimary: true))
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(selectedIds.isEmpty)
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+        .background(theme.primaryBackground)
+        .environment(\.theme, themeManager.currentTheme)
+    }
+
+    private func agentRow(_ agent: Agent) -> some View {
+        let selected = selectedIds.contains(agent.id)
+        return Button {
+            if selected {
+                selectedIds.remove(agent.id)
+            } else {
+                selectedIds.insert(agent.id)
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14))
+                    .foregroundColor(selected ? theme.accentColor : theme.tertiaryText)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(agent.name)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    if !agent.description.isEmpty {
+                        Text(agent.description)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer()
+                if !agent.settings.knowledgeEnabled {
+                    Text("Enables Knowledge", bundle: .module)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                }
+            }
+            .padding(10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Add the collection to every selected agent and turn Knowledge on so
+    /// the grant takes effect. Agents already holding the grant are left
+    /// untouched (no redundant write).
+    private func grant() {
+        var granted = 0
+        for agent in agents where selectedIds.contains(agent.id) {
+            if agent.settings.knowledgeEnabled
+                && agent.settings.knowledgeCollectionIds.contains(collection.id)
+            {
+                continue
+            }
+            var updated = agent
+            updated.settings.knowledgeEnabled = true
+            if !updated.settings.knowledgeCollectionIds.contains(collection.id) {
+                updated.settings.knowledgeCollectionIds.append(collection.id)
+            }
+            AgentManager.shared.update(updated)
+            granted += 1
+        }
+        onDone(granted)
     }
 }
