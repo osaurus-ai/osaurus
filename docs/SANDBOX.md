@@ -41,6 +41,29 @@ Despite running in isolation, agents inside the VM retain full access to Osaurus
 - **macOS 26+** (Tahoe) — required for Apple's Containerization framework
 - **Apple Silicon** (M1 or newer)
 
+On earlier macOS versions the sandbox automatically falls back to a native macOS Seatbelt backend — see [Seatbelt Fallback](#seatbelt-fallback-macos-15-and-earlier).
+
+---
+
+## Seatbelt Fallback (macOS 15 and earlier)
+
+On Macs that can't run the Containerization VM, Osaurus still offers sandboxed execution using the system's Seatbelt facility (`sandbox-exec`). Commands run as regular host processes confined by a deny-by-default sandbox profile: they can read the system but can only write inside the sandbox workspace (`~/.osaurus/container/workspace/`, seen by agents as `/workspace`) and a scratch temp directory. The backend is chosen once at launch — macOS 26+ always uses the VM, older systems always use Seatbelt.
+
+Everything in this guide applies to both backends unless noted. The differences:
+
+| | Linux VM (macOS 26+) | Seatbelt (earlier) |
+|---|---|---|
+| Environment | Alpine Linux, full userland | macOS, BSD userland |
+| Package managers | `pip`, `npm`, `apk` | `pip`, `npm` (no `apk`) |
+| Tool recipe `dependencies` | Supported | Not supported — install via `setup` with pip/npm |
+| Network policy | Off, on, or per-domain allowlist | All-or-nothing. A configured domain allowlist can't be enforced and fails closed to no network |
+| Isolation boundary | Hardware VM, separate filesystem | Process-level write confinement. Reads of the host are not blocked |
+| Per-agent environments | Separate Linux users, optional per-agent rootfs | Shared workspace tree with per-agent home directories |
+| Sandboxed MCP servers | Supported | Not supported — set the provider's Run in to Host |
+| Provisioning | Kernel + rootfs download (~1 min) | Instant, no download |
+
+Two behavioral notes for Seatbelt: denied file lookups surface as "No such file or directory" rather than "Operation not permitted" (deliberate macOS anti-probing behavior), and `~` inside sandboxed commands resolves to the agent's workspace home, not your macOS home.
+
 ---
 
 ## Getting Started
