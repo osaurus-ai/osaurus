@@ -594,8 +594,8 @@ private struct KnowledgeCollectionCard: View {
                 "Every document has a category, so agents can filter the library by it. Categories come from frontmatter `type:` or are inferred automatically from folder names."
         case .nonconforming(let count):
             return count == 1
-                ? "1 document has no category — this is optional, agents can still search and read it. To let agents filter by category, add a `type:` line (e.g. `type: policy`) to the top of the file. Click for the list."
-                : "\(count) documents have no category — this is optional, agents can still search and read them. To let agents filter by category, add a `type:` line (e.g. `type: policy`) to the top of each file. Click for the list."
+                ? "1 document has no category. This is optional, agents can still search and read it. To let agents filter by category, add a `type:` line (e.g. `type: policy`) to the top of the file. Click for the list."
+                : "\(count) documents have no category. This is optional, agents can still search and read them. To let agents filter by category, add a `type:` line (e.g. `type: policy`) to the top of each file. Click for the list."
         case .unknown:
             return "Checking that every document declares a category (its `type`)…"
         }
@@ -617,8 +617,8 @@ private struct KnowledgeCollectionCard: View {
         let sample = uncategorizedPaths.prefix(8).joined(separator: "\n")
         let more = uncategorizedPaths.count - min(8, uncategorizedPaths.count)
         return L(
-            "This is optional — agents can still search and read these documents. To let agents filter by category, move them into a folder (the folder name becomes the category) or add a `type:` line to their frontmatter.\n\n"
-        ) + sample + (more > 0 ? "\n" + String(format: L("…and %lld more"), more) : "")
+            "This is optional. Agents can still search and read these documents.\n\nTo let agents filter by category, move them into a folder (the folder name becomes the category) or add a `type:` line to their frontmatter.\n\n"
+        ) + sample + (more > 0 ? "\n" + String(format: L("and %lld more"), more) : "")
     }
 
     private func refreshOKFStatus() async {
