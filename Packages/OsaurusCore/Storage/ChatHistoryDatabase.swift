@@ -48,6 +48,32 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private let queue = DispatchQueue(label: "ai.osaurus.chatHistory.database")
     private let stmtCache = PreparedStatementCache(capacity: 64)
 
+    /// Mirrors `db != nil` without hopping onto `queue`. `isOpen` does a
+    /// `queue.sync`, which parks the caller behind an in-flight `open()`
+    /// (slow disk: file open + WAL + migrations) — exactly the wait that
+    /// main-thread callers use this flag to avoid.
+    private let openFlagLock = NSLock()
+    private var openFlag = false
+
+    /// Posted (on no particular thread) after `open()` completes
+    /// successfully. Lets deferred main-thread readers reload once the
+    /// background prewarm lands instead of blocking on the open.
+    public static let didOpenNotification = Notification.Name(
+        "ai.osaurus.chatHistory.databaseDidOpen")
+
+    /// Non-blocking `isOpen`. May lag an in-flight `open()` by design.
+    public var isOpenNonBlocking: Bool {
+        openFlagLock.lock()
+        defer { openFlagLock.unlock() }
+        return openFlag
+    }
+
+    private func setOpenFlag(_ value: Bool) {
+        openFlagLock.lock()
+        openFlag = value
+        openFlagLock.unlock()
+    }
+
     init() {}
 
     deinit { close() }
@@ -59,12 +85,15 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         // re-encrypting databases so we can't open a half-rekeyed
         // file with the wrong key. No-op fast path otherwise.
         StorageMutationGate.blockingAwaitNotMutating()
+        var didOpenNow = false
         try queue.sync {
             guard db == nil else { return }
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.chatHistory())
             try openConnection()
             do {
                 try runMigrations()
+                setOpenFlag(true)
+                didOpenNow = true
             } catch {
                 // Don't leave a live, half-migrated connection: `db` is set by
                 // `openConnection()`, and a non-nil `db` makes every later
@@ -86,6 +115,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             }
         }
         OsaurusDatabaseHandle.register(maintenanceHandle)
+        if didOpenNow {
+            NotificationCenter.default.post(name: Self.didOpenNotification, object: nil)
+        }
     }
 
     private lazy var maintenanceHandle = OsaurusDatabaseHandle(
@@ -112,6 +144,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
                 applyPerfPragmas: false
             )
             try runMigrations()
+            setOpenFlag(true)
         }
     }
 
@@ -123,6 +156,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             try? executeRaw("PRAGMA optimize")
             sqlite3_close(connection)
             db = nil
+            setOpenFlag(false)
         }
     }
 

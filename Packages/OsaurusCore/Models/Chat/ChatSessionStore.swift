@@ -224,6 +224,19 @@ enum ChatSessionStore {
             print("[ChatSessionStore] Deferring chat-history open: storage key not yet resident")
             return
         }
+        // Never run (or wait behind) the actual open on the main thread.
+        // `open()` is serialized on the database's own queue, so even when
+        // the background prewarm is already mid-open, `queue.sync` here
+        // parks the main thread for the whole slow open (file open + WAL +
+        // migrations on a cold/slow disk — seen as launch hangs in the
+        // field). Defer instead: `loadAll` returns [] until the DB is open,
+        // and `ChatSessionsManager` reloads on
+        // `ChatHistoryDatabase.didOpenNotification`.
+        if Thread.isMainThread, !ChatHistoryDatabase.shared.isOpenNonBlocking {
+            print("[ChatSessionStore] Deferring chat-history open: not yet open, staying off main")
+            preloadInBackground()
+            return
+        }
         StorageMutationGate.blockingAwaitNotMutating()
         didOpen = true
         do {

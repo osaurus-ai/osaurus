@@ -51,6 +51,18 @@ final class ChatSessionsManager: ObservableObject {
                     self?.refresh()
                 }
                 .store(in: &cancellables)
+
+            // The initial load can also be deferred because the background
+            // prewarm was still mid-open (ChatSessionStore.ensureOpen no
+            // longer waits behind an in-flight open on the main thread).
+            // Reload once the database reports open.
+            NotificationCenter.default.publisher(for: ChatHistoryDatabase.didOpenNotification)
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    ChatSessionStore.flushPendingSaves()
+                    self?.refresh()
+                }
+                .store(in: &cancellables)
         }
     }
 
