@@ -186,6 +186,75 @@ struct BrowserUseEvalTests {
         #expect(await world.finalValues()["color"] == "blue")
     }
 
+    // MARK: - select
+
+    @Test func selectStoresJoinedValuesForScoring() async {
+        let world = FixtureBrowserWorld(pages: [
+            Page(
+                url: "https://fixtures.local/settings",
+                title: "Preferences",
+                elements: [
+                    Element(id: "timezone", type: "select", text: "Timezone", value: "UTC")
+                ])
+        ])
+        _ = await world.execute(
+            name: "browser_navigate",
+            argumentsJSON: #"{"url": "https://fixtures.local/settings"}"#)
+
+        let selected = await world.execute(
+            name: "browser_select",
+            argumentsJSON: #"{"ref": "E1", "values": ["Europe/Berlin"]}"#)
+        #expect(ToolEnvelope.isSuccess(selected))
+        // The joined-values read-back is what `successValues.equals` scores
+        // against in `browseruse.select-dropdown`.
+        #expect(await world.finalValues()["timezone"] == "Europe/Berlin")
+        #expect(await world.verbTrace() == ["navigate", "select"])
+    }
+
+    // MARK: - back history
+
+    @Test func navigateBackWalksHistoryAndRegeneratesRefs() async {
+        let world = FixtureBrowserWorld(pages: [
+            Page(
+                url: "https://fixtures.local/models",
+                title: "Model Catalog",
+                elements: [
+                    Element(
+                        id: "falcon-link", type: "link", text: "Falcon",
+                        goto: "https://fixtures.local/models/falcon")
+                ]),
+            Page(
+                url: "https://fixtures.local/models/falcon",
+                title: "Falcon — Specification",
+                bodyText: "Weight: 742 grams.",
+                elements: []),
+        ])
+
+        // Back with no history is a typed failure, not a crash.
+        let tooEarly = await world.execute(name: "browser_navigate_back", argumentsJSON: "{}")
+        #expect(ToolEnvelope.isError(tooEarly))
+
+        _ = await world.execute(
+            name: "browser_navigate",
+            argumentsJSON: #"{"url": "https://fixtures.local/models"}"#)
+        let clicked = await world.execute(
+            name: "browser_click", argumentsJSON: #"{"ref": "E1"}"#)
+        #expect(text(clicked).contains("Falcon"))
+
+        let back = await world.execute(name: "browser_navigate_back", argumentsJSON: "{}")
+        #expect(ToolEnvelope.isSuccess(back))
+        #expect(text(back).contains("Model Catalog"), "back must land on the list page")
+
+        // Refs regenerated for the restored page — the fresh ref works and
+        // the detail-page world state (clicks) is preserved for scoring.
+        let reclick = await world.execute(
+            name: "browser_click", argumentsJSON: #"{"ref": "E2"}"#)
+        #expect(ToolEnvelope.isSuccess(reclick))
+        #expect(await world.wasClicked("falcon-link"))
+        let verbs = await world.verbTrace()
+        #expect(verbs == ["back", "navigate", "click", "back", "click"])
+    }
+
     // MARK: - read_page pagination
 
     @Test func readPagePaginatesWithOffsetAndHasMore() async {
@@ -250,7 +319,7 @@ struct BrowserUseEvalTests {
         #expect(
             suite.decodeFailures.isEmpty,
             "BrowserUse case JSON failed to decode: \(suite.decodeFailures)")
-        #expect(suite.cases.count >= 4, "Expected the full BrowserUse suite; got \(suite.cases.count)")
+        #expect(suite.cases.count >= 10, "Expected the full BrowserUse suite; got \(suite.cases.count)")
 
         for testCase in suite.cases {
             let exp = testCase.expect.subagent

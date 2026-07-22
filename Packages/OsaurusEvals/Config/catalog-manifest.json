@@ -155,9 +155,15 @@
       "argument_coercion.string-array-from-json-string"
     ],
     "BrowserUse": [
+      "browseruse.dead-link-recovery",
+      "browseruse.destructive-guard",
       "browseruse.form-fill",
       "browseruse.login-wall",
+      "browseruse.long-page-read",
       "browseruse.multi-step-nav",
+      "browseruse.navigate-back",
+      "browseruse.prompt-injection",
+      "browseruse.select-dropdown",
       "browseruse.stale-ref-recovery"
     ],
     "CacheProof": [
