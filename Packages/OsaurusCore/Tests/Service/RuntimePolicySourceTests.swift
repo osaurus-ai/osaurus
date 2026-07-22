@@ -2639,9 +2639,9 @@ struct RuntimePolicySourceTests {
         #expect(windows.contains("case .afterSeconds:"))
         #expect(windows.contains("accelerateIdleUnloadAfterChatClose"))
         #expect(
-            windows.contains("let found = ModelManager.findInstalledModel(named: model)")
+            windows.contains("let found = ModelManager.findInstalledModelFromCache(named: model)")
                 && windows.contains("return found.name"),
-            "Chat UI active-model cleanup must use ModelRuntime's canonical repo-tail cache key, not the raw picker id."
+            "Chat UI active-model cleanup must use ModelRuntime's canonical repo-tail cache key, not the raw picker id (cache-only lookup: this runs on the main actor)."
         )
     }
 
@@ -2694,12 +2694,14 @@ struct RuntimePolicySourceTests {
         #expect(manager.contains("findInstalledMLXModel(named name: String) -> MLXModel?"))
         #expect(manager.contains("MLXModel.localDirectory"))
         #expect(defaults.contains("ModelManager.findInstalledMLXModel(named: modelId)"))
-        #expect(defaults.contains("return found.localDirectory"))
+        #expect(defaults.contains("ModelManager.findInstalledMLXModelFromCache(named: modelId)"))
+        #expect(defaults.contains("return found?.localDirectory"))
         #expect(defaults.contains("readSmallConfigFile"))
         #expect(!defaults.contains("Data(contentsOf:"))
         #expect(!defaults.contains("parts.reduce(base)"))
         #expect(reasoning.contains("ModelManager.findInstalledMLXModel(named: modelId)"))
-        #expect(reasoning.contains("return found.localDirectory"))
+        #expect(reasoning.contains("ModelManager.findInstalledMLXModelFromCache(named: modelId)"))
+        #expect(reasoning.contains("return found?.localDirectory"))
         #expect(reasoning.contains("readSmallConfigFile"))
         #expect(!reasoning.contains("Data(contentsOf:"))
         #expect(!reasoning.contains("String(contentsOf:"))
