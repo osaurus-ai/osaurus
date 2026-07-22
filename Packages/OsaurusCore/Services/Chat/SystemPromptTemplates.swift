@@ -365,6 +365,16 @@ public enum SystemPromptTemplates {
 
     // MARK: - Building New Tools
 
+    /// `dependencies` bullet of the plugin-authoring recipe. System (`apk`)
+    /// dependencies only exist in the Linux VM backend; on Seatbelt the
+    /// guide must steer authors to pip/npm in `setup` instead (declaring
+    /// `dependencies` there fails registration).
+    private static var pluginDependenciesBullet: String {
+        SandboxBackend.current == .seatbelt
+            ? "- `dependencies`: NOT supported in this macOS sandbox (no `apk`) — leave it empty and install Python/Node packages in `setup` (`pip install …` / `npm install …`). `setup` and every `run` command are validated against the network allowlist (PyPI, npm, GitHub, crates.io); reaching any other host fails registration."
+            : "- `dependencies`: Alpine packages (`apk add`). `setup` and every `run` command are validated against the network allowlist (Alpine repos, PyPI, npm, GitHub, crates.io); reaching any other host fails registration."
+    }
+
     /// The plugin-authoring recipe injected as the `## Building new tools`
     /// section by `PluginCreatorGate` whenever plugin creation is enabled for
     /// the session. Owns the *how* (the SandboxPlugin schema, the write →
@@ -415,7 +425,7 @@ public enum SystemPromptTemplates {
         }
         ```
 
-        - `dependencies`: Alpine packages (`apk add`). `setup` and every `run` command are validated against the network allowlist (Alpine repos, PyPI, npm, GitHub, crates.io); reaching any other host fails registration.
+        \(pluginDependenciesBullet)
         - `secrets`: names whose values come from Keychain — registration fails up front if a declared secret has no value yet.
         - `permissions.network`: comma-separated API hostnames the scripts reach (`outbound` / `none` / malformed → `none`). `permissions.inference` is forced to `false`.
         4. **Write the scripts.** Parameters arrive as `$PARAM_{NAME}` (uppercased) env vars, secrets as `$NAME` env vars; print JSON to stdout, errors to stderr, exit non-zero on failure.
@@ -777,6 +787,22 @@ public enum SystemPromptTemplates {
         - Use it for desktop UI automation (filling a form, navigating an app, extracting on-screen content), NOT for shell, files, or web requests — those have dedicated tools.
         """
 
+    /// Browser Use grounding. Rendered only when the `browser_use` tool
+    /// actually resolves into the schema (per-agent opt-in via
+    /// `browserUseEnabled`; the Default agent opts in from Settings →
+    /// Browser). Mirrors the tool's contract: one whole-task `goal`, a
+    /// persistent per-agent signed-in session, and the read-auto /
+    /// edit-confirm autonomy gate — stated plainly, not coerced.
+    public static let browserUseGuidance = """
+        ## Browser use
+
+        - You can browse the web for the user with `browser_use` — it drives a real, persistent browser session that belongs to this agent (cookies and sign-ins survive across chats), navigating, reading pages, clicking, and filling forms.
+        - Describe the WHOLE task in a single `goal`. It runs a self-contained subagent that perceives each page, acts, and verifies on its own and returns a summary — do not try to script individual clicks from here.
+        - Reads and ordinary navigation run automatically; typing into pages and anything consequential (submitting, purchasing, sending, deleting, signing in) pause for the user to approve. Write the goal plainly and let that gate handle confirmation.
+        - If a site needs the user to sign in, the subagent opens a secure sign-in window — NEVER ask the user for passwords or 2FA codes in chat.
+        - Use it for interacting with websites (checking a dashboard, filling a web form, extracting page content behind a login), NOT for simple lookups — `web_search` is faster for those.
+        """
+
     /// Authoritative image directive (generate + edit). Schema-gated on `image`
     /// in the composer, so it only renders when the tool is actually callable;
     /// the composer swaps in the generation-only variant below when no ready
@@ -836,10 +862,11 @@ public enum SystemPromptTemplates {
         - To READ information needed by the current user request, call `mac_query` with the whole question (e.g. "the front Safari tab URL", "the selected Finder items", "the current track and volume"). It runs read-only, needs no confirmation, and returns the actual `values` plus a per-step transcript. Do not invent a Mac-state question merely to acknowledge feedback or conversation.
         - To CHANGE something, call `applescript` with the whole task. Depending on the user's setting each script is shown for approval or auto-run with a warning, so write the task plainly and let that gate handle confirmation — don't ask the user for permission yourself first.
         - When the task must insert EXACT text (a verbatim transcription, quotes, code, or a long note body), pass that text in `applescript`'s `content` argument and keep `task` as the instruction (e.g. task "Set the body of the note 'Quotes' to the provided content", content = the exact text). The subagent inserts it verbatim via a placeholder, so nothing is dropped, reordered, or mis-escaped — never paste large literal text only into `task`.
-        - When the task needs SEVERAL exact blocks (a subject and a body, say), pass them in `applescript`'s `contents` argument as a `{name: text}` map (e.g. contents = {"subject": …, "body": …}); the subagent inserts each verbatim via its own placeholder. Use `content` for a single block and `contents` for several.
+        - When the task needs SEVERAL exact blocks (a subject and a body, say), pass them in `applescript`'s `contents` argument as a `{name: text}` map (e.g. contents = {"subject": …, "body": …}); the subagent inserts each verbatim via its own placeholder. This is REQUIRED for text replacement even when both strings are short: use `contents={"oldText": old, "newText": replacement}` and phrase `task` as "replace the provided oldText with the provided newText". Never leave replacement strings only inside `task`. Use `content` for a single block and `contents` for several.
+        - For an existing open document, name the app or exact path already identified by the request or conversation. Explicit `the file` / `the document` wording is working-app anaphora: call `applescript` with that phrase unchanged so its tracked-frontmost context can resolve it; do not ask for a path first. Never invent a file picker, new file, output file, or save step. An edit does not imply saving.
         - Exact identifiers count as verbatim too: when the task must match an EXISTING thing by its precise name — a note title, file path, mailbox, playlist, contact, or URL — pass that name as a named literal in `contents` alongside any body (e.g. contents = {"target": "Q3 Planning — Notes (v2)", "body": …}) and phrase `task` to use it ("set the body of the provided note to the provided body"). The subagent then references `{{target}}` instead of re-typing the name, so a long or unusual one can't be mistyped into a "not found" error. Names you're only paraphrasing can stay in `task`.
         - Both return a structured result: `status` (succeeded/partial/failed), the returned `values`, and `steps`/`errors` with the real AppleScript error numbers. Read the `values` to confirm the outcome, and use `errors` to retry or to tell the user exactly what to fix (e.g. grant Automation permission).
-        - Use these for AppleScript / Apple Events automation, NOT for shell, files, or web requests — those have dedicated tools.
+        - Use these for documents open in Mac apps and other AppleScript / Apple Events automation. Use file tools only for path-addressed files in a selected folder/sandbox; use dedicated tools for shell or web requests.
         """
 
     /// Compact AppleScript directive for small local models: same behavior at a
@@ -849,8 +876,9 @@ public enum SystemPromptTemplates {
         ## Mac automation (AppleScript)
         - To READ Mac/app state needed by the current user request (Finder, Safari, Mail, Music, System Events, volume, …) use `mac_query(question)`: read-only, no confirmation, returns the actual `values`. Never invent a state question just to acknowledge feedback/conversation.
         - To CHANGE something use `applescript(task)`: each script is shown for approval or auto-run per the user's setting. Don't write AppleScript yourself.
-        - To insert EXACT/verbatim text (transcription, quote, code, long body) OR an exact existing identifier that must match precisely (a note title, file path, mailbox, or URL), always include the required instruction as `task` and pass the exact value separately: `applescript(task="Set the document to the provided content", content=…)` or `applescript(task="Use the provided named values", contents={name:text})`. `task` is still required when `content`/`contents` is present. Reference the supplied value by placeholder — it is reproduced verbatim instead of re-typed, so an exact name can't be mistyped. Use `contents` for several blocks.
-        - Both return `status` + `values` + `errors` (with AppleScript error numbers) — read `values` to confirm, use `errors` to retry/fix. Not for shell, files, or web.
+        - To insert EXACT/verbatim text (transcription, quote, code, long body) OR an exact existing identifier that must match precisely (a note title, file path, mailbox, or URL), always include the required instruction as `task` and pass the exact value separately: `applescript(task="Set the document to the provided content", content=…)` or `applescript(task="Use the provided named values", contents={name:text})`. `task` is still required when `content`/`contents` is present. Reference the supplied value by placeholder — it is reproduced verbatim instead of re-typed, so an exact name can't be mistyped. For replacement this is required even for short strings: `contents={oldText:old,newText:new}` and a task referring to the provided old/new values. Use `contents` for several blocks.
+        - Existing-document edits name the app/path from the request or conversation. Preserve explicit `the file`/`the document` working-app wording in `applescript(task)` so tracked-frontmost resolution can handle it; do not ask for a path first. Never invent a picker/new file/output/save step. Editing does not imply saving.
+        - Both return `status` + `values` + `errors` (with AppleScript error numbers) — read `values` to confirm, use `errors` to retry/fix. Use AppleScript for documents open in Mac apps; file tools are only for path-addressed files in a selected folder/sandbox. Not for shell or web.
         """
 
     // MARK: - Knowledge
@@ -1131,7 +1159,16 @@ public enum SystemPromptTemplates {
 
     // MARK: - Sandbox Building Blocks
 
-    static let sandboxSectionHeading = "## Linux sandbox environment"
+    /// True when commands run on the host under Seatbelt (`sandbox-exec`)
+    /// instead of inside the Alpine VM — the environment the prompt
+    /// describes is then macOS, not Linux, and `apk` does not exist.
+    private static var isSeatbeltBackend: Bool {
+        SandboxBackend.current == .seatbelt
+    }
+
+    static var sandboxSectionHeading: String {
+        isSeatbeltBackend ? "## macOS sandbox environment" : "## Linux sandbox environment"
+    }
     static let sandboxReadFileHint =
         "`sandbox_read_file` with `start_line`/`line_count`/`tail_lines`"
 
@@ -1155,6 +1192,23 @@ public enum SystemPromptTemplates {
             : "Your home directory is `\(home)` (also `~` / `$HOME`); commands run there by "
                 + "default — you don't need to pass `cwd` unless you want a different directory. "
                 + "Files persist across messages."
+        if isSeatbeltBackend {
+            return """
+                You have a sandboxed macOS command environment (processes run on \
+                this Mac, confined to your workspace by a sandbox profile). \(homeLine)
+
+                Network access depends on the sandbox configuration — when \
+                enabled, fetch live or external data (weather, web pages, APIs) \
+                directly with `curl`, Python `requests`, or Node `fetch`; you \
+                don't need a dedicated tool for it.
+
+                Available tools are what this Mac provides: standard BSD/POSIX \
+                utilities plus `bash`, `python3`, `git`, `curl`, `sqlite3`; check \
+                anything else with `command -v` before relying on it. This is \
+                macOS, not Linux — no `apk`, and userland flags follow BSD \
+                conventions.
+                """
+        }
         return """
             You have an isolated Alpine Linux ARM64 sandbox. \(homeLine)
 
@@ -1233,9 +1287,20 @@ public enum SystemPromptTemplates {
             home.isEmpty
             ? "Your home (`~`) is your sandbox home"
             : "Home: `\(home)` (`~` / `$HOME`); commands run there by default — no `cwd` needed"
+        if isSeatbeltBackend {
+            return """
+                Sandboxed macOS command environment (host processes confined to your workspace by a sandbox profile). \(homeLine). Files persist across messages. When network is enabled, fetch live data (weather, web pages, APIs) directly with `curl`, Python `requests`, or Node `fetch`. Tools are what this Mac provides (BSD userland, `bash`, `python3`, `git`, `curl`, `sqlite3`); check others with `command -v`. No `apk` — this is macOS, not Linux.
+                """
+        }
         return """
             Isolated Alpine Linux ARM64 sandbox. \(homeLine). Files persist across messages. Internet works — fetch live data (weather, web pages, APIs) directly with `curl`, `wget`, Python `requests`, or Node `fetch`. Installed: bash, python3, node, git, curl, wget, jq, rg, sqlite3, build-base, cmake, vim, tree.
             """
+    }
+
+    /// Package managers `sandbox_install` can use on the active backend —
+    /// `apk` only exists inside the Alpine VM.
+    private static var sandboxInstallManagers: String {
+        isSeatbeltBackend ? "`pip`/`npm`" : "`pip`/`npm`/`apk`"
     }
 
     /// Compact non-combined dispatch + absorbed runtime hints.
@@ -1248,7 +1313,7 @@ public enum SystemPromptTemplates {
             Tool dispatch:
             - Files: `sandbox_read_file` (read/list); `sandbox_write_file` (`path` FIRST, then `content` whole-file, or `old_string`+`new_string` to edit). Search: `sandbox_search_files` (`target="content"|"files"`).
             - Shell: \(shell). Multi-line code: `sandbox_write_file` a script then `sandbox_exec` it (e.g. `python3 script.py`) — never `python3 -c` / `node -e`.
-            - Install deps with `sandbox_install` (`pip`/`npm`/`apk`); inspect large logs with \(sandboxReadFileHint). Run independent calls in parallel; chain dependent steps with `&&`. Sandbox is disposable.
+            - Install deps with `sandbox_install` (\(sandboxInstallManagers)); inspect large logs with \(sandboxReadFileHint). Run independent calls in parallel; chain dependent steps with `&&`. Sandbox is disposable.
             """
     }
 
@@ -1272,7 +1337,7 @@ public enum SystemPromptTemplates {
             Tool dispatch:
             \(filesLine)
             - Shell: \(shell). Multi-line code: \(scriptWriter) then `sandbox_exec` it (e.g. `python3 script.py`) — never `python3 -c` / `node -e`.
-            - Install deps with `sandbox_install` (`pip`/`npm`/`apk`); inspect large logs with \(sandboxReadFileHintCombined). Run independent calls in parallel; chain dependent steps with `&&`. Sandbox is disposable.
+            - Install deps with `sandbox_install` (\(sandboxInstallManagers)); inspect large logs with \(sandboxReadFileHintCombined). Run independent calls in parallel; chain dependent steps with `&&`. Sandbox is disposable.
             """
     }
 
@@ -1282,9 +1347,10 @@ public enum SystemPromptTemplates {
     /// it can't see in this mode.
     private static func sandboxRuntimeHints(hostReadCombined: Bool) -> String {
         let logReadHint = hostReadCombined ? sandboxReadFileHintCombined : sandboxReadFileHint
+        let managers = isSeatbeltBackend ? "`pip` / `npm`" : "`pip` / `npm` / `apk`"
         return """
             Runtime hints:
-            - Install Python, Node, or system deps with `sandbox_install` (`manager`: `pip` / `npm` / `apk`).
+            - Install Python or Node deps with `sandbox_install` (`manager`: \(managers)).
             - Use \(logReadHint) to inspect large logs.
             - The sandbox is disposable; experiment freely.
             """

@@ -48,6 +48,32 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private let queue = DispatchQueue(label: "ai.osaurus.chatHistory.database")
     private let stmtCache = PreparedStatementCache(capacity: 64)
 
+    /// Mirrors `db != nil` without hopping onto `queue`. `isOpen` does a
+    /// `queue.sync`, which parks the caller behind an in-flight `open()`
+    /// (slow disk: file open + WAL + migrations) — exactly the wait that
+    /// main-thread callers use this flag to avoid.
+    private let openFlagLock = NSLock()
+    private var openFlag = false
+
+    /// Posted (on no particular thread) after `open()` completes
+    /// successfully. Lets deferred main-thread readers reload once the
+    /// background prewarm lands instead of blocking on the open.
+    public static let didOpenNotification = Notification.Name(
+        "ai.osaurus.chatHistory.databaseDidOpen")
+
+    /// Non-blocking `isOpen`. May lag an in-flight `open()` by design.
+    public var isOpenNonBlocking: Bool {
+        openFlagLock.lock()
+        defer { openFlagLock.unlock() }
+        return openFlag
+    }
+
+    private func setOpenFlag(_ value: Bool) {
+        openFlagLock.lock()
+        openFlag = value
+        openFlagLock.unlock()
+    }
+
     init() {}
 
     deinit { close() }
@@ -59,12 +85,15 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         // re-encrypting databases so we can't open a half-rekeyed
         // file with the wrong key. No-op fast path otherwise.
         StorageMutationGate.blockingAwaitNotMutating()
+        var didOpenNow = false
         try queue.sync {
             guard db == nil else { return }
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.chatHistory())
             try openConnection()
             do {
                 try runMigrations()
+                setOpenFlag(true)
+                didOpenNow = true
             } catch {
                 // Don't leave a live, half-migrated connection: `db` is set by
                 // `openConnection()`, and a non-nil `db` makes every later
@@ -86,6 +115,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             }
         }
         OsaurusDatabaseHandle.register(maintenanceHandle)
+        if didOpenNow {
+            NotificationCenter.default.post(name: Self.didOpenNotification, object: nil)
+        }
     }
 
     private lazy var maintenanceHandle = OsaurusDatabaseHandle(
@@ -112,6 +144,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
                 applyPerfPragmas: false
             )
             try runMigrations()
+            setOpenFlag(true)
         }
     }
 
@@ -123,6 +156,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             try? executeRaw("PRAGMA optimize")
             sqlite3_close(connection)
             db = nil
+            setOpenFlag(false)
         }
     }
 
@@ -143,7 +177,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// stamped newer than this is refused (forward-version fail-fast).
     /// Internal (not private) so migration-repair tests assert "reconciled
     /// to the latest" against the real constant instead of a stale literal.
-    static let latestSchemaVersion = 10
+    static let latestSchemaVersion = 11
 
     private func runMigrations() throws {
         let current = try getSchemaVersion()
@@ -169,6 +203,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if current < 8 { try runMigrationStep(8, migrateToV8) }
         if current < 9 { try runMigrationStep(9, migrateToV9) }
         if current < 10 { try runMigrationStep(10, migrateToV10) }
+        if current < 11 { try runMigrationStep(11, migrateToV11) }
     }
 
     /// Run one migration body atomically. Called only from `runMigrations`,
@@ -380,6 +415,13 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         try addColumnIfMissing("sessions", "folder_bookmark", "BLOB")
         try addColumnIfMissing("sessions", "folder_path", "TEXT")
         try setSchemaVersion(10)
+    }
+
+    /// v11: add `pinned` flag on sessions so the sidebar can float
+    /// frequently-used conversations to the top of the list.
+    private func migrateToV11() throws {
+        try addColumnIfMissing("sessions", "pinned", "INTEGER NOT NULL DEFAULT 0")
+        try setSchemaVersion(11)
     }
 
     // MARK: - Public API: sessions
@@ -910,6 +952,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             Self.bindText(stmt, index: 12, value: SessionCapability.encode(session.capabilities))
             Self.bindBlob(stmt, index: 13, value: session.folderBookmark)
             Self.bindText(stmt, index: 14, value: session.folderPath)
+            sqlite3_bind_int(stmt, 15, session.pinned ? 1 : 0)
         }
     }
 
@@ -1116,7 +1159,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private static let baseSessionSelectSQL = """
         SELECT id, title, created_at, updated_at, selected_model, agent_id,
                source, source_plugin_id, external_session_key, dispatch_task_id,
-               archived, capabilities, folder_bookmark, folder_path
+               archived, capabilities, folder_bookmark, folder_path, pinned
         FROM sessions
         """
 
@@ -1126,8 +1169,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         INSERT INTO sessions
             (id, title, created_at, updated_at, selected_model, agent_id,
              source, source_plugin_id, external_session_key, dispatch_task_id,
-             archived, capabilities, folder_bookmark, folder_path)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+             archived, capabilities, folder_bookmark, folder_path, pinned)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
         ON CONFLICT(id) DO UPDATE SET
             title                = excluded.title,
             updated_at           = excluded.updated_at,
@@ -1140,7 +1183,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             archived             = excluded.archived,
             capabilities         = excluded.capabilities,
             folder_bookmark      = excluded.folder_bookmark,
-            folder_path          = excluded.folder_path
+            folder_path          = excluded.folder_path,
+            pinned               = excluded.pinned
         """
 
     private static let insertTurnSQL = """
@@ -1199,6 +1243,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             Data(bytes: base, count: Int(sqlite3_column_bytes(stmt, 12)))
         }
         let folderPath = sqlite3_column_text(stmt, 13).map { String(cString: $0) }
+        let pinned = sqlite3_column_int(stmt, 14) != 0
         return ChatSessionData(
             id: UUID(uuidString: idStr) ?? UUID(),
             title: title,
@@ -1212,6 +1257,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             externalSessionKey: externalKey,
             dispatchTaskId: dispatchId,
             archived: archived,
+            pinned: pinned,
             capabilities: SessionCapability.decode(capabilitiesRaw),
             folderBookmark: folderBookmark,
             folderPath: folderPath

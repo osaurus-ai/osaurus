@@ -222,6 +222,8 @@ private extension ManagementView {
             PermissionsView()
         case .computerUse:
             ComputerUseSettingsView()
+        case .browser:
+            BrowserSettingsView()
         case .privacy:
             PrivacyView()
         case .identity:

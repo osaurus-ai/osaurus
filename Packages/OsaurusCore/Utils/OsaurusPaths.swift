@@ -475,6 +475,17 @@ public enum OsaurusPaths {
     public static func computerUseConfigFile() -> URL {
         config().appendingPathComponent("computer-use.json")
     }
+    /// Native Browser Use config (the Default agent's opt-in lives here since
+    /// the built-in Default agent has no per-agent settings editor).
+    public static func browserConfigFile() -> URL {
+        config().appendingPathComponent("browser.json")
+    }
+    /// Persistent catalog of native browser sessions (agent id → WebKit
+    /// profile UUID + last-known page + observed auth status). The WebKit
+    /// on-disk store itself is owned by `WKWebsiteDataStore(forIdentifier:)`.
+    public static func browserSessionsFile() -> URL {
+        config().appendingPathComponent("browser-sessions.json")
+    }
     public static func toastConfigFile() -> URL { config().appendingPathComponent("toast.json") }
     public static func sandboxConfigFile() -> URL { config().appendingPathComponent("sandbox.json") }
     public static func speechConfigFile() -> URL { voiceConfig().appendingPathComponent("speech.json") }

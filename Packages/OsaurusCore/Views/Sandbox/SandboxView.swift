@@ -62,6 +62,11 @@ struct SandboxView: View {
 
     private var configIsDirty: Bool { pendingConfig != config }
 
+    /// Seatbelt (`sandbox-exec`) backend on pre-Tahoe hosts: no VM, so the
+    /// container-specific chrome (CPU/memory resources, boot timings,
+    /// per-agent environments, "container" wording) is hidden or reworded.
+    private var isSeatbelt: Bool { SandboxBackend.current == .seatbelt }
+
     var body: some View {
         VStack(spacing: 0) {
             headerBar
@@ -112,9 +117,9 @@ private extension SandboxView {
             return L("Unavailable")
         }
         switch sandboxState.status {
-        case .running: return L("Container running")
-        case .stopped: return L("Container stopped")
-        case .starting: return L("Container starting...")
+        case .running: return L("Sandbox running")
+        case .stopped: return L("Sandbox stopped")
+        case .starting: return L("Sandbox starting...")
         case .notProvisioned: return L("Not provisioned")
         case .error(let msg): return L("Error: \(msg)")
         }
@@ -220,12 +225,12 @@ private extension SandboxView {
         SettingsEmptyState(
             icon: "shippingbox",
             title: L("Sandbox Unavailable"),
-            subtitle: sandboxState.availability.reason ?? "Sandbox requires macOS 26 or later.",
+            subtitle: sandboxState.availability.reason ?? L("Sandboxed execution is unavailable on this device."),
             examples: [
                 .init(
                     icon: "lock.shield",
                     title: L("Isolated Execution"),
-                    description: "Run code in a secure Linux container"
+                    description: L("Run code in an isolated sandbox")
                 ),
                 .init(
                     icon: "puzzlepiece.extension",
@@ -257,12 +262,16 @@ private extension SandboxView {
                     SettingsEmptyState(
                         icon: "shippingbox",
                         title: L("Set Up Sandbox"),
-                        subtitle: L("Run isolated Linux containers for agent plugins and autonomous execution."),
+                        subtitle: isSeatbelt
+                            ? L("Run agent commands confined to a sandbox workspace on this Mac. (macOS 26 or later adds full VM isolation.)")
+                            : L("Run isolated Linux containers for agent plugins and autonomous execution."),
                         examples: [
                             .init(
                                 icon: "puzzlepiece.extension",
                                 title: L("Sandbox Plugins"),
-                                description: L("Install tools that run inside the VM")
+                                description: isSeatbelt
+                                    ? L("Install tools that run in the sandbox")
+                                    : L("Install tools that run inside the VM")
                             ),
                             .init(
                                 icon: "terminal",
@@ -271,8 +280,10 @@ private extension SandboxView {
                             ),
                             .init(
                                 icon: "lock.shield",
-                                title: L("Full Isolation"),
-                                description: L("Separate filesystem per agent")
+                                title: isSeatbelt ? L("Confined Writes") : L("Full Isolation"),
+                                description: isSeatbelt
+                                    ? L("Writes limited to the sandbox workspace")
+                                    : L("Separate filesystem per agent")
                             ),
                         ],
                         primaryAction: .init(
@@ -633,7 +644,9 @@ private extension SandboxView {
                     }
                 }
 
-                if let boot = SandboxStartupMetricsStore.load().last {
+                // Boot-phase timings are a VM concept; the Seatbelt
+                // backend "starts" instantly and records no samples.
+                if !isSeatbelt, let boot = SandboxStartupMetricsStore.load().last {
                     Text(lastBootSummary(boot))
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(theme.tertiaryText)
@@ -837,7 +850,7 @@ private struct SandboxLogConsoleCard: View {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             if visibleEntries.isEmpty {
                                 Text(
-                                    "No log entries yet. Command output and container activity will stream here in real time.",
+                                    "No log entries yet. Command output and sandbox activity will stream here in real time.",
                                     bundle: .module
                                 )
                                 .font(.system(size: 11))
@@ -997,7 +1010,12 @@ private extension SandboxView {
                     .buttonStyle(PlainButtonStyle())
                     .disabled(isRunningDiag)
 
-                    Text("Tests exec, NAT networking, agent users, apk, and vsock bridge", bundle: .module)
+                    Text(
+                        isSeatbelt
+                            ? "Tests exec, workspace writes, write confinement, and network policy"
+                            : "Tests exec, NAT networking, agent users, apk, and vsock bridge",
+                        bundle: .module
+                    )
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                         .lineLimit(2)
@@ -1063,7 +1081,9 @@ private extension SandboxView {
         sectionCard(title: "Workspace", icon: "folder") {
             VStack(alignment: .leading, spacing: 12) {
                 Text(
-                    "The container's /workspace directory is bind-mounted from ~/.osaurus/container/workspace/. Open it in Finder to browse or edit files directly on the host.",
+                    isSeatbelt
+                        ? "Sandboxed commands see ~/.osaurus/container/workspace/ as /workspace — the only directory they can write to. Open it in Finder to browse or edit files directly."
+                        : "The container's /workspace directory is bind-mounted from ~/.osaurus/container/workspace/. Open it in Finder to browse or edit files directly on the host.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
@@ -1085,16 +1105,19 @@ private extension SandboxView {
 private extension SandboxView {
 
     var resourceConfigCard: some View {
-        sectionCard(title: "Resources", icon: "cpu") {
+        sectionCard(title: isSeatbelt ? "Configuration" : "Resources", icon: "cpu") {
             VStack(alignment: .leading, spacing: 12) {
-                cpuStepper
-                memoryStepper
+                // CPU/memory budgets and per-agent CoW rootfs clones are
+                // VM constructs — the Seatbelt backend runs host processes
+                // with no resource caps to configure.
+                if !isSeatbelt {
+                    cpuStepper
+                    memoryStepper
+                }
 
                 toggleRow(
                     title: L("Network Access"),
-                    description: pendingConfig.network == "proxy"
-                        ? L("Outbound limited to the provisioning agent's allowed domains")
-                        : L("Allow outbound network from container"),
+                    description: networkToggleDescription,
                     isOn: Binding(
                         get: { pendingConfig.network != "none" },
                         set: { on in
@@ -1111,17 +1134,19 @@ private extension SandboxView {
                     )
                 )
 
-                toggleRow(
-                    title: L("Per-Agent Environments"),
-                    description: L(
-                        "Experimental: boot from each agent's own copy-on-write clone of the base image so system packages persist per agent"
-                    ),
-                    isOn: $pendingConfig.perAgentEnvironments
-                )
+                if !isSeatbelt {
+                    toggleRow(
+                        title: L("Per-Agent Environments"),
+                        description: L(
+                            "Experimental: boot from each agent's own copy-on-write clone of the base image so system packages persist per agent"
+                        ),
+                        isOn: $pendingConfig.perAgentEnvironments
+                    )
+                }
 
                 toggleRow(
                     title: L("Auto-Start"),
-                    description: L("Start container when Osaurus launches"),
+                    description: L("Start the sandbox when Osaurus launches"),
                     isOn: $pendingConfig.autoStart
                 )
                 .onChange(of: pendingConfig.autoStart) { _, _ in
@@ -1137,6 +1162,20 @@ private extension SandboxView {
             }
         }
     }
+
+    /// Network toggle caption. On Seatbelt a configured domain allowlist
+    /// ("proxy" mode) cannot be enforced and fails CLOSED to no network —
+    /// say so instead of promising domain filtering.
+    var networkToggleDescription: String {
+        if pendingConfig.network == "proxy" {
+            return isSeatbelt
+                ? L("A domain allowlist is configured, which this sandbox can't enforce — network stays fully blocked. Clear agents' Allowed Domains to restore outbound access.")
+                : L("Outbound limited to the provisioning agent's allowed domains")
+        }
+        return isSeatbelt
+            ? L("Allow outbound network from sandboxed commands")
+            : L("Allow outbound network from container")
+    }
 }
 
 // MARK: - Danger Zone Card
@@ -1147,17 +1186,19 @@ private extension SandboxView {
         sectionCard(title: "DANGER ZONE", icon: "exclamationmark.triangle") {
             VStack(alignment: .leading, spacing: 12) {
                 Text(
-                    "Resetting destroys all installed sandbox packages. Agent workspace files on the host persist.",
+                    isSeatbelt
+                        ? "Resetting clears sandbox plugin state. Agent workspace files on the host persist."
+                        : "Resetting destroys all installed sandbox packages. Agent workspace files on the host persist.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
 
                 HStack(spacing: 12) {
-                    destructiveButton("Reset Container", icon: "arrow.counterclockwise") {
+                    destructiveButton(isSeatbelt ? "Reset Sandbox" : "Reset Container", icon: "arrow.counterclockwise") {
                         showResetConfirm = true
                     }
-                    .alert(Text("Reset Container?", bundle: .module), isPresented: $showResetConfirm) {
+                    .alert(Text(isSeatbelt ? "Reset Sandbox?" : "Reset Container?", bundle: .module), isPresented: $showResetConfirm) {
                         Button(role: .cancel) {
                         } label: {
                             Text("Cancel", bundle: .module)
@@ -1169,15 +1210,17 @@ private extension SandboxView {
                         }
                     } message: {
                         Text(
-                            "This will destroy the container and re-provision from scratch. Installed packages and sandbox plugin state will be lost.",
+                            isSeatbelt
+                                ? "This will reset the sandbox and re-provision from scratch. Sandbox plugin state will be lost."
+                                : "This will destroy the container and re-provision from scratch. Installed packages and sandbox plugin state will be lost.",
                             bundle: .module
                         )
                     }
 
-                    destructiveButton("Remove Container", icon: "trash") {
+                    destructiveButton(isSeatbelt ? "Remove Sandbox" : "Remove Container", icon: "trash") {
                         showRemoveConfirm = true
                     }
-                    .alert(Text("Remove Container?", bundle: .module), isPresented: $showRemoveConfirm) {
+                    .alert(Text(isSeatbelt ? "Remove Sandbox?" : "Remove Container?", bundle: .module), isPresented: $showRemoveConfirm) {
                         Button(role: .cancel) {
                         } label: {
                             Text("Cancel", bundle: .module)
@@ -1189,7 +1232,9 @@ private extension SandboxView {
                         }
                     } message: {
                         Text(
-                            "This will stop and remove the container entirely. You can set it up again later.",
+                            isSeatbelt
+                                ? "This will stop and remove the sandbox entirely. You can set it up again later."
+                                : "This will stop and remove the container entirely. You can set it up again later.",
                             bundle: .module
                         )
                     }
@@ -1523,6 +1568,8 @@ private struct SandboxProvisionSheet: View {
     @Binding var pendingConfig: SandboxConfiguration
     let onConfirm: () -> Void
 
+    private var isSeatbelt: Bool { SandboxBackend.current == .seatbelt }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -1542,51 +1589,18 @@ private struct SandboxProvisionSheet: View {
             Divider().foregroundColor(theme.cardBorder)
 
             VStack(alignment: .leading, spacing: 20) {
-                Text("Configure resources for the Linux container. These can be changed later.", bundle: .module)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.secondaryText)
-
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("RESOURCES", bundle: .module)
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(theme.secondaryText)
-                        .tracking(0.5)
-
-                    HStack {
-                        Text("CPUs", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(theme.primaryText)
-                        Spacer()
-                        Stepper(
-                            "\(pendingConfig.cpus)",
-                            value: $pendingConfig.cpus,
-                            in: 1 ... 8
-                        )
-                        .font(.system(size: 12))
-                    }
-
-                    HStack {
-                        Text("Memory", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(theme.primaryText)
-                        Spacer()
-                        Stepper(
-                            "\(pendingConfig.memoryGB) GB",
-                            value: $pendingConfig.memoryGB,
-                            in: 1 ... 8
-                        )
-                        .font(.system(size: 12))
-                    }
-                }
-                .padding(16)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.cardBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.cardBorder, lineWidth: 1)
-                        )
+                Text(
+                    isSeatbelt
+                        ? "Commands will run on this Mac, confined to the sandbox workspace by a system sandbox profile. No download or extra resources are needed."
+                        : "Configure resources for the Linux container. These can be changed later.",
+                    bundle: .module
                 )
+                .font(.system(size: 13))
+                .foregroundColor(theme.secondaryText)
+
+                if !isSeatbelt {
+                    resourcesSection
+                }
             }
             .padding(20)
 
@@ -1630,9 +1644,53 @@ private struct SandboxProvisionSheet: View {
             }
             .padding(20)
         }
-        .frame(width: 480, height: 360)
+        .frame(width: 480, height: isSeatbelt ? 260 : 360)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var resourcesSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("RESOURCES", bundle: .module)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(theme.secondaryText)
+                .tracking(0.5)
+
+            HStack {
+                Text("CPUs", bundle: .module)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+                Stepper(
+                    "\(pendingConfig.cpus)",
+                    value: $pendingConfig.cpus,
+                    in: 1 ... 8
+                )
+                .font(.system(size: 12))
+            }
+
+            HStack {
+                Text("Memory", bundle: .module)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+                Stepper(
+                    "\(pendingConfig.memoryGB) GB",
+                    value: $pendingConfig.memoryGB,
+                    in: 1 ... 8
+                )
+                .font(.system(size: 12))
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
     }
 }
 

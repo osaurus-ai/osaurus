@@ -738,10 +738,6 @@ public actor ModelRuntime {
         currentModelName = name
         Memory.cacheLimit = mlxCacheLimit()
 
-        // Enable multi-tier KV caching via vmlx-swift's CacheCoordinator.
-        // Cache tier config is entirely osaurus-internal — not user-visible.
-        await installCacheCoordinator(on: holder)
-
         // Native-MTP bundles historically ran their FIRST request in plain
         // autoregressive mode (the registry's cold-warmup rule), so the one
         // request most users judge a model by silently lost the speculative
@@ -2268,7 +2264,7 @@ public actor ModelRuntime {
             genLog.info(
                 "loadContainer: task loaded model=\(name, privacy: .public) loadID=\(loadID, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public) isVLM=\(isVLM, privacy: .public)"
             )
-            return SessionHolder(
+            let holder = SessionHolder(
                 name: name,
                 container: container,
                 weightsSizeBytes: loadFootprintBytes,
@@ -2282,6 +2278,18 @@ public actor ModelRuntime {
                         physicalMemory: ProcessInfo.processInfo.physicalMemory
                     )
             )
+
+            // Install the cache coordinator before the coalesced load task
+            // returns its holder. `finishLoadedContainer` publishes the holder
+            // in `modelCache` and is actor-reentrant across its post-load MTP
+            // warm-up; installing there let a rapid UI send observe a loaded
+            // model whose BatchEngine still had no coordinator. The request
+            // then generated coherently but could neither fetch nor store its
+            // SSD prefix. Keeping this inside the single shared load task makes
+            // "load complete" mean the configured prefix/paged/L2 policy is
+            // already attached for every waiter.
+            await Self.installCacheCoordinator(on: holder)
+            return holder
         }
 
         loadingTasks[name] = LoadingTaskRecord(id: loadID, task: task)
@@ -2693,7 +2701,8 @@ public actor ModelRuntime {
             let entries = try? fm.contentsOfDirectory(
                 at: directory,
                 includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
-                options: [.skipsHiddenFiles])
+                options: [.skipsHiddenFiles]
+            )
         else {
             // Unreadable bundle: fall back to a value that never matches a previous
             // load, so we take a cold prefill rather than risk a wrong-weights hit.
@@ -2797,10 +2806,10 @@ public actor ModelRuntime {
     }
 
     /// Installs the cache coordinator on a freshly-loaded holder.
-    private func installCacheCoordinator(on holder: SessionHolder) async {
+    private nonisolated static func installCacheCoordinator(on holder: SessionHolder) async {
         let cacheTopology = await holder.container.cacheTopologySnapshot()
         holder.cacheTopology = cacheTopology
-        let cacheConfig = Self.buildCacheCoordinatorConfig(
+        let cacheConfig = buildCacheCoordinatorConfig(
             modelName: holder.name,
             weightsFingerprint: holder.weightsFingerprint,
             cacheTopology: cacheTopology

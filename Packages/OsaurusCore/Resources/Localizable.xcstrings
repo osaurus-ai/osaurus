@@ -3407,6 +3407,40 @@
         }
       }
     },
+    "%lld agents" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Agenten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트 %lld개"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld агентов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个智能体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 個智能體"
+          }
+        }
+      }
+    },
     "%lld artifacts" : {
       "localizations" : {
         "de" : {
@@ -3692,6 +3726,46 @@
         }
       }
     },
+    "%lld conversations will be removed permanently. This can't be undone." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Unterhaltungen werden dauerhaft entfernt. Dies kann nicht rückgängig gemacht werden."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%lld conversations will be removed permanently. This can't be undone."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화 %lld개가 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld разговоров будет удалено навсегда. Это действие нельзя отменить."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个对话将被永久删除。此操作无法撤销。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 個對話將被永久刪除。此操作無法復原。"
+          }
+        }
+      }
+    },
     "%lld cores · %lld GB memory" : {
       "comment" : "A small label displaying the current CPU/RAM allocation for the sandbox.",
       "extractionState" : "stale",
@@ -3805,6 +3879,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%1$lld 個自定義標頭%2$@"
+          }
+        }
+      }
+    },
+    "%lld documents" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Dokumente"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "문서 %lld개"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld документов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个文档"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 個文件"
           }
         }
       }
@@ -4920,6 +5028,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld / %lld 已分配"
+          }
+        }
+      }
+    },
+    "%lld of %lld categorized" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld von %2$lld kategorisiert"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%2$lld개 중 %1$lld개 분류됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld из %2$lld категоризировано"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%2$lld 个中 %1$lld 个已分类"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%2$lld 個中 %1$lld 個已分類"
           }
         }
       }
@@ -8716,6 +8858,40 @@
       },
       "shouldTranslate" : false
     },
+    "1 agent" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 Agent"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트 1개"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 агент"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 个智能体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 個智能體"
+          }
+        }
+      }
+    },
     "1 artifact" : {
       "localizations" : {
         "de" : {
@@ -8848,6 +9024,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "1天"
+          }
+        }
+      }
+    },
+    "1 document" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 Dokument"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "문서 1개"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 документ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 个文档"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 個文件"
           }
         }
       }
@@ -10764,6 +10974,40 @@
         }
       }
     },
+    "A domain allowlist is configured, which this sandbox can't enforce — network stays fully blocked. Clear agents' Allowed Domains to restore outbound access." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eine Domain-Allowlist ist konfiguriert, die diese Sandbox nicht durchsetzen kann — das Netzwerk bleibt vollständig blockiert. Entfernen Sie die erlaubten Domains der Agenten, um ausgehenden Zugriff wiederherzustellen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "도메인 허용 목록이 구성되어 있지만 이 샌드박스에서는 적용할 수 없어 네트워크가 완전히 차단됩니다. 에이전트의 허용 도메인을 지우면 아웃바운드 접근이 복원됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настроен список разрешённых доменов, который эта песочница не может применить — сеть остаётся полностью заблокированной. Очистите разрешённые домены агентов, чтобы восстановить исходящий доступ."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已配置域名允许列表，但此沙盒无法强制执行 — 网络将保持完全阻断。清除代理的允许域名以恢复出站访问。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已設定網域允許清單，但此沙盒無法強制執行 — 網路將保持完全封鎖。清除代理的允許網域以恢復對外存取。"
+          }
+        }
+      }
+    },
     "A file came back at the wrong size, which usually means the connection was interrupted. Retrying should fix this." : {
       "localizations" : {
         "de" : {
@@ -11943,6 +12187,7 @@
       }
     },
     "Absolute path or ~/... path for persisted block-cache entries." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -15945,6 +16190,74 @@
         }
       }
     },
+    "Agents with access" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agenten mit Zugriff"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "접근 권한이 있는 에이전트"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агенты с доступом"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有访问权限的智能体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有存取權限的智能體"
+          }
+        }
+      }
+    },
+    "Agents with access: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agenten mit Zugriff: %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "접근 권한이 있는 에이전트: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агенты с доступом: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有访问权限的智能体：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有存取權限的智能體：%@"
+          }
+        }
+      }
+    },
     "Aggregated BatchEngine readout across every model loaded right now. Refreshes every 2 seconds." : {
       "localizations" : {
         "de" : {
@@ -16468,6 +16781,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "所有內建供應商已連線。"
+          }
+        }
+      }
+    },
+    "All categorized" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alle kategorisiert"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모두 분류됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Все категоризированы"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全部已分类"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全部已分類"
           }
         }
       }
@@ -17494,6 +17841,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "允許容器的出站網絡連接"
+          }
+        }
+      }
+    },
+    "Allow outbound network from sandboxed commands" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ausgehendes Netzwerk für Sandbox-Befehle erlauben"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "샌드박스 명령의 아웃바운드 네트워크 허용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешить исходящую сеть для команд в песочнице"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许沙盒命令的出站网络"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允許沙盒命令的對外網路"
           }
         }
       }
@@ -27051,6 +27432,7 @@
       }
     },
     "Block-based KV cache held in GPU memory. Required for cross-request sharing." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -28887,6 +29269,14 @@
           }
         }
       }
+    },
+    "Browser Session" : {
+      "comment" : "Title of the browser window when it's an active session for a specific agent.",
+      "isCommentAutoGenerated" : true
+    },
+    "Browser Use" : {
+      "comment" : "Title of a per-agent capability card in the Agent Detail View, related to browser use.",
+      "isCommentAutoGenerated" : true
     },
     "Browsing files" : {
       "localizations" : {
@@ -34106,6 +34496,41 @@
         }
       }
     },
+    "Checking cache" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cache wird geprüft"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "캐시 확인 중"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверка кэша"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在检查缓存"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在檢查快取"
+          }
+        }
+      }
+    },
     "Checking git status" : {
       "localizations" : {
         "de" : {
@@ -36078,6 +36503,46 @@
         }
       }
     },
+    "Clear Selection" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auswahl aufheben"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Clear Selection"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "선택 해제"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Снять выделение"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除选择"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除選擇"
+          }
+        }
+      }
+    },
     "Clear the active custom theme and return to the built-in theme for the current appearance mode? Installed themes will stay in the library." : {
       "comment" : "Alert message in the \"Rollback to Default\" alert that explains the consequences of rolling back to the default theme.",
       "isCommentAutoGenerated" : true,
@@ -36974,6 +37439,10 @@
           }
         }
       }
+    },
+    "Close the live session (keeps its data)" : {
+      "comment" : "Label for a button that closes a live browser session without deleting its data.",
+      "isCommentAutoGenerated" : true
     },
     "Close window" : {
       "localizations" : {
@@ -37936,6 +38405,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "命令"
+          }
+        }
+      }
+    },
+    "Commands will run on this Mac, confined to the sandbox workspace by a system sandbox profile. No download or extra resources are needed." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Befehle laufen auf diesem Mac, durch ein System-Sandbox-Profil auf den Sandbox-Arbeitsbereich beschränkt. Kein Download und keine zusätzlichen Ressourcen erforderlich."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "명령은 이 Mac에서 실행되며 시스템 샌드박스 프로필에 의해 샌드박스 워크스페이스로 제한됩니다. 다운로드나 추가 리소스가 필요하지 않습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Команды выполняются на этом Mac и ограничены рабочей областью песочницы системным профилем песочницы. Загрузка и дополнительные ресурсы не требуются."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "命令将在这台 Mac 上运行，由系统沙盒配置文件限制在沙盒工作区内。无需下载或额外资源。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "命令將在這台 Mac 上執行，由系統沙盒設定檔限制在沙盒工作區內。無需下載或額外資源。"
           }
         }
       }
@@ -39787,6 +40290,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在配置沙盒"
+          }
+        }
+      }
+    },
+    "Confined Writes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Begrenzte Schreibzugriffe"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "제한된 쓰기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ограниченная запись"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "受限写入"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "受限寫入"
           }
         }
       }
@@ -42114,6 +42651,7 @@
       }
     },
     "Container running" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -42148,6 +42686,7 @@
       }
     },
     "Container starting..." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -42217,6 +42756,7 @@
       }
     },
     "Container stopped" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -42251,6 +42791,7 @@
       }
     },
     "Container-based code execution." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -42319,6 +42860,7 @@
       }
     },
     "Container-based execution requires macOS 26 or later. Native plugins continue to work normally on this device." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -47485,6 +48027,40 @@
         }
       }
     },
+    "Created %@ · Updated %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erstellt %1$@ · Aktualisiert %2$@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "생성됨 %1$@ · 업데이트됨 %2$@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создано %1$@ · Обновлено %2$@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "创建于 %1$@ · 更新于 %2$@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "建立於 %1$@ · 更新於 %2$@"
+          }
+        }
+      }
+    },
     "Created a database table" : {
       "localizations" : {
         "de" : {
@@ -51367,6 +51943,40 @@
         }
       }
     },
+    "Delete \"%@\"?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„%@“ löschen?"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%@\"을(를) 삭제하시겠습니까?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить «%@»?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除\"%@\"？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刪除「%@」？"
+          }
+        }
+      }
+    },
     "Delete %lld" : {
       "comment" : "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
       "extractionState" : "manual",
@@ -51617,6 +52227,40 @@
         }
       }
     },
+    "Delete Collection" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sammlung löschen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "컬렉션 삭제"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить коллекцию"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除集合"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刪除集合"
+          }
+        }
+      }
+    },
     "Delete command" : {
       "localizations" : {
         "de" : {
@@ -51709,6 +52353,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Удалить разговор?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除对话？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刪除對話？"
+          }
+        }
+      }
+    },
+    "Delete Conversations?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unterhaltungen löschen?"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Delete Conversations?"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화를 삭제하시겠습니까?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить разговоры?"
           }
         },
         "zh-Hans" : {
@@ -52159,6 +52843,10 @@
           }
         }
       }
+    },
+    "Deleted agent" : {
+      "comment" : "Name for a deleted custom agent.",
+      "isCommentAutoGenerated" : true
     },
     "Deleted from the database" : {
       "localizations" : {
@@ -55648,6 +56336,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "文檔"
+          }
+        }
+      }
+    },
+    "Documents" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dokumente"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "문서"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Документы"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文档"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文件"
           }
         }
       }
@@ -61370,6 +62092,40 @@
         }
       }
     },
+    "Enables Knowledge" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktiviert Wissen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "지식 활성화됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включит «Знания»"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将启用知识"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將啟用知識"
+          }
+        }
+      }
+    },
     "Encrypt local data at rest (SQLCipher)" : {
       "comment" : "A label describing the option to enable SQLCipher encryption for local data.",
       "isCommentAutoGenerated" : true,
@@ -61943,6 +62699,9 @@
           }
         }
       }
+    },
+    "Engine" : {
+
     },
     "Engine invariant whenever a cache reuse tier is enabled — keeps prompts with different media from sharing cache entries. Disabling fails validation." : {
       "localizations" : {
@@ -62664,6 +63423,10 @@
           }
         }
       }
+    },
+    "Enter URL and press Return" : {
+      "comment" : "Placeholder text for the URL field in the browser window.",
+      "isCommentAutoGenerated" : true
     },
     "environment" : {
       "localizations" : {
@@ -73967,6 +74730,40 @@
         }
       }
     },
+    "Grant \"%@\" to agents" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„%@“ für Agenten freigeben"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트에 \"%@\" 부여"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предоставить «%@» агентам"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将\"%@\"授予智能体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將「%@」授予智能體"
+          }
+        }
+      }
+    },
     "Grant %@" : {
       "localizations" : {
         "de" : {
@@ -74340,6 +75137,80 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已授予"
+          }
+        }
+      }
+    },
+    "Granted \"%@\" to %lld agents" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„%1$@“ für %2$lld Agenten freigegeben"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Granted \"%1$@\" to %2$lld agents"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%1$@\"을(를) 에이전트 %2$lld개에 부여함"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«%1$@» предоставлено %2$lld агентам"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已将\"%1$@\"授予 %2$lld 个智能体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已將「%1$@」授予 %2$lld 個智能體"
+          }
+        }
+      }
+    },
+    "Granted \"%@\" to 1 agent" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„%@“ für 1 Agenten freigegeben"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"%@\"을(를) 에이전트 1개에 부여함"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«%@» предоставлено 1 агенту"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已将\"%@\"授予 1 个智能体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已將「%@」授予 1 個智能體"
           }
         }
       }
@@ -82462,6 +83333,40 @@
         }
       }
     },
+    "Install tools that run in the sandbox" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools installieren, die in der Sandbox laufen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "샌드박스에서 실행되는 도구 설치"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Устанавливайте инструменты, работающие в песочнице"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安装在沙盒中运行的工具"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安裝在沙盒中執行的工具"
+          }
+        }
+      }
+    },
     "Install tools that run inside the VM" : {
       "localizations" : {
         "de" : {
@@ -86550,6 +87455,10 @@
         }
       }
     },
+    "Let agents browse the web in their own persistent sessions" : {
+      "comment" : "Subtitle for the Browser Settings view.",
+      "isCommentAutoGenerated" : true
+    },
     "Let agents operate macOS apps on your behalf" : {
       "comment" : "Title of the Computer Use settings view.",
       "isCommentAutoGenerated" : true,
@@ -86897,6 +87806,10 @@
           }
         }
       }
+    },
+    "Let the agent browse the web in its own persistent browser session — sign-ins stick around between chats. Reads and navigation run automatically; typing and anything consequential pause for your approval." : {
+      "comment" : "Description of a per-agent capability when the user can use the browser.",
+      "isCommentAutoGenerated" : true
     },
     "Let the agent control macOS apps for you — clicking, typing, and reading the screen. Reads and navigation run automatically; edits and anything consequential pause for your approval." : {
       "comment" : "Subtitle for the \"Computer Use\" per-agent capability card in the Agent Detail View.",
@@ -100049,6 +100962,10 @@
         }
       }
     },
+    "Never used" : {
+      "comment" : "Description of a browser session that hasn't been used yet.",
+      "isCommentAutoGenerated" : true
+    },
     "Never your content" : {
       "localizations" : {
         "de" : {
@@ -101129,6 +102046,40 @@
         }
       }
     },
+    "No agents can use this collection yet" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch kann kein Agent diese Sammlung verwenden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아직 이 컬렉션을 사용할 수 있는 에이전트가 없습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока ни один агент не может использовать эту коллекцию"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无智能体可以使用此集合"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚無智能體可以使用此集合"
+          }
+        }
+      }
+    },
     "No agents configured. Create an agent first." : {
       "localizations" : {
         "de" : {
@@ -101159,6 +102110,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未配置智能體。請先創建一個智能體。"
+          }
+        }
+      }
+    },
+    "No agents to grant yet. Create an agent, then enable Knowledge for it in its Features section." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch keine Agenten zum Freigeben. Erstellen Sie einen Agenten und aktivieren Sie dann „Wissen“ für ihn im Bereich „Features“."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아직 부여할 에이전트가 없습니다. 에이전트를 생성한 다음 해당 에이전트의 기능 섹션에서 지식을 활성화하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока нет агентов для предоставления доступа. Создайте агента, затем включите для него «Знания» в разделе «Функции»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无可授予的智能体。请先创建智能体，然后在其“特性”部分中为其启用知识。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚無可授予的智能體。請先建立智能體，然後在其「特性」部分中為其啟用知識。"
+          }
+        }
+      }
+    },
+    "No agents with access" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kein Agent hat Zugriff"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "접근 권한이 있는 에이전트 없음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет агентов с доступом"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无有权限的智能体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無有權限的智能體"
           }
         }
       }
@@ -102243,6 +103262,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "無分發"
+          }
+        }
+      }
+    },
+    "No documents indexed yet" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch keine Dokumente indexiert"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아직 색인된 문서가 없습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Документы ещё не проиндексированы"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未索引任何文档"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未索引任何文件"
           }
         }
       }
@@ -103422,6 +104475,7 @@
       }
     },
     "No log entries yet. Command output and container activity will stream here in real time." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -103451,6 +104505,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "還沒有日誌條目。命令輸出和容器活動將在此處實時顯示。"
+          }
+        }
+      }
+    },
+    "No log entries yet. Command output and sandbox activity will stream here in real time." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch keine Logeinträge. Befehlsausgaben und Sandbox-Aktivität erscheinen hier in Echtzeit."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아직 로그 항목이 없습니다. 명령 출력과 샌드박스 활동이 실시간으로 여기에 표시됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Записей в журнале пока нет. Вывод команд и активность песочницы будут отображаться здесь в реальном времени."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无日志条目。命令输出和沙盒活动将在此实时显示。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚無日誌條目。命令輸出和沙盒活動將在此即時顯示。"
           }
         }
       }
@@ -110086,6 +111174,9 @@
         }
       }
     },
+    "On-Device (PocketTTS)" : {
+
+    },
     "On-device detection" : {
       "comment" : "Title for a privacy filter setting benefit.",
       "extractionState" : "stale",
@@ -110987,6 +112078,10 @@
         }
       }
     },
+    "Open %@ Settings" : {
+      "comment" : "A button label that directs the user to the settings tab of a native feature that was previously managed by this plugin. The placeholder text is replaced with the name of the native feature.",
+      "isCommentAutoGenerated" : true
+    },
     "Open AI Chat" : {
       "localizations" : {
         "de" : {
@@ -111685,6 +112780,7 @@
       }
     },
     "Open pages and pull text from the web." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -112038,6 +113134,7 @@
     },
     "Open Search Settings" : {
       "comment" : "A button label that opens the Search settings tab in the app.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -112452,6 +113549,10 @@
           }
         }
       }
+    },
+    "Open this session in a window" : {
+      "comment" : "Help text for the button that opens a browser window for a specific session.",
+      "isCommentAutoGenerated" : true
     },
     "Open this table in the Data tab" : {
       "extractionState" : "stale",
@@ -118468,6 +119569,40 @@
         }
       }
     },
+    "Per-domain network allowlists require the VM sandbox (macOS 26 or later). On this device sandbox network access is all-or-nothing — use the Sandbox Network toggle above." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Domainbasierte Netzwerk-Allowlists erfordern die VM-Sandbox (macOS 26 oder neuer). Auf diesem Gerät ist der Sandbox-Netzwerkzugriff alles oder nichts — verwenden Sie den Sandbox-Netzwerk-Schalter oben."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "도메인별 네트워크 허용 목록은 VM 샌드박스(macOS 26 이상)가 필요합니다. 이 기기에서는 샌드박스 네트워크 접근이 전부 아니면 전무입니다 — 위의 샌드박스 네트워크 토글을 사용하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Списки разрешённых доменов для сети требуют песочницы на основе ВМ (macOS 26 или новее). На этом устройстве сетевой доступ песочницы — всё или ничего; используйте переключатель сети песочницы выше."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按域名的网络允许列表需要 VM 沙盒（macOS 26 或更高版本）。在此设备上，沙盒网络访问是全有或全无 — 请使用上方的沙盒网络开关。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按網域的網路允許清單需要 VM 沙盒（macOS 26 或更新版本）。在此裝置上，沙盒網路存取是全有或全無 — 請使用上方的沙盒網路開關。"
+          }
+        }
+      }
+    },
     "Per-Provider" : {
       "comment" : "Title of a settings section that allows configuring privacy settings for each data provider.",
       "isCommentAutoGenerated" : true,
@@ -120091,6 +121226,40 @@
         }
       }
     },
+    "Pick which agents can search and read this collection. You can change this later in each agent's Features → Knowledge section." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wählen Sie aus, welche Agenten diese Sammlung durchsuchen und lesen können. Sie können dies später im Bereich „Features → Wissen“ jedes Agenten ändern."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 컬렉션을 검색하고 읽을 수 있는 에이전트를 선택하세요. 나중에 각 에이전트의 기능 → 지식 섹션에서 변경할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите, какие агенты могут искать и читать эту коллекцию. Позже это можно изменить в разделе «Функции → Знания» каждого агента."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择哪些智能体可以搜索和读取此集合。稍后可在每个智能体的“特性 → 知识”部分中更改。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇哪些智能體可以搜尋和讀取此集合。稍後可在每個智能體的「特性 → 知識」部分中變更。"
+          }
+        }
+      }
+    },
     "Pick which provider answers first for each kind of search. The rest follow your main list order, with built-in sources as backup." : {
       "comment" : "A description of how users can customize the order in which search providers are tried.",
       "isCommentAutoGenerated" : true,
@@ -120389,6 +121558,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "可捕捉較輕的語音，並等待更長停頓"
+          }
+        }
+      }
+    },
+    "Pin" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anheften"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Pin"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "고정"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закрепить"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "置顶"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "置頂"
           }
         }
       }
@@ -131851,6 +133060,10 @@
         }
       }
     },
+    "Reading pages and ordinary navigation run automatically, following your Computer Use autonomy level." : {
+      "comment" : "Description of the safety model: reading pages and ordinary navigation run automatically, following the user's Computer Use autonomy level.",
+      "isCommentAutoGenerated" : true
+    },
     "Reading the database schema" : {
       "localizations" : {
         "de" : {
@@ -134397,6 +135610,10 @@
         }
       }
     },
+    "Refresh session list" : {
+      "comment" : "Localized help text for the \"Refresh\" button in the Browser Settings view.",
+      "isCommentAutoGenerated" : true
+    },
     "Refresh the table list" : {
       "comment" : "Label for a button that refreshes the list of tables in the Database workspace.",
       "isCommentAutoGenerated" : true,
@@ -136497,6 +137714,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "移除規則"
+          }
+        }
+      }
+    },
+    "Remove Sandbox?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sandbox entfernen?"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "샌드박스를 제거하시겠습니까?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить песочницу?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除沙盒？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除沙盒？"
           }
         }
       }
@@ -138687,6 +139938,18 @@
         }
       }
     },
+    "Reset All" : {
+      "comment" : "A button label that resets all browser sessions.",
+      "isCommentAutoGenerated" : true
+    },
+    "Reset all browser sessions?" : {
+      "comment" : "A confirmation prompt for resetting all browser sessions.",
+      "isCommentAutoGenerated" : true
+    },
+    "Reset All Sessions" : {
+      "comment" : "A button label that resets all browser session data.",
+      "isCommentAutoGenerated" : true
+    },
     "Reset All to Default" : {
       "localizations" : {
         "de" : {
@@ -138999,6 +140262,44 @@
         }
       }
     },
+    "Reset Sandbox?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sandbox zurücksetzen?"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "샌드박스를 재설정하시겠습니까?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сбросить песочницу?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重置沙盒？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重置沙盒？"
+          }
+        }
+      }
+    },
+    "Reset Session" : {
+      "comment" : "A button label for resetting a single browser session.",
+      "isCommentAutoGenerated" : true
+    },
     "Reset store" : {
       "comment" : "Button label for resetting the memory store.",
       "isCommentAutoGenerated" : true,
@@ -139070,6 +140371,14 @@
           }
         }
       }
+    },
+    "Reset this browser session?" : {
+      "comment" : "A prompt that appears when the user taps the \"Reset Session\" button in the \"Sessions\" card.",
+      "isCommentAutoGenerated" : true
+    },
+    "Reset this session (deletes its browsing data)" : {
+      "comment" : "Label for a button that resets a saved browsing session.",
+      "isCommentAutoGenerated" : true
     },
     "Reset this store?" : {
       "comment" : "A confirmation prompt for resetting a specific user's data store.",
@@ -139313,6 +140622,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "重置…"
+          }
+        }
+      }
+    },
+    "Resetting clears sandbox plugin state. Agent workspace files on the host persist." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beim Zurücksetzen wird der Plugin-Zustand der Sandbox gelöscht. Agent-Arbeitsbereichsdateien auf dem Host bleiben erhalten."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "재설정하면 샌드박스 플러그인 상태가 지워집니다. 호스트의 에이전트 워크스페이스 파일은 유지됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сброс очищает состояние плагинов песочницы. Файлы рабочих областей агентов на хосте сохраняются."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重置将清除沙盒插件状态。主机上的代理工作区文件将保留。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重置將清除沙盒外掛狀態。主機上的代理工作區檔案將保留。"
           }
         }
       }
@@ -140251,6 +141594,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "將僅影響視圖的設置恢復爲推薦默認值（不影響已保存配置）"
+          }
+        }
+      }
+    },
+    "Restored" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wiederhergestellt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "복원됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановлено"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已恢复"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已恢復"
           }
         }
       }
@@ -142931,6 +144309,40 @@
         }
       }
     },
+    "Run agent commands confined to a sandbox workspace on this Mac. (macOS 26 or later adds full VM isolation.)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agentenbefehle auf diesem Mac ausführen, beschränkt auf einen Sandbox-Arbeitsbereich. (macOS 26 oder neuer bietet volle VM-Isolation.)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac에서 샌드박스 워크스페이스로 제한된 에이전트 명령을 실행합니다. (macOS 26 이상에서는 완전한 VM 격리가 추가됩니다.)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выполняйте команды агентов на этом Mac в пределах рабочей области песочницы. (macOS 26 и новее добавляет полную изоляцию в ВМ.)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在这台 Mac 上运行受限于沙盒工作区的代理命令。（macOS 26 或更高版本提供完整的 VM 隔离。）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在這台 Mac 上執行受限於沙盒工作區的代理命令。（macOS 26 或更新版本提供完整的 VM 隔離。）"
+          }
+        }
+      }
+    },
     "Run AppleScript" : {
       "localizations" : {
         "de" : {
@@ -143002,6 +144414,7 @@
       }
     },
     "Run code in a secure Linux container" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -143031,6 +144444,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在安全的 Linux 容器中運行代碼"
+          }
+        }
+      }
+    },
+    "Run code in an isolated sandbox" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Code in einer isolierten Sandbox ausführen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "격리된 샌드박스에서 코드 실행"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выполняйте код в изолированной песочнице"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在隔离的沙盒中运行代码"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在隔離的沙盒中執行程式碼"
           }
         }
       }
@@ -145529,6 +146976,7 @@
       }
     },
     "Sandbox requires macOS 26 or later." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -145596,6 +147044,40 @@
         }
       }
     },
+    "Sandbox running" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sandbox läuft"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "샌드박스 실행 중"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Песочница запущена"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙盒运行中"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙盒執行中"
+          }
+        }
+      }
+    },
     "Sandbox setup has not completed" : {
       "localizations" : {
         "de" : {
@@ -145630,6 +147112,40 @@
         }
       }
     },
+    "Sandbox starting..." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sandbox startet..."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "샌드박스 시작 중..."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запуск песочницы..."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙盒启动中..."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙盒啟動中..."
+          }
+        }
+      }
+    },
     "Sandbox State" : {
       "localizations" : {
         "de" : {
@@ -145660,6 +147176,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "沙盒狀態"
+          }
+        }
+      }
+    },
+    "Sandbox stopped" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sandbox gestoppt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "샌드박스 중지됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Песочница остановлена"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙盒已停止"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙盒已停止"
           }
         }
       }
@@ -145809,6 +147359,176 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "沙盒不可用 —— 已跳過 stdio MCP"
+          }
+        }
+      }
+    },
+    "Sandboxed code execution." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sandbox-Codeausführung."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "샌드박스 코드 실행."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выполнение кода в песочнице."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙盒代码执行。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙盒程式碼執行。"
+          }
+        }
+      }
+    },
+    "Sandboxed commands see ~/.osaurus/container/workspace/ as /workspace — the only directory they can write to. Open it in Finder to browse or edit files directly." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sandbox-Befehle sehen ~/.osaurus/container/workspace/ als /workspace — das einzige Verzeichnis, in das sie schreiben können. Öffnen Sie es im Finder, um Dateien direkt zu durchsuchen oder zu bearbeiten."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "샌드박스 명령은 ~/.osaurus/container/workspace/를 /workspace로 인식하며, 이는 쓸 수 있는 유일한 디렉터리입니다. Finder에서 열어 파일을 직접 탐색하거나 편집하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Команды в песочнице видят ~/.osaurus/container/workspace/ как /workspace — единственный каталог, доступный им для записи. Откройте его в Finder, чтобы просматривать или редактировать файлы напрямую."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙盒命令将 ~/.osaurus/container/workspace/ 视为 /workspace — 这是它们唯一可写入的目录。在 Finder 中打开即可直接浏览或编辑文件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙盒命令將 ~/.osaurus/container/workspace/ 視為 /workspace — 這是它們唯一可寫入的目錄。在 Finder 中開啟即可直接瀏覽或編輯檔案。"
+          }
+        }
+      }
+    },
+    "Sandboxed execution is unavailable on this device." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sandbox-Ausführung ist auf diesem Gerät nicht verfügbar."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 기기에서는 샌드박스 실행을 사용할 수 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выполнение в песочнице недоступно на этом устройстве."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此设备不支持沙盒执行。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此裝置不支援沙盒執行。"
+          }
+        }
+      }
+    },
+    "Sandboxed execution is unavailable on this device. Native plugins continue to work normally." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sandbox-Ausführung ist auf diesem Gerät nicht verfügbar. Native Plugins funktionieren weiterhin normal."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 기기에서는 샌드박스 실행을 사용할 수 없습니다. 네이티브 플러그인은 계속 정상적으로 작동합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выполнение в песочнице недоступно на этом устройстве. Нативные плагины продолжают работать как обычно."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此设备不支持沙盒执行。原生插件仍可正常工作。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此裝置不支援沙盒執行。原生外掛仍可正常運作。"
+          }
+        }
+      }
+    },
+    "Sandboxed MCP servers require macOS 26 or later and will fail to start on this Mac. Choose Host to run this provider — note it will then run without sandbox protection." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sandbox-MCP-Server erfordern macOS 26 oder neuer und starten auf diesem Mac nicht. Wählen Sie „Host“, um diesen Provider auszuführen — beachten Sie, dass er dann ohne Sandbox-Schutz läuft."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "샌드박스 MCP 서버는 macOS 26 이상이 필요하며 이 Mac에서는 시작되지 않습니다. 이 프로바이더를 실행하려면 호스트를 선택하세요 — 이 경우 샌드박스 보호 없이 실행됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Серверы MCP в песочнице требуют macOS 26 или новее и не запустятся на этом Mac. Выберите «Хост», чтобы запустить этот провайдер — учтите, что тогда он будет работать без защиты песочницы."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙盒 MCP 服务器需要 macOS 26 或更高版本，在这台 Mac 上将无法启动。选择“主机”来运行此提供方 — 注意它将在没有沙盒保护的情况下运行。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙盒 MCP 伺服器需要 macOS 26 或更新版本，在這台 Mac 上將無法啟動。選擇「主機」來執行此提供者 — 注意它將在沒有沙盒保護的情況下執行。"
           }
         }
       }
@@ -152133,6 +153853,9 @@
         }
       }
     },
+    "Sends text to any server implementing the OpenAI /v1/audio/speech API, such as openai-edge-tts or Kokoro." : {
+
+    },
     "Sensitivity Level" : {
       "localizations" : {
         "de" : {
@@ -155700,6 +157423,10 @@
         }
       }
     },
+    "Sign in — Osaurus Browser" : {
+      "comment" : "Title of the browser window when used for login.",
+      "isCommentAutoGenerated" : true
+    },
     "Sign in (or sign up free) at github.com" : {
       "localizations" : {
         "de" : {
@@ -156684,6 +158411,10 @@
           }
         }
       }
+    },
+    "Sign-in needed" : {
+      "comment" : "Label for the \"Sign-in needed\" status in the browser session settings.",
+      "isCommentAutoGenerated" : true
     },
     "Signature" : {
       "localizations" : {
@@ -161267,6 +162998,7 @@
       }
     },
     "Start the sandbox container from the Sandbox status bar to enable these." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -161336,6 +163068,7 @@
     },
     "Start the sandbox container from the Sandbox status bar, then enable autonomous execution and plugin creation in the Execution section above." : {
       "comment" : "Hint text in the Agent Detail View's Sandbox tab section, explaining how to start the sandbox container and enable autonomous execution and plugin creation.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -161403,6 +163136,108 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "從沙盒狀態欄啓動沙盒容器，然後在「配置 → 功能」下啓用自主執行和插件創建。"
+          }
+        }
+      }
+    },
+    "Start the sandbox from the Sandbox status bar to enable these." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Starten Sie die Sandbox über die Sandbox-Statusleiste, um diese zu aktivieren."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 기능을 사용하려면 샌드박스 상태 표시줄에서 샌드박스를 시작하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запустите песочницу из строки состояния песочницы, чтобы включить эти функции."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从沙盒状态栏启动沙盒以启用这些功能。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "從沙盒狀態列啟動沙盒以啟用這些功能。"
+          }
+        }
+      }
+    },
+    "Start the sandbox from the Sandbox status bar, then enable autonomous execution and plugin creation in the Execution section above." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Starten Sie die Sandbox über die Sandbox-Statusleiste und aktivieren Sie dann autonome Ausführung und Plugin-Erstellung im Abschnitt „Ausführung“ oben."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "샌드박스 상태 표시줄에서 샌드박스를 시작한 다음 위의 실행 섹션에서 자율 실행과 플러그인 생성을 활성화하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запустите песочницу из строки состояния песочницы, затем включите автономное выполнение и создание плагинов в разделе «Выполнение» выше."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从沙盒状态栏启动沙盒，然后在上方“执行”部分启用自主执行和插件创建。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "從沙盒狀態列啟動沙盒，然後在上方「執行」部分啟用自主執行和外掛建立。"
+          }
+        }
+      }
+    },
+    "Start the sandbox when Osaurus launches" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sandbox beim Start von Osaurus starten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 실행 시 샌드박스 시작"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запускать песочницу при запуске Osaurus"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 启动时启动沙盒"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 啟動時啟動沙盒"
           }
         }
       }
@@ -167162,6 +168997,40 @@
         }
       }
     },
+    "Tests exec, workspace writes, write confinement, and network policy" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Testet Exec, Arbeitsbereich-Schreibzugriffe, Schreibbegrenzung und Netzwerkrichtlinie"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "실행, 워크스페이스 쓰기, 쓰기 제한, 네트워크 정책을 테스트합니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверяет выполнение команд, запись в рабочую область, ограничение записи и сетевую политику"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "测试命令执行、工作区写入、写入限制和网络策略"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "測試命令執行、工作區寫入、寫入限制和網路策略"
+          }
+        }
+      }
+    },
     "Text" : {
       "comment" : "A label for a text field in a confirmation card.",
       "isCommentAutoGenerated" : true,
@@ -168061,6 +169930,10 @@
           }
         }
       }
+    },
+    "The browser is now a native feature. This plugin's tools and skill are no longer loaded — manage sessions in Settings → Browser. You can uninstall this plugin." : {
+      "comment" : "A message displayed when a plugin that was previously a standalone tool is now integrated into the browser.",
+      "isCommentAutoGenerated" : true
     },
     "The bundle declares a tool-call parser (%@), but Osaurus still needs a live tool-call proof before marking it proven." : {
       "localizations" : {
@@ -171189,6 +173062,10 @@
         }
       }
     },
+    "This agent gets its own isolated browser profile. View sessions and sign-in status in Settings → Browser." : {
+      "comment" : "A footnote explaining the purpose of the browser-use capability.",
+      "isCommentAutoGenerated" : true
+    },
     "This agent has no memory tables yet." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -172259,6 +174136,14 @@
         }
       }
     },
+    "This permanently deletes %@'s browsing data — cookies, sign-ins, and history. The agent starts over with a fresh profile." : {
+      "comment" : "A message in an alert that lets the user know that resetting a browser session is destructive and will delete the user's browsing data.",
+      "isCommentAutoGenerated" : true
+    },
+    "This permanently deletes every agent's browsing data — all cookies, sign-ins, and history." : {
+      "comment" : "A message displayed in an alert when resetting all browser sessions.",
+      "isCommentAutoGenerated" : true
+    },
     "This permanently deletes the plugin's installed dylib, manifest, and per-agent secrets from disk. The host will stop attempting to load it on every launch — the only way to escape a crash-looping plugin without editing files by hand. You can reinstall it later from the Tools manager." : {
       "localizations" : {
         "de" : {
@@ -172712,6 +174597,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "這將從設定檔中移除 \"%@\" 頻道定義。其引用的鑰匙圈金鑰不會被刪除。"
+          }
+        }
+      }
+    },
+    "This removes the collection and its search index from Osaurus. The folder and its files on disk are not touched." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dies entfernt die Sammlung und ihren Suchindex aus Osaurus. Der Ordner und seine Dateien auf der Festplatte bleiben unberührt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 작업은 Osaurus에서 컬렉션과 검색 색인을 제거합니다. 디스크의 폴더와 파일은 그대로 유지됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это удалит коллекцию и её поисковый индекс из Osaurus. Папка и её файлы на диске останутся нетронутыми."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这将从 Osaurus 中移除该集合及其搜索索引。磁盘上的文件夹及其文件不会受到影响。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這將從 Osaurus 中移除該集合及其搜尋索引。磁碟上的資料夾及其檔案不會受到影響。"
           }
         }
       }
@@ -173491,6 +175410,40 @@
         }
       }
     },
+    "This will reset the sandbox and re-provision from scratch. Sandbox plugin state will be lost." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dies setzt die Sandbox zurück und richtet sie neu ein. Der Plugin-Zustand der Sandbox geht verloren."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "샌드박스를 재설정하고 처음부터 다시 프로비저닝합니다. 샌드박스 플러그인 상태가 손실됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Песочница будет сброшена и подготовлена заново. Состояние плагинов песочницы будет потеряно."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这将重置沙盒并从头重新配置。沙盒插件状态将丢失。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這將重置沙盒並從頭重新配置。沙盒外掛狀態將遺失。"
+          }
+        }
+      }
+    },
     "This will stop and remove the container entirely. You can set it up again later." : {
       "localizations" : {
         "de" : {
@@ -173521,6 +175474,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "這會完全停止並移除容器。你稍後可以重新設置。"
+          }
+        }
+      }
+    },
+    "This will stop and remove the sandbox entirely. You can set it up again later." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dies stoppt und entfernt die Sandbox vollständig. Sie können sie später erneut einrichten."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "샌드박스를 완전히 중지하고 제거합니다. 나중에 다시 설정할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Песочница будет полностью остановлена и удалена. Позже её можно настроить снова."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这将完全停止并移除沙盒。您可以稍后重新设置。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這將完全停止並移除沙盒。您可以稍後重新設定。"
           }
         }
       }
@@ -178378,6 +180365,10 @@
         }
       }
     },
+    "Typing pauses for your approval; submitting, purchasing, sending, or clearing data always asks first." : {
+      "comment" : "Description of the \"consent\" aspect of Browser Use, focusing on the typing pauses and the requirement to approve form submissions, purchases, sends, or clears of data.",
+      "isCommentAutoGenerated" : true
+    },
     "U0123ABC — one per line" : {
       "localizations" : {
         "de" : {
@@ -178512,6 +180503,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "不可用"
+          }
+        }
+      }
+    },
+    "Uncategorized" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht kategorisiert"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "미분류"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без категории"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未分类"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未分類"
           }
         }
       }
@@ -189065,6 +191090,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "將~/.osaurus下的每個數據庫、附件和配置的明文副本寫入您選擇的文件夾。建議在重新安裝 macOS 或移動 Mac 之前使用。"
+          }
+        }
+      }
+    },
+    "Writes limited to the sandbox workspace" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schreibzugriffe auf den Sandbox-Arbeitsbereich beschränkt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "쓰기가 샌드박스 워크스페이스로 제한됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запись ограничена рабочей областью песочницы"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写入仅限于沙盒工作区"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "寫入僅限於沙盒工作區"
           }
         }
       }

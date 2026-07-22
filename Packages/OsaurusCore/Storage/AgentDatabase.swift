@@ -550,19 +550,58 @@ public final class AgentDatabase: @unchecked Sendable {
     /// System tables (`_tables_meta`, `_changelog`, `_views`) are excluded
     /// — they are an implementation detail of the agent's DB layer.
     public func schema() throws -> AgentDatabaseSchema {
-        try queue.sync {
-            guard db != nil else { throw AgentDatabaseError.notOpen }
-
-            let tableNames = try listUserTablesUnlocked()
-            var tables: [AgentTableSchema] = []
-            for name in tableNames {
-                let table = try schemaForTableUnlocked(name)
-                tables.append(table)
-            }
-
-            let views = try listViewsUnlocked()
-            return AgentDatabaseSchema(tables: tables, views: views)
+        let result = try queue.sync {
+            try schemaUnlocked()
         }
+        schemaCacheLock.lock()
+        cachedSchemaValue = result
+        schemaCacheLock.unlock()
+        return result
+    }
+
+    /// Last schema computed by `schema()` (or a background refresh), without
+    /// touching the serial DB queue. The queue can be parked on SQLite's WAL
+    /// file lock for seconds when another connection holds it, so main-thread
+    /// callers (the prompt-preview estimate) must use this instead of
+    /// `schema()`. Returns nil until a first computation lands; kicks an
+    /// async refresh each call so the value converges after writes.
+    public func schemaNonBlocking() -> AgentDatabaseSchema? {
+        schemaCacheLock.lock()
+        let cached = cachedSchemaValue
+        let shouldRefresh = !schemaRefreshInFlight
+        if shouldRefresh { schemaRefreshInFlight = true }
+        schemaCacheLock.unlock()
+
+        if shouldRefresh {
+            queue.async { [weak self] in
+                guard let self else { return }
+                let fresh = try? self.schemaUnlocked()
+                self.schemaCacheLock.lock()
+                if let fresh { self.cachedSchemaValue = fresh }
+                self.schemaRefreshInFlight = false
+                self.schemaCacheLock.unlock()
+            }
+        }
+        return cached
+    }
+
+    private let schemaCacheLock = NSLock()
+    private var cachedSchemaValue: AgentDatabaseSchema?
+    private var schemaRefreshInFlight = false
+
+    /// Must run on `queue`.
+    private func schemaUnlocked() throws -> AgentDatabaseSchema {
+        guard db != nil else { throw AgentDatabaseError.notOpen }
+
+        let tableNames = try listUserTablesUnlocked()
+        var tables: [AgentTableSchema] = []
+        for name in tableNames {
+            let table = try schemaForTableUnlocked(name)
+            tables.append(table)
+        }
+
+        let views = try listViewsUnlocked()
+        return AgentDatabaseSchema(tables: tables, views: views)
     }
 
     /// Convenience: schema for a single user table.

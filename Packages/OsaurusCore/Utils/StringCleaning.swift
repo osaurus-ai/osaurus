@@ -130,23 +130,32 @@ public enum StringCleaning {
     public static func stripGeminiDisplayMetadata(_ content: String) -> String {
         var result = content
 
-        // Normal encoded form: ZWS + ts:SIG + ZWS
+        // Runs from `ChatTurn.visibleContent` on every render of every
+        // assistant turn — per token while streaming. Almost no content
+        // contains Gemini markers, so gate the marker loop and the (per-call
+        // recompiled) leak regex on a cheap `contains` scan; only the
+        // whitespace normalization below stays unconditional.
         let zws = "\u{200B}"
-        let prefix = "\(zws)ts:"
-        while let start = result.range(of: prefix) {
-            let markerStart = start.lowerBound
-            let signatureStart = start.upperBound
-            guard let end = result[signatureStart...].range(of: zws) else { break }
-            result.removeSubrange(markerStart ..< end.upperBound)
-        }
+        let hasTS = result.contains("ts:")
 
-        // Defensive cleanup for visible leakage if the zero-width markers are lost or
-        // rendered unexpectedly in the UI.
-        result = result.replacingOccurrences(
-            of: #"(?:(?<=^)|(?<=\s))ts:[A-Za-z0-9+/_=-]{16,}(?=\s|$)"#,
-            with: "",
-            options: .regularExpression
-        )
+        if hasTS {
+            // Normal encoded form: ZWS + ts:SIG + ZWS
+            let prefix = "\(zws)ts:"
+            while let start = result.range(of: prefix) {
+                let markerStart = start.lowerBound
+                let signatureStart = start.upperBound
+                guard let end = result[signatureStart...].range(of: zws) else { break }
+                result.removeSubrange(markerStart ..< end.upperBound)
+            }
+
+            // Defensive cleanup for visible leakage if the zero-width markers are lost or
+            // rendered unexpectedly in the UI.
+            result = result.replacingOccurrences(
+                of: #"(?:(?<=^)|(?<=\s))ts:[A-Za-z0-9+/_=-]{16,}(?=\s|$)"#,
+                with: "",
+                options: .regularExpression
+            )
+        }
 
         return
             result

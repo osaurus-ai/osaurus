@@ -122,6 +122,7 @@ struct AgentAbilityContextPreview: Equatable {
             webSearchEnabled: draft.webSearchEnabled,
             selfSchedulingEnabled: draft.selfSchedulingEnabled,
             computerUseEnabled: base.computerUseEnabled,
+            browserUseEnabled: base.browserUseEnabled,
             spawnDelegationEnabled: base.spawnDelegationEnabled,
             imageEnabled: base.imageEnabled,
             appleScriptEnabled: base.appleScriptEnabled,

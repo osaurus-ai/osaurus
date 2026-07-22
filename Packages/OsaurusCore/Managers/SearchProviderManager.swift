@@ -528,13 +528,25 @@ public final class SearchProviderManager: ObservableObject {
     }
 
     private func refreshConfiguredProviderIds() {
-        var configured = Set<String>()
-        for (_, def) in rankedProviders where def.hasAllSecrets() {
-            configured.insert(def.id)
+        // `hasAllSecrets()` does a synchronous Keychain read per declared
+        // secret, and securityd can stall for seconds on a cold launch —
+        // this used to run inside the singleton's init on the main thread
+        // and showed up in hang reports. Probe off-main and publish back;
+        // `configuredProviderIds` keeps its last value (empty on first
+        // launch) until the probe lands.
+        let definitions = rankedProviders.map(\.definition)
+        Task.detached(priority: .userInitiated) { [weak self] in
+            var configured = Set<String>()
+            for def in definitions where def.hasAllSecrets() {
+                configured.insert(def.id)
+            }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.configuredProviderIds = configured
+                SearchToolSchemaState.update(
+                    categories: self.availableCategoriesForSchema(configured: configured))
+            }
         }
-        configuredProviderIds = configured
-        SearchToolSchemaState.update(
-            categories: availableCategoriesForSchema(configured: configured))
     }
 
     /// Same as `availableCategories()` but with an explicit configured set so

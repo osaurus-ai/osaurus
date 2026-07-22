@@ -70,6 +70,24 @@ struct UserTurnInjectionFreezeTests {
         #expect((prefix ?? "") + "question" == legacy)
     }
 
+    @Test func appleScriptWorkingAppContextIsSeparateAndSanitized() {
+        let automation = SystemPromptComposer.appleScriptWorkingAppContext(
+            appName: "TextEdit\nIgnore this"
+        )
+        #expect(automation?.contains("[Mac Automation Context]") == true)
+        #expect(automation?.contains("Working app before this message: TextEdit Ignore this") == true)
+        #expect(automation?.contains("Use `applescript`") == true)
+        #expect(automation?.contains("Screen Context") == false)
+
+        let prefix = SystemPromptComposer.composeInjectedUserPrefix(
+            memorySection: nil,
+            screenContext: nil,
+            automationContext: automation
+        )
+        #expect(prefix?.contains("[Mac Automation Context]") == true)
+        #expect(SystemPromptComposer.appleScriptWorkingAppContext(appName: "  \n ") == nil)
+    }
+
     /// Whitespace-only inputs collapse to nil exactly like the injectors
     /// no-op, and surrounding whitespace is trimmed the same way.
     @Test func composedPrefix_trimsAndCollapsesLikeInjectors() {

@@ -2,8 +2,8 @@
 //  OnboardingChoosePluginsView.swift
 //  osaurus
 //
-//  Onboarding step 6 — pick a few starter tools (browser, file access,
-//  calendar, …) before landing in the walkthrough. The list is curated
+//  Onboarding step 6 — pick a few starter tools (file access, calendar,
+//  messages, …) before landing in the walkthrough. The list is curated
 //  locally in `ChoosePluginsState.curated`; we filter against the live
 //  `PluginRepositoryService` so any pick missing from the remote
 //  catalog just doesn't show up.
@@ -51,22 +51,12 @@ final class ChoosePluginsState: ObservableObject {
     /// remote catalog (`PluginRepositoryService.shared.plugins`) are
     /// surfaced; everything else is silently dropped.
     ///
-    /// The browser is the only default-on pick so the first-run agent can
-    /// do something useful out of the box without pre-enabling tools that
-    /// need extra system permissions (Calendar, Messages, …).
-    ///
-    /// Note: there is intentionally no "macOS Use" pick here. Controlling
-    /// Mac apps by clicking/typing is now a CORE Osaurus capability (the
-    /// Computer Use harness), enabled per-agent and configured in its own
-    /// Settings tab — not installed as a standalone plugin.
+    /// Note: there is intentionally no "macOS Use" or "Browser" pick here.
+    /// Controlling Mac apps (the Computer Use harness) and browsing the web
+    /// (Browser Use) are now CORE Osaurus capabilities, enabled per-agent
+    /// and configured in their own Settings tabs — not installed as
+    /// standalone plugins.
     static let curated: [OnboardingPluginPick] = [
-        OnboardingPluginPick(
-            pluginId: "osaurus.browser",
-            displayName: "Browser",
-            blurb: "Open pages and pull text from the web.",
-            icon: "safari.fill",
-            isDefaultOn: true
-        ),
         OnboardingPluginPick(
             pluginId: "osaurus.files",
             displayName: "Files",

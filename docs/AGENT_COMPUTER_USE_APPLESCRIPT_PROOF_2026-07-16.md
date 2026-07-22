@@ -1,6 +1,177 @@
 # Agent, Computer Use, and AppleScript 8B Proof Ledger
 
-Last updated: 2026-07-17 (America/Los_Angeles)
+Last updated: 2026-07-20 (America/Los_Angeles)
+
+## Newly reported release-critical regressions (2026-07-20)
+
+These reports are tracked separately even though they arrived during the same
+emergency lane. A successful AppleScript row must not be used to close the
+Sandbox/GPU report, and an idle-GPU row must not be used to close the
+AppleScript completion report.
+
+### Idle 100% GPU after incomplete Sandbox uninstall
+
+Reported environment: Osaurus 0.22.7 on an M5 MacBook Air with 24 GB RAM. The
+user installed a 2-core/2-GB Sandbox after several attempts, then attempted to
+uninstall it. The UI returned to the setup screen but continued to show four
+provisioning findings: `setup_incomplete`, missing kernel, missing init
+filesystem, and missing warm-restart rootfs. With Osaurus open and no user
+task running, the user's monitor attributed approximately 98.6% GPU to
+Osaurus, with overall GPU at 99% and 77 C in the supplied screenshot.
+
+This is **OPEN / UNVERIFIED LOCALLY**. The screenshot proves the reported
+process attribution and visible incomplete state on that machine; it does not
+yet identify Sandbox as the producer. The investigation must distinguish:
+
+- an unintended model load, warmup, decode, media/privacy inference, or cache
+  maintenance task owned by Osaurus;
+- Sandbox provisioning, boot, health polling, retry, teardown, download, or
+  migration work that survives navigation/uninstall/relaunch;
+- a leaked or uncancelled Metal task after a previous request;
+- UI rendering/animation versus actual MLX/Metal command submission;
+- an external VM/helper process versus work charged to the Osaurus process;
+- an environmental/security-tool installation failure versus an Osaurus
+  lifecycle bug. BlockBlock/RansomWhere interaction is a hypothesis only and
+  must not be blamed without an event/process trace.
+
+Required Release-app matrix:
+
+| State transition | Visible operation | Required evidence and pass condition |
+| --- | --- | --- |
+| Clean isolated root, no Sandbox assets | Launch Osaurus and remain on chat, then open the Sandbox setup screen without pressing Setup | Process CPU/GPU and Metal/MLX trace remain idle; no model, VM, provisioning, download, or retry starts |
+| Incomplete asset state | Reproduce each writable-parent/missing-child finding in an isolated root and relaunch | The UI reports the missing assets honestly but does not provision, boot, or spin until the user explicitly starts setup |
+| Setup cancellation/failure | Start setup, cancel/close/quit at download, unpack, configure, and boot boundaries | Every child task and progress poll cancels; relaunch is idle and offers an explicit resumable/retry state |
+| Installed but stopped | Complete setup, leave Sandbox unused, navigate away, quit/relaunch | No VM or plugin daemon starts merely because assets exist; GPU stays idle |
+| Running then stopped | Start a bounded Sandbox job, stop it, uninstall/clear assets, relaunch | VM/helper/model work terminates; no orphan process, timer, GPU command producer, or stale `setupComplete` state remains |
+| Model interaction control | Load and unload one local non-MXFP4 model, then return to idle with Sandbox incomplete | Any GPU activity is attributable to the explicit model task and returns to baseline afterward; Sandbox state does not retain model residency |
+
+Source review must inventory every task launched from `SandboxView`,
+`SandboxManager`, provisioning/runtime asset stores, plugin daemons, host
+bridges, model warmup/residency, privacy/media services, and app launch hooks.
+Tests must cover cancellation and idempotent teardown, but the issue cannot be
+closed without the real Release UI and process/GPU observation. A guard that
+merely hides the setup screen, suppresses warnings, or throttles GPU use is not
+an acceptable fix.
+
+Current source trace found a real lifecycle race, but not a proven GPU root
+cause. `SandboxView.performProvision()` starts an untracked view-owned `Task`
+that directly awaits `SandboxManager.provision()`. The manager separately
+tracks `prefetchTask` and `inFlightStartTask`; `removeContainer()` calls
+`stopContainer()` and deletes the asset roots, but it neither cancels nor
+awaits the prefetch task or the direct provisioning operation first. A Remove
+can therefore race setup/prefetch writes and leave the exact mixed state the
+reporter saw. The missing kernel/initfs/rootfs findings themselves are expected
+after a full Remove and do not prove a VM is still running.
+
+The candidate now coalesces every explicit `provision()` behind an owned
+`inFlightProvisionTask`. Remove marks the sandbox removed first, cancels the
+prefetch/provision/start tasks, and awaits all three before stopping the VM or
+deleting any asset. `SandboxManagerCleanupTests` includes a hermetic suspended-
+task regression proving all three tasks are cancelled, awaited, and cleared;
+the selected suite passed 5/5. This is **SOURCE/TEST ONLY** until a Release UI
+run visibly exercises setup/remove/relaunch and inspects the resulting files,
+processes, and GPU state.
+
+In the current isolated Release control, the warm 16B model remained resident
+but no generation was active: shell sampling showed the proof-app process at
+approximately 0.9% CPU and 1.72 GB RSS. Activity Monitor's current Energy view
+showed Warp and AnyDesk as the large consumers, while it did not list the
+custom-bundle proof process in its `% GPU` search. Global AGX utilization was
+therefore not attributable to Osaurus. This is insufficient to close the
+report. The isolated proof launch also used keychain-disabled test mode, and
+`AppDelegate` deliberately skips `SandboxToolRegistrar.start()` in that mode;
+it cannot prove the production auto-start/prefetch lane idle. The lifecycle
+race still needs a cancellation-safe fix and a visible setup -> remove ->
+relaunch matrix with per-process GPU evidence in a safely isolated launch that
+does not skip the registrar.
+
+### TextEdit replacement repeats and unrequested Save (0.22.7)
+
+The exact reported prompts are:
+
+1. `Change the text in the file from “Hello from OracHQ” to “Hello again”.`
+   The reported result was four concatenated copies of `Hello again`, followed
+   by `Failed: Computer use`.
+2. `Change the text in the file from “Hello World” to “Hello from OracHQ”.`
+   The edit succeeded, but the agent entered an unrequested Save workflow and
+   ultimately marked the task failed.
+
+This report remains **PARTIAL**. Earlier patched-Release evidence in this
+ledger proved the older action-only finalization and feedback-only regressions,
+including a successful TextEdit activation and no unrelated `mac_query` for
+the exact feedback sentence. Those prior rows do not prove the new exact-text
+replacement prompts. The current candidate's explicit-TextEdit control wrote
+`Hello again` once and remained visibly unsaved, but the exact anaphoric prompt
+failed before execution because the helper was not told that TextEdit was the
+working app. The working-app handoff is now source/test-covered and awaits the
+rebuilt Release rerun.
+
+The report's terminal label is `Failed: Computer use`; the initial 2026-07-20
+reruns mistakenly exercised the separately configured native `applescript`
+tool and therefore do not reproduce the owning loop. The real Computer Use
+path is `ComputerUseKind` -> `ComputerUseLoop` with the forced `agent_action`
+schema, native accessibility driver, action gate, and post-action observation.
+The native path is `AppleScriptKind` -> `AppleScriptLoop` with
+`run_applescript` and script confirmation. Both must be tested because the
+same specialized models can expose related behavior, but their evidence is
+not interchangeable.
+
+The live UI also exposed an apparent settings mismatch: dedicated AppleScript
+models are present in the native AppleScript picker but excluded from the
+generic Computer Use override picker. A temporary candidate added them only
+to the Computer Use picker, then the Release UI disproved that route: the
+selected 16B bundle loaded, received Computer Use's forced `agent_action`
+schema, emitted two invalid action envelopes, and then omitted the required
+tool. No TextEdit mutation occurred. The candidate was reverted. Dedicated
+AppleScript bundles remain selectable only for the native `run_applescript`
+ability and remain excluded from ordinary chat, Spawn, and Computer Use. This
+failed route must not be presented as a picker regression or as evidence for
+the reported `Failed: Computer use` path.
+
+Required behavioral matrix for both JANGQ 8B JANG_6M and 16B A4B JANG_4M:
+
+| Scenario | Pass condition |
+| --- | --- |
+| Exact first prompt through Computer Use, whole document equals old text | One replacement only; document is exactly `Hello again`; one successful completion; no retry or Save |
+| Exact second prompt, whole document equals old text | One replacement only; document is exactly `Hello from OracHQ`; document remains unsaved/Edited; no Save workflow |
+| Old text is a substring in a larger document | Only matching occurrences change as requested; prefix/suffix and whitespace remain byte-correct; no duplicated replacement |
+| Old text is absent or document/app is missing | No mutation and no fabricated success; one grounded, recoverable result or bounded failure |
+| User explicitly requests Save | Edit and Save occur once, with the correct confirmation/effect classification and visible file state |
+| Confirm Each accept, decline, and cancel | Accept executes once; decline/cancel never mutates and never retries as though approval had succeeded |
+| Same prompt repeated as a new user turn | Each turn is independently correct; helper context contains only that job; no stale script, literals, target, or completion state crosses turns |
+| Feedback-only turn after success | Plain acknowledgement only; no AppleScript, Computer Use, `mac_query`, date/time invention, Save, or stale forced tool choice |
+| Cold, exact-prefix, partial-prefix, and SSD-only restore | The same valid script/one-mutation result under every cache condition; trace identifies the actual hit tier and any required hybrid-state rederive |
+| Prefix/disk cache disabled through visible Settings | Same semantics without reuse; changing the toggle affects the next request and restoring it restores the prior effective policy |
+| Same prompts through native AppleScript | Record separately from Computer Use; one valid script/mutation and no Save, but never use this row to close a `Failed: Computer use` reproduction |
+
+The owning layer must be identified per failure. Candidate causes include the
+parent's committed tool arguments, working-app snapshot, helper prompt/recipe,
+helper model proposal, confirmation/execution result, completion classifier,
+outer parent continuation, and cache restore. Incremental content/tool previews
+must not be blamed when the committed invocation is complete. Likewise, cache
+reuse must not be blamed when the cold request already lacks target/literal
+context. Every live row must retain the tool cards and trace needed to tell
+these boundaries apart.
+
+### Global regression questions for both fixes
+
+- Does any working-app fallback leak TextEdit knowledge into named-app,
+  information-only, background-app, or unrelated new-chat tasks?
+- Does stopping after a successful mutation accidentally stop a required
+  readback, a true multi-step task, a failed execution, or a requested Save?
+- Can either the parent or helper execute a second mutation after success due
+  to cached output, a stale tool choice, a delayed stream delta, or an outer
+  agent-loop retry?
+- Does every helper job start from only its newest task/desktop/literal context
+  while retaining tool results only inside that one job?
+- Do explicit UI choices for helper model, confirmation, reasoning, cache,
+  residency, and Sandbox state reach the exact next runtime request and persist
+  only where documented?
+- After cancel, failure, navigation, app quit, model unload, Sandbox stop, and
+  Sandbox uninstall, are all model/Metal/VM/provisioning tasks actually gone?
+- Do Gemma, Qwen-derived Ornith/Bonsai, LFM, Spawn, Computer Use, native
+  AppleScript, and ordinary chat retain their own reasoning/tool/cache defaults
+  rather than inheriting an AppleScript-specific behavior globally?
 
 ## Reopened JANG_6M acceptance lane (2026-07-17)
 
@@ -680,3 +851,337 @@ ledger for the merged schema-1 JANG loader pin, the still-partial Ornith
 multi-step semantic failure, the deferred cache/RAM matrix, and why the
 reported JANG_4M/MXFP8 behavior did not support a content-delta or tool-JSON
 assembler diagnosis.
+
+## 2026-07-20 repeated-edit, no-save, and reasoning-propagation checkpoint
+
+This checkpoint is intentionally separate from the wider cache/TurboQuant and
+model-family campaign. Its source base is Osaurus
+`59334020f54950f16247a2b60474de7b11fbb54b`; the focused Xcode workspace
+resolved vMLX Swift to
+`f2b184841e98d969e46dec83109f27cd7bb57357`. No row below is a live pass until
+the isolated Release app is operated through visible Settings and chat UI.
+
+The primary local helpers for this checkpoint are the exact registered bundles
+`JANGQ-AI/AppleScript-8B-JANG_6M` and
+`JANGQ-AI/AppleScript-16B-A4B-JANG_4M` under `/Users/eric/models`. MXFP4 is out
+of scope and must not be downloaded, loaded, or used as evidence.
+
+### Change-by-change scope and regression ledger
+
+| Change / reported issue | Owning source and intended scope | Main spillover questions | Focused evidence | Required live evidence | Current verdict |
+| --- | --- | --- | --- | --- | --- |
+| Successful TextEdit mutation repeats until duplicate text or failure | `AppleScriptLoop` success finalization already on current main terminates a successful action-only automation; exact/data-bearing tasks still require independent readback | Does it terminate only real successful action rows; do failures, denied confirmation, exact-content readback, and multi-step reads still continue correctly | `successfulActionStopsRepeatingModel`, `mutatingReturnNeedsReadBackForExactContent`, and neighboring loop tests passed in the current Xcode run | Seed `Hello from OracHQ`, request one replacement, inspect TextEdit, tool feed, and trace; repeat with larger-document partial replacement | **PARTIAL-LIVE — rebuilt Release JANGQ 16B changed `Hello World` to `Hello from OracHQ` exactly once, then changed `Hello from OracHQ` to `Hello again` exactly once. The second job used one mutation plus one read-only verification; no repeated edit occurred. JANGQ 8B and larger-document substring controls remain open.** |
+| Model adds an unrequested Save workflow | TextEdit recipe now explicitly forbids `save`, Command-S, and Save menu unless requested; effect classifier now treats `save` as mutation rather than a read | Does requested Save still work; does unrequested Save require confirmation rather than auto-run; do other read-only scripts remain auto-runnable | recipe/classifier guidance tests passed in the current Xcode run | Replace unsaved text without asking to save, then separately ask to save; inspect approval cards, document state, and file side effects | **PARTIAL-LIVE — both rebuilt Release 16B replacements remained visibly Edited/unsaved and no Save command or workflow appeared. Requested-Save control remains open.** |
+| Malformed AppleScript classified as read-only can consume the full loop | `AppleScriptLoop` now dry-compiles every proposed script before every gate, with the existing consecutive-invalid bound | Does a valid read still execute once; does a malformed read never execute; do runtime errors remain distinguishable from compile errors; does confirmation behavior remain unchanged for valid writes | `compileFailureBudgetCoversReadClassification` and the complete selected loop/effect suites passed | Trigger a bounded invalid-script correction, observe no application mutation and one terminal grounded failure; then run valid read/write controls | **PARTIAL — source/test only** |
+| Parent puts generated instructions/scripts in literal `content`, or omits old/new replacement literals | `AppleScriptTool` schema guidance reserves `content`/`contents` for user-supplied literal bytes and names old/replacement text as separate exact blocks. `AppleScriptToolDispatch` now rejects unreferenced literal fields and script-like generated source masquerading as literal content, while preserving an explicit request to insert AppleScript source as text | Do JSON/schema parsing and committed tool arguments remain complete; are quotes/newlines/Unicode preserved; does ordinary `task`-only use remain unchanged; can a genuine code-as-text task still pass | `AppleScriptToolDispatchLiteralsTests`, schema guidance, selected loop, and app-knowledge suites exited 0 in the 2026-07-20 19:52 Xcode run | Rebuild Release, replay the exact second prompt, inspect the outer invalid-args correction and corrected committed invocation, and require exactly one unsaved TextEdit mutation | **PARTIAL-LIVE — the rebuilt Release binary no longer sent generated AppleScript as literal `content` for either exact reported replacement. The helper received the job, generated one approved mutation, and TextEdit reached the exact requested text. Quotes/newlines/Unicode and explicit code-as-text controls remain open.** |
+| JANGQ helpers installed through External Models cannot be selected in native AppleScript settings | `AppleScriptModelCatalog` recognizes only dedicated `OsaurusAI/Osaurus-AppleScript-*` and `JANGQ-AI/AppleScript-*` prefixes; `AppleScriptModelsView` includes installed primary/external helpers in its native picker without adding a destructive catalog Delete row. The generic Computer Use picker intentionally excludes them because that loop requires `agent_action`, not `run_applescript` | Does auto-selection remain curated-only; do unrelated `other/AppleScript-*` names stay excluded; does explicit 8B/16B native selection persist and route the next run to that exact bundle; does no dedicated helper leak into chat/Spawn/Computer Use | primary-directory/external-source fixtures and model routing tests passed; the temporary Computer Use candidate was reverted after the live schema failure | Register `/Users/eric/models`, visibly select 8B then 16B under native AppleScript, quit/relaunch, and match each next native tool feed/load trace to the selected id | **PARTIAL-LIVE — native picker showed all four dedicated choices; JANGQ 8B persisted across relaunch; JANGQ 16B was visibly selected and its exact id loaded for both TextEdit controls. Computer Use routing was a failed experiment and is not part of the fix** |
+| An anaphoric task such as “change the text in the file” loses the working app when Osaurus becomes frontmost | `AppleScriptKind.desktopSnapshot` now uses the existing `FrontmostAppTracker` handoff whenever Osaurus is frontmost; `AppleScriptAppKnowledge` limits fallback to explicit current/front-app or file/document cues | Could an unrelated task inherit stale app knowledge; does a genuinely frontmost non-Osaurus app still win; do named-app tasks remain authoritative; does the exact prompt now receive TextEdit recipes without globally injecting TextEdit | `workingDocumentFallback` passes with a battery-query negative control; prior named/frontmost tests also pass | Put TextEdit frontmost, return to Osaurus, send the exact original prompt, and require TextEdit in the helper prompt/approval plus one unsaved replacement | **PARTIAL — source/test pass; rebuilt Release exact-prompt rerun pending** |
+| Dedicated helper accumulates parent/previous-job context and degrades into context rot | Each `AppleScriptLoop.run` constructs a new transcript containing only its task-specific system prompt/desktop/app recipe/literals plus `Task: <current task>`; only inner calls/results from that one run are appended. `TextSubagentKind` similarly creates a new seed from the target agent prompt plus the current delegated input and mints a unique spawn session id. Neither receives the parent transcript. | Does a second AppleScript job contain any first-job text; do within-job correction/readback still retain the needed tool result; does a spawned result return only its compact digest; does content-addressed prefix reuse remain valid without semantic transcript inheritance | Current source trace establishes the construction boundary; no new behavior test has yet captured two independent live request payloads | Run two deliberately disjoint AppleScript jobs and two disjoint spawns in one parent chat; compare every emitted request message and returned digest, and require zero prior-job text in the second helper request | **PARTIAL — source trace only** |
+| SSD/prefix partial reuse corrupts a clean helper transcript or hybrid companion state | This AppleScript candidate does not modify the cache stack. The JANGQ 8B bundle is Qwen-derived, so a cache hit must restore or rederive every architecture-specific companion state before decode; a clean request array alone cannot exclude cache corruption | Do cold, exact-prefix, partial-prefix, and disk-only restore produce the same coherent script; do trace counters identify the actual tier; does a partial hit report the required async rederive/sync; does disabling paged RAM leave SSD lookup/store/reuse functional | **LIVE REPRO + SOURCE ROOT; ENGINE CANDIDATE UNVERIFIED** — Ornith fresh-process/new-chat exact SSD hits carried 48 companion states, but an exact indexed candidate bypassed `skipExactDiskBoundary` and the UI then full-prefilled; vMLX candidate excludes that exact candidate and skips validated duplicate writes | Through visible Server -> Cache settings keep paged RAM at its default Off, record a cold job, an exact repeat, a different partial-prefix job, unload/relaunch, then record SSD-only restore. Repeat with any explicit cache toggle changed and restore the default afterward | **PARTIAL-LIVE — SSD persistence/hits are real, and both 16B jobs were coherent, but the current binary reproduced the hybrid exact-hit rollback. Rebuild and prove safe partial restore plus JANGQ 8B before closure.** |
+| JANGQ 8B silently reasons before every tool step when the UI did not request reasoning | Its template defaults `enable_thinking` to true when absent. Each `AppleScriptLoop.modelStep` marks the request as agentic; `ChatEngine.prepareDispatch` resolves the per-model agent policy; `MLXBatchAdapter.additionalContext` should inject `enable_thinking=false` for the default direct-agent policy. Explicit per-model choices must still win. | Is the kwarg present on every first and post-tool step; is this limited to agent/tool requests; do normal chat and explicit reasoning choices remain untouched; do Gemma/Qwen/DSV4 family-specific policies remain unchanged | `AgentReasoningPolicyTests`, `AgentReasoningDispatchTests`, and `LocalReasoningCapabilityTests` passed | With the visible UI state recorded, capture `enable_thinking` for every JANG_6M model step plus TTFT/token/s; repeat a multi-step tool turn and a 16B control. No speed/coherence claim is allowed from source alone | **PARTIAL — source/test only** |
+
+Current focused result bundles are:
+
+- `/private/tmp/osaurus-applescript-emergency-tests-derived-20260720/Logs/Test/Test-OsaurusCoreTests-2026.07.20_18-21-45--0700.xcresult`
+- `/private/tmp/osaurus-applescript-emergency-tests-derived-20260720/Logs/Test/Test-OsaurusCoreTests-2026.07.20_18-26-42--0700.xcresult`
+- `/private/tmp/osaurus-applescript-emergency-tests-derived-20260720/Logs/Test/Test-OsaurusCoreTests-2026.07.20_19-05-41--0700.xcresult` (**failed** first working-document assertion; retained intentionally)
+- `/private/tmp/osaurus-applescript-emergency-tests-derived-20260720/Logs/Test/Test-OsaurusCoreTests-2026.07.20_19-07-27--0700.xcresult` (`AppleScriptAppKnowledgeTests`, exit 0)
+- `/private/tmp/osaurus-applescript-emergency-tests-derived-20260720/Logs/Test/Test-OsaurusCoreTests-2026.07.20_19-28-04--0700.xcresult` (`ModelPickerItemChatCapabilityTests` plus `AppleScriptModelRoutingTests`, exit 0; includes the Computer-Use-only dedicated-model candidate boundary)
+- `/private/tmp/osaurus-applescript-emergency-tests-derived-20260720/Logs/Test/Test-OsaurusCoreTests-2026.07.20_19-51-11--0700.xcresult` (`AppleScriptToolDispatchLiteralsTests`, selection guidance, loop, and app-knowledge suites: 53 passed, 0 failed, 0 skipped; the later live Computer Use failure caused the candidate picker route to be reverted)
+- `/private/tmp/osaurus-applescript-emergency-tests-derived-20260720/Logs/Test/Test-OsaurusCoreTests-2026.07.20_20-05-18--0700.xcresult` (`SandboxManagerCleanupTests`: 5 passed, 0 failed, 0 skipped; includes cancellation/await of prefetch, provision, and start writers before removal)
+
+### Second Release candidate: pre-working-app-fix live evidence
+
+The next isolated Release executable had SHA-256
+`6a4b96b83960698eab7afd2e38b6eff6bafc19a43725b65f7205ab10f5c3866a`.
+Computer Use visibly showed `Models (4)` and the picker entries `Choose
+automatically`, the curated Osaurus 8B, JANGQ 16B A4B JANG_4M, JANGQ 8B
+JANG_4M, and JANGQ 8B JANG_6M. The per-agent JANG_6M selection, Confirm Each
+mode, Ornith 1.0 9B MXFP8 parent, and visible parent Thinking Off state all
+persisted across an app quit/relaunch. Server -> Settings -> Cache visibly
+showed Prefix Cache On, GPU paged cache Off, Disk Cache On, SSM re-derive On,
+and Codec `Engine Selected`.
+
+The exact reported prompt then failed live after 24.3 seconds. The visible tool
+card showed only `content: Hello from OracHQ` and task `Replace the text ... in
+the file`; its result was a grounded non-compiling-script failure. The raw
+JANGQ trace showed a generic 3,726-character system prompt, a Finder file
+chooser, then three bounded compile failures. Runtime cache trace showed a cold
+1,360-token helper prefix followed by partial SSD hits at boundaries 1,360 and
+1,634 with hybrid re-derive logs. TextEdit remained unchanged. This is a real
+failed row; it does not prove cache corruption because the helper never
+received TextEdit as its target.
+
+Under the identical visible cache/reasoning/model settings, a control prompt
+that explicitly named the open TextEdit document produced one valid direct-set
+script, one approval card, and no Save command. TextEdit visibly contained
+exactly `Hello again` once and remained `Edited`/unsaved. The helper trace
+showed JANGQ 8B JANG_6M, a 5,237-character TextEdit-aware system prompt, one
+tool call in 6.5 seconds at 43.0 tok/s, and no inner retry. The final Ornith row
+showed Thinking Off, zero reasoning deltas in the runtime stream, TTFT 1.33
+seconds, 26.6 tok/s, and 79 tokens. The outer AppleScript elapsed display was
+45.0 seconds because it included model handoff and human approval wait; it is
+not helper decode time. The returned residency counters reported zero disk-L2
+hits, six misses, and two stores for that control.
+
+### JANGQ 16B native controls and rejected Computer Use route
+
+The isolated Release app was operated with the parent set to Ornith 1.0 9B
+MXFP8, parent Thinking visibly Off, Computer Use Off, Spawn Off, native
+AppleScript On, Confirm Each, and helper
+`JANGQ-AI/AppleScript-16B-A4B-JANG_4M`. For the explicitly scoped prompt
+`In TextEdit, change ... “Hello from OracHQ” to “Hello again”`, the parent
+first made a read-only `mac_query`, then the helper proposed exactly one direct
+TextEdit mutation:
+
+```applescript
+tell application "TextEdit"
+    set text of front document to "Hello again"
+end tell
+```
+
+The approval card contained no Save command. After approval, TextEdit visibly
+contained exactly `Hello again` once and its title remained `Untitled 2 —
+Edited`, so no Save occurred. The parent finished with a visible `Done` answer,
+TTFT 1.38 seconds, 51.0 tok/s, and 26 tokens. The dedicated helper trace named
+the exact 16B bundle, recorded 2.7 seconds and 80.0 tok/s, and contained one
+`run_applescript` call. This is one explicit-app native control, not proof of
+the original anaphoric prompt or generic Computer Use.
+
+For the second explicit prompt, seeded with visible `Hello World`, the parent
+committed this outer argument shape:
+
+```json
+{
+  "content": "tell application \"TextEdit\" ... keystroke ...",
+  "task": "Select all text in the active TextEdit document and replace it with \"Hello from OracHQ\", then press Return."
+}
+```
+
+That is a parent-to-helper contract violation: generated AppleScript was put
+in the literal `content` field and the parent invented UI steps not requested
+by the user. The helper produced a non-compiling script and stopped after
+compile feedback. TextEdit visibly remained exactly `Hello World`; it was not
+saved or partially mutated. This committed invocation establishes that this
+failure is tool argument/schema construction, not content-delta streaming.
+`AppleScriptToolDispatch` now returns `invalid_args` for unreferenced literal
+fields and script-like generated literal content unless the user explicitly
+asked to insert AppleScript source as text. The four new literal-contract tests
+plus selected guidance, loop, and app-knowledge suites exited 0. A rebuilt
+Release replay is still required before that change can be called effective.
+
+A separate temporary route exposed both dedicated helpers in the generic
+Computer Use picker. With 16B visibly selected, the trace loaded that exact
+bundle, but it emitted two invalid `agent_action` envelopes and then no
+required action; TextEdit remained unchanged and the turn ended failed after
+26.0 seconds. This proves only that the specialized `run_applescript` bundle
+does not reliably satisfy Computer Use's schema. The picker change was
+reverted rather than adding a parser coercion or misrepresenting the model's
+capability.
+
+### Third Release candidate: literal-contract and exact reported edits
+
+The current rebuilt app is
+`/private/tmp/osaurus-applescript-emergency-release-derived-20260720/Build/Products/Release/osaurus.app`,
+bundle id `com.dinoki.osaurus.applescriptemergency20260720`, executable
+SHA-256
+`114fbe282e9e2872abe88ca8c991da6ebc1b7c9e19f0ef5029bd94c54511fd9b`,
+isolated root
+`/private/tmp/osaurus-applescript-emergency-live-root-20260720`, and exact
+vMLX pin `f2b184841e98d969e46dec83109f27cd7bb57357`. It was ad-hoc signed and
+launched keychain-free with `/Users/eric/models` explicitly provided to the
+isolated process. The real Cache settings UI showed Prefix On, paged GPU/RAM
+Off, Disk On, Engine Selected/native, and SSM rederive On. The parent was exact
+`Ornith 1.0 9B MXFP8`, visibly warm with Thinking Off; the selected native
+helper was exact `JANGQ-AI/AppleScript-16B-A4B-JANG_4M`.
+
+Two user-visible TextEdit controls were run:
+
+1. Starting from visible unsaved `Hello World`, the prompt requested
+   `Hello from OracHQ`. The parent first performed the relevant read. The
+   helper proposed one direct TextEdit setter, the approval card was accepted,
+   and TextEdit visibly contained exactly `Hello from OracHQ` once. The title
+   remained Edited/unsaved. The parent ended with grounded success at TTFT
+   1.45 s, 49.9 tok/s, and 25 tokens. No Save workflow appeared.
+2. In a new chat starting from visible unsaved `Hello from OracHQ`, the exact
+   reported replacement to `Hello again` produced one mutating script and one
+   post-mutation read-only verification. After approval, TextEdit visibly
+   contained exactly `Hello again` once and remained Edited/unsaved. The parent
+   ended with grounded success at TTFT 1.41 s, 49.9 tok/s, and 31 tokens. There
+   was no repeated mutation and no Save workflow.
+
+These rows show that the rebuilt literal-field/schema guidance is effective
+for the two exact explicit-TextEdit reports and that the response is not being
+cut off by content-delta streaming. They do not close JANGQ 8B, requested Save,
+larger-document substring replacement, permission denial, cancellation, or
+generic Computer Use.
+
+They also exposed a separate cache defect. The runtime reported exact Ornith
+SSD hits with 48 recurrent companion states, including
+`boundary=2234 remaining=0 ... skipExactDisk=true`, while the UI then showed
+raw prefill advancing from zero in 512-token chunks. The pinned vMLX source
+re-admits the prohibited exact boundary through its indexed-candidate loop;
+without a safe N-1 GDN seed, the restored state is discarded and the prompt is
+fully prefetched. A vMLX candidate now excludes the exact indexed candidate
+and avoids rewriting a file that this process has already validated when its
+fingerprint and SQLite row remain unchanged. That candidate is not in this
+binary; its live verdict remains **PARTIAL** until the app is rebuilt against
+the new pin and the visible prefill/counters/files prove the intended route.
+
+### Cross-cutting live controls required before promotion
+
+The following remain deliberately **PARTIAL / NOT RUN** after the current
+Release evidence:
+
+- JANGQ 8B one-step/multi-step replacements and a larger-document substring
+  replacement; the two exact 16B one-step reports above are the only current
+  mutation passes;
+- app closed/already-open, Confirm Each accept/decline, requested Save, denied
+  Save, cancellation, failure recovery, and quit/relaunch persistence;
+- exact feedback-only acknowledgement with no `mac_query`, date invention, or
+  stale tool selection;
+- Computer Use only, AppleScript only, both abilities, and parent recovery
+  after Spawn without recursive desktop-tool inheritance;
+- per-step reasoning kwarg, visible Thinking state, TTFT, token/s, coherent
+  visible answer, no protocol-marker leakage, no duplicate mutation, and no
+  length-cap or stochastic-loop fake pass;
+- Activity Monitor physical footprint and model unload/reload behavior;
+- rebuilt-engine proof for the reproduced hybrid SSD exact-hit rollback and
+  duplicate large-file writes, plus paged/L2/TurboQuant-KV controls. Cache
+  storage, partial reuse, eviction, determinism, and toggled policy remain
+  separate live rows and must not be inferred from a successful automation.
+
+### Fourth diagnostic: exact outer/inner contract failures before the new candidate
+
+The previous Release app (which did **not** contain the source changes below)
+was used to separate four possible causes before another build:
+
+1. With JANGQ 8B selected, the plain reported replacement produced a complete,
+   parseable outer JSON call and a complete inner `run_applescript` call. The
+   script itself appended `• New text replacement was added in TextEdit by
+   OSaurus. Increase quotes if necessary.` and then the parent retried. There
+   were zero reasoning deltas. This is a helper-generated script/termination
+   failure, not content-delta truncation, tool-JSON assembly, or hidden
+   reasoning.
+2. With the common JANGQ 16B A4B JANG_4M helper selected, the same plain prompt
+   produced complete JSON but invented invalid list operations and failed with
+   AppleScript error `-1728`; TextEdit remained unchanged. Merely preferring
+   the larger helper does not solve the contract.
+3. When the parent correctly supplied `contents={oldText,newText}`, dispatch
+   rejected it because the old validator recognized field names and the word
+   `provided`, but not literal values already present in `task`. The parent
+   burned several tool rounds, called an unrelated query, and eventually
+   dropped the named literals.
+4. With a task phrased in the intended named-value form, 16B emitted a complete
+   multiline AppleScript program as assistant text instead of calling
+   `run_applescript`. The old loop displayed that row as successful even though
+   TextEdit had not changed, then the parent retried the job several times.
+
+The candidate source therefore makes four narrow contract/state changes:
+
+- accept an exact literal value as a valid task reference, replace those bytes
+  with `{{name}}` before helper dispatch, and keep the named literal store as
+  the only authoritative data channel;
+- require the parent schema/prompt to use separate `oldText` and `newText`
+  values for replacement instead of asking either model to re-type them;
+- treat structurally complete multiline AppleScript emitted as plain assistant
+  text as an invalid missing tool envelope, never execute it or report success,
+  and make one bounded request for the required `run_applescript` call;
+- after one successful replacement mutation, block every further mutation and
+  permit only the existing read-back verification path.
+
+The focused macOS Xcode rerun covering `AppleScriptLoopTests`,
+`AppleScriptToolDispatchLiteralsTests`, `AppleScriptEffectClassifierTests`,
+`AppleScriptToolSelectionGuidanceTests`, `AppleScriptModelRoutingTests`, and
+`AppleScriptAppKnowledgeTests` exited 0 on 2026-07-20. The relevant cases
+include `rawScriptTextRequiresToolEnvelope`,
+`textEditReplacementRequiresReadBack`, and `referencedLiteralContract`. This
+remains **PARTIAL**: the exact source has not yet been rebuilt and replayed in
+the visible Release app, so no user-facing fix is claimed from the tests.
+
+### Failed first Release candidate (visual evidence, 2026-07-20)
+
+The first ad-hoc signed Release candidate used bundle id
+`com.dinoki.osaurus.applescriptemergency20260720`, executable SHA-256
+`dec06e2c64770af47233dcaf182df95adabe157df5e01be8fd8760fe4b7da253`, and
+isolated root
+`/private/tmp/osaurus-applescript-emergency-live-root-20260720`. Computer Use
+visibly showed Accessibility and Screen Recording granted. Storage visibly
+showed the primary Models Directory as `~/models` and 55 local models, but
+Computer Use -> Models -> Model offered only `Choose automatically` and the
+curated Osaurus AppleScript 8B. It did not offer the installed
+`JANGQ-AI/AppleScript-8B-JANG_6M` or
+`JANGQ-AI/AppleScript-16B-A4B-JANG_4M` bundles.
+
+That is a **FAILED-LIVE** candidate, not a pass. The owning bug was that the
+candidate enumerated `ExternalModelLocator` only; `~/models` is the primary
+Models Directory and is owned by `ModelManager`'s merged local inventory. The
+follow-up source now uses `ModelManager.localModelsSnapshotNonBlocking()` with
+the same strict dedicated AppleScript id prefixes. Both primary-directory and
+external-source fixtures pass, but the rebuilt picker has not yet been checked
+visually.
+
+### Fifth Release candidate: exact 16B completion and feedback regression
+
+Status for this narrow row: **VERIFIED-LIVE**. Broader AppleScript, Computer
+Use, reasoning-policy, cache-codec, and model-family rows remain separately
+PARTIAL unless named below.
+
+The exact app was the ad-hoc-signed Release build at
+`/private/tmp/osaurus-ssd-stable-release-derived-20260721/Build/Products/Release/osaurus.app`,
+bundle id `com.dinoki.osaurus.ssdstableproof20260721`, executable SHA-256
+`e28cc1a1aad58514fa2cb325cf7f95bb098b6a93cd2a82f7e4f1ceae9244fb7d`,
+isolated root
+`/private/tmp/osaurus-ssd-stable-finalproof-root-20260721-0320`, and exact
+resolved vMLX revision
+`b87cdd6b2a9f05f600461e41b239b7197151d9ff`. The visible parent was
+`Ornith 1.0 9B MXFP8` with Thinking Off. The global native AppleScript helper
+was exact `JANGQ-AI/AppleScript-16B-A4B-JANG_4M`; the agent's AppleScript
+choice was visibly `Choose automatically`, exercising inheritance rather than
+a hard-coded per-agent helper.
+
+The first build of this merged-pin candidate was a real failed live row. Its
+16B proposal compiled but used invalid TextEdit runtime semantics. After the
+runtime error the helper returned empty/EOS, while `AppleScriptLoop` entered
+verification merely because one script had been attempted. That blocked a
+corrective mutation and ended `Failed: Applescript`; TextEdit remained exactly
+`Hello from OracHQ`. The owning state bug was the use of
+`scriptsExecuted > 0` instead of successful execution. Current source enters
+verification only after `succeeded > 0`, permits one bounded idempotent
+correction after a real execution failure, and requires the authoritative
+`{{newText}}` data placeholder before any proposed replacement can reach
+compile, approval, or execution. It does not rewrite or execute a model script
+automatically.
+
+The final candidate was then operated through the real UI as follows:
+
+1. TextEdit visibly contained exactly `Hello from OracHQ` and was marked
+   Edited. The user sent the exact reported prompt, `Change the text in the
+   file from “Hello from OracHQ” to “Hello again”.`
+2. Dispatch recorded frontmost/working app `TextEdit`, a grounded task, and
+   authoritative `oldText`/`newText` literals. The exact 16B helper emitted
+   one bounded delimiter-based replacement using both placeholders. The
+   approval card visibly contained no Save, shell, file, keystroke, formatting,
+   or unrelated-app action.
+3. After approval, TextEdit visibly contained exactly `Hello again` once and
+   remained Edited/unsaved. The helper made one mutating call followed by one
+   read-only verification, then stopped. Osaurus visibly finalized success in
+   25.3 seconds; the parent answer reported TTFT 1.42 seconds, 50.8 tok/s, and
+   25 tokens. There was no duplicate write and no Save workflow.
+4. In the same chat the user sent only informational feedback: `For your
+   information, the TextEdit edit completed successfully.` The parent replied
+   with a plain acknowledgement at TTFT 1.65 seconds and 50.9 tok/s. No
+   `mac_query`, time/date query, AppleScript, or other tool was invoked.
+
+The final focused Xcode run includes the new
+`replacementRequiresNewTextPlaceholder`,
+`failedReplacementCanCorrectBeforeReadBack`, global-helper inheritance, and
+stable-warmup-boundary controls. It completed with 176 passed, 0 failed, 0
+skipped at
+`/private/tmp/osaurus-ssd-stable-release-derived-20260721/Logs/Test/Test-OsaurusCoreTests-2026.07.21_04-35-44--0700.xcresult`.
+
+This proves the reported common 16B TextEdit replacement, successful-action
+finalization, no-unrequested-Save behavior, and feedback-only no-tool behavior
+for this exact configuration. JANGQ 8B, requested Save, denial/cancellation,
+larger-document and Unicode/quote replacement, generic Computer Use, Spawn,
+and every reasoning-on control remain PARTIAL / NOT RUN in this candidate.

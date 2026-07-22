@@ -65,6 +65,8 @@ extension EvalRunner {
             return await scoreImageLane(testCase, exp: exp, modelId: modelId, label: label)
         case "computer_use":
             return await scoreComputerUseLane(testCase, exp: exp, modelId: modelId, label: label)
+        case "browser_use":
+            return await scoreBrowserUseLane(testCase, exp: exp, modelId: modelId, label: label)
         default:
             return .terminal(
                 id: testCase.id,
@@ -73,7 +75,8 @@ extension EvalRunner {
                 outcome: .errored,
                 notes: [
                     "unknown subagent lane '\(exp.lane)' "
-                        + "(expected scripted|spawn|spawn_model|spawn_model_residency|image|computer_use)"
+                        + "(expected scripted|spawn|spawn_model|spawn_model_residency|image|"
+                        + "computer_use|browser_use)"
                 ],
                 modelId: modelId
             )
@@ -577,6 +580,143 @@ extension EvalRunner {
         for id in exp.failIfClicked ?? [] {
             let clicked = await driver.wasClicked(id)
             check(!clicked, pass: "correctly avoided '\(id)'", fail: "clicked forbidden '\(id)'")
+        }
+        if let order = exp.expectVerbsInOrder, !order.isEmpty {
+            check(
+                containsSubsequence(verbTrace, order),
+                pass: "verb order ok: \(order) ⊑ [\(verbTrace.joined(separator: ","))]",
+                fail: "verb order \(order) not a subsequence of [\(verbTrace.joined(separator: ","))]"
+            )
+        }
+        notes.append("verbs: [\(verbTrace.joined(separator: ","))]")
+        if !passed {
+            notes.append(
+                "final values: "
+                    + finalValues.keys.sorted()
+                    .map { "\($0)='\(finalValues[$0] ?? "")'" }
+                    .joined(separator: " ")
+            )
+        }
+
+        return EvalCaseReport(
+            id: testCase.id,
+            label: label,
+            domain: testCase.domain,
+            query: testCase.query,
+            outcome: passed ? .passed : .failed,
+            notes: notes,
+            modelId: modelId,
+            latencyMs: transcript.latencyMs,
+            toolUsage: verbUsageStats(verbTrace)
+        )
+    }
+
+    // MARK: - Live browser_use lane (host + fixture web world)
+
+    /// Drive the real `browser_use` host (`SubagentSession` + `BrowserUseKind`)
+    /// against an in-memory `FixtureBrowserWorld`, then score BOTH the
+    /// host-parity transcript (envelope/feed/summary) AND the world state
+    /// (typed values, clicked ids, verb trace) read back from the world.
+    /// Always live (the child model plans the tool calls); tiny-context models
+    /// SKIP because they can't emit tool calls.
+    private static func scoreBrowserUseLane(
+        _ testCase: EvalCase,
+        exp: EvalCase.SubagentExpectations,
+        modelId: String,
+        label: String
+    ) async -> EvalCaseReport {
+        guard let pages = exp.pages, !pages.isEmpty else {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .errored,
+                notes: ["browser_use lane needs `pages`"],
+                modelId: modelId
+            )
+        }
+
+        let window = ContextSizeResolver.resolve(modelId: modelId)
+        if window.sizeClass.disablesTools {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .skipped,
+                notes: [
+                    "tools auto-disabled for '\(modelId)': context size class "
+                        + "\(window.sizeClass) (≤\(ContextSizeResolver.tinyCeiling)-token window) "
+                        + "can't drive the browser_use child toolset; live case skipped"
+                ],
+                modelId: modelId
+            )
+        }
+
+        let world = FixtureBrowserWorld(pages: pages, startURL: exp.startURL)
+        let transcript = await SubagentJobEvaluator.runBrowserUse(
+            goal: testCase.query,
+            modelId: modelId,
+            maxSteps: exp.maxSteps ?? 16,
+            execute: { name, argsJSON in
+                await world.execute(name: name, argumentsJSON: argsJSON)
+            }
+        )
+
+        // Host-parity matchers (envelope/feed/summary/resultKind).
+        var (passed, notes) = score(transcript, against: exp)
+
+        // Availability-skip: a host without a routable model reads "didn't
+        // apply" (same semantics as the other live lanes).
+        let availabilitySkipKinds: Set<String> = ["rejected", "unavailable", "user_denied"]
+        if !transcript.succeeded,
+            availabilitySkipKinds.contains(transcript.envelopeKind),
+            exp.expectEnvelopeKind != transcript.envelopeKind
+        {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .skipped,
+                notes: [
+                    "live browser_use lane unavailable on this host: "
+                        + (transcript.error ?? transcript.envelopeKind)
+                ],
+                modelId: modelId
+            )
+        }
+
+        // World-state read-back — the substantive "did it work" check.
+        let finalValues = await world.finalValues()
+        let verbTrace = await world.verbTrace()
+        func check(_ ok: Bool, pass: String, fail: String) {
+            passed = passed && ok
+            notes.append(ok ? pass : fail)
+        }
+        for predicate in exp.successValues ?? [] {
+            let value = (finalValues[predicate.id] ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let exact = predicate.equals {
+                check(
+                    value == exact.trimmingCharacters(in: .whitespacesAndNewlines),
+                    pass: "value[\(predicate.id)] == '\(exact)'",
+                    fail: "value[\(predicate.id)] = '\(value)' != '\(exact)'"
+                )
+            }
+            if let needle = predicate.contains {
+                check(
+                    value.localizedCaseInsensitiveContains(needle),
+                    pass: "value[\(predicate.id)] contains '\(needle)'",
+                    fail: "value[\(predicate.id)] = '\(value)' missing '\(needle)'"
+                )
+            }
+        }
+        for id in exp.successClicked ?? [] {
+            let wasClicked = await world.wasClicked(id)
+            check(wasClicked, pass: "clicked '\(id)'", fail: "never clicked '\(id)'")
+        }
+        for id in exp.failIfClicked ?? [] {
+            let wasClicked = await world.wasClicked(id)
+            check(!wasClicked, pass: "correctly avoided '\(id)'", fail: "clicked forbidden '\(id)'")
         }
         if let order = exp.expectVerbsInOrder, !order.isEmpty {
             check(

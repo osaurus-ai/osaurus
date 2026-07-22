@@ -34,6 +34,14 @@ enum MessageSection: Hashable {
 final class CenteredMessageScrollView: NSScrollView {
     var maxContentWidth: CGFloat = 1100
 
+    /// Content width the last `sizeLastColumnToFit()` ran at. `tile()` fires
+    /// on every scroll/layout pass, and `sizeLastColumnToFit()` makes
+    /// NSTableView re-derive its frame via `_totalHeightOfTableView` — a
+    /// `heightOfRow` delegate walk over every row. On long conversations
+    /// that walk per tile pass adds up to visible main-thread hangs, so the
+    /// column fit only reruns when the effective width actually changes.
+    private var lastFittedContentWidth: CGFloat = -1
+
     override func tile() {
         let hInset = max(0, (bounds.width - maxContentWidth) / 2)
         if contentInsets.left != hInset || contentInsets.right != hInset {
@@ -52,7 +60,11 @@ final class CenteredMessageScrollView: NSScrollView {
             f.origin.x = bounds.width - f.width
             vs.frame = f
         }
-        (documentView as? NSTableView)?.sizeLastColumnToFit()
+        let contentWidth = contentSize.width
+        if contentWidth != lastFittedContentWidth {
+            lastFittedContentWidth = contentWidth
+            (documentView as? NSTableView)?.sizeLastColumnToFit()
+        }
     }
 }
 

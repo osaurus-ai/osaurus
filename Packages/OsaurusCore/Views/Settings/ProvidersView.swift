@@ -2465,23 +2465,47 @@ private struct ProviderEditSheet: View {
     private var executionHostExplainer: some View {
         switch executionHost {
         case .sandbox:
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "shippingbox.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.accentColor)
-                Text(
-                    "Runs in an isolated Linux VM with no access to host files or credentials. Outbound network is on by default and can be turned off per agent in the agent's Sandbox settings.",
-                    bundle: .module
+            // Seatbelt backend: sandboxed stdio doesn't exist (no VM
+            // interactive exec bridge), so a provider left on Sandbox
+            // will fail to start. Warn at selection time — the same
+            // guidance the connect-time error gives.
+            if SandboxBackend.current == .seatbelt {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.orange)
+                    Text(
+                        "Sandboxed MCP servers require macOS 26 or later and will fail to start on this Mac. Choose Host to run this provider — note it will then run without sandbox protection.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.orange.opacity(0.10))
                 )
-                .font(.system(size: 11))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
+            } else {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "shippingbox.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(themeManager.currentTheme.accentColor)
+                    Text(
+                        "Runs in an isolated Linux VM with no access to host files or credentials. Outbound network is on by default and can be turned off per agent in the agent's Sandbox settings.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(themeManager.currentTheme.accentColor.opacity(0.08))
+                )
             }
-            .padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(themeManager.currentTheme.accentColor.opacity(0.08))
-            )
 
         case .host:
             HStack(alignment: .top, spacing: 8) {

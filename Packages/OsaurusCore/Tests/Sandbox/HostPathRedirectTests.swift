@@ -37,13 +37,13 @@ struct HostPathRedirectTests {
         // the broad heuristic, but with the generic (non-workspace) wording.
         ChatExecutionContext.$hostReadOnlyScope.withValue(URL(fileURLWithPath: "/Users/tpae/Desktop")) {
             let hint = hostPathRedirectHint(path: "/Users/tpae/Documents/x")
-            #expect(hint?.contains("macOS host path") == true)
+            #expect(hint?.contains("host path outside the sandbox") == true)
         }
     }
 
     @Test func broadMacPathRedirectsWithoutScope() {
         let hint = hostPathRedirectHint(path: "/Users/tpae/Desktop")
-        #expect(hint?.contains("macOS host path") == true)
+        #expect(hint?.contains("host path outside the sandbox") == true)
         #expect(hint?.contains("file_read") == true)
     }
 

@@ -581,6 +581,12 @@ public final class AgentManager: ObservableObject {
         // doesn't accumulate one VecturaKit instance per deleted agent.
         await MemorySearchService.shared.evictAgent(agentId: id.uuidString)
 
+        // Wipe the agent's native browser profile (cookies / sign-ins /
+        // history) and drop its session-catalog record. Without this a
+        // deleted agent's authenticated WebKit store would sit on disk
+        // forever with nothing left that can open — or reset — it.
+        await BrowserSessionManager.shared.resetSession(for: id)
+
         // Notify remaining subscribers. Plugin webhook deregistration
         // already happened synchronously above; PluginManager's own
         // `.agentRemoved` handler only performs an idempotent repeat
@@ -834,7 +840,11 @@ extension AgentManager {
                 webSearchEnabled: true,
                 selfSchedulingEnabled: false,
                 computerUseEnabled: false,
-                screenContextEnabled: false
+                screenContextEnabled: false,
+                // Like Computer Use, Browser Use is a custom-agent capability:
+                // the Default agent is locked to its fixed baseline and never
+                // gets browser access.
+                browserUseEnabled: false
             )
         }
 
@@ -853,6 +863,7 @@ extension AgentManager {
             // screen-context flag AND Computer Use itself must be on.
             screenContextEnabled: agent.settings.computerUseEnabled
                 && agent.settings.screenContextEnabled,
+            browserUseEnabled: agent.settings.browserUseEnabled,
             spawnDelegationEnabled: agent.settings.spawnDelegationEnabled,
             imageEnabled: agent.settings.imageEnabled,
             appleScriptEnabled: agent.settings.appleScriptEnabled,

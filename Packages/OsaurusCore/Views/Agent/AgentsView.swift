@@ -972,7 +972,7 @@ private enum DetailTab: String, CaseIterable {
         case .network: return L("Bonjour discovery and relay tunnel.")
         case .connections:
             return L("Peers granted access to this agent — usage and revocation.")
-        case .sandbox: return L("Container-based code execution.")
+        case .sandbox: return L("Sandboxed code execution.")
         case .automation: return L("Schedules and file watchers for autonomous behavior.")
         case .memory: return L("Conversation history, pinned facts, and episode summaries.")
         case .database:
@@ -1154,6 +1154,7 @@ struct AgentDetailView: View {
     /// Convenience reads over `subagentToggles` so the save path and the
     /// inline config rows keep their existing call sites.
     private var computerUseEnabled: Bool { subagentToggles[.computerUse] ?? false }
+    private var browserUseEnabled: Bool { subagentToggles[.browserUse] ?? false }
     private var spawnDelegationEnabled: Bool { subagentToggles[.spawn] ?? false }
     private var imageEnabled: Bool { subagentToggles[.image] ?? false }
     private var appleScriptEnabled: Bool { subagentToggles[.appleScript] ?? false }
@@ -3563,6 +3564,13 @@ struct AgentDetailView: View {
                     subtitle:
                         "Let the agent automate this Mac by writing and running AppleScript with an on-device model. Each script is shown for your approval or auto-run with a warning, per the mode below."
                 )
+            case .browserUse:
+                return PerAgentFeature(
+                    flag: .browserUse,
+                    title: "Browser Use",
+                    subtitle:
+                        "Let the agent browse the web in its own persistent browser session — sign-ins stick around between chats. Reads and navigation run automatically; typing and anything consequential pause for your approval."
+                )
             }
         }
     }
@@ -3827,6 +3835,14 @@ struct AgentDetailView: View {
             subagentFootnote(
                 "AppleScript runs on this Mac. The first time the agent controls an app, macOS asks you to allow Automation for Osaurus. Download AppleScript models in Settings → Computer Use → Models."
             )
+        case .browserUse:
+            // The model-override row is rendered generically above (registry
+            // `supportsModelOverride`). Approval behavior follows the shared
+            // Autonomy policy (same read/navigate/edit/consequential gate as
+            // Computer Use), so there is no per-agent permission row here.
+            subagentFootnote(
+                "This agent gets its own isolated browser profile. View sessions and sign-in status in Settings → Browser."
+            )
         }
     }
 
@@ -3860,8 +3876,9 @@ struct AgentDetailView: View {
     }
 
     /// AppleScript model picker for the AppleScript card. `nil` (Choose
-    /// automatically) resolves to the first installed catalog model at run time;
-    /// a stored id no longer on disk shows an "(unavailable)" row.
+    /// automatically) inherits the global Computer Use AppleScript model, then
+    /// falls back to the first installed catalog model when no global model is
+    /// configured. A stored id no longer on disk shows an "(unavailable)" row.
     private var appleScriptModelPickerRow: some View {
         VStack(alignment: .leading, spacing: 8) {
             AgentSheetSectionLabel("Model")
@@ -5265,7 +5282,7 @@ struct AgentDetailView: View {
                         icon: "shippingbox",
                         title: "Sandbox unavailable",
                         hint:
-                            "Container-based execution requires macOS 26 or later. Native plugins continue to work normally on this device."
+                            "Sandboxed execution is unavailable on this device. Native plugins continue to work normally."
                     )
                 } else if !sandboxRunning {
                     workspaceFolderRow
@@ -5273,7 +5290,7 @@ struct AgentDetailView: View {
                         icon: "shippingbox",
                         title: "Sandbox not running",
                         hint:
-                            "Start the sandbox container from the Sandbox status bar, then enable autonomous execution and plugin creation in the Execution section above."
+                            "Start the sandbox from the Sandbox status bar, then enable autonomous execution and plugin creation in the Execution section above."
                     )
                     secretsSubsection
                 } else {
@@ -5477,7 +5494,21 @@ struct AgentDetailView: View {
             }
 
             if execConfig?.sandboxNetworkEnabled ?? true {
-                sandboxAllowedDomainsField(execConfig: execConfig, interactive: interactive)
+                // The filtering egress proxy is a vmnet construct — on the
+                // Seatbelt backend a domain allowlist would fail closed to
+                // NO network, so don't offer the field there.
+                if SandboxBackend.current == .virtualMachine {
+                    sandboxAllowedDomainsField(execConfig: execConfig, interactive: interactive)
+                } else {
+                    Text(
+                        "Per-domain network allowlists require the VM sandbox (macOS 26 or later). On this device sandbox network access is all-or-nothing — use the Sandbox Network toggle above.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 2)
+                }
             }
 
             featureCard(
@@ -5525,10 +5556,10 @@ struct AgentDetailView: View {
 
         sandboxExecToggles(execConfig: execConfig, interactive: sandboxRunning)
         if !sandboxAvailable {
-            sandboxFeatureHint("Container-based execution requires macOS 26 or later.")
+            sandboxFeatureHint("Sandboxed execution is unavailable on this device.")
         } else if !sandboxRunning {
             sandboxFeatureHint(
-                "Start the sandbox container from the Sandbox status bar to enable these."
+                "Start the sandbox from the Sandbox status bar to enable these."
             )
         }
     }
@@ -6684,6 +6715,7 @@ struct AgentDetailView: View {
                 computerUseEnabled: computerUseEnabled,
                 computerUseCeiling: computerUseEnabled ? computerUseCeiling : nil,
                 screenContextEnabled: screenContextEnabled,
+                browserUseEnabled: browserUseEnabled,
                 spawnDelegationEnabled: spawnDelegationEnabled,
                 imageEnabled: imageEnabled,
                 // AppleScript enable + model + execution mode, declared right

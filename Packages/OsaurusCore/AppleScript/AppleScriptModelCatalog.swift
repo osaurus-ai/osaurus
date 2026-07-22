@@ -75,6 +75,10 @@ enum AppleScriptModelCatalog {
     /// AppleScript, so they aren't useful as a chat model).
     static let repoIdPrefix = "OsaurusAI/Osaurus-AppleScript-"
 
+    /// Upstream publisher prefix used by the original dedicated AppleScript
+    /// task-model bundles that users may register through External Models.
+    static let upstreamRepoIdPrefix = "JANGQ-AI/AppleScript-"
+
     /// The flagship curated AppleScript model: a Gemma-4 16B-A4B MoE build (~12 GB).
     static let model16BId = "OsaurusAI/Osaurus-AppleScript-16B-A4B-JANG_4M"
 
@@ -111,11 +115,14 @@ enum AppleScriptModelCatalog {
         ),
     ]
 
-    /// Whether a repo id is one of the curated AppleScript models. Matches the
-    /// shared prefix case-insensitively so a canonical or differently-cased id
-    /// still resolves.
+    /// Whether a repo id is an AppleScript-only task model. The current curated
+    /// repos use `OsaurusAI/Osaurus-AppleScript-*`; earlier/upstream JANGQ bundles
+    /// use `JANGQ-AI/AppleScript-*`. Both are dedicated automation models that
+    /// emit scripts rather than normal chat replies, so both must be excluded
+    /// from the chat picker and made available to the dedicated selector.
     static func isAppleScriptModel(id: String) -> Bool {
         id.range(of: repoIdPrefix, options: [.caseInsensitive, .anchored]) != nil
+            || id.range(of: upstreamRepoIdPrefix, options: [.caseInsensitive, .anchored]) != nil
     }
 
     /// Whether a catalog/ad-hoc AppleScript bundle is available either in the
@@ -141,34 +148,45 @@ enum AppleScriptModelCatalog {
     }
 
     /// The catalog entries that are installed on disk, including bundles the
-    /// user registered in Settings -> Storage -> External Models.
+    /// user placed in the primary Models Directory or registered in Settings
+    /// -> Storage -> External Models. Use the shared non-blocking local-model
+    /// snapshot so this selector sees the same merged inventory as the normal
+    /// model picker without ever starting a synchronous disk scan on the main
+    /// thread.
     static func installedModels() -> [MLXModel] {
-        models.filter(isInstalled)
+        let curated = models.filter(isInstalled)
+        let curatedIds = Set(curated.map { $0.id.lowercased() })
+        let discovered = ModelManager.localModelsSnapshotNonBlocking()
+            .filter { isAppleScriptModel(id: $0.id) }
+            .filter { !curatedIds.contains($0.id.lowercased()) }
+            .sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
+        return curated + discovered
     }
 
-    /// Whether ANY curated AppleScript model is installed. Cheap enough for the
-    /// system-prompt compose hot path (each `isDownloaded` reads the warmed
-    /// `MLXModelDownloadCache`, invalidated on `.localModelsChanged`).
+    /// Whether any curated or externally registered dedicated AppleScript
+    /// model is installed.
     static var hasInstalledModel: Bool {
-        models.contains(where: isInstalled)
+        !installedModels().isEmpty
     }
 
     /// Resolve the model id the AppleScript subagent should load: the
     /// `preferred` id when it is an installed AppleScript bundle (curated, or
-    /// any `OsaurusAI/Osaurus-AppleScript-*` repo the user has on disk — an
-    /// explicit preference for a non-catalog build is honored);
+    /// any recognized OsaurusAI/JANGQ AppleScript repo the user has on disk —
+    /// an explicit preference for a non-catalog build is honored);
     /// otherwise the first installed catalog model; otherwise `nil` (none
     /// installed → the kind denies before any load). Trimmed so a blank
     /// preference is ignored.
     static func resolveInstalledModelId(preferred: String?) -> String? {
         let trimmed = preferred?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let trimmed, !trimmed.isEmpty {
-            if let match = models.first(where: { $0.id == trimmed }), isInstalled(match) {
+            if let match = installedModels().first(where: {
+                $0.id.caseInsensitiveCompare(trimmed) == .orderedSame
+            }) {
                 return match.id
             }
-            // A non-catalog AppleScript bundle (matching the curated repo-id
-            // prefix) that is installed on disk also resolves — but only via
-            // an explicit preference, never as the implicit default.
+            // A non-catalog AppleScript bundle (matching the dedicated bundle
+            // naming contract) that is installed on disk also resolves — but
+            // only via an explicit preference, never as the implicit default.
             if isAppleScriptModel(id: trimmed) {
                 let adHoc = MLXModel(
                     id: trimmed,
@@ -179,6 +197,9 @@ enum AppleScriptModelCatalog {
                 if isInstalled(adHoc) { return trimmed }
             }
         }
-        return installedModels().first?.id
+        // Automatic selection remains curated-only. Upstream/ad-hoc bundles
+        // are available in the visible picker but are never silently selected
+        // just because they happen to exist in an external folder.
+        return models.first(where: isInstalled)?.id
     }
 }

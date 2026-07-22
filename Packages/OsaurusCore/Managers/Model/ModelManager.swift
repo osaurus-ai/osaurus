@@ -1361,8 +1361,45 @@ extension ModelManager {
     /// must use this: with a cold cache `discoverLocalModels()` parks on the
     /// scan condition (up to ~10s) and beachballs the main thread.
     nonisolated static func findInstalledMLXModelFromCache(named name: String) -> MLXModel? {
-        matchInstalledMLXModel(named: name, in: localModelsSnapshotNonBlocking())
+        let key = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !key.isEmpty else { return nil }
+
+        // This runs from view bodies on every 2s memory tick (RAM-feasibility
+        // refresh). Rebuilding the merged model list and re-splitting every id
+        // per call is wasted main-thread work — and under memory pressure it
+        // shows up in hang reports. Memoize per name, invalidated when either
+        // the local scan cache or the external registry changes.
+        localModelsCacheCondition.lock()
+        let localGen = localModelsCacheGen
+        localModelsCacheCondition.unlock()
+        let externalGen = ExternalModelLocator.registryGeneration()
+
+        matchMemoLock.lock()
+        if matchMemoLocalGen == localGen, matchMemoExternalGen == externalGen,
+            let hit = matchMemo[key]
+        {
+            matchMemoLock.unlock()
+            return hit
+        }
+        matchMemoLock.unlock()
+
+        let result = matchInstalledMLXModel(named: name, in: localModelsSnapshotNonBlocking())
+
+        matchMemoLock.lock()
+        if matchMemoLocalGen != localGen || matchMemoExternalGen != externalGen {
+            matchMemo.removeAll(keepingCapacity: true)
+            matchMemoLocalGen = localGen
+            matchMemoExternalGen = externalGen
+        }
+        matchMemo[key] = result
+        matchMemoLock.unlock()
+        return result
     }
+
+    private static nonisolated let matchMemoLock = NSLock()
+    private static nonisolated(unsafe) var matchMemo: [String: MLXModel?] = [:]
+    private static nonisolated(unsafe) var matchMemoLocalGen: UInt64 = .max
+    private static nonisolated(unsafe) var matchMemoExternalGen: UInt64 = .max
 
     private nonisolated static func matchInstalledMLXModel(
         named name: String,
@@ -1391,6 +1428,19 @@ extension ModelManager {
     /// externally-discovered and symlinked bundles keep their real path.
     nonisolated static func findInstalledModel(named name: String) -> (name: String, id: String)? {
         guard let match = findInstalledMLXModel(named: name) else { return nil }
+        let repo =
+            match.id.split(separator: "/").last.map(String.init)?.lowercased()
+            ?? name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return (repo, match.id)
+    }
+
+    /// Cache-only variant of `findInstalledModel(named:)` for main-thread /
+    /// view-body callers: never waits on the disk scan (returns nil misses
+    /// until it lands).
+    nonisolated static func findInstalledModelFromCache(named name: String) -> (
+        name: String, id: String
+    )? {
+        guard let match = findInstalledMLXModelFromCache(named: name) else { return nil }
         let repo =
             match.id.split(separator: "/").last.map(String.init)?.lowercased()
             ?? name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -1751,6 +1801,10 @@ extension ModelManager {
     // MARK: - Local Models Cache (in-memory, cleared on app restart)
     private static nonisolated let localModelsCacheCondition = NSCondition()
     private static nonisolated(unsafe) var cachedLocalModels: [MLXModel]?
+    /// Bumped whenever `cachedLocalModels` changes (invalidate or scan
+    /// landing). Combined with `ExternalModelLocator.registryGeneration()`
+    /// this versions the full merged model list for read-side memo caches.
+    private static nonisolated(unsafe) var localModelsCacheGen: UInt64 = 0
     private static nonisolated(unsafe) var localModelsScanInFlight = false
     private static nonisolated let localModelsScanWaitLimit: TimeInterval = 10
     private static nonisolated(unsafe) var lastLocalModelsScanDiagnostic: [String: Any]?
@@ -1761,6 +1815,7 @@ extension ModelManager {
         localModelsCacheCondition.lock()
         cachedLocalModels = nil
         localModelsScanInFlight = false
+        localModelsCacheGen &+= 1
         localModelsCacheCondition.broadcast()
         localModelsCacheCondition.unlock()
         LocalReasoningCapability.invalidate()
@@ -1839,6 +1894,15 @@ extension ModelManager {
         }
     }
 
+    /// True once the background disk scan has populated the local-models
+    /// cache. Lets memoizing callers distinguish "model not installed" from
+    /// "scan hasn't landed yet" when using the non-blocking lookups.
+    nonisolated static var isLocalModelsCacheWarm: Bool {
+        localModelsCacheCondition.lock()
+        defer { localModelsCacheCondition.unlock() }
+        return cachedLocalModels != nil
+    }
+
     /// Local models from the warm cache, never waiting on a scan. On a cold
     /// cache this kicks off the background scan and returns the (possibly
     /// empty) current state immediately — callers re-render once the scan
@@ -1864,6 +1928,7 @@ extension ModelManager {
             localModelsCacheCondition.lock()
             cachedLocalModels = scanned
             localModelsScanInFlight = false
+            localModelsCacheGen &+= 1
             localModelsCacheCondition.broadcast()
             localModelsCacheCondition.unlock()
         }

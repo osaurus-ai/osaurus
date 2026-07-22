@@ -3,10 +3,9 @@
   "domain": "capability_claims",
   "label": "capability claims • confirm an enabled-but-unloaded tool",
   "query": "Do you have a tool that can open and navigate web pages?",
-  "notes": "The browser tools are enabled for the agent but only the hot set is loaded into the schema, so on a capability question the browser tools may not be present. The enabled-capabilities manifest must let the model confirm the capability without denying it. Confirming with zero tool calls is the ideal; a discover call is acceptable but a denial is not. Requires osaurus.browser installed.",
+  "notes": "The native browser_use tool is enabled for the agent but only the hot set is loaded into the schema, so on a capability question the browser tool may not be present. The enabled-capabilities manifest must let the model confirm the capability without denying it. Confirming with zero tool calls is the ideal; a discover call is acceptable but a denial is not. Uses the built-in browser_use tool (the osaurus.browser plugin is superseded).",
   "fixtures": {
-    "requirePlugins": ["osaurus.browser"],
-    "enableTools": ["browser_navigate"]
+    "enableTools": ["browser_use"]
   },
   "expect": {
     "capabilityClaims": {
@@ -14,7 +13,7 @@
         "Confirms that it has a tool or capability for opening / navigating web pages.",
         "Does not claim it lacks any web-browsing capability."
       ],
-      "mustNotCallTools": ["browser_navigate"],
+      "mustNotCallTools": ["browser_use"],
       "maxIterations": 4
     }
   }

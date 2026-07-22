@@ -74,10 +74,15 @@ let package = Package(
         // enables safe image/audio hybrid-prefix restore. The paged-cache
         // follow-up separates typed-disk persistence from paged compatibility,
         // restores recurrent companions at the exact matched boundary, and
-        // keeps every unproven cache topology fail-closed.
+        // keeps every unproven cache topology fail-closed. PR #171 persists
+        // stable system/tool warm-up boundaries in SSD L2 and excludes unsafe
+        // exact hybrid/GDN candidates while preserving their matched recurrent
+        // companion state. The Laguna S 2.1 revision adds the released
+        // full-KV + rotating-SWA runtime contract, safe fresh-session SSD
+        // seeds, growing partial-leaf reuse, and complete TQ window restore.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "3852026f9fe052abe9e158ae915fa8ad3d7577c6"
+            revision: "a3b047e05871e1271fc86d2ef0ab2f8270aa832f"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

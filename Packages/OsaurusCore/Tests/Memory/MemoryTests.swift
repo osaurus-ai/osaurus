@@ -607,6 +607,43 @@ struct MemoryRelevanceGateTests {
         #expect(verdict == .transcript)
     }
 
+    @Test func exactOutputDirectiveDoesNotInjectTranscript() {
+        for query in [
+            "Reply exactly DELTA-OK.",
+            "Use the get_current_time tool exactly once, then reply exactly DONE.",
+            "Repeat this verbatim: CURRENT-TASK.",
+            "Copy the supplied paragraph word for word.",
+            "Use the exact words ALPHA-OK.",
+        ] {
+            let verdict = MemoryRelevanceGate.decide(
+                query: query,
+                identity: nil,
+                knownEntities: [],
+                mode: .heuristic
+            )
+            #expect(verdict == .none)
+        }
+    }
+
+    @Test func exactlyWithExplicitPriorWordsReturnsTranscript() {
+        for query in [
+            "What were my exact words about the deploy?",
+            "Exact words ultramarine prism-441",
+            "What exact words did I type for the memory fixture?",
+            "What exactly did I say about the deployment?",
+            "What did I write exactly?",
+            "Repeat back what I typed.",
+        ] {
+            let verdict = MemoryRelevanceGate.decide(
+                query: query,
+                identity: nil,
+                knownEntities: [],
+                mode: .heuristic
+            )
+            #expect(verdict == .transcript)
+        }
+    }
+
     @Test func unrelatedQueryReturnsNone() {
         let verdict = MemoryRelevanceGate.decide(
             query: "What's 2 + 2?",

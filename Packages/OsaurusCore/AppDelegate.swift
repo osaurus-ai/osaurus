@@ -372,6 +372,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 // of osaurus.search plugin keys runs at launch, not lazily on
                 // the first web_search call / Settings visit.
                 _ = SearchProviderManager.shared
+                // Same for the superseded osaurus.browser plugin: copy each
+                // agent's exact WebKit profile UUID into the native session
+                // catalog so existing sign-ins carry over to Browser Use.
+                BrowserPluginMigration.migrateIfNeeded()
             }
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
@@ -681,6 +685,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         if !keychainDisabledTestMode {
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(5))
+                // Sparkle's first XPC/installer-status setup runs on the main
+                // thread and has hung for seconds on memory-starved machines.
+                // Wait out resource pressure before arming the check cycle.
+                while Self.isUnderResourcePressure {
+                    try? await Task.sleep(for: .seconds(30))
+                }
                 self?.updater.checkForUpdatesInBackground()
             }
         }
@@ -1326,6 +1336,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         PluginRepositoryService.shared.stopBackgroundRefresh()
         ToastWindowController.shared.teardown()
         NotchWindowController.shared.teardown()
+        // Detach live browser WebViews and close their windows so WebKit's
+        // networking XPC processes wind down before `_exit` (stored profiles
+        // and the session catalog survive for the next run).
+        BrowserSessionManager.shared.shutdownAll()
         SharedConfigurationService.shared.remove()
         SharedConfigurationService.shared.flushPendingWork()
         // `applicationWillTerminate` is sync and the process exits as
@@ -1531,7 +1545,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // Keep plugin and repository work off the initial bind path;
             // crashes here are handled by the plugin loading marker.
             Task { @MainActor in
-                await PluginManager.shared.loadAll()
+                await PluginManager.shared.ensurePromptCatalogReady()
             }
             PluginRepositoryService.shared.startBackgroundRefresh()
         }

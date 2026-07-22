@@ -318,6 +318,72 @@ struct AgentToolLoopTests {
         #expect(surface.batchOutcomes[1].first?.wasDeduped == true)
     }
 
+    /// Issue #2098: a `file_read` whose rendered output was cut by the
+    /// character cap carries `next_start_line`/`next_end_line`; the loop
+    /// must stage a continuation notice for the NEXT model step naming the
+    /// exact path and resume range, so the model reads the rest instead of
+    /// reviewing the visible prefix as the whole file.
+    @Test func partialFileReadStagesContinuationNoticeForNextStep() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("file_read", #"{"path":"BeatStrip.ino"}"#)]),
+            .finalResponse,
+        ])
+        surface.toolResults["file_read"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(
+                tool: "file_read",
+                result: [
+                    "kind": "file",
+                    "text": "Lines 1-426 of 499:\n...",
+                    "path": "BeatStrip.ino",
+                    "truncated": true,
+                    "next_start_line": 427,
+                    "next_end_line": 499,
+                ]
+            )
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+        #expect(result.exit == .finalResponse)
+        #expect(surface.builtNotices.count == 2)
+        let notice = try #require(surface.builtNotices[1].first)
+        #expect(notice.hasPrefix("[System Notice] "))
+        #expect(notice.contains("BeatStrip.ino"))
+        #expect(notice.contains(#""start_line": 427"#))
+        #expect(notice.contains(#""end_line": 499"#))
+    }
+
+    /// A COMPLETE file read must not stage any continuation notice — the
+    /// steer is reserved for reads observed truncated by the output cap.
+    @Test func completeFileReadStagesNoContinuationNotice() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("file_read", #"{"path":"small.txt"}"#)]),
+            .finalResponse,
+        ])
+        surface.toolResults["file_read"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(
+                tool: "file_read",
+                result: [
+                    "kind": "file",
+                    "text": "     1|hello\n",
+                    "path": "small.txt",
+                    "truncated": false,
+                ]
+            )
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+        #expect(result.exit == .finalResponse)
+        #expect(surface.builtNotices == [[], []])
+    }
+
     @Test func dedupeNoticeSuppressedForHeadlessPolicy() async throws {
         let args = #"{"path":"notes.txt"}"#
         let envelope = ToolEnvelope.success(

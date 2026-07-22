@@ -19,7 +19,7 @@ import Foundation
 import Darwin
 
 enum LocalReasoningCapability {
-    struct Capability: Sendable {
+    struct Capability: Sendable, Equatable {
         /// Template references `<think>` or `</think>` tags.
         let supportsThinking: Bool
         /// Template reads an `enable_thinking` kwarg.
@@ -63,6 +63,14 @@ enum LocalReasoningCapability {
         lock.unlock()
 
         let detected = detect(modelId: modelId)
+
+        // A main-thread lookup during the launch scan can miss purely
+        // because the local-models cache is still cold (see
+        // `localDirectory(forModelId:)`). Don't memoize that provisional
+        // miss — the next lookup after the scan lands gets the real answer.
+        if detected == .none, !ModelManager.isLocalModelsCacheWarm {
+            return detected
+        }
 
         lock.lock()
         cache[key] = detected
@@ -183,10 +191,21 @@ enum LocalReasoningCapability {
         // `ORG/REPO` id, case-insensitive. Re-implementing the match here was
         // silently returning nil whenever the caller passed a form neither of
         // our candidate heuristics covered.
-        guard let found = ModelManager.findInstalledMLXModel(named: modelId) else {
-            return nil
-        }
-        return found.localDirectory
+        //
+        // On the main thread use the cache-only lookup: this is reached from
+        // SwiftUI body evaluation (FloatingInputCard's reasoning suffix), and
+        // the blocking variant parks on the cold-cache scan condition for up
+        // to ~10s at launch. Off-main (server/generation paths) keep the
+        // blocking lookup so capability detection stays authoritative.
+        // Under tests everything runs on the main thread and suites expect
+        // the blocking lookup's synchronous answer, so the shortcut is
+        // production-only.
+        let cacheOnly = Thread.isMainThread && !RuntimeEnvironment.isUnderTests
+        let found =
+            cacheOnly
+            ? ModelManager.findInstalledMLXModelFromCache(named: modelId)
+            : ModelManager.findInstalledMLXModel(named: modelId)
+        return found?.localDirectory
     }
 
     /// Read `jang_config.json > chat > reasoning` and surface it as a

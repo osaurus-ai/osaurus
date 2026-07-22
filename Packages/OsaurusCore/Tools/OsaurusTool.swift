@@ -50,6 +50,11 @@ protocol OsaurusTool: Sendable {
     /// "Changes" list. Mutually exclusive with `mutatesSandboxWorkspace`.
     /// Default `false`.
     var mutatesHostFolder: Bool { get }
+
+    /// Optional, tool-owned repair for a narrowly documented model-output
+    /// shape before the shared schema validator runs. The default is identity;
+    /// tools must not use this to weaken their schema generally.
+    func normalizeArgumentsBeforeValidation(_ argumentsJSON: String) -> String
 }
 
 extension OsaurusTool {
@@ -64,6 +69,11 @@ extension OsaurusTool {
     /// Default: tools do not mutate the selected host folder. Folder
     /// write/edit/shell/undo tools override to `true`.
     var mutatesHostFolder: Bool { false }
+
+    /// Default: preserve the model/client payload byte-for-byte.
+    func normalizeArgumentsBeforeValidation(_ argumentsJSON: String) -> String {
+        argumentsJSON
+    }
 
     /// Build OpenAI-compatible Tool specification
     func asOpenAITool() -> Tool {

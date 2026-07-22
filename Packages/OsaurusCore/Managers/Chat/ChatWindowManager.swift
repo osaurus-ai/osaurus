@@ -477,7 +477,9 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         return Set(
             (windowSessions + detachedSessions).compactMap { session in
                 guard let model = session.selectedModel,
-                    let found = ModelManager.findInstalledModel(named: model)
+                    // Cache-only: runs on the main actor; a cold-cache miss
+                    // just means the model can't be resident yet anyway.
+                    let found = ModelManager.findInstalledModelFromCache(named: model)
                 else { return nil }
                 return found.name
             }

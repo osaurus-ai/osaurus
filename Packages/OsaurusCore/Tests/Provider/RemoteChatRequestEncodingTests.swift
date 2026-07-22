@@ -249,6 +249,43 @@ struct RemoteChatRequestEncodingTests {
         )
     }
 
+    @Test func anthropicImplicitMaxTokens_forwardsResolvedChatBudget() {
+        let params = GenerationParameters(
+            temperature: nil,
+            maxTokens: 16_384,
+            maxTokensExplicit: false
+        )
+
+        #expect(
+            RemoteProviderService.remoteChatMaxTokens(
+                providerType: .anthropic,
+                parameters: params
+            ) == 16_384
+        )
+    }
+
+    @Test func anthropicStreamingToolsEnableEagerInputStreaming() throws {
+        let streaming = Self.makeRequest(
+            model: "claude-fable-5",
+            maxTokens: 16_384,
+            tools: [Self.weatherTool],
+            stream: true
+        ).toAnthropicRequest()
+        let buffered = Self.makeRequest(
+            model: "claude-fable-5",
+            maxTokens: 16_384,
+            tools: [Self.weatherTool],
+            stream: false
+        ).toAnthropicRequest()
+        let streamingWire = try Self.encodeAsDictionary(streaming)
+        let wireTools = try #require(streamingWire["tools"] as? [[String: Any]])
+
+        #expect(streaming.max_tokens == 16_384)
+        #expect(streaming.tools?.first?.eager_input_streaming == true)
+        #expect(wireTools.first?["eager_input_streaming"] as? Bool == true)
+        #expect(buffered.tools?.first?.eager_input_streaming == nil)
+    }
+
     @Test func openResponsesRequest_defaultSingleUserMessage_usesTextShorthand() throws {
         let request = Self.makeRequest(model: "gpt-5.2", maxTokens: 1024)
         let responsesRequest = request.toOpenResponsesRequest()
@@ -3040,14 +3077,15 @@ struct RemoteChatRequestEncodingTests {
         reasoningEffort: String? = nil,
         tools: [Tool]? = nil,
         thinking: ThinkingConfig? = nil,
-        messages: [ChatMessage] = [ChatMessage(role: "user", content: "hi")]
+        messages: [ChatMessage] = [ChatMessage(role: "user", content: "hi")],
+        stream: Bool = false
     ) -> RemoteChatRequest {
         RemoteChatRequest(
             model: model,
             messages: messages,
             temperature: 0.7,
             max_completion_tokens: maxTokens,
-            stream: false,
+            stream: stream,
             top_p: nil,
             frequency_penalty: nil,
             presence_penalty: nil,
@@ -3155,6 +3193,14 @@ struct RemoteChatRequestEncodingTests {
     )
 
     private static func encodeAsDictionary(_ request: RemoteChatRequest) throws -> [String: Any] {
+        let data = try JSONEncoder().encode(request)
+        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw DecodeAsDictionaryError.notAnObject
+        }
+        return obj
+    }
+
+    private static func encodeAsDictionary(_ request: AnthropicMessagesRequest) throws -> [String: Any] {
         let data = try JSONEncoder().encode(request)
         guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw DecodeAsDictionaryError.notAnObject

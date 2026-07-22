@@ -402,6 +402,15 @@ struct CustomizableTheme: ThemeProtocol {
     let fontScale: Double
 
     init(config: CustomTheme, fontScale: Double = ThemeManager.fontScale) {
+        // Substituting here covers every construction site (startup,
+        // appearance resolution, custom apply, per-agent chat themes,
+        // font-scale rebuilds) without touching them individually.
+        var config = config
+        if config.followsSystemAccent,
+            let accentHex = SystemAccentColor.currentAccentHex(isDark: config.isDark)
+        {
+            config.colors = config.colors.applyingAccent(accentHex, isDark: config.isDark)
+        }
         self.config = config
         self.fontScale = fontScale
     }
@@ -673,6 +682,23 @@ public class ThemeManager: ObservableObject {
             object: nil
         )
 
+        // Observe system accent color changes so themes that opt in via
+        // `followsSystemAccent` re-derive their palette live. AppKit posts
+        // the in-process notification when system colors change; the
+        // distributed one covers accent changes made in System Settings.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(systemAccentColorChanged),
+            name: NSColor.systemColorsDidChangeNotification,
+            object: nil
+        )
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(systemAccentColorChanged),
+            name: Notification.Name("AppleColorPreferencesChangedNotification"),
+            object: nil
+        )
+
         // Defer the heavy disk work (built-in install + full theme decode)
         // off the *synchronous* launch-critical path. `ThemeConfigurationStore`
         // is `@MainActor` (it guards a static install-cache + UserDefaults), so
@@ -902,6 +928,28 @@ public class ThemeManager: ObservableObject {
         guard appearanceMode == .system, activeCustomTheme == nil else { return }
 
         applyResolvedTheme(for: .system, animated: true)
+        NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
+    }
+
+    @objc private func systemAccentColorChanged() {
+        // Delivered on an arbitrary thread (see `systemAppearanceChanged`);
+        // hop to the main actor before touching @Published theme state.
+        Task { @MainActor [weak self] in
+            self?.applySystemAccentChange()
+        }
+    }
+
+    private func applySystemAccentChange() {
+        if let custom = activeCustomTheme {
+            // Rebuilding `CustomizableTheme` re-runs the accent substitution;
+            // static themes have nothing to re-derive.
+            guard custom.followsSystemAccent else { return }
+            applyCustomTheme(custom, persist: false)
+            return
+        }
+
+        applyResolvedTheme(for: appearanceMode, animated: true)
+        // Notify so per-agent chat windows rebuild their themes too.
         NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
 

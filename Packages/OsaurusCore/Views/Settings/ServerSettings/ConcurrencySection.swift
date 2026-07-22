@@ -108,6 +108,13 @@ struct ConcurrencySection: View {
         let trimmed = maxConcurrentText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let parsed = Int(trimmed), parsed > 0 else { return }
         let clamped = min(parsed, 32)
+
+        // `nil` is the persisted engine-default state and resolves to one
+        // session in this control. Merely materializing the lazily-rendered
+        // section must not turn that equivalent display value into an edit.
+        guard draft.concurrency.maxConcurrentSequences != nil || clamped != 1 else {
+            return
+        }
         if draft.concurrency.maxConcurrentSequences != clamped {
             draft.concurrency.maxConcurrentSequences = clamped
         }

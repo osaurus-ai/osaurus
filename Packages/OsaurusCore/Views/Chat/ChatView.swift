@@ -308,6 +308,9 @@ final class ChatSession: ObservableObject {
     /// Mirrors `ChatSessionData.archived`. Required here so `toSessionData()`
     /// round-trips the flag instead of stamping `false` on every save.
     var archived: Bool = false
+    /// Mirrors `ChatSessionData.pinned`, for the same round-trip reason as
+    /// `archived`.
+    var pinned: Bool = false
 
     /// Tracks if session has unsaved content changes
     private var isDirty: Bool = false
@@ -1258,7 +1261,9 @@ final class ChatSession: ObservableObject {
     /// `pickerItems` being populated.
     var selectedModelIsLocal: Bool {
         guard let model = selectedModel else { return false }
-        return ModelManager.findInstalledModel(named: model) != nil
+        // Cache-only: this getter runs in main-actor/view contexts where the
+        // blocking lookup can park on the cold-cache disk scan for seconds.
+        return ModelManager.findInstalledModelFromCache(named: model) != nil
     }
 
     /// True while this session is streaming a reply from a local model.
@@ -1541,6 +1546,15 @@ final class ChatSession: ObservableObject {
         let preview = composePreview()
         cachedPreviewContext = preview
         return preview
+    }
+
+    /// Whether the next local UI send exposes at least one tool and will
+    /// therefore carry the same agent/tool marker consumed by
+    /// `ChatEngine.prepareDispatch`. The composer uses this exact preview
+    /// surface to present the untouched Thinking default truthfully.
+    var appliesAgentReasoningDefault: Bool {
+        guard !isRemoteAgentTarget else { return false }
+        return previewContext()?.tools.isEmpty == false
     }
 
     /// Compose a fresh welcome/pre-send preview from the current agent /
@@ -2018,6 +2032,7 @@ final class ChatSession: ObservableObject {
         externalSessionKey = nil
         dispatchTaskId = nil
         archived = false
+        pinned = false
         isDirty = false
         // A new chat starts folder-less; the outgoing session's folder stays
         // persisted on its own row and does not leak into the fresh one.
@@ -2269,6 +2284,7 @@ final class ChatSession: ObservableObject {
             externalSessionKey: externalSessionKey,
             dispatchTaskId: dispatchTaskId,
             archived: archived,
+            pinned: pinned,
             capabilities: SessionCapability.derive(from: turnData),
             folderBookmark: folderState.persistedBookmark,
             folderPath: folderState.persistedPath
@@ -2327,6 +2343,7 @@ final class ChatSession: ObservableObject {
         externalSessionKey = data.externalSessionKey
         dispatchTaskId = data.dispatchTaskId
         archived = data.archived
+        pinned = data.pinned
 
         // Restore THIS session's persisted folder (fire-and-forget: the
         // bookmark resolve + context build happen off the main actor and
@@ -3839,7 +3856,8 @@ final class ChatSession: ObservableObject {
     /// `frozenSoul` freeze the static prompt side.
     private func freezeInjectedContextOntoLatestUserTurn(
         memorySection: String?,
-        screenContext: String?
+        screenContext: String?,
+        automationContext: String?
     ) {
         guard let turn = turns.last(where: { $0.role == .user }) else { return }
         // Regeneration re-runs an already-sent turn: keep the original
@@ -3862,7 +3880,8 @@ final class ChatSession: ObservableObject {
         guard
             let prefix = SystemPromptComposer.composeInjectedUserPrefix(
                 memorySection: memorySection,
-                screenContext: screenContext
+                screenContext: screenContext,
+                automationContext: automationContext
             )
         else { return }
         turn.injectedContextPrefix = prefix
@@ -4058,6 +4077,14 @@ final class ChatSession: ObservableObject {
         // detached task) couldn't tell what agent they belonged to.
         let turnAgentId = agentId ?? Agent.defaultId
         let imageSettings = imageComposerSettings
+        // Freeze prompt-affecting model controls at send time. Every model
+        // step in the agent loop reconstructs its request; reading the live UI
+        // dictionary inside that loop can change the prompt halfway through a
+        // run, and carrying only local-only `modelOptions` drops the explicit
+        // Thinking choice on any wire-encoded continuation.
+        let turnGenerationControls = ChatTurnGenerationControls.capture(
+            activeModelOptions: activeModelOptions
+        )
 
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -4204,6 +4231,15 @@ final class ChatSession: ObservableObject {
                         self.isScreenContextFrozen = true
                     }
 
+                    // Keep the first real send byte-identical to warmup and
+                    // restart restore: plugin tools/skills are part of the
+                    // static prompt and must come from a completed catalog
+                    // snapshot, not launch-task timing.
+                    if !isRemoteAgentTarget {
+                        await PluginManager.shared.ensurePromptCatalogReady()
+                        guard isRunActive(runId) else { return }
+                    }
+
                     let context = await SystemPromptComposer.composeChatContext(
                         agentId: effectiveAgentId,
                         executionMode: executionMode,
@@ -4296,7 +4332,7 @@ final class ChatSession: ObservableObject {
                     budgetTracker.snapshot(context: context)
                     budgetTracker.updateScreenContext(tokens: cachedScreenContextTokens)
 
-                    // Freeze this turn's memory + screen-context prefix into
+                    // Freeze this turn's memory + screen/automation-context prefix into
                     // the turn history BEFORE any messages are rendered: the
                     // injected bytes become part of the turn's permanent
                     // rendering, so turn N+1 replays turn N byte-identically
@@ -4306,10 +4342,20 @@ final class ChatSession: ObservableObject {
                     // history on the next turn, re-prefilling the last
                     // exchange every turn.) Skipped in Mode 2: requests stay
                     // bare and the remote agent applies its own context.
+                    let appleScriptWorkingContext =
+                        !isRemoteAgentTarget
+                        && toolSpecs.contains(where: {
+                            $0.function.name == AppleScriptTool.toolName
+                        })
+                        ? SystemPromptComposer.appleScriptWorkingAppContext(
+                            appName: FrontmostAppTracker.shared.lastNonSelfAppName
+                        )
+                        : nil
                     if !isRemoteAgentTarget {
                         freezeInjectedContextOntoLatestUserTurn(
                             memorySection: context.memorySection,
-                            screenContext: screenContextEnabled ? frozenScreenContext : nil
+                            screenContext: screenContextEnabled ? frozenScreenContext : nil,
+                            automationContext: appleScriptWorkingContext
                         )
                     }
 
@@ -5006,11 +5052,19 @@ final class ChatSession: ObservableObject {
                                 self.turns.last(where: { $0.role == .user })?
                                 .injectedContextPrefix
                                 .map { ContextBudgetManager.estimateTokens(for: $0) } ?? 0
+                            // The dedicated AppleScript app-name hint is part of
+                            // the conversation, not the opt-in Screen Context
+                            // budget row. Add its tokens back after excluding
+                            // the memory/screen prefix from Conversation.
+                            let automationContextTokens =
+                                appleScriptWorkingContext.map {
+                                    ContextBudgetManager.estimateTokens(for: $0)
+                                } ?? 0
                             let convTokens =
                                 msgs
                                 .filter { $0.role != "system" }
                                 .reduce(0) { $0 + ContextBudgetManager.estimateTokens(for: $1.content) }
-                                - currentInjectedTokens
+                                - max(0, currentInjectedTokens - automationContextTokens)
                             self.budgetTracker.updateConversation(
                                 tokens: max(0, convTokens),
                                 finishedOutputTurn: assistantTurn
@@ -5097,8 +5151,13 @@ final class ChatSession: ObservableObject {
                             req.remoteAgentLogModel =
                                 self.isRemoteAgentTarget
                                 ? self.windowState?.pinnedRemoteAgentEffectiveModel : nil
-                            req.modelOptions =
-                                self.activeModelOptions.isEmpty ? nil : self.activeModelOptions
+                            // Freeze agent semantics for the whole logical run.
+                            // Tool schemas stay present on ordinary iterations,
+                            // but the cap finalizer below intentionally removes
+                            // them; the explicit marker keeps both paths on the
+                            // same reasoning policy.
+                            req.isAgentRequest = !toolSpecs.isEmpty || self.isRemoteAgentTarget
+                            turnGenerationControls.apply(to: &req)
                             req.backgroundModelLoad = (self.loadIntent == .background)
                             req.ttftTrace = ttftTrace
                             // Correlate the Insights log this send produces back to the
@@ -5379,7 +5438,8 @@ final class ChatSession: ObservableObject {
                             finalReq.remoteAgentLogModel =
                                 isRemoteAgentTarget
                                 ? windowState?.pinnedRemoteAgentEffectiveModel : nil
-                            finalReq.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
+                            finalReq.isAgentRequest = !toolSpecs.isEmpty || isRemoteAgentTarget
+                            turnGenerationControls.apply(to: &finalReq)
                             finalReq.backgroundModelLoad = (loadIntent == .background)
                             finalReq.turnId = assistantTurn.id
                             // Distinct logical step (the post-cap summarizing
@@ -6061,6 +6121,15 @@ struct ChatView: View {
                                 }
                                 windowState.refreshSessions()
                             },
+                            onSetPinned: { id, pinned in
+                                ChatSessionsManager.shared.setPinned(id: id, pinned: pinned)
+                                // Keep the open view-model in sync so the
+                                // next auto-save doesn't clobber the flag.
+                                if session.sessionId == id {
+                                    session.pinned = pinned
+                                }
+                                windowState.refreshSessions()
+                            },
                             onExport: { metadata, format in
                                 ChatSessionExportCoordinator.run(
                                     metadataSession: metadata,
@@ -6146,6 +6215,7 @@ struct ChatView: View {
                                 isPrivacyReviewSheetVisible: pendingRedactionReview != nil,
                                 supportsImages: observedSession.selectedModelSupportsImages,
                                 estimatedContextTokens: observedSession.estimatedContextTokens,
+                                appliesAgentReasoningDefault: observedSession.appliesAgentReasoningDefault,
                                 contextBreakdown: observedSession.estimatedContextBreakdown,
                                 sessionSpendMicro: observedSession.sessionRouterSpendMicro,
                                 isRouterBilledSession: observedSession.isOsaurusRouterSession,

@@ -455,11 +455,14 @@ struct PluginsView: View {
         }
 
         // A superseded plugin that isn't installed has no Browse card to land
-        // on (native search replaced it) — send the deeplink to the Search
-        // settings tab instead of dead-ending.
+        // on (a native feature replaced it) — send the deeplink to the owning
+        // native settings tab instead of dead-ending.
         if PluginManager.supersededPluginIds.contains(pluginId), !plugin.isInstalled {
             managementState.pendingPluginDetailId = nil
-            AppDelegate.shared?.showManagementWindow(initialTab: .search)
+            AppDelegate.shared?.showManagementWindow(
+                initialTab: PluginManager.nativeSettingsTab(forSupersededPlugin: pluginId)
+                    ?? .plugins
+            )
             return
         }
 
@@ -1963,10 +1966,18 @@ private struct PluginDetailView: View {
         PluginManager.supersededPluginIds.contains(plugin.pluginId) && plugin.isInstalled
     }
 
-    /// Native search replaced this plugin's tools; point the user at the
-    /// Search settings tab instead of the plugin's own configuration.
+    /// A native feature replaced this plugin's tools; point the user at the
+    /// owning settings tab instead of the plugin's own configuration.
     private var supersededBanner: some View {
-        detailCard {
+        let nativeTab = PluginManager.nativeSettingsTab(forSupersededPlugin: plugin.pluginId)
+        let detail: LocalizedStringKey =
+            switch plugin.pluginId {
+            case "osaurus.browser":
+                "The browser is now a native feature. This plugin's tools and skill are no longer loaded — manage sessions in Settings → Browser. You can uninstall this plugin."
+            default:
+                "Web search is now a native feature. This plugin's tools are no longer loaded — configure providers in Settings → Search. You can uninstall this plugin."
+            }
+        return detailCard {
             HStack(spacing: 12) {
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 20))
@@ -1976,28 +1987,47 @@ private struct PluginDetailView: View {
                     Text("Built into Osaurus", bundle: .module)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(theme.primaryText)
-                    Text(
-                        "Web search is now a native feature. This plugin's tools are no longer loaded — configure providers in Settings → Search. You can uninstall this plugin.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    Text(detail, bundle: .module)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
                 }
 
                 Spacer()
 
+                if let nativeTab {
+                    Button {
+                        AppDelegate.shared?.showManagementWindow(initialTab: nativeTab)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: nativeTab.icon).font(.system(size: 10))
+                            Text("Open \(nativeTab.label) Settings", bundle: .module)
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentColor))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+
+                // One-click cleanup: routes to the same destructive-confirm
+                // alert the header trash button uses.
                 Button {
-                    AppDelegate.shared?.showManagementWindow(initialTab: .search)
+                    showDeleteConfirm = true
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "magnifyingglass").font(.system(size: 10))
-                        Text("Open Search Settings", bundle: .module)
+                        Image(systemName: "trash").font(.system(size: 10))
+                        Text("Uninstall", bundle: .module)
                             .font(.system(size: 12, weight: .semibold))
                     }
-                    .foregroundColor(.white)
+                    .foregroundColor(theme.errorColor)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentColor))
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.errorColor.opacity(0.1))
+                    )
                 }
                 .buttonStyle(PlainButtonStyle())
             }

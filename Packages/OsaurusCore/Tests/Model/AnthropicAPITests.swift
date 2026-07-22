@@ -319,6 +319,32 @@ struct AnthropicAPITests {
         #expect(delta["text"] as? String == "Hello")
     }
 
+    @Test func decodeToolUseBlockStartPreservesPopulatedInput() throws {
+        let json = """
+            {
+              "type": "content_block_start",
+              "index": 0,
+              "content_block": {
+                "type": "tool_use",
+                "id": "toolu_1",
+                "name": "file_write",
+                "input": {"path": "probe.txt", "content": "hello"}
+              }
+            }
+            """
+
+        let event = try JSONDecoder().decode(
+            ContentBlockStartEvent.self,
+            from: Data(json.utf8)
+        )
+        guard case .toolUse(let tool) = event.content_block else {
+            Issue.record("Expected tool_use content block")
+            return
+        }
+        #expect(tool.input["path"]?.value as? String == "probe.txt")
+        #expect(tool.input["content"]?.value as? String == "hello")
+    }
+
     @Test func encodeMessageDeltaEvent() throws {
         let event = MessageDeltaEvent(stopReason: "end_turn", outputTokens: 50)
 

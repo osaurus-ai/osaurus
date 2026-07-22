@@ -134,6 +134,18 @@ enum ExternalModelLocator {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var registry: [String: Discovered]?
     nonisolated(unsafe) private static var lastReport: ScanReport?
+    /// Bumped on every `registry` mutation so read-side memo caches (e.g.
+    /// `ModelManager`'s name-match memo) can invalidate without observing
+    /// notifications.
+    nonisolated(unsafe) private static var registryGen: UInt64 = 0
+
+    /// Monotonic version of the registry contents. Two equal values guarantee
+    /// `models()` would return the same set.
+    static func registryGeneration() -> UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return registryGen
+    }
 
     /// Test hook: override the scan roots so unit tests don't depend on a
     /// developer's real `~/.cache/huggingface`. When set, only these roots
@@ -199,6 +211,7 @@ enum ExternalModelLocator {
         var map = loadedLocked()
         let removed = map.removeValue(forKey: id.lowercased()) != nil
         registry = map
+        if removed { registryGen &+= 1 }
         lock.unlock()
         if removed {
             persist(map)
@@ -250,7 +263,10 @@ enum ExternalModelLocator {
             map.removeValue(forKey: key)
             removed = true
         }
-        if removed { registry = map }
+        if removed {
+            registry = map
+            registryGen &+= 1
+        }
         lock.unlock()
 
         if removed {
@@ -276,6 +292,7 @@ enum ExternalModelLocator {
         lock.lock()
         let changed = registry == nil || registry! != discovered
         registry = discovered
+        if changed { registryGen &+= 1 }
         lastReport = report
         lock.unlock()
 
@@ -801,6 +818,7 @@ enum ExternalModelLocator {
         if let registry { return registry }
         let loaded = loadFromDisk()
         registry = loaded
+        registryGen &+= 1
         return loaded
     }
 
@@ -833,6 +851,7 @@ enum ExternalModelLocator {
         lock.lock()
         registry = nil
         lastReport = nil
+        registryGen &+= 1
         lock.unlock()
     }
 }

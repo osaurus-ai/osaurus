@@ -928,6 +928,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 row["cache_enabled"] = true
                 row["is_hybrid"] = stats.isHybrid
                 row["is_paged_incompatible"] = stats.isPagedIncompatible
+                row["requires_paged_boundary_companion"] =
+                    stats.requiresPagedBoundaryCompanion
                 let turboQuantTransition = turboQuantTransitions[summary.name]
                 let effectiveCacheTopology = Self.effectiveCacheTopology(
                     baseline: summary.cacheTopology,
@@ -2901,6 +2903,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // `effectiveToolsDisabled` does not read it, so it must be folded
         // in here (the app chat path does the same via `chatCfg.disableTools`).
         let globalToolsDisabled = await MainActor.run { ChatConfigurationStore.load().disableTools }
+        await PluginManager.shared.ensurePromptCatalogReady()
         let composed = await SystemPromptComposer.composeChatContext(
             agentId: agentUUID,
             executionMode: executionMode,

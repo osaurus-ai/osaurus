@@ -98,8 +98,9 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             throw SubagentError.denied("AppleScript is not enabled for this agent.")
         }
 
-        // Dedicated model: the configured per-agent / global id, else the first
-        // installed catalog model. `nil` → none installed → fail cleanly.
+        // Dedicated model: an explicit per-agent id, otherwise the global
+        // Computer Use default, otherwise the first installed catalog model.
+        // `nil` after catalog resolution → none installed → fail cleanly.
         let preferred = SubagentToolVisibility.effectiveAppleScriptModel(
             isDefault: isDefault,
             config: config,
@@ -255,12 +256,23 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             frontmost: desktop.frontmost,
             runningAppNames: desktop.running.map(\.name)
         )
+        let groundedTask = AppleScriptAppKnowledge.groundingWorkingAppReference(
+            task: task,
+            resolvedApp: targetApps.count == 1 ? targetApps[0] : nil
+        )
+        AppleScriptTraceLog.recordDispatchContext(
+            frontmost: desktop.frontmost,
+            targetApps: targetApps,
+            workingReference: AppleScriptAppKnowledge.mentionsWorkingApp(task),
+            taskGrounded: groundedTask != task,
+            literalKeys: literals.names
+        )
         let knowledge = AppleScriptAppKnowledge.compose(
             apps: targetApps,
             runningApps: desktop.running
         )
         let result = await AppleScriptLoop.run(
-            task: task,
+            task: groundedTask,
             modelId: resolved.name,
             feed: feed,
             interrupt: interrupt,
@@ -307,7 +319,25 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             for app in running where seen.insert(app.name.lowercased()).inserted {
                 unique.append(app)
             }
-            let frontmost = workspace.frontmostApplication?.localizedName
+            // The user necessarily brings Osaurus frontmost to submit a chat
+            // task, so NSWorkspace usually reports Osaurus here instead of the
+            // app they were working in. Computer Use already preserves that
+            // handoff through FrontmostAppTracker; use the same source for
+            // AppleScript so phrases such as "the file" or "the document"
+            // can resolve against the real working app and receive its
+            // dictionary/recipes. A genuinely frontmost non-Osaurus app still
+            // wins, and no synthetic app is invented when the tracker is empty.
+            let current = workspace.frontmostApplication
+            let currentIsSelf =
+                current?.processIdentifier == ProcessInfo.processInfo.processIdentifier
+                || (
+                    current?.bundleIdentifier != nil
+                        && current?.bundleIdentifier == Bundle.main.bundleIdentifier
+                )
+            let frontmost =
+                currentIsSelf
+                ? FrontmostAppTracker.shared.lastNonSelfAppName
+                : current?.localizedName
             var lines: [String] = []
             if let frontmost { lines.append("Frontmost app: \(frontmost)") }
             lines.append(

@@ -133,6 +133,12 @@ final class PluginManager {
     /// calls from overwriting and deallocating each other's host contexts.
     private var activeReloadTask: Task<Void, Never>?
 
+    /// True while PluginManager, ToolRegistry, and SkillManager expose one
+    /// complete catalog snapshot. A reload clears it until registry mutation
+    /// finishes. Prompt composition uses this readiness boundary so a
+    /// persisted KV prefix can never depend on launch/reload task timing.
+    private var isPromptCatalogReady = false
+
     private init() {}
 
     /// Returns the load error for a specific plugin, if any
@@ -181,6 +187,19 @@ final class PluginManager {
 
     // MARK: - Loading
 
+    /// Wait for the process's initial plugin catalog snapshot without turning
+    /// every prompt into a rescan. Concurrent launch/warmup/send callers join
+    /// the same `activeReloadTask`; later install/uninstall paths still call
+    /// `loadAll()` directly to refresh the catalog.
+    func ensurePromptCatalogReady() async {
+        if isPromptCatalogReady { return }
+        if let task = activeReloadTask {
+            await task.value
+            return
+        }
+        await loadAll()
+    }
+
     /// Result of heavy plugin scanning performed on a background thread.
     private struct PluginScanResult: @unchecked Sendable {
         let allURLs: [URL]
@@ -204,6 +223,7 @@ final class PluginManager {
             }
         }
 
+        isPromptCatalogReady = false
         let task = Task {
             await _loadAll(forceReload: forceReload)
         }
@@ -305,17 +325,12 @@ final class PluginManager {
                 loadedPluginPaths.insert(entry.url.path)
                 loadedNew = true
 
-                // Register tools — except for plugins whose functionality is
-                // now built into Osaurus (native search supersedes
-                // osaurus.search); their dylib stays loaded for routes/skills
-                // but the tools would collide with the native surface.
-                if !Self.supersededPluginIds.contains(loaded.plugin.id) {
-                    for tool in loaded.tools {
-                        ToolRegistry.shared.registerPluginTool(tool)
-                    }
+                // Superseded plugins never reach this point — the scan stage
+                // filters them out (see `excludeSupersededPlugins`), so every
+                // loaded plugin registers its full tool and skill surface.
+                for tool in loaded.tools {
+                    ToolRegistry.shared.registerPluginTool(tool)
                 }
-
-                // Register plugin skills
                 for skill in loaded.skills {
                     await SkillManager.shared.registerPluginSkill(skill)
                 }
@@ -338,6 +353,11 @@ final class PluginManager {
         }
 
         observeTunnelStatus()
+        // Every model-facing tool/skill registry mutation is complete here.
+        // Publish readiness before first-delivery callbacks: a plugin is
+        // allowed to invoke host inference from a callback, and making that
+        // nested request await its own active reload task would deadlock.
+        isPromptCatalogReady = true
         // Per-plugin first-delivery sweep, each step bracketed by the
         // `.currently_loading` marker. A SIGABRT inside the plugin's
         // `on_config_changed` (e.g. misaligned ABI mirror calling
@@ -368,11 +388,53 @@ final class PluginManager {
     nonisolated static let abiProbeKey = "__osaurus_abi_probe__"
 
     /// Plugins whose functionality has been absorbed into Osaurus itself.
-    /// Their tools are NOT registered (the native implementation owns the
-    /// tool names); the Plugins UI shows a "built into Osaurus" notice
-    /// instead of the usual tool list. `nonisolated` so views and the
-    /// migration path can consult it from any context.
-    nonisolated static let supersededPluginIds: Set<String> = ["osaurus.search"]
+    /// Their dylibs are skipped entirely at the scan stage (see
+    /// `excludeSupersededPlugins`): the native implementation owns the tool
+    /// names, none of these plugins declare routes, and never dlopen-ing
+    /// them removes the ABI probe / config-push crash surface for code that
+    /// will never serve a tool again. The Plugins UI shows a "built into
+    /// Osaurus" notice instead of the usual tool list — installed-state
+    /// detection keys off `InstalledPluginsStore`, not the loaded pool.
+    /// `nonisolated` so views and the migration path can consult it from
+    /// any context.
+    nonisolated static let supersededPluginIds: Set<String> = [
+        "osaurus.search", "osaurus.browser",
+    ]
+
+    /// Drops superseded plugins from a scan result BEFORE any dlopen. Also
+    /// removes their verification failures (e.g. a missing consent marker)
+    /// so the Plugins UI keeps showing the "Built into Osaurus" banner
+    /// instead of a load error for a plugin that will never load again.
+    /// Removing them from `urls` also means `_loadAll`'s removed-plugin
+    /// sweep unloads any instance a previous scan loaded (hot-reload
+    /// transition). Pure function so the skip contract is unit-testable
+    /// without real dylibs.
+    nonisolated static func excludeSupersededPlugins(
+        urls: [URL],
+        failures: [String: String]
+    ) -> (urls: [URL], failures: [String: String]) {
+        var filteredFailures = failures
+        for pluginId in supersededPluginIds {
+            filteredFailures.removeValue(forKey: pluginId)
+        }
+        return (
+            urls: urls.filter { !supersededPluginIds.contains(extractPluginId(from: $0)) },
+            failures: filteredFailures
+        )
+    }
+
+    /// The settings tab that owns a superseded plugin's native replacement,
+    /// for Plugins-UI deep links ("Built into Osaurus" banner / dead Browse
+    /// cards).
+    nonisolated static func nativeSettingsTab(forSupersededPlugin pluginId: String)
+        -> ManagementTab?
+    {
+        switch pluginId {
+        case "osaurus.search": return .search
+        case "osaurus.browser": return .browser
+        default: return nil
+        }
+    }
 
     /// Per-plugin first-delivery sweep. The synthetic ABI probe is
     /// delivered SYNCHRONOUSLY inside a `.currently_loading` marker so
@@ -825,7 +887,11 @@ final class PluginManager {
     nonisolated private static func performPluginScan(
         alreadyLoadedPaths: Set<String>
     ) -> PluginScanResult {
-        let (urls, verificationFailures) = toolsDirectoryURLsWithFailures()
+        let scanned = toolsDirectoryURLsWithFailures()
+        let (urls, verificationFailures) = excludeSupersededPlugins(
+            urls: scanned.urls,
+            failures: scanned.failures
+        )
 
         var loadResults: [(url: URL, result: Result<LoadedPlugin, PluginLoadError>)] = []
         for url in urls {

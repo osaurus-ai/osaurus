@@ -294,6 +294,15 @@ public final class ToolRegistry: ObservableObject {
             // PermissionedTool: execution preflights Accessibility +
             // Screen Recording before the loop runs.
             ComputerUseTool(),
+            // Browser Use (persistent per-agent WebKit session — the native
+            // replacement for the osaurus.browser plugin). Registered as a
+            // built-in so the runtime can execute it and ChatView can
+            // intercept its live activity feed, but the composer strips it
+            // authoritatively unless the agent opts in via
+            // `browserUseEnabled` (custom agents; the Default agent opts in
+            // from Settings → Browser). The `browser_*` primitives are
+            // PRIVATE to the nested runner and are never registered here.
+            BrowserUseTool(),
             // AppleScript subagent. Like the other delegation-family tools it
             // is registered as a built-in so the runtime can execute it and
             // ChatView can intercept its feed, but the composer strips it
@@ -775,7 +784,12 @@ public final class ToolRegistry: ObservableObject {
         // Coerce + preflight against the tool's schema. Returns either
         // a (possibly rewritten) `argumentsJSON` ready for dispatch, or
         // a structured failure envelope to short-circuit with.
-        switch Self.preflight(argumentsJSON: argumentsJSON, schema: tool.parameters, toolName: name) {
+        let normalizedArguments = tool.normalizeArgumentsBeforeValidation(argumentsJSON)
+        switch Self.preflight(
+            argumentsJSON: normalizedArguments,
+            schema: tool.parameters,
+            toolName: name
+        ) {
         case .rejected(let envelopeJSON):
             return envelopeJSON
         case .ready(let effectiveArgumentsJSON):
@@ -1983,10 +1997,10 @@ public final class ToolRegistry: ObservableObject {
     /// auto-injects them into the schema when the owning agent flag is on and
     /// strips them otherwise. Indexing them would let the model "discover" a
     /// capability it can never load (the per-agent gate re-strips it), so they
-    /// are kept out of the search index entirely. `computer_use` is the sole
-    /// member today.
+    /// are kept out of the search index entirely.
     static let nonDiscoverableBuiltInToolNames: Set<String> = [
-        ComputerUseTool.toolName
+        ComputerUseTool.toolName,
+        BrowserUseTool.toolName,
     ]
 
     /// Always-loaded tool specs: built-in + runtime-managed tools.

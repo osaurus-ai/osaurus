@@ -275,6 +275,7 @@ struct ChatWarmupControllerRequestTests {
         #expect(engine.lastRequest?.modelOptions?["disableThinking"] == .bool(true))
         #expect(engine.lastRequest?.suppressProgressUI == true)
         #expect(engine.lastRequest?.warmupPrefill == true)
+        #expect(engine.lastRequest?.backgroundModelLoad == true)
     }
 }
 

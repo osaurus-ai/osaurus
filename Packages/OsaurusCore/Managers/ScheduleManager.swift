@@ -50,20 +50,20 @@ public final class ScheduleManager {
     // MARK: - Initialization
 
     private init() {
-        // Load schedules from disk
-        refresh()
-
-        // Schedule the next timer (cheap — just arms a Task.sleep).
-        scheduleNextTimer()
-
-        // Check for missed schedules on startup. Deferred to a later
-        // main-actor turn so it doesn't run synchronously on the
-        // launch-critical path while `.shared` is being constructed
-        // (the App struct builds this property before
-        // `applicationDidFinishLaunching`). `checkForMissedSchedules`
-        // can immediately dispatch LLM work, which must not block launch.
+        // Load schedules, arm the timer, and check for missed schedules.
+        // All deferred to a later main-actor turn: the disk load now runs
+        // on the schedule I/O queue (it has hung the main thread in the
+        // field), and `checkForMissedSchedules` can immediately dispatch
+        // LLM work, which must not block launch (the App struct builds
+        // this property before `applicationDidFinishLaunching`).
         Task { @MainActor [weak self] in
+            await self?.refreshFromDisk()
+            self?.scheduleNextTimer()
             self?.checkForMissedSchedules()
+            if let self {
+                print(
+                    "[Osaurus] ScheduleManager initialized with \(self.schedules.count) schedules")
+            }
         }
 
         // Listen for timezone changes
@@ -76,8 +76,6 @@ public final class ScheduleManager {
                 self?.scheduleNextTimer()
             }
         }
-
-        print("[Osaurus] ScheduleManager initialized with \(schedules.count) schedules")
     }
 
     deinit {
@@ -89,9 +87,43 @@ public final class ScheduleManager {
 
     // MARK: - Public API
 
-    /// Reload schedules from disk
+    /// Serial queue for all `ScheduleStore` disk I/O. Loads and saves used
+    /// to run synchronously on the main actor and showed up in hang
+    /// reports; routing every read/write through one background queue
+    /// keeps the main thread free and preserves write ordering.
+    private nonisolated static let ioQueue = DispatchQueue(
+        label: "com.dinoki.osaurus.schedule-io", qos: .userInitiated)
+
+    private nonisolated static func persist(_ work: @escaping @Sendable () -> Void) {
+        ioQueue.async(execute: work)
+    }
+
+    /// Reload schedules from disk (async, off the main actor). Mutating
+    /// callers apply their change to `schedules` in-memory first, so this
+    /// reconcile only picks up external/disk-side differences.
     public func refresh() {
-        schedules = ScheduleStore.loadAll()
+        Task { @MainActor [weak self] in
+            await self?.refreshFromDisk()
+        }
+    }
+
+    public func refreshFromDisk() async {
+        let loaded = await withCheckedContinuation { continuation in
+            Self.ioQueue.async { continuation.resume(returning: ScheduleStore.loadAll()) }
+        }
+        schedules = loaded
+        recomputeAgentCounts()
+    }
+
+    /// Apply a created/updated schedule to the in-memory list so reads
+    /// (timer arming, UI) see it immediately, without waiting on disk.
+    private func applyLocal(_ schedule: Schedule) {
+        if let index = schedules.firstIndex(where: { $0.id == schedule.id }) {
+            schedules[index] = schedule
+        } else {
+            schedules.append(schedule)
+        }
+        schedules.sort { $0.createdAt > $1.createdAt }
         recomputeAgentCounts()
     }
 
@@ -135,8 +167,8 @@ public final class ScheduleManager {
             updatedAt: Date()
         )
 
-        ScheduleStore.save(schedule)
-        refresh()
+        applyLocal(schedule)
+        Self.persist { ScheduleStore.save(schedule) }
         scheduleNextTimer()
 
         NotificationCenter.default.post(name: .schedulesChanged, object: nil)
@@ -149,7 +181,10 @@ public final class ScheduleManager {
     public func update(_ schedule: Schedule) {
         var updated = schedule
         updated.updatedAt = Date()
-        ScheduleStore.save(updated)
+        applyLocal(updated)
+        Self.persist { [updated] in ScheduleStore.save(updated) }
+        // Reconcile: `save` merges run history from the previous on-disk
+        // copy, which the in-memory apply above can't see.
         refresh()
         scheduleNextTimer()
 
@@ -167,9 +202,10 @@ public final class ScheduleManager {
         }
         runningTasks.removeValue(forKey: id)
 
-        guard ScheduleStore.delete(id: id) else { return false }
-
-        refresh()
+        guard schedules.contains(where: { $0.id == id }) else { return false }
+        schedules.removeAll { $0.id == id }
+        recomputeAgentCounts()
+        Self.persist { _ = ScheduleStore.delete(id: id) }
         scheduleNextTimer()
 
         NotificationCenter.default.post(name: .schedulesChanged, object: nil)
@@ -183,8 +219,8 @@ public final class ScheduleManager {
         guard var schedule = schedules.first(where: { $0.id == id }) else { return }
         schedule.isEnabled = enabled
         schedule.updatedAt = Date()
-        ScheduleStore.save(schedule)
-        refresh()
+        applyLocal(schedule)
+        Self.persist { [schedule] in ScheduleStore.save(schedule) }
         scheduleNextTimer()
 
         NotificationCenter.default.post(name: .schedulesChanged, object: nil)
@@ -391,8 +427,8 @@ public final class ScheduleManager {
 
         var triggeredSchedule = schedule
         triggeredSchedule.lastTriggeredAt = Date()
-        ScheduleStore.save(triggeredSchedule)
-        refresh()
+        applyLocal(triggeredSchedule)
+        Self.persist { [triggeredSchedule] in ScheduleStore.save(triggeredSchedule) }
 
         let request = DispatchRequest(
             prompt: triggeredSchedule.instructions,
@@ -448,8 +484,8 @@ public final class ScheduleManager {
             updatedSchedule.lastChatSessionId = chatSessionId
             if case .once = schedule.frequency { updatedSchedule.isEnabled = false }
 
-            ScheduleStore.save(updatedSchedule)
-            refresh()
+            applyLocal(updatedSchedule)
+            Self.persist { [updatedSchedule] in ScheduleStore.save(updatedSchedule) }
 
             // executeSchedule rejects schedules without a real custom-agent
             // id up front, so `schedule.agentId` is guaranteed non-nil here.

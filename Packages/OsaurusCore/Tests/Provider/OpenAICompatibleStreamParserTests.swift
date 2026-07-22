@@ -108,6 +108,174 @@ struct OpenAICompatibleStreamParserTests {
         #expect(yielded.compactMap { StreamingToolHint.decodeArgs($0) }.joined() == #"{"path":"a.html","content":"x"}"#)
     }
 
+    @Test(arguments: [7_996, 9_000, 16_000])
+    func parser_preservesLargeSingleEventToolArguments(contentBytes: Int) throws {
+        let arguments = #"{"path":"probe.txt","content":""#
+            + String(repeating: "x", count: contentBytes)
+            + #""}"#
+        let event: [String: Any] = [
+            "id": "chatcmpl-large",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": "m",
+            "choices": [
+                [
+                    "index": 0,
+                    "delta": [
+                        "tool_calls": [
+                            [
+                                "index": 0,
+                                "id": "call_large",
+                                "type": "function",
+                                "function": [
+                                    "name": "file_write",
+                                    "arguments": arguments,
+                                ],
+                            ]
+                        ]
+                    ],
+                    "finish_reason": NSNull(),
+                ]
+            ],
+        ]
+        let eventData = try JSONSerialization.data(withJSONObject: event)
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+
+        let delta = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: eventData,
+            options: .routerCompatible,
+            state: &state,
+            yield: { _ in }
+        )
+        guard case .continue = delta else {
+            Issue.record("Expected large argument event to continue, got \(delta)")
+            return
+        }
+
+        let finish = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(#"{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#.utf8),
+            options: .routerCompatible,
+            state: &state,
+            yield: { _ in }
+        )
+        guard case .finishWithToolCall(let invocations) = finish,
+            let invocation = invocations.first
+        else {
+            Issue.record("Expected large tool call to finish, got \(finish)")
+            return
+        }
+        #expect(invocation.jsonArguments == arguments)
+        #expect(invocation.jsonArguments.utf8.count > contentBytes)
+    }
+
+    @Test func parser_doesNotDispatchNamedToolSlotWithNoArgumentBytesOnAbruptEnd() {
+        let accumulated: [Int: RemoteProviderService.StreamingState.ToolSlot] = [
+            0: (
+                id: "call_empty",
+                name: "file_write",
+                args: "",
+                thoughtSignature: nil
+            )
+        ]
+
+        // Abrupt end (no declared finish): zero argument bytes means the
+        // stream was cut before the first argument event — quarantine.
+        let result = OpenAICompatibleToolCallAccumulator.resolveAccumulatedToolCall(
+            from: accumulated,
+            finishMarker: "stream-end"
+        )
+
+        guard case .truncated(let error) = result else {
+            Issue.record("Expected blank accumulated arguments to be quarantined, got \(result)")
+            return
+        }
+        #expect(error.localizedDescription.contains("received 0 bytes"))
+    }
+
+    @Test func parser_dispatchesNoArgumentToolCallOnDeclaredFinish() {
+        // Anthropic-style upstreams emit a no-input tool_use with ZERO
+        // argument deltas. When the provider declares the finish, that is a
+        // real no-argument call — `{}` — not a truncated stream. (Observed
+        // live: Claude calling `browser_read_page` failed every retry with
+        // "received 0 bytes" until declared finishes were distinguished.)
+        let accumulated: [Int: RemoteProviderService.StreamingState.ToolSlot] = [
+            0: (
+                id: "call_noargs",
+                name: "browser_read_page",
+                args: "",
+                thoughtSignature: nil
+            )
+        ]
+
+        let result = OpenAICompatibleToolCallAccumulator.resolveAccumulatedToolCall(
+            from: accumulated,
+            finishMarker: "finish_reason=tool_calls",
+            emptyArgsAreComplete: true
+        )
+
+        guard case .ready(let invocations) = result, let invocation = invocations.first else {
+            Issue.record("Expected a no-argument call to dispatch on a declared finish, got \(result)")
+            return
+        }
+        #expect(invocation.toolName == "browser_read_page")
+        #expect(invocation.jsonArguments == "{}")
+    }
+
+    /// The full router wire shape that failed live: a name-only tool-call
+    /// delta (no `arguments` field at all) followed by a clean
+    /// `finish_reason=tool_calls` must dispatch the call with `{}` args.
+    @Test func parser_nameOnlyToolCallDeltaThenToolCallsFinishDispatches() throws {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        let start =
+            #"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"toolu_01","type":"function","function":{"name":"browser_read_page"}}]},"finish_reason":null}]}"#
+        _ = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(start.utf8),
+            options: .routerCompatible,
+            state: &state,
+            yield: { _ in }
+        )
+
+        let finish = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(#"{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#.utf8),
+            options: .routerCompatible,
+            state: &state,
+            yield: { _ in }
+        )
+
+        guard case .finishWithToolCall(let invocations) = finish, let invocation = invocations.first
+        else {
+            Issue.record("Expected the no-argument tool call to dispatch, got \(finish)")
+            return
+        }
+        #expect(invocation.toolName == "browser_read_page")
+        #expect(invocation.jsonArguments == "{}")
+    }
+
+    @Test func parser_lengthFinishRejectsEvenSyntacticallyCompletePendingTool() throws {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        let start =
+            #"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"file_write","arguments":"{}"}}]},"finish_reason":null}]}"#
+        _ = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(start.utf8),
+            options: .routerCompatible,
+            state: &state,
+            yield: { _ in }
+        )
+
+        let finish = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(#"{"choices":[{"index":0,"delta":{},"finish_reason":"length"}]}"#.utf8),
+            options: .routerCompatible,
+            state: &state,
+            yield: { _ in }
+        )
+
+        guard case .finishWithError(let error) = finish else {
+            Issue.record("Expected output-limited tool call to fail, got \(finish)")
+            return
+        }
+        #expect(error.localizedDescription.contains("output token limit"))
+    }
+
     @Test func parser_preservesParallelToolCallIndices() throws {
         var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: true)
         let env = #""id":"chatcmpl-1","object":"chat.completion.chunk","created":0,"model":"m""#

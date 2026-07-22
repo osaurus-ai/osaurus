@@ -151,6 +151,12 @@ struct MLXBatchAdapter {
         runtimeDefaults: VMLXServerGenerationDefaults,
         maxBatchSize: Int
     ) async {
+        // `last_effective_generation` is user/API request telemetry. Chat
+        // prefill warm-ups deliberately submit `temperature=0, maxTokens=1`
+        // after a visible turn; letting that housekeeping request overwrite
+        // the row makes the admin endpoint describe the warm-up instead of
+        // the generation the user just observed.
+        guard shouldRecordAsLastEffectiveGeneration(generation) else { return }
         let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelName)
         let effective = Self.effectiveGenerationSettings(
             modelName: modelName,
@@ -164,6 +170,12 @@ struct MLXBatchAdapter {
             modelName: modelName,
             settings: effective
         )
+    }
+
+    static func shouldRecordAsLastEffectiveGeneration(
+        _ generation: GenerationParameters
+    ) -> Bool {
+        !generation.warmupPrefill
     }
 
     static func effectiveDraftStrategy(
@@ -461,6 +473,7 @@ struct MLXBatchAdapter {
             var pagedIncompatible = 0
             var prefixHits = 0
             var prefixMisses = 0
+            var pagedEvictions = 0
             var diskL2Hits = 0
             var diskL2Misses = 0
             var diskL2Stores = 0
@@ -478,6 +491,7 @@ struct MLXBatchAdapter {
                 if let pagedStats = stats.pagedStats {
                     prefixHits += pagedStats.cacheHits
                     prefixMisses += pagedStats.cacheMisses
+                    pagedEvictions += pagedStats.evictions
                 }
                 if let diskStats = stats.diskStats {
                     diskL2Hits += diskStats.hits
@@ -514,6 +528,7 @@ struct MLXBatchAdapter {
                 pagedIncompatibleModelCount: pagedIncompatible,
                 prefixHits: prefixHits,
                 prefixMisses: prefixMisses,
+                pagedEvictions: pagedEvictions,
                 diskL2Hits: diskL2Hits,
                 diskL2Misses: diskL2Misses,
                 diskL2Stores: diskL2Stores,
@@ -1229,10 +1244,12 @@ struct MLXBatchAdapter {
             cacheTopology: cacheTopology,
             stage: "submitted_to_batch_engine"
         )
-        await Registry.shared.recordEffectiveGenerationSettings(
-            modelName: modelName,
-            settings: effective
-        )
+        if Self.shouldRecordAsLastEffectiveGeneration(generation) {
+            await Registry.shared.recordEffectiveGenerationSettings(
+                modelName: modelName,
+                settings: effective
+            )
+        }
         var mlxParams = ModelRuntime.makeGenerateParameters(
             temperature: effective.temperature,
             maxTokens: effective.maxTokens,
@@ -1464,6 +1481,7 @@ struct MLXBatchAdapter {
         }
         guard !hasMedia else { return nil }
 
+        var probeStableBoundaries: [[Int]] = []
         let prefix = await warmupSendInvariantPrefixTokens(chat: chat) { probeText in
             var probeChat = chat
             probeChat.append(.user(probeText))
@@ -1476,6 +1494,7 @@ struct MLXBatchAdapter {
             guard let prepared = try? await processor.prepare(input: input),
                 !prepared.hasMediaContent
             else { return nil }
+            probeStableBoundaries.append(prepared.cacheStablePrefixTokenCounts)
             return prepared.text.tokenIds
                 ?? MLXCacheIOLock.withSerializedMLXCacheIO {
                     prepared.text.tokens.asArray(Int.self)
@@ -1492,8 +1511,19 @@ struct MLXBatchAdapter {
         // The scope salt is derived from additionalContext alone, so the
         // probe render's salt matches the real send's.
         let scopeSalt = MLXLMCommon.cacheScopeSalt(from: additionalContext)
+        let stableBoundaries =
+            probeStableBoundaries.count == 2
+            ? agreedWarmupStableBoundaries(
+                probeA: probeStableBoundaries[0],
+                probeB: probeStableBoundaries[1],
+                invariantPrefixCount: prefix.count
+            )
+            : []
+        let cacheBoundaries = warmupCacheBoundaryLists(
+            stableBoundaries: stableBoundaries
+        )
         batchAdapterLog.info(
-            "warmupPrefill: truncated prompt to send-invariant prefix of \(prefix.count, privacy: .public) tokens"
+            "warmupPrefill: truncated prompt to send-invariant prefix of \(prefix.count, privacy: .public) tokens; stable boundaries \(stableBoundaries, privacy: .public)"
         )
         // Prompt tokens are batch-shaped [1, N] by processor contract (see
         // `truncatingToCanonicalCacheBoundary`).
@@ -1501,9 +1531,35 @@ struct MLXBatchAdapter {
             tokens: MLXArray(prefix).expandedDimensions(axis: 0),
             tokenIds: prefix,
             cacheScopeSalt: scopeSalt,
-            cachePrefixTokenCounts: [],
+            cachePrefixTokenCounts: cacheBoundaries.all,
+            cacheStablePrefixTokenCounts: cacheBoundaries.stable,
             toolSchemas: toolsSpec
         )
+    }
+
+    /// vMLX stores boundaries by iterating `cachePrefixTokenCounts`; the
+    /// stable list is metadata that selects the safe re-derive path. A stable
+    /// warm-up boundary must therefore be present in both lists or it can be
+    /// preferred for lookup but is never persisted.
+    static func warmupCacheBoundaryLists(
+        stableBoundaries: [Int]
+    ) -> (all: [Int], stable: [Int]) {
+        let stable = Array(Set(stableBoundaries.filter { $0 > 0 })).sorted()
+        return (all: stable, stable: stable)
+    }
+
+    /// Keep only stable cache boundaries independently derived by both probe
+    /// renders and contained strictly inside their send-invariant prefix.
+    /// A one-probe-only boundary is discarded: warm-up must not persist a
+    /// supposedly cross-chat checkpoint unless both template renders agree.
+    static func agreedWarmupStableBoundaries(
+        probeA: [Int],
+        probeB: [Int],
+        invariantPrefixCount: Int
+    ) -> [Int] {
+        guard invariantPrefixCount > 1 else { return [] }
+        let agreed = Set(probeA).intersection(probeB)
+        return agreed.filter { $0 > 0 && $0 < invariantPrefixCount }.sorted()
     }
 
     /// Token-level core of ``prepareWarmupInputAtSendInvariantPrefix``:

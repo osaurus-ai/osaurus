@@ -423,6 +423,7 @@ public enum AppleScriptLoop {
         // result, but only a read step can verify requested state.
         var lastReadOutput: String? = nil
         var consecutiveInvalid = 0
+        var consecutiveLiteralFailures = 0
         var consecutiveBlocked = 0
         // Consecutive confirm-gate dry-compile failures. Bounded separately so
         // a model stuck on syntax terminates with the real reason (the compile
@@ -444,6 +445,11 @@ public enum AppleScriptLoop {
         // that follow-up so it never silently mutates or prompts the user.
         var verifyAttempted = false
         var verifying = false
+        // One empty/EOS response immediately after a real execution failure
+        // gets one bounded chance to emit a corrected tool call. This stays in
+        // automate mode: a failed script is not evidence that the requested
+        // state changed, so it must never enter read-only verification.
+        var executionRecoveryAttempted = false
 
         func record(
             intent: EffectClass,
@@ -549,8 +555,74 @@ public enum AppleScriptLoop {
             // value, so the parent gets a REAL result instead of "completed".
             guard let call = stepResult.call else {
                 let text = stepResult.text?.trimmingCharacters(in: .whitespacesAndNewlines)
+                // A few dedicated AppleScript bundles occasionally emit the
+                // complete script as assistant text instead of wrapping it in
+                // `run_applescript`. Treat only structurally script-like text
+                // as a malformed call and ask for the required envelope. A
+                // normal plain-text explanation still ends the run. This is a
+                // protocol repair, not an execution shortcut: the raw text is
+                // never run or counted as successful work.
+                if let text, looksLikeUncalledScript(text) {
+                    consecutiveInvalid += 1
+                    let reason =
+                        "You wrote AppleScript as plain text, so nothing ran. Call `run_applescript` "
+                        + "with that complete script in its `script` argument. Do not print the script."
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step,
+                            kind: .retry,
+                            title: "Script was not called; requesting the tool envelope",
+                            detail: scriptPreview(text)
+                        )
+                    )
+                    steps.append(
+                        AppleScriptStepRecord(
+                            n: steps.count + 1,
+                            intent: "unknown",
+                            status: "invalid",
+                            error: reason,
+                            scriptPreview: scriptPreview(text)
+                        )
+                    )
+                    if consecutiveInvalid >= limits.maxConsecutiveInvalid {
+                        return terminate(
+                            .failed(
+                                reason:
+                                    "The model kept writing AppleScript without calling "
+                                    + "run_applescript."
+                            )
+                        )
+                    }
+                    messages.append(ChatMessage(role: "assistant", content: text))
+                    messages.append(ChatMessage(role: "user", content: reason))
+                    lastToolResult = reason
+                    step += 1
+                    continue
+                }
                 let haveValue = !(lastReadOutput?.isEmpty ?? true)
-                if harness.verifyReadBack, !verifyAttempted, !haveValue, scriptsExecuted > 0,
+                let emptyCompletion = text?.isEmpty ?? true
+                if succeeded == 0, failed > 0, !executionRecoveryAttempted, emptyCompletion {
+                    executionRecoveryAttempted = true
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step,
+                            kind: .retry,
+                            title: "Execution failed; requesting one corrected tool call"
+                        )
+                    )
+                    let nudge =
+                        "The prior script reported failure and the requested result is not verified. "
+                        + "Do not assume either that it completed or that state is unchanged. Call "
+                        + "run_applescript ONE more time with an idempotent corrected script that "
+                        + "reads current state and applies only the missing requested change. Use every "
+                        + "required {{name}} placeholder instead of typing its name or value. If you "
+                        + "cannot correct it, reply with a short explanation."
+                    messages.append(ChatMessage(role: "user", content: nudge))
+                    lastToolResult = nudge
+                    step += 1
+                    continue
+                }
+                if harness.verifyReadBack, !verifyAttempted, !haveValue, succeeded > 0,
                     shouldVerify(mode: mode, task: task)
                 {
                     verifyAttempted = true
@@ -655,12 +727,71 @@ public enum AppleScriptLoop {
             }
             consecutiveInvalid = 0
             messages.append(assistantMessage)
+            let proposedEffect = AppleScriptEffectClassifier.classify(
+                proposedScript,
+                language: language
+            )
+
+            // Exact replacement values are deliberately withheld from the
+            // helper and exposed only as placeholders. A script that writes
+            // the word `newText` instead of {{newText}} would mutate the app
+            // with model-invented bytes. Reject it before compile, approval, or
+            // execution; this is data-contract validation, not script repair.
+            if !verifying, proposedEffect != .read,
+                let missingName = missingRequiredReplacementPlaceholder(
+                    in: proposedScript,
+                    literals: literals
+                )
+            {
+                consecutiveLiteralFailures += 1
+                let reason =
+                    "The script omitted the required {{\(missingName)}} placeholder. Put "
+                    + "{{\(missingName)}} exactly where that provided value belongs; do not type "
+                    + "the placeholder name or reconstruct its value."
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .retry,
+                        title: "Required replacement placeholder missing",
+                        detail: reason
+                    )
+                )
+                steps.append(
+                    AppleScriptStepRecord(
+                        n: steps.count + 1,
+                        intent: "unknown",
+                        status: "invalid",
+                        error: reason,
+                        scriptPreview: scriptPreview(proposedScript)
+                    )
+                )
+                if consecutiveLiteralFailures >= limits.maxConsecutiveInvalid {
+                    return terminate(
+                        .failed(
+                            reason:
+                                "The model kept omitting the required replacement placeholder "
+                                + "{{\(missingName)}}."
+                        )
+                    )
+                }
+                messages.append(
+                    ChatMessage(
+                        role: "tool",
+                        content: reason,
+                        tool_calls: nil,
+                        tool_call_id: call.id
+                    )
+                )
+                lastToolResult = reason
+                step += 1
+                continue
+            }
 
             // Classify the proposed script's effect (read / edit / consequential).
             // Escalate-biased + surfaced to the user, never used to fake safety.
             // A JXA script floors at `.edit` (its mutations are statically
             // opaque to the AppleScript verb vocabulary).
-            let effect = AppleScriptEffectClassifier.classify(proposedScript, language: language)
+            let effect = proposedEffect
 
             // Expand any {{name}} placeholders into exact, correctly-escaped
             // AppleScript string literals BEFORE preview / gate / execution, so
@@ -669,7 +800,7 @@ public enum AppleScriptLoop {
             // so user content can't trip the escalate-biased classifier.
             let expansion = literals.expand(proposedScript)
             if let undefinedName = expansion.undefinedName {
-                consecutiveInvalid += 1
+                consecutiveLiteralFailures += 1
                 let reason = undefinedPlaceholderReason(undefinedName, literals: literals)
                 feed.emit(
                     SubagentActivityEvent(
@@ -679,7 +810,7 @@ public enum AppleScriptLoop {
                         detail: reason
                     )
                 )
-                if consecutiveInvalid >= limits.maxConsecutiveInvalid {
+                if consecutiveLiteralFailures >= limits.maxConsecutiveInvalid {
                     return terminate(
                         .failed(
                             reason:
@@ -707,6 +838,7 @@ public enum AppleScriptLoop {
                 lastToolResult = reason
                 continue
             }
+            consecutiveLiteralFailures = 0
             // Downstream preview / gate / execution all operate on the EXPANDED
             // script (the user sees and approves the real content that runs).
             let script = expansion.script
@@ -734,6 +866,59 @@ public enum AppleScriptLoop {
                     detail: scriptPreview(script)
                 )
             )
+
+            // Compile every proposal before ANY gate or execution path. The
+            // effect classifier is intentionally structural and can classify a
+            // malformed script as read-only when its attempted mutation uses
+            // invented syntax. Restricting preflight to `.confirm` therefore
+            // let those scripts auto-run, compile-fail in the executor, and
+            // consume the full step cap. Universal preflight keeps malformed
+            // reads and writes out of both the executor and confirmation UI and
+            // applies the same bounded correction budget to each.
+            if let dryCompile,
+                let compileFailure = await dryCompile(script, language),
+                compileFailure.status == .compileError
+            {
+                consecutiveCompileFailures += 1
+                let message = compileFailure.errorMessage ?? "syntax error"
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .retry,
+                        title: "Script did not compile; asking for a correction",
+                        detail: message
+                    )
+                )
+                record(
+                    intent: effect,
+                    status: "compile_error",
+                    error: message,
+                    errorNumber: compileFailure.errorNumber,
+                    script: script
+                )
+                if consecutiveCompileFailures >= limits.maxConsecutiveInvalid {
+                    return terminate(
+                        .failed(
+                            reason: "The model could not produce a script that compiles: \(message)"
+                        )
+                    )
+                }
+                let toolResult =
+                    "The script was NOT run — it does not compile: \(message). Fix the "
+                    + "\(language.displayLabel) syntax and call run_applescript again."
+                messages.append(
+                    ChatMessage(
+                        role: "tool",
+                        content: toolResult,
+                        tool_calls: nil,
+                        tool_call_id: call.id
+                    )
+                )
+                lastToolResult = toolResult
+                step += 1
+                continue
+            }
+            consecutiveCompileFailures = 0
 
             // Accessibility preflight: System Events UI scripting cannot run
             // without the user's Accessibility grant. Catch it BEFORE the gate
@@ -789,12 +974,27 @@ public enum AppleScriptLoop {
             //  • query / verification → run reads automatically, BLOCK writes.
             //  • automate → the user's confirm-each / auto-run-with-warning policy.
             let approved: Bool
-            switch gateDecision(
+            let gate = gateDecision(
                 mode: mode,
                 executionMode: executionMode,
                 effect: effect,
                 verifying: verifying
-            ) {
+            )
+            let gateLabel: String
+            switch gate {
+            case .autoRunReadOnly: gateLabel = "auto_read"
+            case .autoRunWithWarning: gateLabel = "auto_warning"
+            case .confirm: gateLabel = "confirm"
+            case .block: gateLabel = "block"
+            }
+            AppleScriptTraceLog.recordGate(
+                mode: mode,
+                executionMode: executionMode,
+                effect: effect,
+                verifying: verifying,
+                decision: gateLabel
+            )
+            switch gate {
             case .block(let reason):
                 consecutiveBlocked += 1
                 feed.emit(
@@ -823,56 +1023,6 @@ public enum AppleScriptLoop {
                 step += 1
                 continue
             case .confirm:
-                // Compile-before-confirm dry run: never ask the user to
-                // approve a script that cannot compile. On a syntax error,
-                // feed the REAL compile error back for correction (the same
-                // feedback executing it would have produced) — the user only
-                // ever sees scripts that can actually run.
-                if let dryCompile,
-                    let compileFailure = await dryCompile(script, language),
-                    compileFailure.status == .compileError
-                {
-                    consecutiveCompileFailures += 1
-                    let message = compileFailure.errorMessage ?? "syntax error"
-                    feed.emit(
-                        SubagentActivityEvent(
-                            step: step,
-                            kind: .retry,
-                            title: "Script did not compile; asking for a correction",
-                            detail: message
-                        )
-                    )
-                    record(
-                        intent: effect,
-                        status: "compile_error",
-                        error: message,
-                        errorNumber: compileFailure.errorNumber,
-                        script: script
-                    )
-                    if consecutiveCompileFailures >= limits.maxConsecutiveInvalid {
-                        return terminate(
-                            .failed(
-                                reason:
-                                    "The model could not produce a script that compiles: \(message)"
-                            )
-                        )
-                    }
-                    let toolResult =
-                        "The script was NOT run — it does not compile: \(message). Fix the "
-                        + "\(language.displayLabel) syntax and call run_applescript again."
-                    messages.append(
-                        ChatMessage(
-                            role: "tool",
-                            content: toolResult,
-                            tool_calls: nil,
-                            tool_call_id: call.id
-                        )
-                    )
-                    lastToolResult = toolResult
-                    step += 1
-                    continue
-                }
-                consecutiveCompileFailures = 0
                 // Surface the target app so the confirm card names it AND the
                 // shared prompt queue can offer "don't ask again in {app} this
                 // run" (it scopes that blanket approval on `appName`).
@@ -974,6 +1124,19 @@ public enum AppleScriptLoop {
                 if let trimmedOutput, !trimmedOutput.isEmpty {
                     lastOutput = trimmedOutput
                     if effect == .read { lastReadOutput = trimmedOutput }
+                }
+                // A task that names a readable postcondition (replace/change/
+                // exact content, a requested value, etc.) must not execute a
+                // second mutation before that state is read back. The small
+                // AppleScript models can otherwise interpret a successful OS
+                // execution as permission to repeat or embellish the same
+                // edit. Enter the existing verification gate immediately:
+                // subsequent reads are allowed, while another write is
+                // rejected before approval/execution. If the model stops
+                // instead of reading, the no-tool path below emits the bounded
+                // read-only verification nudge.
+                if effect != .read, shouldVerify(mode: mode, task: task) {
+                    verifying = true
                 }
             } else {
                 failed += 1
@@ -1152,6 +1315,7 @@ public enum AppleScriptLoop {
             // classify them as fire-and-forget only because they are phrased
             // as commands rather than questions.
             "exactly", "contain", "insert ", "write ", "type ",
+            "replace", "change the text", "edit the text", "remove the text",
         ]
         return dataIntent.contains { t.contains($0) }
     }
@@ -1299,6 +1463,35 @@ public enum AppleScriptLoop {
             .replacingOccurrences(of: "\t", with: " ")
         let squeezed = collapsed.split(whereSeparator: { $0 == " " }).joined(separator: " ")
         return squeezed.count > 200 ? String(squeezed.prefix(200)) + "…" : squeezed
+    }
+
+    /// Detect the confirmed protocol failure where a helper prints executable
+    /// AppleScript instead of calling `run_applescript`. Keep this deliberately
+    /// structural and multi-line so normal summaries that mention AppleScript
+    /// or quote a short command are not converted into tool attempts.
+    static func looksLikeUncalledScript(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.contains("\n") else { return false }
+        let lower = trimmed.lowercased()
+        let hasTellBlock =
+            (lower.contains("tell application \"") || lower.contains("tell process \""))
+            && lower.contains("end tell")
+        let hasHandler = lower.contains("\non ") && lower.contains("\nend ")
+        let fencedScript =
+            lower.hasPrefix("```applescript") || lower.hasPrefix("```osascript")
+        return hasTellBlock || hasHandler || fencedScript
+    }
+
+    /// Exact replacement runs cannot safely reconstruct the requested new
+    /// bytes: the helper sees only the placeholder name and length. Require
+    /// the authoritative new-value token while allowing the old-value token to
+    /// be omitted for the valid whole-document direct-set idiom.
+    static func missingRequiredReplacementPlaceholder(
+        in script: String,
+        literals: AppleScriptLiterals
+    ) -> String? {
+        guard literals.value(for: "newText") != nil else { return nil }
+        return script.contains("{{newText}}") ? nil : "newText"
     }
 
     // MARK: - Literal placeholders
@@ -1527,6 +1720,11 @@ public enum AppleScriptLoop {
                 "- After you change something, run ONE more read-only script that gets and `return`s "
                 + "the resulting state, so the result can be verified (e.g. after setting the volume, "
                 + "return the new volume).\n"
+                + "- When the task says `the file` or `the document`, use the named Frontmost app in "
+                + "Current desktop and its open document. If neither the task nor Current desktop "
+                + "identifies an app or exact path, do not open a chooser, create an output file, or "
+                + "save anything; reply with one short clarification and no tool call. Editing an "
+                + "open document never implies Save, Save As, export, or creating another file.\n"
                 + "- When you address an app object by name (a note, file, mailbox, playlist), it may "
                 + "not exist yet or be named slightly differently; prefer a script that finds or "
                 + "creates it (e.g. `if not (exists note \"X\") then make new note`) instead of "
@@ -1596,7 +1794,10 @@ public enum AppleScriptLoop {
                 "You are Osaurus's AppleScript agent: accomplish the Mac task by writing and running "
                 + "one complete AppleScript at a time."
             modeRule =
-                "- Address objects that may be missing with find-or-create (`if not (exists note \"X\") "
+                "- Resolve `the file`/`the document` only from the named Frontmost app in Current "
+                + "desktop; if no app/path is identified, ask briefly without a tool call. Never "
+                + "invent a chooser, output file, Save, or Save As for an existing-document edit. "
+                + "Address other objects that may be missing with find-or-create (`if not (exists note \"X\") "
                 + "then make new note`), not by assuming. After a change, run one read-only script that "
                 + "`return`s the resulting state. Avoid destructive/irreversible actions unless "
                 + "explicitly asked. If an app has no usable dictionary, fall back to System Events UI "

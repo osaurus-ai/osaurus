@@ -33,6 +33,10 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
     /// User-set archive flag. Hidden from the default sidebar view, shown
     /// under the "Archived" filter chip.
     public var archived: Bool
+    /// User-set pin flag. Pinned sessions float to the top of the sidebar
+    /// list (within their current filter) so frequently-used chats stay
+    /// reachable without searching.
+    public var pinned: Bool
     /// Derived from turns at save time and persisted so the sidebar can
     /// render badges without loading every turn.
     public var capabilities: Set<SessionCapability>
@@ -58,6 +62,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         externalSessionKey: String? = nil,
         dispatchTaskId: UUID? = nil,
         archived: Bool = false,
+        pinned: Bool = false,
         capabilities: Set<SessionCapability> = [],
         folderBookmark: Data? = nil,
         folderPath: String? = nil
@@ -74,6 +79,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         self.externalSessionKey = externalSessionKey
         self.dispatchTaskId = dispatchTaskId
         self.archived = archived
+        self.pinned = pinned
         self.capabilities = capabilities
         self.folderBookmark = folderBookmark
         self.folderPath = folderPath
@@ -96,6 +102,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         externalSessionKey = try container.decodeIfPresent(String.self, forKey: .externalSessionKey)
         dispatchTaskId = try container.decodeIfPresent(UUID.self, forKey: .dispatchTaskId)
         archived = try container.decodeIfPresent(Bool.self, forKey: .archived) ?? false
+        pinned = try container.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
         capabilities = try container.decodeIfPresent(Set<SessionCapability>.self, forKey: .capabilities) ?? []
         folderBookmark = try container.decodeIfPresent(Data.self, forKey: .folderBookmark)
         folderPath = try container.decodeIfPresent(String.self, forKey: .folderPath)
@@ -115,6 +122,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(externalSessionKey, forKey: .externalSessionKey)
         try container.encodeIfPresent(dispatchTaskId, forKey: .dispatchTaskId)
         try container.encode(archived, forKey: .archived)
+        try container.encode(pinned, forKey: .pinned)
         try container.encode(capabilities, forKey: .capabilities)
         try container.encodeIfPresent(folderBookmark, forKey: .folderBookmark)
         try container.encodeIfPresent(folderPath, forKey: .folderPath)
@@ -125,6 +133,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         case personaId  // legacy key for migration
         case source, sourcePluginId, externalSessionKey, dispatchTaskId
         case archived
+        case pinned
         case capabilities
         case folderBookmark, folderPath
     }

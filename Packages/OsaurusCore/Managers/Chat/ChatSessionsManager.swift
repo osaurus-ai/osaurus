@@ -51,6 +51,18 @@ final class ChatSessionsManager: ObservableObject {
                     self?.refresh()
                 }
                 .store(in: &cancellables)
+
+            // The initial load can also be deferred because the background
+            // prewarm was still mid-open (ChatSessionStore.ensureOpen no
+            // longer waits behind an in-flight open on the main thread).
+            // Reload once the database reports open.
+            NotificationCenter.default.publisher(for: ChatHistoryDatabase.didOpenNotification)
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    ChatSessionStore.flushPendingSaves()
+                    self?.refresh()
+                }
+                .store(in: &cancellables)
         }
     }
 
@@ -147,6 +159,20 @@ final class ChatSessionsManager: ObservableObject {
         else { return }
         guard session.archived != archived else { return }
         session.archived = archived
+        ChatSessionStore.save(session)
+        upsertInMemory(session)
+    }
+
+    /// Toggle a session's pin flag. Like `setArchived`, this does not touch
+    /// `updatedAt`: pinning is a display-ordering concern handled by the
+    /// sidebar and must not bubble the row up the recency list.
+    func setPinned(id: UUID, pinned: Bool) {
+        guard
+            var session = sessions.first(where: { $0.id == id })
+                ?? ChatSessionStore.load(id: id)
+        else { return }
+        guard session.pinned != pinned else { return }
+        session.pinned = pinned
         ChatSessionStore.save(session)
         upsertInMemory(session)
     }
