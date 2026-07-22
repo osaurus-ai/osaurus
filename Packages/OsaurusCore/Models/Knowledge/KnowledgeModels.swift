@@ -22,6 +22,10 @@ public struct KnowledgeDocument: Sendable, Equatable {
     public var title: String
     /// OKF `type` frontmatter field ("" when absent).
     public var docType: String
+    /// Category the indexer inferred when frontmatter has no `type`
+    /// (e.g. from the containing folder name); "" when nothing could be
+    /// inferred. Never written to the user's files.
+    public var inferredType: String
     /// OKF `description` frontmatter field ("" when absent).
     public var summary: String
     /// OKF `tags` frontmatter field, normalized to lowercase CSV.
@@ -39,6 +43,7 @@ public struct KnowledgeDocument: Sendable, Equatable {
         relPath: String,
         title: String,
         docType: String,
+        inferredType: String = "",
         summary: String,
         tagsCSV: String,
         contentHash: String,
@@ -51,12 +56,25 @@ public struct KnowledgeDocument: Sendable, Equatable {
         self.relPath = relPath
         self.title = title
         self.docType = docType
+        self.inferredType = inferredType
         self.summary = summary
         self.tagsCSV = tagsCSV
         self.contentHash = contentHash
         self.sizeBytes = sizeBytes
         self.modifiedAt = modifiedAt
         self.indexedAt = indexedAt
+    }
+
+    /// The category agents filter by: explicit frontmatter `type` when
+    /// present, else the inferred one, else "".
+    public var effectiveType: String {
+        docType.isEmpty ? inferredType : docType
+    }
+
+    /// True when the effective type came from inference rather than
+    /// explicit frontmatter.
+    public var isTypeInferred: Bool {
+        docType.isEmpty && !inferredType.isEmpty
     }
 
     public var tags: [String] {

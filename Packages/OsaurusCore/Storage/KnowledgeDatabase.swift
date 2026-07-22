@@ -44,7 +44,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
     public static let shared = KnowledgeDatabase()
 
     /// Highest schema version this build knows how to produce.
-    private static let latestSchemaVersion = 2
+    private static let latestSchemaVersion = 3
 
     nonisolated(unsafe) private static let iso8601Formatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -145,6 +145,9 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         }
         if currentVersion < 2 {
             try runMigrationStep(2, migrateToV2)
+        }
+        if currentVersion < 3 {
+            try runMigrationStep(3, migrateToV3)
         }
     }
 
@@ -303,6 +306,23 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         KnowledgeLogger.database.info("v2 migration completed")
     }
 
+    /// V3: auto-categorization. `inferred_type` holds the category the
+    /// indexer derived when frontmatter carries no explicit `type`. The
+    /// explicit `doc_type` always wins; readers resolve the effective
+    /// type as `doc_type` when non-empty, else `inferred_type`.
+    private func migrateToV3() throws {
+        KnowledgeLogger.database.info("Running v3 migration (inferred document type)")
+        try executeRaw(
+            "ALTER TABLE documents ADD COLUMN inferred_type TEXT NOT NULL DEFAULT ''"
+        )
+        KnowledgeLogger.database.info("v3 migration completed")
+    }
+
+    /// SQL expression resolving a document's effective category:
+    /// explicit frontmatter `type` when present, else the inferred one.
+    private static let effectiveTypeSQL =
+        "CASE WHEN doc_type = '' THEN inferred_type ELSE doc_type END"
+
     // MARK: - Documents
 
     /// Insert or update a document row, returning its row id. Chunks are
@@ -313,6 +333,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         relPath: String,
         title: String,
         docType: String,
+        inferredType: String = "",
         summary: String,
         tagsCSV: String,
         contentHash: String,
@@ -323,12 +344,13 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         try prepareAndExecute(
             """
             INSERT INTO documents
-                (collection_id, rel_path, title, doc_type, summary, tags_csv,
+                (collection_id, rel_path, title, doc_type, inferred_type, summary, tags_csv,
                  content_hash, size_bytes, modified_at, indexed_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             ON CONFLICT(collection_id, rel_path) DO UPDATE SET
                 title = excluded.title,
                 doc_type = excluded.doc_type,
+                inferred_type = excluded.inferred_type,
                 summary = excluded.summary,
                 tags_csv = excluded.tags_csv,
                 content_hash = excluded.content_hash,
@@ -342,12 +364,13 @@ public final class KnowledgeDatabase: @unchecked Sendable {
                 Self.bindText(stmt, index: 2, value: relPath)
                 Self.bindText(stmt, index: 3, value: title)
                 Self.bindText(stmt, index: 4, value: docType)
-                Self.bindText(stmt, index: 5, value: summary)
-                Self.bindText(stmt, index: 6, value: tagsCSV)
-                Self.bindText(stmt, index: 7, value: contentHash)
-                sqlite3_bind_int(stmt, 8, Int32(sizeBytes))
-                Self.bindText(stmt, index: 9, value: modifiedAt)
-                Self.bindText(stmt, index: 10, value: Self.iso8601Now())
+                Self.bindText(stmt, index: 5, value: inferredType)
+                Self.bindText(stmt, index: 6, value: summary)
+                Self.bindText(stmt, index: 7, value: tagsCSV)
+                Self.bindText(stmt, index: 8, value: contentHash)
+                sqlite3_bind_int(stmt, 9, Int32(sizeBytes))
+                Self.bindText(stmt, index: 10, value: modifiedAt)
+                Self.bindText(stmt, index: 11, value: Self.iso8601Now())
             },
             process: { stmt in
                 if sqlite3_step(stmt) == SQLITE_ROW {
@@ -546,7 +569,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         var tagIndex: Int?
         if docType != nil {
             docTypeIndex = nextIndex
-            sql += " AND doc_type = ?\(nextIndex) COLLATE NOCASE"
+            sql += " AND \(Self.effectiveTypeSQL) = ?\(nextIndex) COLLATE NOCASE"
             nextIndex += 1
         }
         if tag != nil {
@@ -953,7 +976,7 @@ public final class KnowledgeDatabase: @unchecked Sendable {
     // MARK: - Row readers
 
     private static let documentColumns =
-        "id, collection_id, rel_path, title, doc_type, summary, tags_csv, content_hash, size_bytes, modified_at, indexed_at"
+        "id, collection_id, rel_path, title, doc_type, inferred_type, summary, tags_csv, content_hash, size_bytes, modified_at, indexed_at"
 
     private static func readDocument(_ stmt: OpaquePointer) -> KnowledgeDocument {
         KnowledgeDocument(
@@ -962,12 +985,13 @@ public final class KnowledgeDatabase: @unchecked Sendable {
             relPath: columnText(stmt, 2),
             title: columnText(stmt, 3),
             docType: columnText(stmt, 4),
-            summary: columnText(stmt, 5),
-            tagsCSV: columnText(stmt, 6),
-            contentHash: columnText(stmt, 7),
-            sizeBytes: Int(sqlite3_column_int(stmt, 8)),
-            modifiedAt: columnText(stmt, 9),
-            indexedAt: columnText(stmt, 10)
+            inferredType: columnText(stmt, 5),
+            summary: columnText(stmt, 6),
+            tagsCSV: columnText(stmt, 7),
+            contentHash: columnText(stmt, 8),
+            sizeBytes: Int(sqlite3_column_int(stmt, 9)),
+            modifiedAt: columnText(stmt, 10),
+            indexedAt: columnText(stmt, 11)
         )
     }
 
