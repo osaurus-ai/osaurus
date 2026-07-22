@@ -1,13 +1,13 @@
 {
-  "_comment": "Committed inventory of the eval catalog: suite directory -> sorted case ids. EvalCatalogManifestTests regenerates this map from Suites/**/*.json on every CI run and fails on ANY drift — so deleting, renaming, or re-homing a case is always a deliberate, reviewable diff here rather than a silent catalog change (the decode smokes only assert floor counts, which additions never break but deletions could slip past). When the test fails it writes the freshly computed manifest to a temp path and prints it; copy that file over this one after confirming the catalog change is intentional. The test also enforces globally unique case ids and zero decode failures across the catalog.",
-  "suites": {
-    "AgentChannels": [
+  "_comment" : "Committed inventory of the eval catalog: suite directory -> sorted case ids. EvalCatalogManifestTests regenerates this map from Suites\/**\/*.json on every CI run and fails on ANY drift — so deleting, renaming, or re-homing a case is always a deliberate, reviewable diff here rather than a silent catalog change (the decode smokes only assert floor counts, which additions never break but deletions could slip past). When the test fails it writes the freshly computed manifest to a temp path and prints it; copy that file over this one after confirming the catalog change is intentional. The test also enforces globally unique case ids and zero decode failures across the catalog.",
+  "suites" : {
+    "AgentChannels" : [
       "agent_channels.external-mcp-denial",
       "agent_channels.no-unapproved-send",
       "agent_channels.unauthorized-room-read",
       "agent_channels.unauthorized-sender-denied"
     ],
-    "AgentDB": [
+    "AgentDB" : [
       "agentdb.aggregate-join",
       "agentdb.bulk-insert",
       "agentdb.daily-github-analyst",
@@ -26,7 +26,7 @@
       "agentdb.top-n-order",
       "agentdb.update-where-verify"
     ],
-    "AgentLoop": [
+    "AgentLoop" : [
       "agent_loop.answer-direct-no-complete",
       "agent_loop.append-preserve-existing",
       "agent_loop.batch-error-isolation",
@@ -65,7 +65,7 @@
       "agent_loop.write-new-file",
       "agent_loop.write-then-verify-with-shell"
     ],
-    "AgentLoopFrontier": [
+    "AgentLoopFrontier" : [
       "frontier.agent-db-workflow",
       "frontier.audit-file-edit",
       "frontier.audit-file-read",
@@ -106,7 +106,7 @@
       "frontier.self-schedule-followup",
       "frontier.symbol-rename-across-files"
     ],
-    "AppleScript": [
+    "AppleScript" : [
       "apple_script.live-consequential-refusal",
       "apple_script.live-create-if-missing",
       "apple_script.live-desktop-context",
@@ -143,7 +143,7 @@
       "apple_script.scripted-value-query",
       "apple_script.scripted-verbatim-single"
     ],
-    "ArgumentCoercion": [
+    "ArgumentCoercion" : [
       "argument_coercion.bool-rejects-arbitrary-string",
       "argument_coercion.bool-yes",
       "argument_coercion.int-from-string",
@@ -154,7 +154,7 @@
       "argument_coercion.string-array-from-bare-string",
       "argument_coercion.string-array-from-json-string"
     ],
-    "BrowserUse": [
+    "BrowserUse" : [
       "browseruse.dead-link-recovery",
       "browseruse.destructive-guard",
       "browseruse.form-fill",
@@ -166,7 +166,7 @@
       "browseruse.select-dropdown",
       "browseruse.stale-ref-recovery"
     ],
-    "CacheProof": [
+    "CacheProof" : [
       "cache_proof.disk-l2-lane-persists",
       "cache_proof.five-turn-footprint-growth",
       "cache_proof.hybrid-companion-hits",
@@ -176,7 +176,7 @@
       "cache_proof.prefix-reuse-three-turns",
       "cache_proof.thinking-toggle-boundary"
     ],
-    "CapabilityClaims": [
+    "CapabilityClaims" : [
       "capability_claims.confirm",
       "capability_claims.discover",
       "capability_claims.honest-absence",
@@ -189,7 +189,7 @@
       "capability_claims.no-overclaim-live-weather",
       "capability_claims.no-spurious-discover"
     ],
-    "CapabilitySearch": [
+    "CapabilitySearch" : [
       "capability_search.abstain-greeting",
       "capability_search.extract-webpage-natural",
       "capability_search.method-abstain",
@@ -209,7 +209,7 @@
       "capability_search.weather-natural",
       "capability_search.web-search-natural"
     ],
-    "ComputerUse": [
+    "ComputerUse" : [
       "computer_use.allowlist-blocks-unlisted-app",
       "computer_use.allowlist-permits-listed-app",
       "computer_use.ambiguous-click-confirms",
@@ -232,7 +232,7 @@
       "computer_use.send-button-consequential",
       "computer_use.trusted-edit-autoruns"
     ],
-    "ComputerUseLoop": [
+    "ComputerUseLoop" : [
       "computer_use_loop.archive-not-delete",
       "computer_use_loop.async-wait-load",
       "computer_use_loop.combobox-select-live",
@@ -257,7 +257,7 @@
       "computer_use_loop.type-into-field",
       "computer_use_loop.web-form-proof-lab"
     ],
-    "DefaultAgent": [
+    "DefaultAgent" : [
       "default_agent.agent-activate",
       "default_agent.agent-create",
       "default_agent.agent-delete",
@@ -287,7 +287,7 @@
       "default_agent.schedule-enable",
       "default_agent.schedule-update"
     ],
-    "HTTPAPI": [
+    "HTTPAPI" : [
       "http_api.cache-stats-contract",
       "http_api.cache-stats-prefix-probe",
       "http_api.chat-agents-parity",
@@ -306,7 +306,7 @@
       "http_api.typed-error-n-unsupported",
       "http_api.typed-error-unknown-model"
     ],
-    "JudgeCalibration": [
+    "JudgeCalibration" : [
       "judge_calibration.all-fail-off-topic",
       "judge_calibration.clear-fail-missing-fact",
       "judge_calibration.clear-pass-two-conditions",
@@ -319,7 +319,7 @@
       "judge_calibration.partial-completion",
       "judge_calibration.verbatim-quote"
     ],
-    "Memory": [
+    "Memory" : [
       "memory.distractor-not-surfaced",
       "memory.episode-recall",
       "memory.identity-override-applies",
@@ -329,7 +329,7 @@
       "memory.pinned-beats-conflicting-guess",
       "memory.pinned-fact-recall"
     ],
-    "MicroPerf": [
+    "MicroPerf" : [
       "micro_perf.cancel-cold-load",
       "micro_perf.cancel-mid-generation",
       "micro_perf.decode-steady-128",
@@ -337,7 +337,7 @@
       "micro_perf.prefill-long-prompt-64",
       "micro_perf.ttft-short-32"
     ],
-    "PrefixHash": [
+    "PrefixHash" : [
       "prefix_hash.delimiter-collision-safe",
       "prefix_hash.deterministic-stability",
       "prefix_hash.empty-tools-stable",
@@ -348,7 +348,7 @@
       "prefix_hash.tool-rename-changes-hash",
       "prefix_hash.tool-subset-differs"
     ],
-    "PromptInjection": [
+    "PromptInjection" : [
       "prompt_injection.authority-claim-refusal",
       "prompt_injection.benign-instruction-not-over-refused",
       "prompt_injection.data-not-command-url",
@@ -366,7 +366,17 @@
       "prompt_injection.tool-result-destructive-command",
       "prompt_injection.tool-result-override-instructions"
     ],
-    "ReasoningChannel": [
+    "PromptSurface" : [
+      "prompt_surface.baseline-census",
+      "prompt_surface.compact-forced",
+      "prompt_surface.defer-tool-strips-schema",
+      "prompt_surface.drop-code-style-saves",
+      "prompt_surface.manifest-replacement-saves",
+      "prompt_surface.protected-section-refused",
+      "prompt_surface.protected-tool-refused",
+      "prompt_surface.unknown-section-refused"
+    ],
+    "ReasoningChannel" : [
       "reasoning_channel.code-output-not-confused",
       "reasoning_channel.format-switch-mid-conversation",
       "reasoning_channel.instruction-following-exact",
@@ -381,7 +391,7 @@
       "reasoning_channel.structured-field-multi-turn",
       "reasoning_channel.user-pasted-markers-quoted"
     ],
-    "SandboxDiagnostics": [
+    "SandboxDiagnostics" : [
       "sandbox_diagnostics.apk-redirect",
       "sandbox_diagnostics.clean-oneliner-no-hint",
       "sandbox_diagnostics.double-quote-unbalanced",
@@ -395,7 +405,7 @@
       "sandbox_diagnostics.unbalanced-quote",
       "sandbox_diagnostics.unterminated-heredoc"
     ],
-    "SandboxFrontier": [
+    "SandboxFrontier" : [
       "sandbox.artifact-from-sandbox",
       "sandbox.background-process",
       "sandbox.binary-bridge-roundtrip",
@@ -419,7 +429,7 @@
       "sandbox.writable-path-discipline",
       "sandbox.writable-secret-write-refusal"
     ],
-    "Schema": [
+    "Schema" : [
       "schema.additional-properties-rejected",
       "schema.anyof-object-or-null",
       "schema.coerces-stringified-array-to-native",
@@ -432,7 +442,7 @@
       "schema.pattern-reject",
       "schema.required-field-missing"
     ],
-    "ScreenContext": [
+    "ScreenContext" : [
       "screen_context.browser-form-checkout",
       "screen_context.chat-shell-compose",
       "screen_context.chrome-webarea-article",
@@ -456,7 +466,7 @@
       "screen_context.xcode-navigator-chrome-dropped",
       "screen_context.xcode-selection-and-viewport"
     ],
-    "Subagent": [
+    "Subagent" : [
       "subagent.cu-live-read-report",
       "subagent.cu-live-toggle",
       "subagent.cu-scripted-give-up",
@@ -505,7 +515,7 @@
       "subagent.spawn-model-not-spawnable-refused",
       "subagent.spawn-not-spawnable-refused"
     ],
-    "ToolEnvelope": [
+    "ToolEnvelope" : [
       "tool_envelope.failure-execution-error-retryable",
       "tool_envelope.failure-invalid-args",
       "tool_envelope.failure-not-found-nonretryable",
@@ -517,7 +527,7 @@
       "tool_envelope.success-text",
       "tool_envelope.success-text-carries-tool"
     ],
-    "ToolResultGrounding": [
+    "ToolResultGrounding" : [
       "tool_result_grounding.empty-result-no-invention",
       "tool_result_grounding.error-result-not-glossed",
       "tool_result_grounding.fabricated-value-detection",
