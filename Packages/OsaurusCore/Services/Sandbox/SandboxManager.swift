@@ -783,6 +783,15 @@
             _status = .running
             _lastBootReadyAt = Date()
             syncStatus()
+            let workspacePath = OsaurusPaths.containerWorkspace().path
+            Task { @MainActor in
+                SandboxLogBuffer.shared.append(
+                    level: .info,
+                    message:
+                        "Seatbelt backend ready — commands run under sandbox-exec confinement (workspace: \(workspacePath))",
+                    source: "seatbelt"
+                )
+            }
         }
 
         public func provision() async throws {
@@ -1637,6 +1646,15 @@
                 network: network
             )
             let mappedCwd = cwd.map { SeatbeltPathMapper.mapToHost($0, workspaceRoot: root) }
+            let netLabel = network == .allowed ? "allowed" : "denied"
+            let commandPreview = String(command.prefix(160))
+            Task { @MainActor in
+                SandboxLogBuffer.shared.append(
+                    level: .debug,
+                    message: "sandbox-exec [net:\(netLabel)] $ \(commandPreview)",
+                    source: "seatbelt"
+                )
+            }
             return try await SeatbeltExecutor.run(
                 SeatbeltExecutor.Request(
                     command: SeatbeltPathMapper.mapToHost(command, workspaceRoot: root),
