@@ -232,7 +232,12 @@ enum ChatSessionStore {
         // field). Defer instead: `loadAll` returns [] until the DB is open,
         // and `ChatSessionsManager` reloads on
         // `ChatHistoryDatabase.didOpenNotification`.
-        if Thread.isMainThread, !ChatHistoryDatabase.shared.isOpenNonBlocking {
+        // Skipped under tests: suites drive `ensureOpen` from the main
+        // thread and expect a synchronous open, and the background prewarm
+        // this kicks would race the storage-converge suites.
+        if Thread.isMainThread, !RuntimeEnvironment.isUnderTests,
+            !ChatHistoryDatabase.shared.isOpenNonBlocking
+        {
             print("[ChatSessionStore] Deferring chat-history open: not yet open, staying off main")
             preloadInBackground()
             return

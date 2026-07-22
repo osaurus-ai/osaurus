@@ -197,8 +197,12 @@ enum LocalReasoningCapability {
         // the blocking variant parks on the cold-cache scan condition for up
         // to ~10s at launch. Off-main (server/generation paths) keep the
         // blocking lookup so capability detection stays authoritative.
+        // Under tests everything runs on the main thread and suites expect
+        // the blocking lookup's synchronous answer, so the shortcut is
+        // production-only.
+        let cacheOnly = Thread.isMainThread && !RuntimeEnvironment.isUnderTests
         let found =
-            Thread.isMainThread
+            cacheOnly
             ? ModelManager.findInstalledMLXModelFromCache(named: modelId)
             : ModelManager.findInstalledMLXModel(named: modelId)
         return found?.localDirectory

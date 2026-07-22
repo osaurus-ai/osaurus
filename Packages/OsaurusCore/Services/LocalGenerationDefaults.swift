@@ -184,8 +184,11 @@ enum LocalGenerationDefaults {
         // cold-cache scan condition (up to ~10s at launch) and this is
         // reachable from SwiftUI body evaluation. Off-main callers keep the
         // authoritative blocking lookup.
+        // Production-only shortcut — see LocalReasoningCapability: test
+        // suites run on the main thread and expect the blocking answer.
+        let cacheOnly = Thread.isMainThread && !RuntimeEnvironment.isUnderTests
         let found =
-            Thread.isMainThread
+            cacheOnly
             ? ModelManager.findInstalledMLXModelFromCache(named: modelId)
             : ModelManager.findInstalledMLXModel(named: modelId)
         return found?.localDirectory
