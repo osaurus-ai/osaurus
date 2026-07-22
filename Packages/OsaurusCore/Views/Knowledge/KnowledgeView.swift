@@ -113,7 +113,7 @@ struct KnowledgeView: View {
                                     onValidateOKF: {
                                         Task.detached(priority: .userInitiated) {
                                             let failing = await KnowledgeIndexService.shared
-                                                .okfNonconformingDocuments(collectionId: collection.id.uuidString)
+                                                .uncategorizedDocuments(collectionId: collection.id.uuidString)
                                             await MainActor.run {
                                                 if failing.isEmpty {
                                                     showSuccess(L("Every document has a category (type)"))
@@ -607,7 +607,7 @@ private struct KnowledgeCollectionCard: View {
         switch okfStatus {
         case .conformant:
             return
-                "Every document has a category, so agents can filter the library by it. Following the Open Knowledge Format (OKF)."
+                "Every document has a category, so agents can filter the library by it. Categories come from frontmatter `type:` or are inferred automatically from folder names."
         case .nonconforming(let count):
             return count == 1
                 ? "1 document has no category — this is optional, agents can still search and read it. To let agents filter by category, add a `type:` line (e.g. `type: policy`) to the top of the file. Click for the list."
@@ -619,7 +619,7 @@ private struct KnowledgeCollectionCard: View {
 
     private func refreshOKFStatus() async {
         let failing = await KnowledgeIndexService.shared
-            .okfNonconformingDocuments(collectionId: collection.id.uuidString)
+            .uncategorizedDocuments(collectionId: collection.id.uuidString)
         okfStatus = failing.isEmpty ? .conformant : .nonconforming(failing.count)
     }
 
@@ -1656,17 +1656,26 @@ private struct KnowledgeCollectionDetailSheet: View {
                     .truncationMode(.middle)
             }
             Spacer(minLength: 8)
-            Text(verbatim: doc.docType.isEmpty ? L("Uncategorized") : doc.docType)
-                .font(.system(size: 9, weight: .bold))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1)
-                .background(
-                    Capsule().fill(
-                        doc.docType.isEmpty
-                            ? theme.secondaryText.opacity(0.12) : theme.accentColor.opacity(0.15)
-                    )
+            Text(
+                verbatim: doc.effectiveType.isEmpty
+                    ? L("Uncategorized")
+                    : doc.isTypeInferred ? "\(doc.effectiveType) (auto)" : doc.effectiveType
+            )
+            .font(.system(size: 9, weight: .bold))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(
+                Capsule().fill(
+                    doc.effectiveType.isEmpty
+                        ? theme.secondaryText.opacity(0.12) : theme.accentColor.opacity(0.15)
                 )
-                .foregroundColor(doc.docType.isEmpty ? theme.secondaryText : theme.accentColor)
+            )
+            .foregroundColor(doc.effectiveType.isEmpty ? theme.secondaryText : theme.accentColor)
+            .help(
+                doc.isTypeInferred
+                    ? L("Category inferred from the folder name. Add a `type:` line to the file's frontmatter to override it.")
+                    : ""
+            )
         }
         .padding(10)
     }
@@ -1694,7 +1703,7 @@ private struct KnowledgeCollectionDetailSheet: View {
             }
             let docs: [KnowledgeDocument] =
                 (try? KnowledgeDatabase.shared.listDocuments(collectionIds: [collectionId], limit: 2000)) ?? []
-            let failing = await KnowledgeIndexService.shared.okfNonconformingDocuments(collectionId: collectionId)
+            let failing = await KnowledgeIndexService.shared.uncategorizedDocuments(collectionId: collectionId)
             await MainActor.run {
                 documents = docs
                 nonconformingCount = failing.count

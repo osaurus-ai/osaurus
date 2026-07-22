@@ -26,6 +26,7 @@ struct KnowledgeDatabaseTests {
         relPath: String,
         title: String = "Doc",
         docType: String = "guide",
+        inferredType: String = "",
         tagsCSV: String = "wordpress,php",
         chunks: [(headingPath: String, content: String)]
     ) throws -> Int {
@@ -34,6 +35,7 @@ struct KnowledgeDatabaseTests {
             relPath: relPath,
             title: title,
             docType: docType,
+            inferredType: inferredType,
             summary: "",
             tagsCSV: tagsCSV,
             contentHash: "hash-\(relPath)",
@@ -168,6 +170,31 @@ struct KnowledgeDatabaseTests {
         // Tag match is exact against the normalized list, not substring.
         let partial = try db.listDocuments(collectionIds: ["c1"], tag: "op")
         #expect(partial.isEmpty)
+    }
+
+    @Test
+    func typeFilterMatchesInferredTypeAndExplicitTypeWins() throws {
+        let db = makeDBOrSkip()
+        guard let db else { return }
+        // No explicit type — inferred from folder.
+        try seedDocument(
+            db, collectionId: "c1", relPath: "recipes/pasta.md",
+            docType: "", inferredType: "recipes", chunks: [("", "p")]
+        )
+        // Explicit type present — a stale inferred value must not leak.
+        try seedDocument(
+            db, collectionId: "c1", relPath: "recipes/notes.md",
+            docType: "guide", inferredType: "recipes", chunks: [("", "n")]
+        )
+
+        let recipes = try db.listDocuments(collectionIds: ["c1"], docType: "recipes")
+        #expect(recipes.map(\.relPath) == ["recipes/pasta.md"])
+        #expect(recipes.first?.effectiveType == "recipes")
+        #expect(recipes.first?.isTypeInferred == true)
+
+        let guides = try db.listDocuments(collectionIds: ["c1"], docType: "guide")
+        #expect(guides.map(\.relPath) == ["recipes/notes.md"])
+        #expect(guides.first?.isTypeInferred == false)
     }
 
     @Test

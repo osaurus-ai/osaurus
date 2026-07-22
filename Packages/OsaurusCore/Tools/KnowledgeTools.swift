@@ -402,7 +402,9 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
         let document = match.document
         var out = "[\(match.collection.name)] \(relPath)\(sectionNote)\n"
         if !document.title.isEmpty { out += "title: \(document.title)\n" }
-        if !document.docType.isEmpty { out += "type: \(document.docType)\n" }
+        if !document.effectiveType.isEmpty {
+            out += "type: \(document.effectiveType)\(document.isTypeInferred ? " (inferred)" : "")\n"
+        }
         if !document.tagsCSV.isEmpty { out += "tags: \(document.tagsCSV)\n" }
         out += "\n" + content
         if truncated {
@@ -490,7 +492,10 @@ final class ListKnowledgeTool: OsaurusTool, @unchecked Sendable {
             out += "- \(document.relPath)"
             if !document.title.isEmpty { out += " — \(document.title)" }
             var facets: [String] = []
-            if !document.docType.isEmpty { facets.append("type: \(document.docType)") }
+            if !document.effectiveType.isEmpty {
+                facets.append(
+                    "type: \(document.effectiveType)\(document.isTypeInferred ? " (inferred)" : "")")
+            }
             if !document.tagsCSV.isEmpty { facets.append("tags: \(document.tagsCSV)") }
             if !facets.isEmpty { out += " (\(facets.joined(separator: "; ")))" }
             out += "\n"

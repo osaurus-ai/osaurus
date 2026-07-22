@@ -439,6 +439,26 @@ public final class KnowledgeDatabase: @unchecked Sendable {
         }
     }
 
+    /// Update only the inferred category of an existing document. Used by
+    /// the indexer's skip path to backfill rows indexed before inference
+    /// existed (their content hash is unchanged, so the full upsert never
+    /// runs) and to heal stale inferences after a file is moved.
+    public func updateInferredType(
+        collectionId: String,
+        relPath: String,
+        inferredType: String
+    ) throws {
+        try prepareAndExecute(
+            "UPDATE documents SET inferred_type = ?1 WHERE collection_id = ?2 AND rel_path = ?3",
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: inferredType)
+                Self.bindText(stmt, index: 2, value: collectionId)
+                Self.bindText(stmt, index: 3, value: relPath)
+            },
+            process: { stmt in _ = sqlite3_step(stmt) }
+        )
+    }
+
     /// Content hashes for every indexed document of a collection, keyed by
     /// relative path. Drives the incremental skip + prune pass.
     public func documentHashes(collectionId: String) throws -> [String: String] {

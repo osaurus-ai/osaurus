@@ -82,6 +82,18 @@ public actor KnowledgeIndexService {
         DocumentAdaptersBootstrap.registerBuiltIns()
         let files = scanIndexableFiles(in: folderURL)
         let existingHashes = (try? KnowledgeDatabase.shared.documentHashes(collectionId: collectionId)) ?? [:]
+        // Existing rows' categories, for backfilling inference on the skip
+        // path: rows indexed before inference existed have an unchanged
+        // content hash, so the full upsert never revisits them.
+        let existingDocuments =
+            (try? KnowledgeDatabase.shared.listDocuments(
+                collectionIds: [collectionId],
+                limit: Self.maxFilesPerCollection
+            )) ?? []
+        var typesByPath: [String: (docType: String, inferredType: String)] = [:]
+        for document in existingDocuments {
+            typesByPath[document.relPath] = (document.docType, document.inferredType)
+        }
         var seenPaths: Set<String> = []
 
         for file in files {
@@ -100,6 +112,16 @@ public actor KnowledgeIndexService {
 
             let hash = Self.sha256Hex(data)
             if !force, existingHashes[relPath] == hash {
+                if let types = typesByPath[relPath], types.docType.isEmpty {
+                    let inferred = KnowledgeTypeInference.infer(relPath: relPath)
+                    if inferred != types.inferredType {
+                        try? KnowledgeDatabase.shared.updateInferredType(
+                            collectionId: collectionId,
+                            relPath: relPath,
+                            inferredType: inferred
+                        )
+                    }
+                }
                 summary.skipped += 1
                 continue
             }
@@ -159,6 +181,28 @@ public actor KnowledgeIndexService {
         return documents
             .filter { document in
                 document.docType.isEmpty
+                    && !reserved.contains(document.relPath.lowercased())
+                    && Self.markdownExtensions.contains(
+                        (document.relPath as NSString).pathExtension.lowercased())
+            }
+            .map(\.relPath)
+    }
+
+    /// Documents with no category at all — no explicit frontmatter
+    /// `type` and nothing the indexer could infer. This is what the UI
+    /// badge reports; `okfNonconformingDocuments` (explicit type only)
+    /// remains the strict OKF conformance check.
+    public func uncategorizedDocuments(collectionId: String) -> [String] {
+        guard openDatabaseIfNeeded() else { return [] }
+        let documents =
+            (try? KnowledgeDatabase.shared.listDocuments(
+                collectionIds: [collectionId],
+                limit: Self.maxFilesPerCollection
+            )) ?? []
+        let reserved: Set<String> = ["index.md", "log.md"]
+        return documents
+            .filter { document in
+                document.effectiveType.isEmpty
                     && !reserved.contains(document.relPath.lowercased())
                     && Self.markdownExtensions.contains(
                         (document.relPath as NSString).pathExtension.lowercased())
