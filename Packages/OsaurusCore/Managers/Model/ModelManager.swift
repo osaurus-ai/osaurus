@@ -1433,6 +1433,19 @@ extension ModelManager {
             ?? name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return (repo, match.id)
     }
+
+    /// Cache-only variant of `findInstalledModel(named:)` for main-thread /
+    /// view-body callers: never waits on the disk scan (returns nil misses
+    /// until it lands).
+    nonisolated static func findInstalledModelFromCache(named name: String) -> (
+        name: String, id: String
+    )? {
+        guard let match = findInstalledMLXModelFromCache(named: name) else { return nil }
+        let repo =
+            match.id.split(separator: "/").last.map(String.init)?.lowercased()
+            ?? name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return (repo, match.id)
+    }
 }
 
 // MARK: - Hugging Face discovery helpers
@@ -1879,6 +1892,15 @@ extension ModelManager {
             localModelsCacheCondition.unlock()
             return mergeExternalModels(into: cached)
         }
+    }
+
+    /// True once the background disk scan has populated the local-models
+    /// cache. Lets memoizing callers distinguish "model not installed" from
+    /// "scan hasn't landed yet" when using the non-blocking lookups.
+    nonisolated static var isLocalModelsCacheWarm: Bool {
+        localModelsCacheCondition.lock()
+        defer { localModelsCacheCondition.unlock() }
+        return cachedLocalModels != nil
     }
 
     /// Local models from the warm cache, never waiting on a scan. On a cold

@@ -1261,7 +1261,9 @@ final class ChatSession: ObservableObject {
     /// `pickerItems` being populated.
     var selectedModelIsLocal: Bool {
         guard let model = selectedModel else { return false }
-        return ModelManager.findInstalledModel(named: model) != nil
+        // Cache-only: this getter runs in main-actor/view contexts where the
+        // blocking lookup can park on the cold-cache disk scan for seconds.
+        return ModelManager.findInstalledModelFromCache(named: model) != nil
     }
 
     /// True while this session is streaming a reply from a local model.
