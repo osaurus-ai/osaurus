@@ -1434,7 +1434,14 @@ struct AppleScriptLoopTests {
             id: "write"
         )
         let read = call(#"tell application "TextEdit" to get text of document 1"#, id: "read")
-        let seq = ScriptSequencer([write, read, nil])
+        // A third mutation would expose a redundant model turn after the
+        // successful verifier. The loop must finish from the real read-back
+        // before this call can be proposed.
+        let forbiddenAfterVerification = call(
+            #"tell application "TextEdit" to set text of document 1 to "WRONG""#,
+            id: "forbidden-after-verification"
+        )
+        let seq = ScriptSequencer([write, read, forbiddenAfterVerification])
 
         let result = await AppleScriptLoop.run(
             task: "Create a TextEdit document containing exactly JANG6M LIVE PROOF",
@@ -1455,6 +1462,7 @@ struct AppleScriptLoopTests {
         #expect(await exec.count == 2)
         // The mutating write is confirmed; the read-back is auto-run.
         #expect(await confirm.count == 1)
+        #expect(result.steps.contains { $0.status == "blocked" } == false)
     }
 
     @Test("exact TextEdit replacement uses live pre/post read-back and stops after one write")

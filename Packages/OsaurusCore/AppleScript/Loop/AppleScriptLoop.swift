@@ -1421,11 +1421,9 @@ public enum AppleScriptLoop {
                 // second mutation before that state is read back. The small
                 // AppleScript models can otherwise interpret a successful OS
                 // execution as permission to repeat or embellish the same
-                // edit. Enter the existing verification gate immediately:
-                // subsequent reads are allowed, while another write is
-                // rejected before approval/execution. If the model stops
-                // instead of reading, the no-tool path below emits the bounded
-                // read-only verification nudge.
+                // edit. Enter the verification gate immediately: subsequent
+                // reads are allowed, while another write is rejected before
+                // approval/execution.
                 if effect != .read, shouldVerify(mode: mode, task: task) {
                     verifying = true
                 }
@@ -1488,6 +1486,46 @@ public enum AppleScriptLoop {
                 }
             }
 
+            // Do not ask the helper for a free-form terminal turn between an
+            // already-successful mutation and the required OS read-back. Gemma
+            // 4 AppleScript bundles can answer that `tool_choice:auto` turn
+            // with reasoning only even when `enable_thinking=false`; nothing
+            // is gained from that turn, and it delays completion before the
+            // loop inevitably asks for verification. Advance the real state
+            // machine directly to exactly one read-only verification request.
+            // The verifier is still model-authored, effect-classified, compiled,
+            // and gated; only its redundant predecessor is removed.
+            if execution.isSuccess, harness.verifyReadBack, !verifyAttempted,
+                effect != .read, shouldVerify(mode: mode, task: task)
+            {
+                verifyAttempted = true
+                verifying = true
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .retry,
+                        title: "Verifying: reading the result back"
+                    )
+                )
+                let nudge =
+                    "The requested change ran successfully. Run ONE READ-ONLY AppleScript that "
+                    + "gets and `return`s the specific resulting value(s) the task asked for. "
+                    + "Reply with a single run_applescript call. Do not change, type, open, close, "
+                    + "or save anything during verification."
+                messages.append(
+                    ChatMessage(
+                        role: "tool",
+                        content: toolResult,
+                        tool_calls: nil,
+                        tool_call_id: call.id
+                    )
+                )
+                messages.append(ChatMessage(role: "user", content: nudge))
+                lastToolResult = nudge
+                step += 1
+                continue
+            }
+
             // A successful action-only automation is complete even when the
             // script naturally returns no value (for example `activate`). Asking
             // the small dedicated model for another turn after that point lets
@@ -1498,12 +1536,13 @@ public enum AppleScriptLoop {
             // mutating automation changed state.
             let hasOutput = !(trimmedOutput?.isEmpty ?? true)
             let queryWithValue = mode == .query && hasOutput
+            let verifiedValue = verifying && effect == .read && hasOutput
             let actionOnlyAutomation =
                 mode == .automate && !shouldVerify(mode: mode, task: task)
-            if execution.isSuccess, queryWithValue || actionOnlyAutomation {
+            if execution.isSuccess, queryWithValue || verifiedValue || actionOnlyAutomation {
                 let summary = completionSummary(
                     modelText: nil,
-                    lastOutput: queryWithValue ? trimmedOutput : nil,
+                    lastOutput: queryWithValue || verifiedValue ? trimmedOutput : nil,
                     scriptsExecuted: scriptsExecuted,
                     succeeded: succeeded,
                     failed: failed
