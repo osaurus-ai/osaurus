@@ -601,6 +601,26 @@ private struct KnowledgeCollectionCard: View {
         }
     }
 
+    private var categoryAlertTitle: String {
+        if uncategorizedPaths.isEmpty { return L("All documents categorized") }
+        return uncategorizedPaths.count == 1
+            ? L("1 document has no category")
+            : String(format: L("%lld documents have no category"), uncategorizedPaths.count)
+    }
+
+    private var categoryAlertMessage: String {
+        if uncategorizedPaths.isEmpty {
+            return L(
+                "Every document has a category, from its frontmatter `type:` or inferred from its folder name. Agents can filter this collection by category."
+            )
+        }
+        let sample = uncategorizedPaths.prefix(8).joined(separator: "\n")
+        let more = uncategorizedPaths.count - min(8, uncategorizedPaths.count)
+        return L(
+            "This is optional — agents can still search and read these documents. To let agents filter by category, move them into a folder (the folder name becomes the category) or add a `type:` line to their frontmatter.\n\n"
+        ) + sample + (more > 0 ? "\n" + String(format: L("…and %lld more"), more) : "")
+    }
+
     private func refreshOKFStatus() async {
         let failing = await KnowledgeIndexService.shared
             .uncategorizedDocuments(collectionId: collection.id.uuidString)
@@ -653,35 +673,12 @@ private struct KnowledgeCollectionCard: View {
             }
             .buttonStyle(.plain)
             .help(okfHelp)
-            .alert(
-                uncategorizedPaths.isEmpty
-                    ? Text("All documents categorized", bundle: .module)
-                    : Text(
-                        uncategorizedPaths.count == 1
-                            ? L("1 document has no category")
-                            : String(format: L("%lld documents have no category"), uncategorizedPaths.count)
-                    ),
-                isPresented: $showingCategoryAlert
-            ) {
-                Button {} label: {
-                    Text("OK", bundle: .module)
-                }
-            } message: {
-                if uncategorizedPaths.isEmpty {
-                    Text(
-                        "Every document has a category, from its frontmatter `type:` or inferred from its folder name. Agents can filter this collection by category.",
-                        bundle: .module
-                    )
-                } else {
-                    let sample = uncategorizedPaths.prefix(8).joined(separator: "\n")
-                    let more = uncategorizedPaths.count - min(8, uncategorizedPaths.count)
-                    Text(
-                        L(
-                            "This is optional — agents can still search and read these documents. To let agents filter by category, move them into a folder (the folder name becomes the category) or add a `type:` line to their frontmatter.\n\n"
-                        ) + sample + (more > 0 ? "\n" + String(format: L("…and %lld more"), more) : "")
-                    )
-                }
-            }
+            .themedAlert(
+                categoryAlertTitle,
+                isPresented: $showingCategoryAlert,
+                message: categoryAlertMessage,
+                primaryButton: .cancel(L("OK"))
+            )
             .task(id: collection.updatedAt) { await refreshOKFStatus() }
             .onChange(of: isIndexing) { indexing in
                 // Recompute the category badge once the pass completes and

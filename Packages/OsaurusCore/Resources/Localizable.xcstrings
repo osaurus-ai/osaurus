@@ -317,6 +317,9 @@
       },
       "shouldTranslate" : false
     },
+    "…and %lld more" : {
+
+    },
     "·" : {
       "localizations" : {
         "de" : {
@@ -3916,6 +3919,9 @@
           }
         }
       }
+    },
+    "%lld documents have no category" : {
+
     },
     "%lld downloaded • %@" : {
       "localizations" : {
@@ -9061,6 +9067,9 @@
           }
         }
       }
+    },
+    "1 document has no category" : {
+
     },
     "1 earlier step" : {
       "localizations" : {
@@ -16957,6 +16966,9 @@
           }
         }
       }
+    },
+    "All documents categorized" : {
+
     },
     "All enabled capabilities are sent to the model every turn." : {
       "extractionState" : "stale",
@@ -64478,6 +64490,7 @@
       }
     },
     "Every document has a category (type)" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -64510,6 +64523,9 @@
           }
         }
       }
+    },
+    "Every document has a category, from its frontmatter `type:` or inferred from its folder name. Agents can filter this collection by category." : {
+
     },
     "Every model here runs privately on your Mac. Not sure? Keep the one we picked for your Mac's specs — you can switch anytime." : {
       "localizations" : {
@@ -173828,6 +173844,9 @@
           }
         }
       }
+    },
+    "This is optional — agents can still search and read these documents. To let agents filter by category, move them into a folder (the folder name becomes the category) or add a `type:` line to their frontmatter.\n\n" : {
+
     },
     "This looks like an MCP server" : {
       "localizations" : {
