@@ -76,7 +76,7 @@ Agents can also opt into a private local database and a single self-scheduled ne
 
 ### Agent Loop
 
-Every chat is an agent loop. Pick a working folder and the agent gets file, search, and git tools. Toggle the sandbox and it gets shell access in an isolated Linux VM. The model writes a markdown todo list, executes against it, and closes out with a verified summary -- all in the same chat window. See the [Agent Loop Guide](docs/AGENT_LOOP.md).
+Every chat is an agent loop. Pick a working folder and the agent gets file, search, and git tools. Toggle the sandbox and it gets shell access in an isolated sandbox. The model writes a markdown todo list, executes against it, and closes out with a verified summary -- all in the same chat window. See the [Agent Loop Guide](docs/AGENT_LOOP.md).
 
 ### Sandbox
 
@@ -96,7 +96,7 @@ Each agent gets its own Linux user and home directory. The VM connects back to O
 └────────────────┘       └────────────────────────────┘
 ```
 
-> Requires macOS 26+ (Tahoe). See the [Sandbox Guide](docs/SANDBOX.md) for configuration, built-in tools, and plugin authoring.
+> The Linux VM requires macOS 26+ (Tahoe). On earlier versions Osaurus falls back to a native macOS Seatbelt sandbox: commands run on your Mac under `sandbox-exec` confinement, with writes limited to the sandbox workspace, `pip`/`npm` installs (no `apk`), and all-or-nothing network access instead of per-domain allowlists. See the [Sandbox Guide](docs/SANDBOX.md) for configuration, built-in tools, and plugin authoring.
 
 ### Memory
 
