@@ -3614,6 +3614,21 @@ struct AppleScriptAppKnowledgeTests {
         #expect(recipes.contains("Do not invent `changed of front document`"))
     }
 
+    @Test("Finder recipe distinguishes the front window folder from its selection")
+    func finderFrontWindowRecipe() {
+        let apps = AppleScriptAppKnowledge.detectTargetApps(
+            task: "Report the exact name and POSIX path of the front Finder window",
+            frontmost: nil,
+            runningAppNames: []
+        )
+        #expect(apps == ["Finder"])
+        let sections = AppleScriptAppKnowledge.compose(apps: apps, runningApps: [])
+        let recipes = try! #require(sections.recipes)
+        #expect(recipes.contains("name of front window"))
+        #expect(recipes.contains("POSIX path of (target of front window as alias)"))
+        #expect(recipes.contains("Do not use `selection of front window`"))
+    }
+
     @Test("a task phrased 'run my … shortcut' surfaces the Shortcuts recipe")
     func shortcutTaskGetsShortcutsRecipe() {
         let apps = AppleScriptAppKnowledge.detectTargetApps(

@@ -94,6 +94,9 @@ public enum AppleScriptRecipeCatalog {
         AppleScriptRecipe(
             appNames: ["Finder"],
             tips: [
+                "Front window folder (not its selection): inside `tell application \"Finder\"`, "
+                    + "use `name of front window` and `POSIX path of (target of front window as alias)`. "
+                    + "Do not use `selection of front window` to answer the window's path.",
                 "Selected files: `tell application \"Finder\" to get selection` (returns Finder items; coerce with `as alias list`).",
                 "Paths: Finder speaks colon-separated HFS paths; use `POSIX path of (item as alias)` to convert, and `POSIX file \"/slash/path\"` going in.",
                 "New folder: `make new folder at desktop with properties {name:\"…\"}`.",
