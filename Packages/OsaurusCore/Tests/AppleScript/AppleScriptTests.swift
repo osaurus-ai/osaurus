@@ -1596,6 +1596,66 @@ struct AppleScriptLoopTests {
         )
     }
 
+    @Test("partial TextEdit replacement computes and verifies the full document once")
+    func partialTextEditReplacementUsesDeterministicWholeDocumentWrite() async {
+        let feed = SubagentFeed(
+            toolCallId: "t-textedit-partial-runtime-readback",
+            kindId: "applescript",
+            title: "task"
+        )
+        let before = "Aster delta 482\nCedar echo 619"
+        let after = "Birch nova 305\nCedar echo 619"
+        let exec = ScriptedExec(results: [
+            successResult(before),
+            successResult(nil),
+            successResult(after),
+        ])
+        let executedScripts = MutableTexts()
+        let confirm = ConfirmCounter(approve: true)
+
+        let result = await AppleScriptLoop.run(
+            task:
+                "Change only the text in the front TextEdit document from the provided old text "
+                + "to the provided new text. Do not save it.",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in await confirm.confirm() },
+            limits: RunLimits(maxSteps: 8),
+            sessionId: "s",
+            mode: .automate,
+            literals: AppleScriptLiterals([
+                "oldText": "Aster delta 482",
+                "newText": "Birch nova 305",
+            ]),
+            execute: { script, _ in
+                executedScripts.append(script)
+                return await exec.run(script)
+            },
+            nextScript: { _ in
+                Issue.record("the deterministic partial TextEdit path must not call the model")
+                return nil
+            }
+        )
+
+        #expect(result.outcome.isSuccess)
+        #expect(result.scriptsExecuted == 1)
+        #expect(result.lastOutput == after)
+        #expect(result.modelTokens == 0)
+        #expect(await exec.count == 3)
+        #expect(await confirm.count == 1)
+        #expect(
+            executedScripts.all() == [
+                #"tell application "TextEdit" to get text of front document"#,
+                "tell application \"TextEdit\" to set text of front document to "
+                    + #""Birch nova 305\nCedar echo 619""#,
+                #"tell application "TextEdit" to get text of front document"#,
+            ]
+        )
+        #expect(executedScripts.all().contains { $0.lowercased().contains("save") } == false)
+    }
+
     @Test("exact TextEdit replacement saves only when the user explicitly requests it")
     func exactTextEditReplacementHonorsExplicitSave() async {
         let feed = SubagentFeed(

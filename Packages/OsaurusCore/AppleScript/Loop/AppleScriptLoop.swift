@@ -512,9 +512,10 @@ public enum AppleScriptLoop {
         // 16B rows either invented replacement bytes despite receiving the
         // authoritative {{content}} placeholder or failed to correct that
         // omission. Before invoking that model, read the actual front document.
-        // For old/new replacement, require the live text to equal the supplied
-        // old value. For an explicit whole-document set, the open front document
-        // is enough. Offer one minimal placeholder-expanded write through the
+        // For old/new replacement, require the live text to contain the supplied
+        // old value and compute the complete expected document in Swift. For an
+        // explicit whole-document set, the supplied content is already complete.
+        // Offer one minimal placeholder-expanded whole-document write through the
         // ordinary user gate, then read OS state back and require an exact match.
         // A read failure, old-value mismatch, other app, missing literals, or
         // ambiguous task keeps the existing model-driven path.
@@ -525,22 +526,34 @@ public enum AppleScriptLoop {
                 textEditFrontDocumentReadScript,
                 .appleScript
             )
-            let beforeMatches = contract.oldText.map { beforeObservation.output == $0 } ?? true
-            if beforeObservation.isSuccess, beforeMatches {
+            let expectedText: String?
+            if let before = beforeObservation.output, let oldText = contract.oldText {
+                expectedText = before.contains(oldText)
+                    ? before.replacingOccurrences(of: oldText, with: contract.newText)
+                    : nil
+            } else if contract.oldText == nil {
+                expectedText = contract.newText
+            } else {
+                expectedText = nil
+            }
+            if beforeObservation.isSuccess, let expectedText {
+                let replacementLiterals = AppleScriptLiterals([
+                    "replacementDocument": expectedText
+                ])
                 let proposedScript: String
                 if contract.saveRequested {
                     proposedScript = """
                         tell application "TextEdit"
-                            set text of front document to {{\(contract.newTextPlaceholder)}}
+                            set text of front document to {{replacementDocument}}
                             save front document
                         end tell
                         """
                 } else {
                     proposedScript =
                         "tell application \"TextEdit\" to set text of front document to "
-                        + "{{\(contract.newTextPlaceholder)}}"
+                        + "{{replacementDocument}}"
                 }
-                let expansion = literals.expand(proposedScript)
+                let expansion = replacementLiterals.expand(proposedScript)
                 guard expansion.undefinedName == nil else {
                     return terminate(
                         .failed(reason: "The exact TextEdit replacement literal was unavailable.")
@@ -690,7 +703,7 @@ public enum AppleScriptLoop {
                     .appleScript
                 )
                 let after = afterObservation.isSuccess ? afterObservation.output : nil
-                let matched = after == contract.newText
+                let matched = after == expectedText
                 steps.append(
                     AppleScriptStepRecord(
                         n: steps.count + 1,
@@ -1758,7 +1771,6 @@ public enum AppleScriptLoop {
     private struct ExactTextEditReplacementContract {
         let oldText: String?
         let newText: String
-        let newTextPlaceholder: String
         let saveRequested: Bool
     }
 
@@ -1775,13 +1787,16 @@ public enum AppleScriptLoop {
 
         if let oldText = literals.value(for: "oldText"),
             let newText = literals.value(for: "newText"),
-            normalizedTask.contains("replace") || normalizedTask.contains("change the text")
+            normalizedTask.contains("replace")
+                || normalizedTask.range(
+                    of: #"\bchange(?:\s+only)?\s+the\s+text\b"#,
+                    options: .regularExpression
+                ) != nil
                 || normalizedTask.contains("edit the text")
         {
             return ExactTextEditReplacementContract(
                 oldText: oldText,
                 newText: newText,
-                newTextPlaceholder: "newText",
                 saveRequested: saveRequested
             )
         }
@@ -1795,7 +1810,6 @@ public enum AppleScriptLoop {
         return ExactTextEditReplacementContract(
             oldText: nil,
             newText: content,
-            newTextPlaceholder: "content",
             saveRequested: saveRequested
         )
     }
