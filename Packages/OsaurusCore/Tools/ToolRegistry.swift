@@ -77,7 +77,7 @@ private final class ToolBodyRaceState: @unchecked Sendable {
 /// must price the spec that will be sent this turn, not the registry's
 /// canonical full schema, because the prompt composer can now ship compact
 /// bootstrap schemas and hot-load full ones later.
-private enum ToolSpecTokenEstimator {
+enum ToolSpecTokenEstimator {
     static func estimate(name: String, description: String?, parameters: JSONValue?) -> Int {
         var total = name.count + (description?.count ?? 0)
         if let parameters {

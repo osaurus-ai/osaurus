@@ -1,0 +1,17 @@
+{
+  "id": "prompt_surface.unknown-section-refused",
+  "domain": "prompt_surface",
+  "label": "prompt_surface • validator refuses unknown section ids (composer drift guard)",
+  "query": "",
+  "notes": "A typo'd or stale section id must fail loudly instead of composing a no-op ablation that reads as 'no savings'. Also guards composer drift: a renamed section makes existing profiles error, not silently stop ablating.",
+  "fixtures": {},
+  "expect": {
+    "promptSurface": {
+      "profile": {
+        "name": "drop-nonexistent",
+        "dropSections": ["notARealSection"]
+      },
+      "expectInvalidProfile": true
+    }
+  }
+}

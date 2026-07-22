@@ -356,7 +356,8 @@ extension EvalRunner {
                     modelId: modelId,
                     latencyMs: latency,
                     toolUsage: toolUsageStats(transcript),
-                    telemetry: telemetry(from: transcript)
+                    telemetry: telemetry(from: transcript),
+                    context: transcript.contextAttribution
                 ),
                 query: testCase.query
             )
@@ -510,7 +511,8 @@ extension EvalRunner {
                 judgeLatencyMs: judgeElapsed,
                 toolUsage: toolUsageStats(transcript),
                 telemetry: telemetry(from: transcript),
-                judge: judgeAudit
+                judge: judgeAudit,
+                context: transcript.contextAttribution
             ),
             query: testCase.query
         )
@@ -586,7 +588,7 @@ extension EvalRunner {
     /// The schedule preset is `reactive` — no quiet hours and a
     /// 5-minute min interval — so self-scheduling cases aren't
     /// quiet-hours-clamped depending on when the eval runs.
-    private static func installEvalAgent(
+    static func installEvalAgent(
         _ caps: EvalCase.AgentCapabilitiesFixture?,
         autonomousExec: AutonomousExecConfig? = nil
     ) -> UUID {

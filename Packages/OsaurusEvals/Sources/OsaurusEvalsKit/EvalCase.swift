@@ -615,6 +615,14 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `AgentChannelEvalHarness` — no network, no model — and pins the
         /// allowlist / confirm-send / MCP-exposure contracts.
         public let agentChannels: AgentChannelsExpectations?
+        /// Deterministic composition-census expectation for
+        /// `domain == "prompt_surface"` cases. Composes the REAL preview
+        /// surface (no model call) — optionally under an inline
+        /// `ExperimentProfile` — and pins section/tool presence, token
+        /// budgets, compact selection, byte-determinism, and savings vs
+        /// the production baseline. The census attribution rides in the
+        /// report's `context` block. CI-safe like `schema` / `prefix_hash`.
+        public let promptSurface: PromptSurfaceExpectations?
 
         public init(
             schema: SchemaExpectations? = nil,
@@ -638,7 +646,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             cacheProof: CacheProofExpectations? = nil,
             httpAPI: HTTPAPIExpectations? = nil,
             memory: MemoryExpectations? = nil,
-            agentChannels: AgentChannelsExpectations? = nil
+            agentChannels: AgentChannelsExpectations? = nil,
+            promptSurface: PromptSurfaceExpectations? = nil
         ) {
             self.schema = schema
             self.toolEnvelope = toolEnvelope
@@ -662,6 +671,82 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.httpAPI = httpAPI
             self.memory = memory
             self.agentChannels = agentChannels
+            self.promptSurface = promptSurface
+        }
+    }
+
+    /// Expectation for `domain == "prompt_surface"` cases — the
+    /// deterministic feature/prompt census lane. The runner composes the
+    /// production preview surface for the run model in host-folder mode
+    /// (an empty temp workspace; `fixtures.agentCapabilities` installs a
+    /// temp agent when capability toggles matter), then composes AGAIN
+    /// under `profile` when one is declared, and scores:
+    ///   - profile validation itself (`expectInvalidProfile` pins that the
+    ///     validator REFUSES protected/unknown ablation — the negative
+    ///     contract);
+    ///   - section/tool presence and absence in the (profiled) surface;
+    ///   - hard token ceilings (`max*Tokens`);
+    ///   - compact/full selection (`expectCompactPrompt`);
+    ///   - byte determinism (`expectDeterministic` — two composes must
+    ///     hash identically, the KV-prefix stability requirement);
+    ///   - `requireSavingsVsBaseline` — the profiled surface must cost
+    ///     strictly fewer estimated tokens than the production baseline.
+    /// Every field is optional so a case scopes to exactly what it pins.
+    public struct PromptSurfaceExpectations: Sendable, Codable {
+        /// Inline experiment profile the census composes under. nil →
+        /// census the production baseline itself.
+        public let profile: ExperimentProfile?
+        /// True → the case PASSES iff `profile` FAILS validation (and no
+        /// compose happens). Pins the protected-contract refusal path.
+        public let expectInvalidProfile: Bool?
+        /// Section ids that must survive composition.
+        public let mustIncludeSections: [String]?
+        /// Section ids that must NOT appear in the composed manifest.
+        public let mustExcludeSections: [String]?
+        /// Tool names that must be in the request schema.
+        public let mustIncludeTools: [String]?
+        /// Tool names that must NOT be in the request schema.
+        public let mustExcludeTools: [String]?
+        /// Hard ceiling on the estimated system-prompt tokens.
+        public let maxSystemPromptTokens: Int?
+        /// Hard ceiling on the estimated tool-schema tokens.
+        public let maxToolSchemaTokens: Int?
+        /// Hard ceiling on prompt + tool schema combined.
+        public let maxSurfaceTokens: Int?
+        /// Compact/full selection the resolved window must land on.
+        public let expectCompactPrompt: Bool?
+        /// Two identical composes must produce the identical prompt hash.
+        public let expectDeterministic: Bool?
+        /// The profiled surface must cost strictly fewer tokens than the
+        /// no-profile baseline (requires `profile`).
+        public let requireSavingsVsBaseline: Bool?
+
+        public init(
+            profile: ExperimentProfile? = nil,
+            expectInvalidProfile: Bool? = nil,
+            mustIncludeSections: [String]? = nil,
+            mustExcludeSections: [String]? = nil,
+            mustIncludeTools: [String]? = nil,
+            mustExcludeTools: [String]? = nil,
+            maxSystemPromptTokens: Int? = nil,
+            maxToolSchemaTokens: Int? = nil,
+            maxSurfaceTokens: Int? = nil,
+            expectCompactPrompt: Bool? = nil,
+            expectDeterministic: Bool? = nil,
+            requireSavingsVsBaseline: Bool? = nil
+        ) {
+            self.profile = profile
+            self.expectInvalidProfile = expectInvalidProfile
+            self.mustIncludeSections = mustIncludeSections
+            self.mustExcludeSections = mustExcludeSections
+            self.mustIncludeTools = mustIncludeTools
+            self.mustExcludeTools = mustExcludeTools
+            self.maxSystemPromptTokens = maxSystemPromptTokens
+            self.maxToolSchemaTokens = maxToolSchemaTokens
+            self.maxSurfaceTokens = maxSurfaceTokens
+            self.expectCompactPrompt = expectCompactPrompt
+            self.expectDeterministic = expectDeterministic
+            self.requireSavingsVsBaseline = requireSavingsVsBaseline
         }
     }
 

@@ -84,6 +84,11 @@ set -uo pipefail
 #                  ceiling only, never real paging/thermal/memory-pressure
 #                  behavior on the target machine. Values ≥ host RAM are
 #                  ignored (label stays provenance-only).
+#   CTX_OPTIMIZE   "1" → run the staged context-optimization search
+#                  (`osaurus-evals optimize-context`) instead of the
+#                  scoreboard matrix. See the mode block below for its
+#                  CTX_* knobs; artifacts land under
+#                  <run dir>/context-optimize/<model>/.
 #   PARALLEL_REMOTE "1" (default) → when MODELS mixes local and remote-provider
 #                  ids, run the remote models' LLM pass in a background lane
 #                  concurrent with the local lane (remote decode is
@@ -205,6 +210,59 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 OUT="${LOOP_OUT_ROOT}/${STAMP}"
 mkdir -p "${OUT}"
 log "Run dir: ${OUT}"
+
+# ── Context-optimization mode (CTX_OPTIMIZE=1) ───────────────────────────
+# Runs the staged `optimize-context` search instead of the scoreboard
+# matrix: deterministic surface census → one-factor ablations → pruning →
+# combination candidates → sequential warm-model quality runs (baseline
+# first, one process per model so the model loads once) → flake-aware
+# no-regression gate vs the in-process baseline → Pareto artifacts
+# (plan.json, baseline.json, candidate-*.json, pareto.{json,md}) under
+# <run dir>/context-optimize/<model>/.
+#
+#   CTX_SUITES     suites for the quality lane. Default "AgentLoop".
+#   CTX_REPEAT     trials per case (default 3 — the search phase floor).
+#   CTX_MIN_SAVINGS surface-token prune floor (default 25).
+#   CTX_MAX_CANDIDATES model-tested candidate cap (default 10).
+#   CTX_CENSUS_ONLY "1" → stop after the deterministic plan (no model runs).
+#
+# The judge stays whatever JUDGE_MODEL/XAI_API_KEY resolve to — pin it for
+# comparable runs (see Packages/OsaurusEvals/README.md).
+if [[ "${CTX_OPTIMIZE:-0}" == "1" ]]; then
+  read -ra CTX_SUITES <<< "${CTX_SUITES:-AgentLoop}"
+  ctx_suite_args=()
+  for suite in "${CTX_SUITES[@]}"; do
+    if [[ ! -d "${EVALS_PKG}/Suites/${suite}" ]]; then
+      log "ERROR: CTX_SUITES entry does not exist: Suites/${suite}"
+      exit 2
+    fi
+    ctx_suite_args+=(--suite "${EVALS_PKG}/Suites/${suite}")
+  done
+  ctx_filter_args=()
+  [[ -n "${FILTER}" ]] && ctx_filter_args=(--filter "${FILTER}")
+  ctx_census_args=()
+  [[ "${CTX_CENSUS_ONLY:-0}" == "1" ]] && ctx_census_args=(--census-only)
+  ctx_exit=0
+  for model in ${MODELS}; do
+    model_label="$(printf '%s' "${model}" | tr '/' '-')"
+    ctx_out="${OUT}/context-optimize/${model_label}"
+    mkdir -p "${ctx_out}"
+    log "optimize-context: ${model} → ${ctx_out}"
+    "${BIN}" optimize-context \
+      "${ctx_suite_args[@]}" \
+      --model "${model}" \
+      --out-dir "${ctx_out}" \
+      --repeat "${CTX_REPEAT:-3}" \
+      --min-savings "${CTX_MIN_SAVINGS:-25}" \
+      --max-candidates "${CTX_MAX_CANDIDATES:-10}" \
+      --resume \
+      "${ctx_filter_args[@]}" \
+      "${ctx_census_args[@]}" \
+      || ctx_exit=$?
+    [[ -f "${ctx_out}/pareto.md" ]] && log "pareto: ${ctx_out}/pareto.md"
+  done
+  exit "${ctx_exit}"
+fi
 
 # Surface the simulated target-RAM profile loudly at the top of the run so a
 # reader of the log can never mistake a policy-budget simulation for a real

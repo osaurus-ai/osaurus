@@ -1,0 +1,17 @@
+{
+  "id": "prompt_surface.protected-tool-refused",
+  "domain": "prompt_surface",
+  "label": "prompt_surface • validator refuses deferring the capability-discovery gateway",
+  "query": "",
+  "notes": "Negative contract: capabilities_load is what makes tool deferral safe at all, so a profile that defers it must be REFUSED at validation time.",
+  "fixtures": {},
+  "expect": {
+    "promptSurface": {
+      "profile": {
+        "name": "defer-gateway",
+        "deferTools": ["capabilities_load"]
+      },
+      "expectInvalidProfile": true
+    }
+  }
+}

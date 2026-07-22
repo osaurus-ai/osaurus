@@ -33,6 +33,16 @@ public struct SystemPromptComposer: Sendable {
         PromptRenderer.render(sections)
     }
 
+    /// Eval-scoped ablation hook: drop experiment-listed section ids
+    /// after gated composition. No-op in production (`current == nil`)
+    /// and for protected ids — see `PromptComposerExperiment`.
+    mutating func applyExperimentAblation() {
+        guard let experiment = PromptComposerExperimentScope.current,
+            !experiment.dropSectionIds.isEmpty
+        else { return }
+        sections = experiment.filterSections(sections)
+    }
+
     public func manifest() -> PromptManifest {
         PromptManifest(sections: sections.filter { !$0.isEmpty })
     }
@@ -260,6 +270,7 @@ public struct SystemPromptComposer: Sendable {
             soulSection: soulSection,
             trace: trace
         )
+        comp.applyExperimentAblation()
         let manifest = comp.manifest()
         debugLog("[Context] \(manifest.debugDescription)")
 
@@ -1358,7 +1369,10 @@ public struct SystemPromptComposer: Sendable {
     /// standalone group always last. Usage-frequency ordering is a documented
     /// future hook, intentionally not built here.
     @MainActor
-    private static func deriveEnabledManifest(
+    /// Internal (not private): `capabilities_discover`'s exact paginated
+    /// `list: "enabled"` mode reuses this derivation so its listing and the
+    /// prompt manifest can never disagree about what is enabled.
+    static func deriveEnabledManifest(
         agentId: UUID
     ) -> [SystemPromptTemplates.ManifestPluginGroup] {
         let allowedTools = AgentManager.shared.effectiveEnabledToolNames(for: agentId).map(Set.init)
@@ -1821,6 +1835,7 @@ public struct SystemPromptComposer: Sendable {
             soulSection: soulSection,
             allowBlockingDBOpen: false
         )
+        composer.applyExperimentAblation()
 
         let manifest = composer.manifest()
         let rendered = composer.render()
@@ -2406,6 +2421,18 @@ public struct SystemPromptComposer: Sendable {
                 || (isManual && (snapshot.manualToolNames?.contains("image") ?? false))
             let genOnly = ImageTool.generationOnlySpec()
             byName["image"] = imageLoadedExplicitly ? genOnly : compactBootstrapSpec(genOnly)
+        }
+
+        // Eval-scoped ablation hook (nil in production): strip deferred
+        // tool names from the request schema. The tools stay registered and
+        // reachable via `capabilities_load`, so this measures the
+        // defer-to-discovery architecture; protected names (discovery
+        // gateway, agent-loop contract) always survive.
+        if let experiment = PromptComposerExperimentScope.current {
+            byName = Dictionary(
+                uniqueKeysWithValues: experiment.filterTools(Array(byName.values))
+                    .map { ($0.function.name, $0) }
+            )
         }
 
         let resolved = canonicalToolOrder(Array(byName.values))

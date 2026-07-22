@@ -314,6 +314,13 @@ public struct EvalCaseReport: Sendable, Codable {
     /// rubric (judge model, per-condition verdicts, raw reply). nil for
     /// rows with no rubric or domains that don't judge.
     public let judge: EvalJudgeAudit?
+    /// Per-contributor context attribution (system-prompt sections,
+    /// per-tool schema tokens, memory, first/peak/cumulative step inputs,
+    /// history composition). Populated for `agent_loop` and
+    /// `prompt_surface` rows — on SUCCESSFUL cases too, so the
+    /// optimization loop can read "where do the tokens go" without
+    /// forcing a failure. nil for domains that don't compose.
+    public let context: ContextAttribution?
 
     /// Pass fraction across trials — nil for single-execution rows.
     public var passRate: Double? {
@@ -343,7 +350,8 @@ public struct EvalCaseReport: Sendable, Codable {
         telemetry: EvalCaseTelemetry? = nil,
         trials: Int? = nil,
         trialsPassed: Int? = nil,
-        judge: EvalJudgeAudit? = nil
+        judge: EvalJudgeAudit? = nil,
+        context: ContextAttribution? = nil
     ) {
         self.id = id
         self.label = label
@@ -360,6 +368,7 @@ public struct EvalCaseReport: Sendable, Codable {
         self.trials = trials
         self.trialsPassed = trialsPassed
         self.judge = judge
+        self.context = context
     }
 
     /// Build an early-exit row (decode failure, unknown domain, missing
@@ -469,7 +478,8 @@ public struct EvalCaseReport: Sendable, Codable {
             telemetry: representative.telemetry,
             trials: rows.count,
             trialsPassed: passedCount,
-            judge: representative.judge
+            judge: representative.judge,
+            context: representative.context
         )
     }
 }
@@ -569,6 +579,9 @@ public struct EvalReport: Sendable, Codable {
             if let telemetryLine = Self.formatTelemetryLine(row.telemetry) {
                 lines.append("       · \(telemetryLine)")
             }
+            if let contextLine = Self.formatContextLine(row.context) {
+                lines.append("       · \(contextLine)")
+            }
             if verbose { appendVerboseDiagnostics(for: row, into: &lines) }
         }
         if let usageLines = formatAggregatedToolUsage() {
@@ -579,7 +592,49 @@ public struct EvalReport: Sendable, Codable {
             lines.append("")
             lines.append(contentsOf: perfLines)
         }
+        if let contextLines = formatAggregatedContext() {
+            lines.append("")
+            lines.append(contentsOf: contextLines)
+        }
         return lines.joined(separator: "\n")
+    }
+
+    /// Suite-wide context-attribution rollup: mean first-step cost plus
+    /// the largest mean contributors (sections and tools) across every
+    /// row that carried an attribution block. nil when no row did.
+    private func formatAggregatedContext() -> [String]? {
+        let attributed = cases.compactMap(\.context)
+        guard !attributed.isEmpty else { return nil }
+        var lines = ["[context attribution] (rows with compose evidence, suite-wide)"]
+        let firstSteps = attributed.compactMap(\.firstStepInputTokens)
+        if !firstSteps.isEmpty {
+            lines.append(
+                "  first-step tok  mean=\(firstSteps.reduce(0, +) / firstSteps.count)  "
+                    + "min=\(firstSteps.min() ?? 0)  max=\(firstSteps.max() ?? 0)  (n=\(firstSteps.count))"
+            )
+        }
+        var totals: [String: Int] = [:]
+        var counts: [String: Int] = [:]
+        for a in attributed {
+            for s in a.sections {
+                totals["§\(s.id)", default: 0] += s.tokens
+                counts["§\(s.id)", default: 0] += 1
+            }
+            for t in a.tools {
+                totals["tool:\(t.name)", default: 0] += t.tokens
+                counts["tool:\(t.name)", default: 0] += 1
+            }
+        }
+        let ranked = totals
+            .map { (name: $0.key, mean: $0.value / max(1, counts[$0.key] ?? 1)) }
+            .sorted { $0.mean > $1.mean }
+            .prefix(10)
+        for entry in ranked {
+            let nameCol = entry.name.padding(
+                toLength: max(28, entry.name.count), withPad: " ", startingAt: 0)
+            lines.append("  \(nameCol) mean≈\(entry.mean) tok  (n=\(counts[entry.name] ?? 0))")
+        }
+        return lines
     }
 
     /// Suite-wide tool-usage table aggregated across every `agent_loop`
@@ -663,6 +718,27 @@ public struct EvalReport: Sendable, Codable {
         if let peak = t.peakContextTokens { parts.append("peakCtx \(peak)") }
         if let tokens = t.completionTokens { parts.append("\(tokens) tok") }
         return parts.isEmpty ? nil : "perf: " + parts.joined(separator: "  ")
+    }
+
+    /// One-line "where do the tokens go" annotation from the attribution
+    /// block: prompt/tool split, first-step cost, and the top contributors.
+    /// Printed for PASSING rows too — the whole point of attribution is
+    /// reading contributor cost without forcing a failure.
+    static func formatContextLine(_ attribution: ContextAttribution?) -> String? {
+        guard let a = attribution else { return nil }
+        var parts: [String] = []
+        parts.append("prompt \(a.systemPromptTokens) (static \(a.staticPrefixTokens))")
+        parts.append("tools \(a.toolSchemaTokens)/\(a.tools.count)")
+        if let memory = a.memoryTokens { parts.append("memory \(memory)") }
+        if let first = a.firstStepInputTokens { parts.append("first-step \(first)") }
+        if let history = a.history, history.toolResultTokens > 0 {
+            parts.append("toolResults \(history.toolResultTokens)/\(history.toolResultCount)")
+        }
+        let top = a.topContributors(3)
+        if !top.isEmpty {
+            parts.append("top: " + top.map { "\($0.name)=\($0.tokens)" }.joined(separator: " "))
+        }
+        return "ctx-attr: " + parts.joined(separator: "  ")
     }
 
     /// Suite-wide perf rollup across every row that carried telemetry:

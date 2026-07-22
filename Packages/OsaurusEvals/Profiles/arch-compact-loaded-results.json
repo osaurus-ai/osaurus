@@ -1,0 +1,5 @@
+{
+  "name": "arch-compact-loaded-results",
+  "description": "Compact capabilities_load results (smaller skill-reference budget, skeleton schemas for loaded tools). The only profile to pass the strict 5-trial promotion gate on Bonsai 27B Ternary JANG (2026-07-22): no pass->fail transitions, no new failures/errors/skips, no lower per-case pass rates. Savings are cumulative/history tokens on capability-loading tasks; the composed surface is unchanged.",
+  "compactLoadedResults": true
+}

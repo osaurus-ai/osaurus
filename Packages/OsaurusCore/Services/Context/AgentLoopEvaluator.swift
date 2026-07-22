@@ -109,6 +109,12 @@ public struct AgentLoopTranscript: Sendable, Codable {
     public let peakContextTokens: Int?
     /// Number of model steps (loop iterations that called the model).
     public let modelSteps: Int?
+    /// Per-contributor context-cost attribution (system-prompt sections,
+    /// per-tool schema cost, memory, first/peak/cumulative step inputs,
+    /// end-of-run history composition). Built from the SAME composed
+    /// context the loop sent, so it reconciles with `promptTokensTotal` /
+    /// `peakContextTokens` above. nil on aborted runs that never composed.
+    public let contextAttribution: ContextAttribution?
 
     public init(
         toolCalls: [ToolInvocation],
@@ -127,7 +133,8 @@ public struct AgentLoopTranscript: Sendable, Codable {
         completionTokens: Int? = nil,
         promptTokensTotal: Int? = nil,
         peakContextTokens: Int? = nil,
-        modelSteps: Int? = nil
+        modelSteps: Int? = nil,
+        contextAttribution: ContextAttribution? = nil
     ) {
         self.toolCalls = toolCalls
         self.finalText = finalText
@@ -146,6 +153,7 @@ public struct AgentLoopTranscript: Sendable, Codable {
         self.promptTokensTotal = promptTokensTotal
         self.peakContextTokens = peakContextTokens
         self.modelSteps = modelSteps
+        self.contextAttribution = contextAttribution
     }
 }
 
@@ -372,6 +380,9 @@ public enum AgentLoopEvaluator {
         var promptTokensTotal = 0
         var peakContextTokens = 0
         var modelStepCount = 0
+        // First model step's input estimate — the cold-prefill cost the
+        // attribution block reports separately from the cumulative total.
+        var firstStepInputTokens: Int?
         // Set when a successful `complete` intercept ends the run; the
         // summary becomes the final answer (mirrors the chat surface,
         // where the summary renders as the completion banner).
@@ -408,7 +419,18 @@ public enum AgentLoopEvaluator {
                 completionTokens: sawAnyModelStep ? completionTokensTotal : nil,
                 promptTokensTotal: modelStepCount > 0 ? promptTokensTotal : nil,
                 peakContextTokens: modelStepCount > 0 ? peakContextTokens : nil,
-                modelSteps: modelStepCount > 0 ? modelStepCount : nil
+                modelSteps: modelStepCount > 0 ? modelStepCount : nil,
+                contextAttribution: ContextAttribution.build(
+                    manifest: composed.manifest,
+                    tools: composed.tools,
+                    memorySection: composed.memorySection,
+                    staticPrefixHash: composed.cacheHint,
+                    firstStepInputTokens: firstStepInputTokens,
+                    peakStepInputTokens: modelStepCount > 0 ? peakContextTokens : nil,
+                    cumulativeInputTokens: modelStepCount > 0 ? promptTokensTotal : nil,
+                    modelSteps: modelStepCount > 0 ? modelStepCount : nil,
+                    history: history
+                )
             )
         }
 
@@ -593,6 +615,7 @@ public enum AgentLoopEvaluator {
                     ContextBudgetManager.estimateTokens(for: effective) + composed.toolTokens
                 promptTokensTotal += stepInputTokens
                 peakContextTokens = max(peakContextTokens, stepInputTokens)
+                if firstStepInputTokens == nil { firstStepInputTokens = stepInputTokens }
                 modelStepCount += 1
                 if streaming {
                     // Streaming path (default, matching chat): delta routing

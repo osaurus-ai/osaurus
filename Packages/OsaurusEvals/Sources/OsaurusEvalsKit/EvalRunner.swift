@@ -238,7 +238,8 @@ public enum EvalRunner {
             telemetry: row.telemetry,
             trials: row.trials,
             trialsPassed: row.trialsPassed,
-            judge: row.judge
+            judge: row.judge,
+            context: row.context
         )
     }
 
@@ -493,7 +494,12 @@ public enum EvalRunner {
     /// runner already attached (decode tok/s, TTFT, prefill from the
     /// agent-loop transcript). KV deltas are only recorded when both
     /// snapshots exist (a remote-only run has neither).
-    private static func mergeResourceTelemetry(
+    ///
+    /// Internal (not private) for the regression test that pins the row
+    /// rebuild preserving `context` — this wrapper silently dropping the
+    /// attribution block for every resource-sampled domain is exactly the
+    /// bug that shipped once.
+    static func mergeResourceTelemetry(
         into row: EvalCaseReport,
         sample: ResourceSample,
         kvBefore: BatchDiagnosticsSnapshot?,
@@ -552,7 +558,8 @@ public enum EvalRunner {
             telemetry: merged,
             trials: row.trials,
             trialsPassed: row.trialsPassed,
-            judge: row.judge
+            judge: row.judge,
+            context: row.context
         )
     }
 
@@ -590,6 +597,8 @@ public enum EvalRunner {
             )
         case "prefix_hash":
             return runPrefixHashCase(testCase, modelId: modelId)
+        case "prompt_surface":
+            return await runPromptSurfaceCase(testCase, modelId: modelId)
         case "argument_coercion":
             return runArgumentCoercionCase(testCase, modelId: modelId)
         case "sandbox_diagnostics":

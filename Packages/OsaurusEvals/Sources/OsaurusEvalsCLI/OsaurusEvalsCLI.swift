@@ -75,6 +75,9 @@ struct OsaurusEvalsCLI {
         switch command {
         case "run":
             await runCommand(Array(args.dropFirst()))
+        case "optimize-context":
+            let optimizeExit = await runOptimizeContext(Array(args.dropFirst()))
+            await shutdownAndExit(optimizeExit)
         case "capture-screen":
             // Local-only AX capture (NativeMacDriver) → ScreenContextFixture
             // JSON. No model/MLX load, so a plain exit (no Metal teardown) is
@@ -163,6 +166,36 @@ struct OsaurusEvalsCLI {
             )
             printUsage()
             exit(2)
+        }
+
+        // Eval-scoped composition experiment (`--experiment-profile`):
+        // decode + VALIDATE the profile (protected sections/tools and
+        // unknown ids are refused with the full error list), then install
+        // it process-wide so every compose in this run — agent loop,
+        // claims, previews — measures the profiled surface. The profile
+        // is also stamped into each report's RunEnvironment below, so a
+        // profiled report can never silently read as production.
+        var experimentProfile: ExperimentProfile?
+        if let profilePath = opts.experimentProfilePath {
+            do {
+                experimentProfile = try ExperimentProfile.load(
+                    from: URL(fileURLWithPath: profilePath)
+                )
+            } catch {
+                FileHandle.standardError.write(
+                    Data(("experiment profile error: \(error.localizedDescription)\n").utf8)
+                )
+                exit(2)
+            }
+            if let profile = experimentProfile {
+                PromptComposerExperimentScope.current = profile.experiment
+                FileHandle.standardError.write(
+                    Data(
+                        ("[evals] experiment profile: \(profile.name)@\(profile.profileHash) "
+                            + "[\(profile.resolvedFeatureVector.joined(separator: ", "))]\n").utf8
+                    )
+                )
+            }
         }
 
         let suites: [EvalSuite]
@@ -285,12 +318,14 @@ struct OsaurusEvalsCLI {
             // substrate for crowdsourced model-compatibility contributions.
             // `caseIDs` are the cases that actually ran (post-filter),
             // matching the report rows.
-            let report = baseReport.withEnvironment(
-                RunEnvironment.current(
-                    caseIDs: baseReport.cases.map(\.id),
-                    runModel: baseReport.modelId
-                )
+            var environment = RunEnvironment.current(
+                caseIDs: baseReport.cases.map(\.id),
+                runModel: baseReport.modelId
             )
+            if let experimentProfile {
+                environment = environment.withExperiment(experimentProfile)
+            }
+            let report = baseReport.withEnvironment(environment)
 
             print(report.formatHumanReadable(verbose: opts.verbose))
 
@@ -815,6 +850,11 @@ struct OsaurusEvalsCLI {
         /// loads plugins only when a suite requires them; capability-search
         /// suites initialize indices without dlopen-ing local plugins.
         let pluginBootstrapPreference: EvalInstalledPluginBootstrapPreference
+        /// Path to an `ExperimentProfile` JSON (`--experiment-profile`):
+        /// eval-scoped composition overrides installed process-wide and
+        /// stamped into every report's RunEnvironment. nil → production
+        /// composition.
+        let experimentProfilePath: String?
 
         static func parse(_ args: [String]) throws -> Options {
             var suites: [URL] = []
@@ -834,6 +874,7 @@ struct OsaurusEvalsCLI {
             var failOnFloor = false
             var startupTimeoutSeconds = EvalTimeoutReport.configuredStartupTimeoutSeconds()
             var pluginBootstrapPreference: EvalInstalledPluginBootstrapPreference = .automatic
+            var experimentProfilePath: String?
 
             var i = 0
             while i < args.count {
@@ -905,6 +946,9 @@ struct OsaurusEvalsCLI {
                 case "--no-plugin-bootstrap":
                     pluginBootstrapPreference = .disabled
                     i += 1
+                case "--experiment-profile":
+                    experimentProfilePath = try valueForArg(args, after: i, flag: arg)
+                    i += 2
                 case "--help", "-h":
                     printUsage()
                     exit(0)
@@ -937,7 +981,8 @@ struct OsaurusEvalsCLI {
                 floorsPath: floorsPath,
                 failOnFloor: failOnFloor,
                 startupTimeoutSeconds: startupTimeoutSeconds,
-                pluginBootstrapPreference: pluginBootstrapPreference
+                pluginBootstrapPreference: pluginBootstrapPreference,
+                experimentProfilePath: experimentProfilePath
             )
         }
     }
@@ -962,6 +1007,13 @@ struct OsaurusEvalsCLI {
                                               [--repeat <n>] [--resume] [--transcripts]
                                               [--threshold <float>] [--report-forensics]
                                               [--startup-timeout <seconds>]
+                                              [--experiment-profile <profile.json>]
+                osaurus-evals optimize-context --suite <dir> [--suite <dir> ...] --out-dir <dir>
+                                              [--model <id>] [--filter <substr>] [--repeat <n>]
+                                              [--min-savings <tok>] [--max-candidates <n>]
+                                              [--finalist-repeat <n>] [--skip-finalists]
+                                              [--context-budget <tok>]
+                                              [--resume] [--census-only]
                 osaurus-evals capture-screen [--app <name>] [--out <path>]
                 osaurus-evals agent-loop-lab --baseline <path> [--suite <dir> ...] [--model <id>]
                 osaurus-evals report [--suite <dir> ...] [--local-model <id>] [--frontier-model <id>]
@@ -1080,6 +1132,16 @@ struct OsaurusEvalsCLI {
                                       selected search-index lanes in isolated
                                       eval storage and skip plugin-required
                                       cases when no plugin is loaded.
+                --experiment-profile <profile.json>
+                                      Compose the ENTIRE run under a validated
+                                      experiment profile (compact/full override,
+                                      section drops, tool deferrals). Protected
+                                      contracts (grounding, capability gateway,
+                                      loop tools) are refused at load. The
+                                      profile name+hash+feature vector is
+                                      stamped into every report's environment,
+                                      and matrix/diff flag profiled columns —
+                                      a profiled run never reads as production.
                 scorecard             Reads existing EvalReport JSON artifacts
                                       and writes privacy-safe Computer Use
                                       scorecard JSON + Markdown. Defaults to

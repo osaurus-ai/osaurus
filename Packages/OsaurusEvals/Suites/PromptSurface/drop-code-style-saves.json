@@ -1,0 +1,19 @@
+{
+  "id": "prompt_surface.drop-code-style-saves",
+  "domain": "prompt_surface",
+  "label": "prompt_surface • dropping the codeStyle section removes it and saves tokens vs baseline",
+  "query": "",
+  "notes": "A representative single-section ablation: the section must actually vanish from the composed manifest AND the surface must cost strictly less than the production baseline (a no-op 'savings' means the hook regressed).",
+  "fixtures": {},
+  "expect": {
+    "promptSurface": {
+      "profile": {
+        "name": "drop-code-style",
+        "dropSections": ["codeStyle"]
+      },
+      "mustExcludeSections": ["codeStyle"],
+      "requireSavingsVsBaseline": true,
+      "expectDeterministic": true
+    }
+  }
+}

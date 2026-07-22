@@ -1,0 +1,14 @@
+{
+  "id": "prompt_surface.baseline-census",
+  "domain": "prompt_surface",
+  "label": "prompt_surface • production baseline composes deterministically with the identity contract intact",
+  "query": "",
+  "notes": "The anchor row: no profile, so the census IS production composition. Pins the identity/quality sections every compose must carry and byte-determinism (two composes must hash identically — the KV-prefix stability requirement).",
+  "fixtures": {},
+  "expect": {
+    "promptSurface": {
+      "mustIncludeSections": ["platform", "persona", "grounding"],
+      "expectDeterministic": true
+    }
+  }
+}

@@ -75,6 +75,15 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
     public let meanPromptTokensPerTask: Double?
     /// Mean estimated total tokens per task (input + output) across rows.
     public let meanTotalTokensPerTask: Double?
+    /// Mean FIRST-STEP input estimate across rows that carried context
+    /// attribution — the cold-prefill cost per task (what the first-step
+    /// optimization axis drives down; the cumulative mean above also moves
+    /// with iteration count, this one is pure surface size).
+    public let meanFirstStepContextTokens: Double?
+    /// Largest mean context contributors across attributed rows, formatted
+    /// `name=tokens`, largest first — the "where do the tokens go" line the
+    /// plan requires successful cases to surface.
+    public let topContextContributors: [String]?
     /// Number of cases whose repeat trials disagreed (`--repeat N` runs) —
     /// the per-model flakiness signal. nil when no row carried trial data
     /// (single-execution runs), 0 when trials ran and all agreed.
@@ -101,6 +110,8 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
         peakCpuPercent: Double? = nil,
         meanPromptTokensPerTask: Double? = nil,
         meanTotalTokensPerTask: Double? = nil,
+        meanFirstStepContextTokens: Double? = nil,
+        topContextContributors: [String]? = nil,
         flakyCases: Int? = nil,
         environment: RunEnvironment? = nil
     ) {
@@ -120,6 +131,8 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
         self.peakCpuPercent = peakCpuPercent
         self.meanPromptTokensPerTask = meanPromptTokensPerTask
         self.meanTotalTokensPerTask = meanTotalTokensPerTask
+        self.meanFirstStepContextTokens = meanFirstStepContextTokens
+        self.topContextContributors = topContextContributors
         self.flakyCases = flakyCases
         self.environment = environment
     }
@@ -168,6 +181,26 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
             warnings.append(
                 "self-judged column(s): \(selfJudged.joined(separator: ", ")) — "
                     + "LLM-rubric rows were graded by the run model itself (weaker grade)"
+            )
+        }
+        // Mixed composition profiles: an ablation column must never be read
+        // as production. Any profile mix (including profile-vs-none) warns
+        // with the exact name@hash so the reader knows which is which.
+        let profiled = models.compactMap { col -> String? in
+            guard let name = col.environment?.experimentProfile else { return nil }
+            let hash = col.environment?.experimentProfileHash.map { "@\($0)" } ?? ""
+            return "\(shortModel(col.modelId))=\(name)\(hash)"
+        }
+        if !profiled.isEmpty && profiled.count < models.count {
+            warnings.append(
+                "experiment-profile column(s) mixed with production columns "
+                    + "(\(profiled.joined(separator: ", "))) — profiled rows composed a "
+                    + "DIFFERENT prompt/tool surface"
+            )
+        } else if Set(models.compactMap { $0.environment?.experimentProfileHash }).count > 1 {
+            warnings.append(
+                "columns ran DIFFERENT experiment profiles (\(profiled.joined(separator: ", "))) "
+                    + "— not an apples-to-apples comparison"
             )
         }
         return warnings
@@ -254,12 +287,26 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
                 + models.map { $0.meanTotalTokensPerTask.map { String(format: "%.0f", $0) } ?? "—" }
                 .joined(separator: " | ") + " |"
         )
+        lines.append(
+            "| first-step ctx tok (mean) | "
+                + models.map { $0.meanFirstStepContextTokens.map { String(format: "%.0f", $0) } ?? "—" }
+                .joined(separator: " | ") + " |"
+        )
         if models.contains(where: { $0.flakyCases != nil }) {
             lines.append(
                 "| flaky cases (repeat trials) | "
                     + models.map { $0.flakyCases.map(String.init) ?? "—" }
                     .joined(separator: " | ") + " |"
             )
+        }
+        if models.contains(where: { !($0.topContextContributors ?? []).isEmpty }) {
+            lines.append("")
+            lines.append("## Top Context Contributors")
+            lines.append("")
+            for col in models {
+                guard let top = col.topContextContributors, !top.isEmpty else { continue }
+                lines.append("- `\(shortModel(col.modelId))` — \(top.joined(separator: ", "))")
+            }
         }
         let warnings = comparabilityWarnings
         if !warnings.isEmpty {
@@ -405,6 +452,27 @@ public enum EvalMatrixBuilder {
                 )
             }
             let telem = cases.compactMap(\.telemetry).filter { !$0.isEmpty }
+            // Context attribution rollup: mean first-step cost + the
+            // largest mean contributors across attributed rows.
+            let attributed = cases.compactMap(\.context)
+            let firstSteps = attributed.compactMap(\.firstStepInputTokens)
+            var contributorTotals: [String: Int] = [:]
+            var contributorCounts: [String: Int] = [:]
+            for a in attributed {
+                for s in a.sections {
+                    contributorTotals["§\(s.id)", default: 0] += s.tokens
+                    contributorCounts["§\(s.id)", default: 0] += 1
+                }
+                for t in a.tools {
+                    contributorTotals["tool:\(t.name)", default: 0] += t.tokens
+                    contributorCounts["tool:\(t.name)", default: 0] += 1
+                }
+            }
+            let topContributors = contributorTotals
+                .map { (name: $0.key, mean: $0.value / max(1, contributorCounts[$0.key] ?? 1)) }
+                .sorted { $0.mean > $1.mean }
+                .prefix(6)
+                .map { "\($0.name)=\($0.mean)" }
             let decodes = telem.compactMap(\.decodeTokensPerSecond)
             let ttfts = telem.compactMap(\.ttftMs)
             let rams = telem.compactMap(\.peakPhysFootprintMb)
@@ -435,6 +503,9 @@ public enum EvalMatrixBuilder {
                     ? nil : Double(promptToks.reduce(0, +)) / Double(promptToks.count),
                 meanTotalTokensPerTask: totalToks.isEmpty
                     ? nil : Double(totalToks.reduce(0, +)) / Double(totalToks.count),
+                meanFirstStepContextTokens: firstSteps.isEmpty
+                    ? nil : Double(firstSteps.reduce(0, +)) / Double(firstSteps.count),
+                topContextContributors: topContributors.isEmpty ? nil : Array(topContributors),
                 flakyCases: trialed.isEmpty ? nil : trialed.filter(\.isFlaky).count,
                 environment: envByModel[modelId]
             )

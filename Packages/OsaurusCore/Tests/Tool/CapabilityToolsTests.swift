@@ -187,6 +187,40 @@ struct CapabilitiesDiscoverToolTests {
         #expect(result.contains("No capabilities found") || result.contains("capability"))
     }
 
+    @Test func listModeRejectsUnknownListValue() async throws {
+        let tool = CapabilitiesDiscoverTool()
+        let result = try await tool.execute(argumentsJSON: "{\"list\": \"everything\"}")
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("enabled"))
+    }
+
+    @Test @MainActor
+    func listModeReturnsPaginatedEnabledCapabilities() async throws {
+        let tool = CapabilitiesDiscoverTool()
+        let result = try await tool.execute(argumentsJSON: "{\"list\": \"enabled\"}")
+        #expect(!ToolEnvelope.isError(result))
+        // Either an exact paginated listing or (empty test registry) the
+        // explicit no-capabilities message — never a search result.
+        #expect(
+            result.contains("Enabled capabilities (page 1 of")
+                || result.contains("No capabilities are enabled")
+        )
+        #expect(!result.contains("Found "))
+    }
+
+    @Test @MainActor
+    func listModeRejectsOutOfRangePage() async throws {
+        let tool = CapabilitiesDiscoverTool()
+        let first = try await tool.execute(argumentsJSON: "{\"list\": \"enabled\"}")
+        // Out-of-range paging only applies when there IS a list to page.
+        guard first.contains("Enabled capabilities (page 1 of") else { return }
+        let result = try await tool.execute(
+            argumentsJSON: "{\"list\": \"enabled\", \"page\": 9999}"
+        )
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("out of range"))
+    }
+
     @Test func namedToolCandidateExtractionIsConservative() {
         let candidates = CapabilitiesDiscoverTool.namedToolCandidates(
             in: [

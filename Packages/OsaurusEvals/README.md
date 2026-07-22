@@ -130,6 +130,142 @@ swift run osaurus-evals run --suite Suites/AgentLoop --out report.json --transcr
 swift run osaurus-evals report --local-model foundation --frontier-model openai/gpt-4o-mini
 ```
 
+### Context optimization harness (`optimize-context`)
+
+The staged search that answers "where do the tokens go, and what can we
+remove without losing quality":
+
+1. **Census (no model)** — composes the REAL preview surface (same gates as
+   the send path) for the production baseline, then every one-factor
+   ablation the validator allows: each droppable prompt section, each
+   deferrable tool, the compact-prompt toggle.
+2. **Prune** — axes that compose invalid or save less than `--min-savings`
+   (default 25 estimated tokens) are recorded in `plan.json` but never cost
+   a model run.
+3. **Combine** — survivors merge into combination candidates
+   (`combo-sections`, `combo-tools`, `combo-all`) plus the named
+   architecture candidates: `arch-hot-set` (immutable hot tool set,
+   everything else defers to discovery), `arch-lean-guidance` (always-on
+   guidance prose dropped), `arch-manifest-replacement` (prompt manifest
+   replaced by the exact paginated `capabilities_discover
+   {"list": "enabled"}` mode), and `arch-compact-loaded-results`
+   (compacted `capabilities_load` results — a cumulative-token axis, so it
+   is exempt from the surface-savings floor).
+   Architecture and combo candidates always earn a model run;
+   `--max-candidates` caps how many single-axis candidates join them
+   (largest surface savers first).
+4. **Quality runs** — baseline FIRST, then every candidate, over the same
+   scoped suites in ONE process (the model loads and warms once; profiles
+   swap through the eval-only experiment scope between runs). Each
+   candidate is diffed against the in-process baseline with the flake-aware
+   `EvalDiff` gate.
+5. **Pareto** — gate-passing candidates rank on pass rate, first-step
+   context, cumulative context, peak context, TTFT, throughput, and RAM;
+   `pareto.md` marks the non-dominated frontier.
+6. **Finalists + strict promotion gate** — the baseline and every frontier
+   candidate rerun at `--finalist-repeat` trials (default 5), then
+   `PromotionGate` applies the STRICT rules: no baseline pass→fail
+   transitions (no flake amnesty), no new failures/errors/skips, no lower
+   per-case pass rate on repeat-trial rows, judge-calibration lane must
+   pass, unchanged case catalog, and the optional `--context-budget`
+   ceiling on mean first-step tokens. Verdicts land in `promotion.md`.
+
+#### Exact Bonsai Ternary commands
+
+The xAI key is supplied ONLY via the environment (`XAI_API_KEY`); it is
+never written to config, scripts, reports, or logs, and should be rotated
+after a shared run. With the key set, the judge auto-resolves to
+`xai/grok-4.3`.
+
+```bash
+cd Packages/OsaurusEvals
+
+# Deterministic plan only (seconds, no model):
+XAI_API_KEY=... swift run osaurus-evals optimize-context \
+  --suite Suites/AgentLoop \
+  --model "OsaurusAI/Bonsai-27b-Ternary-JANG" \
+  --out-dir build/ctxopt-bonsai --census-only
+
+# The full search (hours on a 27B local model — resumable):
+XAI_API_KEY=... swift run osaurus-evals optimize-context \
+  --suite Suites/AgentLoop --suite Suites/CapabilityClaims \
+  --model "OsaurusAI/Bonsai-27b-Ternary-JANG" \
+  --out-dir build/ctxopt-bonsai \
+  --repeat 3 --finalist-repeat 5 --max-candidates 8 --resume
+
+# Or through the loop script (artifacts under the stamped run dir):
+CTX_OPTIMIZE=1 MODELS="OsaurusAI/Bonsai-27b-Ternary-JANG" \
+CTX_SUITES="AgentLoop" CTX_REPEAT=3 XAI_API_KEY=... \
+scripts/evals/optimization-loop.sh
+```
+
+#### Reading the artifacts
+
+- `plan.json` — the census: baseline surface tokens, every candidate with
+  its `kind` and `surfaceSavings`, and every pruned axis with the reason.
+- `baseline.json` / `candidate-<name>.json` — merged env-stamped reports;
+  profiled reports carry `experimentProfile` + `experimentProfileHash` in
+  their environment, so they can never silently read as production.
+- `pareto.md` — the ranking table; `★` rows are the gate-passing,
+  non-dominated frontier. A candidate missing from the frontier is
+  dominated or gate-failed (see the Gate Failures section).
+- `finalist-*.json` + `promotion.md` — the strict verdicts. Only a
+  `PROMOTABLE` finalist may be promoted to production composition.
+
+#### Promotion rules (never weaken these)
+
+- Promote only `PROMOTABLE` finalists, and only when the finalist run used
+  ≥5 trials per case against a same-process baseline.
+- A pass→fail flip on a flaky row means MORE trials, not promotion.
+- Never weaken case expectations, inject model-family coercion, repair
+  parser output, or hide failures to make a candidate pass.
+- The prompt manifest stays in production until `arch-manifest-replacement`
+  passes CapabilityClaims and tool-use gates — the exact
+  `capabilities_discover {"list": "enabled"}` listing exists precisely so
+  that experiment is honest.
+- Per-case context ceilings (`expect.agentLoop.scoredMaxPromptTokens` /
+  `scoredMaxTotalTokens`) should be added to representative agent-loop
+  cases only AFTER a stable baseline exists, set from observed baseline +
+  margin — they are regression tripwires, not targets.
+
+#### Bonsai 27B Ternary JANG results (2026-07-22)
+
+Full staged run: 10 representative AgentLoop cases + CapabilityClaims +
+JudgeCalibration, 3 trials per case in search, 5 in finalists, judge
+`xai/grok-4.3`. Baseline surface 4984 tok; baseline quality 29/32.
+
+| Profile | Search (3×) | 1st-step | cum/task | Verdict |
+| --- | --- | ---: | ---: | --- |
+| `arch-compact-loaded-results` | 27/32 | ±0% | −12% | **PROMOTABLE** (clean 5-trial pass) |
+| `arch-lean-guidance` | 28/32 | −13% | −17% | BLOCKED (one flaky claims row 4/5→1/5 — rerun with more trials) |
+| `arch-hot-set` | 27/32 | −18% | −12% | gate FAIL (`no-clarify` regression) |
+| `arch-manifest-replacement` | 27/32 | −30% | −37% | gate FAIL (claims honesty + `no-spurious-discover` regress) |
+| `combo-sections` / `combo-tools` / `combo-all` | ≤27/32 | up to −73% | up to −50% | gate FAIL (multiple hard regressions) |
+
+Conclusions the evidence supports:
+
+- **Winning profile: [`Profiles/arch-compact-loaded-results.json`](Profiles/arch-compact-loaded-results.json)**
+  — the only candidate to survive the strict promotion gate. Its savings
+  are history-side (−12% cumulative on capability-loading tasks), not
+  surface-side, and cost zero quality.
+- **Best trade, pending evidence:
+  [`Profiles/arch-lean-guidance.json`](Profiles/arch-lean-guidance.json)**
+  — beat baseline in the 5-trial finalist aggregate (26/29 vs 25/29,
+  −17% first-step, −22% cumulative in finalists, two claims rows
+  IMPROVED) but is blocked, correctly, on a single flaky-row pass→fail
+  flip. Next action: rerun finalists at higher trials
+  (`--finalist-repeat 9`); do not promote over the gate.
+- **Keep the enabled manifest and the full tool schema.** The manifest
+  replacement (even with the exact `{"list": "enabled"}` mode available)
+  and the hot-set/deferral architectures all produced real regressions on
+  Bonsai Ternary — grounding-by-prompt is what this model's honesty
+  depends on. These are documented negative results, not failures of the
+  harness.
+
+Artifacts for this run live under `build/ctxopt-bonsai/run1/`
+(`plan.json`, `pareto.md`, `promotion.md`, per-profile reports with full
+context attribution).
+
 ### Screen Context capture lab
 
 `ScreenContext` cases replay a frozen Accessibility-tree fixture through the

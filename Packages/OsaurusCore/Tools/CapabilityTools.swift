@@ -149,7 +149,9 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
         + "Use this to discover or confirm any capability, including whether a named tool exists in the enabled set. "
         + "Your current tool list is a fixed subset, not the full set. "
         + "Returns ranked IDs copied from the live capability index; pass only those exact returned IDs to `capabilities_load`. "
-        + "Example: `{\"query\": \"convert csv to json\"}`."
+        + "Example: `{\"query\": \"convert csv to json\"}`. "
+        + "To enumerate everything enabled instead of searching, pass "
+        + "`{\"list\": \"enabled\"}` (paginated; add `\"page\": 2` for more)."
 
     let agentId: UUID?
 
@@ -168,7 +170,18 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
             "query": .object([
                 "type": .string("string"),
                 "description": .string("Single search query describing what you need"),
-            ])
+            ]),
+            "list": .object([
+                "type": .string("string"),
+                "enum": .array([.string("enabled")]),
+                "description": .string(
+                    "Exact listing mode: 'enabled' returns every enabled capability id, paginated. Omit to search."
+                ),
+            ]),
+            "page": .object([
+                "type": .string("integer"),
+                "description": .string("1-based page for list mode (default 1)"),
+            ]),
         ]),
     ])
 
@@ -190,6 +203,29 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        // Exact listing mode: `{"list": "enabled", "page": N}`. This is the
+        // validated replacement path for the prompt manifest (plan: never
+        // shrink/remove the manifest without an exact listing operation the
+        // model can call instead). It reuses the manifest derivation, so the
+        // listing can never disagree with what composition would render.
+        if let rawList = args["list"] {
+            guard let mode = rawList as? String, mode == "enabled" else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "Argument `list` only supports the value 'enabled'.",
+                    field: "list",
+                    expected: "'enabled'",
+                    tool: name
+                )
+            }
+            let page = max((args["page"] as? Int) ?? 1, 1)
+            return await Self.listEnabledCapabilities(
+                page: page,
+                agentId: Self.resolveAgentContextId(explicit: agentId),
+                tool: name
+            )
+        }
 
         let queriesReq = Self.requireQueries(args, tool: self)
         guard case .value(let rawQueries) = queriesReq else { return queriesReq.failureEnvelope ?? "" }
@@ -375,6 +411,77 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
         }
         output += "Use `capabilities_load` with the IDs to load them into this session."
         return ToolEnvelope.success(tool: name, text: output)
+    }
+
+    /// Lines per `list: "enabled"` page. Sized so one page costs roughly
+    /// what one search result set costs; the model pages rather than
+    /// receiving one unbounded dump (that is exactly the manifest-bloat
+    /// problem the listing mode exists to replace).
+    static let enabledListPageSize = 40
+
+    /// Exact, paginated listing of every enabled capability id for the
+    /// current agent — grouped and ordered exactly like the prompt
+    /// manifest (same derivation), so "the list" and "the prompt" can
+    /// never disagree. Deterministic: same state → same pages.
+    static func listEnabledCapabilities(
+        page: Int,
+        agentId: UUID?,
+        tool: String
+    ) async -> String {
+        let lines: [String] = await MainActor.run {
+            let resolvedAgentId = agentId ?? AgentManager.shared.activeAgent.id
+            let groups = SystemPromptComposer.deriveEnabledManifest(agentId: resolvedAgentId)
+            var out: [String] = []
+            for group in groups {
+                if !group.groupId.isEmpty {
+                    out.append("plugin/\(group.groupId) — \(group.pluginDisplay)")
+                } else if !group.pluginDisplay.isEmpty {
+                    out.append("<\(group.pluginDisplay)>")
+                }
+                for skill in group.skills {
+                    out.append("  skill/\(skill.name)" + Self.clippedDescription(skill.description))
+                }
+                for entry in group.tools {
+                    out.append("  tool/\(entry.name)" + Self.clippedDescription(entry.description))
+                }
+            }
+            return out
+        }
+        guard !lines.isEmpty else {
+            return ToolEnvelope.success(
+                tool: tool,
+                text: "No capabilities are enabled for this agent."
+            )
+        }
+        let pageCount = (lines.count + enabledListPageSize - 1) / enabledListPageSize
+        guard page <= pageCount else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Page \(page) is out of range — the enabled list has \(pageCount) page(s).",
+                field: "page",
+                expected: "integer between 1 and \(pageCount)",
+                tool: tool
+            )
+        }
+        let start = (page - 1) * enabledListPageSize
+        let slice = lines[start ..< min(start + enabledListPageSize, lines.count)]
+        var text = "Enabled capabilities (page \(page) of \(pageCount), \(lines.count) entries total):\n\n"
+        text += slice.joined(separator: "\n")
+        text += "\n\nLoad any id with `capabilities_load`."
+        if page < pageCount {
+            text += " Next page: `{\"list\": \"enabled\", \"page\": \(page + 1)}`."
+        }
+        return ToolEnvelope.success(tool: tool, text: text)
+    }
+
+    /// One-line description suffix for a listing entry, clipped so a
+    /// verbose plugin description can't blow up a page.
+    private static func clippedDescription(_ raw: String) -> String {
+        let trimmed = raw
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        return " — " + (trimmed.count > 100 ? String(trimmed.prefix(97)) + "…" : trimmed)
     }
 
     /// Resolve the agent context whose capability picker scopes runtime
@@ -605,6 +712,19 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     /// omission note; `/skill-name` invocation stays uncapped because it
     /// injects for a single message only.
     static let skillReferenceBudget = 32_000
+
+    /// The compacted budget under the `compactLoadedResults` experiment
+    /// axis (~2k tokens). Eval-only: production always uses
+    /// `skillReferenceBudget`.
+    static let compactSkillReferenceBudget = 8_000
+
+    /// Effective budget for this load: the experiment axis (nil in
+    /// production) can compact loaded skill references so the harness can
+    /// price "loaded result compaction" in cumulative-token terms.
+    static var effectiveSkillReferenceBudget: Int {
+        PromptComposerExperimentScope.current?.compactLoadedResults == true
+            ? compactSkillReferenceBudget : skillReferenceBudget
+    }
 
     /// Built-in skills are not plugin-backed, so they have no dynamic tool
     /// group for `loadSkill` to cascade automatically. Keep their concrete
@@ -957,7 +1077,12 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     /// Every other agent gets the full schema so dynamically loaded
     /// plugin/MCP/sandbox tools call correctly on the first attempt.
     static func loadedSchemaBlock(for spec: Tool) -> String {
-        let compact = ChatExecutionContext.currentAgentId == Agent.defaultId
+        // `compactLoadedResults` (eval-only, nil in production) extends the
+        // default agent's skeleton-schema behavior to every agent so the
+        // harness can price compacted load results.
+        let compact =
+            ChatExecutionContext.currentAgentId == Agent.defaultId
+            || PromptComposerExperimentScope.current?.compactLoadedResults == true
         let rendered = compact ? SystemPromptComposer.compactBootstrapSpec(spec) : spec
         let dict = rendered.toTokenizerToolSpec()
         guard JSONSerialization.isValidJSONObject(dict),
@@ -1062,7 +1187,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         // result; past it, files collapse to a named omission note.
         output += await SkillManager.shared.buildFullInstructions(
             for: skill,
-            referenceBudget: Self.skillReferenceBudget
+            referenceBudget: Self.effectiveSkillReferenceBudget
         )
         output += "\n\n"
         if sameNamed.count > 1 {
