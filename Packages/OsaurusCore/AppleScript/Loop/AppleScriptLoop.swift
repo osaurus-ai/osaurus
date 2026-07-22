@@ -509,14 +509,15 @@ public enum AppleScriptLoop {
 
         // Exact whole-document TextEdit replacement is a deterministic app
         // operation, not an open-ended synthesis problem. The live AppleScript
-        // 16B row received the correct old/new placeholders yet invented an
-        // invalid Foundation selector, then emitted malformed tool JSON while
-        // correcting it. Before invoking that model, read the actual front
-        // document. Only when it is byte-for-byte the authoritative old value
-        // do we offer one minimal, placeholder-expanded TextEdit write through
-        // the ordinary user gate, then read the OS state back and require an
-        // exact match. A read failure, non-exact document, other app, missing
-        // literals, or ambiguous task keeps the existing model-driven path.
+        // 16B rows either invented replacement bytes despite receiving the
+        // authoritative {{content}} placeholder or failed to correct that
+        // omission. Before invoking that model, read the actual front document.
+        // For old/new replacement, require the live text to equal the supplied
+        // old value. For an explicit whole-document set, the open front document
+        // is enough. Offer one minimal placeholder-expanded write through the
+        // ordinary user gate, then read OS state back and require an exact match.
+        // A read failure, old-value mismatch, other app, missing literals, or
+        // ambiguous task keeps the existing model-driven path.
         if mode == .automate,
             let contract = exactTextEditReplacementContract(task: task, literals: literals)
         {
@@ -524,18 +525,20 @@ public enum AppleScriptLoop {
                 textEditFrontDocumentReadScript,
                 .appleScript
             )
-            if beforeObservation.isSuccess, beforeObservation.output == contract.oldText {
+            let beforeMatches = contract.oldText.map { beforeObservation.output == $0 } ?? true
+            if beforeObservation.isSuccess, beforeMatches {
                 let proposedScript: String
                 if contract.saveRequested {
                     proposedScript = """
                         tell application "TextEdit"
-                            set text of front document to {{newText}}
+                            set text of front document to {{\(contract.newTextPlaceholder)}}
                             save front document
                         end tell
                         """
                 } else {
                     proposedScript =
-                        #"tell application "TextEdit" to set text of front document to {{newText}}"#
+                        "tell application \"TextEdit\" to set text of front document to "
+                        + "{{\(contract.newTextPlaceholder)}}"
                 }
                 let expansion = literals.expand(proposedScript)
                 guard expansion.undefinedName == nil else {
@@ -999,13 +1002,14 @@ public enum AppleScriptLoop {
                 language: language
             )
 
-            // Exact replacement values are deliberately withheld from the
-            // helper and exposed only as placeholders. A script that writes
-            // the word `newText` instead of {{newText}} would mutate the app
-            // with model-invented bytes. Reject it before compile, approval, or
-            // execution; this is data-contract validation, not script repair.
+            // Exact user values are deliberately withheld from the helper and
+            // exposed only as placeholders. A script that invents replacement
+            // bytes instead of consuming {{newText}} or the single supplied
+            // {{content}} value would mutate the app with model-invented data.
+            // Reject it before compile, approval, or execution; this is data-
+            // contract validation, not script repair.
             if !verifying, proposedEffect != .read,
-                let missingName = missingRequiredReplacementPlaceholder(
+                let missingName = missingRequiredMutationPlaceholder(
                     in: proposedScript,
                     literals: literals
                 )
@@ -1039,6 +1043,59 @@ public enum AppleScriptLoop {
                                 "The model kept omitting the required replacement placeholder "
                                 + "{{\(missingName)}}."
                         )
+                    )
+                }
+                messages.append(
+                    ChatMessage(
+                        role: "tool",
+                        content: reason,
+                        tool_calls: nil,
+                        tool_call_id: call.id
+                    )
+                )
+                lastToolResult = reason
+                step += 1
+                continue
+            }
+
+            // TextEdit persistence is opt-in. `save`, Command-S, Save-menu
+            // automation, closing-with-save, and clearing the document's dirty
+            // flag all persist or falsely mark the document as persisted. A
+            // helper may not add any of those when the user's task did not ask
+            // to save. Reject the proposal before it reaches the approval UI so
+            // a correct edit cannot be followed by an invented save workflow.
+            if !verifying, proposedEffect != .read,
+                let persistenceOperation = unrequestedTextEditPersistenceOperation(
+                    in: proposedScript,
+                    task: task,
+                    language: language
+                )
+            {
+                consecutiveInvalid += 1
+                let reason =
+                    "The script added an unrequested TextEdit persistence operation "
+                    + "(\(persistenceOperation)). Remove it and apply only the requested edit; "
+                    + "do not save or clear the document's changed state."
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .retry,
+                        title: "Unrequested TextEdit save rejected",
+                        detail: reason
+                    )
+                )
+                steps.append(
+                    AppleScriptStepRecord(
+                        n: steps.count + 1,
+                        intent: "unknown",
+                        status: "invalid",
+                        error: reason,
+                        scriptPreview: scriptPreview(proposedScript)
+                    )
+                )
+                if consecutiveInvalid >= limits.maxConsecutiveInvalid {
+                    return terminate(
+                        .failed(reason: "The model kept adding an unrequested TextEdit save operation.")
                     )
                 }
                 messages.append(
@@ -1441,16 +1498,17 @@ public enum AppleScriptLoop {
 
             if execution.isSuccess,
                 let contract = exactTextEditReplacement,
-                let before = textEditBefore
+                let before = textEditBefore,
+                let oldText = contract.oldText
             {
                 let observation = await runExecutor(textEditFrontDocumentReadScript, .appleScript)
                 let after = observation.isSuccess ? observation.output : nil
                 let expected = before.replacingOccurrences(
-                    of: contract.oldText,
+                    of: oldText,
                     with: contract.newText
                 )
                 let matched = after == expected
-                    && (before.contains(contract.oldText) || expected.contains(contract.newText))
+                    && (before.contains(oldText) || expected.contains(contract.newText))
                 steps.append(
                     AppleScriptStepRecord(
                         n: steps.count + 1,
@@ -1698,8 +1756,9 @@ public enum AppleScriptLoop {
     }
 
     private struct ExactTextEditReplacementContract {
-        let oldText: String
+        let oldText: String?
         let newText: String
+        let newTextPlaceholder: String
         let saveRequested: Bool
     }
 
@@ -1710,18 +1769,34 @@ public enum AppleScriptLoop {
         task: String,
         literals: AppleScriptLiterals
     ) -> ExactTextEditReplacementContract? {
-        guard let oldText = literals.value(for: "oldText"),
-            let newText = literals.value(for: "newText")
-        else { return nil }
         let normalizedTask = task.lowercased()
-        guard normalizedTask.contains("textedit"),
+        guard normalizedTask.contains("textedit") else { return nil }
+        let saveRequested = explicitlyRequestsSave(normalizedTask)
+
+        if let oldText = literals.value(for: "oldText"),
+            let newText = literals.value(for: "newText"),
             normalizedTask.contains("replace") || normalizedTask.contains("change the text")
                 || normalizedTask.contains("edit the text")
-        else { return nil }
+        {
+            return ExactTextEditReplacementContract(
+                oldText: oldText,
+                newText: newText,
+                newTextPlaceholder: "newText",
+                saveRequested: saveRequested
+            )
+        }
+
+        let wholeDocumentIntent =
+            normalizedTask.contains("entire contents")
+            || normalizedTask.contains("entire content")
+            || normalizedTask.contains("entire text")
+            || normalizedTask.contains("whole document")
+        guard wholeDocumentIntent, let content = literals.value(for: "content") else { return nil }
         return ExactTextEditReplacementContract(
-            oldText: oldText,
-            newText: newText,
-            saveRequested: explicitlyRequestsSave(normalizedTask)
+            oldText: nil,
+            newText: content,
+            newTextPlaceholder: "content",
+            saveRequested: saveRequested
         )
     }
 
@@ -1922,12 +1997,60 @@ public enum AppleScriptLoop {
     /// bytes: the helper sees only the placeholder name and length. Require
     /// the authoritative new-value token while allowing the old-value token to
     /// be omitted for the valid whole-document direct-set idiom.
+    static func missingRequiredMutationPlaceholder(
+        in script: String,
+        literals: AppleScriptLiterals
+    ) -> String? {
+        // Preserve the more precise unknown-placeholder diagnostic. The main
+        // loop validates undefined tokens immediately after this contract;
+        // once the helper corrects that name, this required-value check runs.
+        if literals.expand(script).undefinedName != nil { return nil }
+        if literals.value(for: "newText") != nil {
+            return script.contains("{{newText}}") ? nil : "newText"
+        }
+        guard literals.names == ["content"] else { return nil }
+        return script.contains("{{content}}") ? nil : "content"
+    }
+
+    /// Preserve the original narrow helper name for callers/tests that reason
+    /// specifically about the two-value replacement contract.
     static func missingRequiredReplacementPlaceholder(
         in script: String,
         literals: AppleScriptLiterals
     ) -> String? {
         guard literals.value(for: "newText") != nil else { return nil }
-        return script.contains("{{newText}}") ? nil : "newText"
+        return missingRequiredMutationPlaceholder(in: script, literals: literals)
+    }
+
+    /// Return the persistence primitive a TextEdit mutation added even though
+    /// the user did not opt in to saving. This is deliberately scoped to
+    /// AppleScript tasks naming TextEdit; it does not infer save policy for
+    /// other apps or JXA.
+    static func unrequestedTextEditPersistenceOperation(
+        in script: String,
+        task: String,
+        language: AppleScriptLanguage
+    ) -> String? {
+        guard language == .appleScript else { return nil }
+        let normalizedTask = task.lowercased()
+        guard normalizedTask.contains("textedit"), !explicitlyRequestsSave(normalizedTask)
+        else { return nil }
+
+        let checks: [(pattern: String, label: String)] = [
+            (#"(?im)^\s*save(?:\s|$)"#, "save command"),
+            (#"(?i)\bkeystroke\s+[\"“]s[\"”]\s+using\s+\{[^}]*command\s+down"#, "Command-S"),
+            (#"(?i)\bclick\s+(?:menu\s+item|button)\s+[\"“]save[\"”]"#, "Save UI action"),
+            (#"(?im)^\s*close\b[^\n]*\bsaving\s+(?:yes|true)\b"#, "close-with-save"),
+            (
+                #"(?im)^\s*set\s+[^\n]*\b(?:changed|modified)\b[^\n]*\bto\s+false\b"#,
+                "dirty-state reset"
+            ),
+        ]
+        for check in checks
+        where script.range(of: check.pattern, options: .regularExpression) != nil {
+            return check.label
+        }
+        return nil
     }
 
     // MARK: - Literal placeholders

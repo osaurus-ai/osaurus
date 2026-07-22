@@ -1269,6 +1269,66 @@ struct AppleScriptLoopTests {
         )
     }
 
+    @Test("single supplied content is mandatory for mutations and TextEdit saving stays opt-in")
+    func genericContentAndTextEditPersistenceContracts() {
+        let literals = AppleScriptLiterals(["content": "Aster delta 482\nCedar echo 619"])
+        #expect(
+            AppleScriptLoop.missingRequiredMutationPlaceholder(
+                in: #"tell application "TextEdit" to set text of front document to "Line one""#,
+                literals: literals
+            ) == "content"
+        )
+        #expect(
+            AppleScriptLoop.missingRequiredMutationPlaceholder(
+                in: #"tell application "TextEdit" to set text of front document to {{content}}"#,
+                literals: literals
+            ) == nil
+        )
+        #expect(
+            AppleScriptLoop.unrequestedTextEditPersistenceOperation(
+                in: """
+                    tell application "TextEdit"
+                        set text of front document to {{content}}
+                        set changed of front document to false
+                    end tell
+                    """,
+                task: "Replace the TextEdit contents and do not save it.",
+                language: .appleScript
+            ) == "dirty-state reset"
+        )
+        #expect(
+            AppleScriptLoop.unrequestedTextEditPersistenceOperation(
+                in: """
+                    tell application "TextEdit"
+                        set text of front document to {{content}}
+                        save front document
+                    end tell
+                    """,
+                task: "Replace the TextEdit contents.",
+                language: .appleScript
+            ) == "save command"
+        )
+        #expect(
+            AppleScriptLoop.unrequestedTextEditPersistenceOperation(
+                in: #"tell application "TextEdit" to set text of front document to {{content}}"#,
+                task: "Replace the TextEdit contents and do not save it.",
+                language: .appleScript
+            ) == nil
+        )
+        #expect(
+            AppleScriptLoop.unrequestedTextEditPersistenceOperation(
+                in: """
+                    tell application "TextEdit"
+                        set text of front document to {{content}}
+                        save front document
+                    end tell
+                    """,
+                task: "Replace the TextEdit contents and save the document.",
+                language: .appleScript
+            ) == nil
+        )
+    }
+
     // A MUTATING script so the confirm / deny / auto-run-with-warning gate
     // tests below exercise the gate: a pure read now auto-runs in automate mode
     // (see `automateReadAutoRuns`), so the shared "valid" script must be an edit
@@ -2429,6 +2489,67 @@ struct AppleScriptLoopTests {
         #expect(ran.contains("Line one — an apostrophe's curl"))
         #expect(ran.contains("a \\\"quote\\\"."))
         #expect(ran.contains("\\nLine two."))
+    }
+
+    @Test("exact whole-document TextEdit content uses deterministic gated read-back")
+    func exactWholeDocumentTextEditContentUsesRuntimeReadBack() async {
+        let feed = SubagentFeed(
+            toolCallId: "t-generic-textedit-contract",
+            kindId: "applescript",
+            title: "task"
+        )
+        let content = "Aster delta 482\nCedar echo 619"
+        let exec = ScriptedExec(results: [
+            successResult("Live alpha 731\nLive beta 954"),
+            successResult(nil),
+            successResult(content),
+        ])
+        let executedScripts = MutableTexts()
+        let confirm = ConfirmCounter(approve: true)
+
+        let result = await AppleScriptLoop.run(
+            task:
+                "Replace the entire contents of the front TextEdit document with the provided "
+                + "content exactly, and do not save it.",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in await confirm.confirm() },
+            limits: RunLimits(maxSteps: 8),
+            sessionId: "s",
+            mode: .automate,
+            literals: AppleScriptLiterals(["content": content]),
+            execute: { script, _ in
+                executedScripts.append(script)
+                return await exec.run(script)
+            },
+            nextScript: { _ in
+                Issue.record("the deterministic whole-document path must not call the model")
+                return nil
+            }
+        )
+
+        #expect(result.outcome.isSuccess)
+        #expect(result.scriptsExecuted == 1)
+        #expect(result.lastOutput == content)
+        #expect(result.modelTokens == 0)
+        #expect(await exec.count == 3)
+        #expect(await confirm.count == 1)
+        #expect(
+            executedScripts.all() == [
+                #"tell application "TextEdit" to get text of front document"#,
+                "tell application \"TextEdit\" to set text of front document to "
+                    + #""Aster delta 482\nCedar echo 619""#,
+                #"tell application "TextEdit" to get text of front document"#,
+            ]
+        )
+        #expect(executedScripts.all().contains { $0.lowercased().contains("save") } == false)
+        #expect(
+            feed.currentEvents().contains {
+                $0.title == "Verified TextEdit replacement" && $0.success == true
+            }
+        )
     }
 
     @Test("referencing an unknown placeholder is re-asked, not executed")
