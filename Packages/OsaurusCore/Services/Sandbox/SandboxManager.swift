@@ -784,13 +784,11 @@
             _lastBootReadyAt = Date()
             syncStatus()
             let workspacePath = OsaurusPaths.containerWorkspace().path
-            let bootMessage =
-                "Seatbelt backend ready — commands run under sandbox-exec confinement (workspace: \(workspacePath))"
-            debugLog("[seatbelt] \(bootMessage)")
             Task { @MainActor in
                 SandboxLogBuffer.shared.append(
                     level: .info,
-                    message: bootMessage,
+                    message:
+                        "Seatbelt backend ready — commands run under sandbox-exec confinement (workspace: \(workspacePath))",
                     source: "seatbelt"
                 )
             }
@@ -1649,12 +1647,11 @@
             )
             let mappedCwd = cwd.map { SeatbeltPathMapper.mapToHost($0, workspaceRoot: root) }
             let netLabel = network == .allowed ? "allowed" : "denied"
-            let execMessage = "sandbox-exec [net:\(netLabel)] $ \(String(command.prefix(160)))"
-            debugLog("[seatbelt] \(execMessage)")
+            let commandPreview = String(command.prefix(160))
             Task { @MainActor in
                 SandboxLogBuffer.shared.append(
                     level: .debug,
-                    message: execMessage,
+                    message: "sandbox-exec [net:\(netLabel)] $ \(commandPreview)",
                     source: "seatbelt"
                 )
             }
