@@ -889,3 +889,18 @@ Post-rebase source verification:
 At this point local source and live gates for this scoped PR are satisfied.
 Remote PR CI and the merge itself remain pending; this document does not claim
 a release or close any carry-forward matrix row above.
+
+### PR CI pin-contract correction
+
+The first PR #2131 CI run (`29924637680`) completed seven checks successfully
+but failed `test-core` in `ImageGenerationBridgeContractTests`. The four
+recorded expectations still hard-coded the previous vMLX revision
+`a3b047e05871e1271fc86d2ef0ab2f8270aa832f`, while this PR intentionally moves
+`Package.swift` and all three resolved files to the merged, live-proven revision
+`bbbf49e090449bb42f6cde8f50b6f230e3578aec`. The image bridge, route, and Metal
+gate assertions in the same test continued to pass; this was a stale exact-pin
+source contract, not a live image-generation failure. The contract now checks
+the same `bbbf49e` revision as `RuntimePolicySourceTests` and the four package
+manifests. A focused local rerun and a fresh full PR CI run are required before
+merge; no runtime source changed for this correction, so the exact Release UI
+evidence above remains the current runtime proof.
