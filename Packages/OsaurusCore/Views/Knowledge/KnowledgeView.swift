@@ -631,32 +631,8 @@ private struct KnowledgeCollectionCard: View {
                     .labelsHidden()
             }
 
-            HStack(spacing: 6) {
-                Image(systemName: collection.folderExists ? "folder.fill" : "folder.badge.questionmark")
-                    .font(.system(size: 11))
-                    .foregroundColor(collection.folderExists ? theme.tertiaryText : .orange)
-                Text(collection.folderPath)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if collection.isGitRepository {
-                    Text("git", bundle: .module)
-                        .font(.system(size: 9, weight: .bold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(theme.accentColor.opacity(0.18)))
-                        .foregroundColor(theme.accentColor)
-                        .help(collection.gitRemoteURL ?? "Local git repository (no remote)")
-                }
-            }
-            if collection.isGitRepository, let remote = collection.gitRemoteURL {
-                Text(remote)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+            // Folder path and git remote intentionally omitted — they
+            // crowd the card and live in the detail sheet (tap the card).
             grantedAgentsRow
             Button(action: {
                 Task {
