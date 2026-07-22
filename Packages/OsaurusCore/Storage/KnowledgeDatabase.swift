@@ -1032,7 +1032,8 @@ public final class KnowledgeDatabase: @unchecked Sendable {
     }
 
     private static let chunkHitColumns =
-        "c.document_id, c.chunk_index, c.heading_path, c.content, d.collection_id, d.rel_path, d.title, d.doc_type, d.tags_csv"
+        "c.document_id, c.chunk_index, c.heading_path, c.content, d.collection_id, d.rel_path, d.title, "
+        + "CASE WHEN d.doc_type = '' THEN d.inferred_type ELSE d.doc_type END, d.tags_csv"
 
     private static func readChunkHit(_ stmt: OpaquePointer) -> KnowledgeChunkHit {
         KnowledgeChunkHit(

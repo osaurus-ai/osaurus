@@ -219,6 +219,14 @@ public actor KnowledgeIndexService {
         )
         let chunks = KnowledgeDocumentParser.chunk(body: body)
 
+        // No explicit frontmatter `type` → infer one from the folder
+        // structure so the collection stays type-filterable without the
+        // user editing files. Explicit frontmatter always wins.
+        let inferredType =
+            frontmatter.docType.isEmpty
+            ? KnowledgeTypeInference.infer(relPath: relPath) : ""
+        let effectiveType = frontmatter.docType.isEmpty ? inferredType : frontmatter.docType
+
         let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
         let modifiedAt = values?.contentModificationDate.map {
             ISO8601DateFormatter().string(from: $0)
@@ -230,6 +238,7 @@ public actor KnowledgeIndexService {
             relPath: relPath,
             title: title,
             docType: frontmatter.docType,
+            inferredType: inferredType,
             summary: frontmatter.summary,
             tagsCSV: frontmatter.tagsCSV,
             contentHash: contentHash,
@@ -260,7 +269,7 @@ public actor KnowledgeIndexService {
                 collectionId: collectionId,
                 relPath: relPath,
                 title: title,
-                docType: frontmatter.docType,
+                docType: effectiveType,
                 tagsCSV: frontmatter.tagsCSV
             )
         }
