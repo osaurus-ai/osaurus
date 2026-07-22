@@ -1,8 +1,10 @@
 # Prefill Queue Emergency Gate — 2026-07-22
 
 Status: **PARTIAL — the released queue symptom predates current main; a distinct
-current-main LFM disk-restore bypass is fixed and live-proven in the isolated
-Release app, while the complete all-family/all-setting matrix is not closed.**
+current-main LFM disk-restore bypass is fixed and live-proven on the exact
+merged vMLX pin in the isolated Release app. Bonsai/Qwen-hybrid and Gemma 4
+rotating-SWA representatives also pass that exact-pin cache gate, while the
+complete all-family/all-setting matrix is not closed.**
 
 Scope: shared Osaurus/vMLX request, warm-up, and cache lifecycle. This is not a
 Bonsai-only workaround. AppleScript, Laguna expansion, routing guidance, and
@@ -30,10 +32,10 @@ model unloading, SSD restore, cancellation, or UI progress projection.
 ## Baseline source truth
 
 - Osaurus base: `0c6563c6618782116aa113dbfe7a4cbc32337b2e`
-- vMLX pin: `bbbf49e090449bb42f6cde8f50b6f230e3578aec`
-- Integration target: merged vMLX PR #176,
+- Baseline vMLX pin: `bbbf49e090449bb42f6cde8f50b6f230e3578aec`
+- Osaurus PR integration pin: merged vMLX PR #176,
   `c59024a1b4b1314bf98ce962f99e1ffaaebfc247`. The exact-pin Release rebuild
-  and post-merge UI rerun are required before the Osaurus PR can merge.
+  and UI rerun are recorded below.
 - Shipped release `0.22.8` resolves to commit
   `402060bce30e802ab0e19a932e05c6afa9c71c99`, published before the SSD repair
   series below.
@@ -147,6 +149,56 @@ Telemetry note: `[vmlx][cache/paged-store]` is logged before tier selection.
 The in-memory write is still guarded by a non-nil paged cache. With the visible
 GPU Cache toggle Off, that trace label does not prove that paged RAM was
 silently enabled.
+
+## Exact merged-pin Release confirmation
+
+This rerun used the scoped Osaurus PR head `5926372363033c22f7497f988fa38e2a967c0414`
+with the exact merged vMLX pin
+`c59024a1b4b1314bf98ce962f99e1ffaaebfc247` in a fresh Release build. The app
+was ad-hoc signed and launched as the isolated bundle
+`com.dinoki.osaurus.prefillqueueproof20260722`; its executable SHA-256 was
+`070faab1e06e425981410ccbcb7f92714509734dbc7608fc34af111dd4e4289d`.
+`OSAURUS_TEST_ROOT` isolated app data, and `OSU_MODELS_DIR=/Users/eric/models`
+pointed the proof app at the user-specified local model store instead of
+changing or copying any model bundle.
+
+Computer Use visually confirmed Settings -> Server -> Cache with Prefix Cache
+On, GPU/Paged Cache Off, Disk Cache On, codec Engine Selected, SSM Re-derive
+On, and `All changes saved`. The same exact app then selected and exercised
+each model through the visible chat UI:
+
+- LFM2.5 8B A1B MXFP8 CRACK: the exact answer `LFM-EXACT-PIN-ONE` displayed at
+  TTFT `0.46s` and `210.6 tok/s`. Runtime fetch restored disk boundary
+  `1747/1768` (`remaining=21`, `ssm=18`, format v2). A separate new chat's
+  proactive warm-up restored `1747/1750` and drained in `0.45s` rather than
+  recomputing from token zero.
+- Bonsai 27B Ternary JANG CRACK: the user-visible Thinking control was switched
+  Off before the measured turn. That configuration change correctly caused one
+  cold seed for the new prompt identity, which stored boundary `3005`; the
+  measured turn then restored `3005/3031` (`remaining=26`, `ssm=96`, format v2)
+  and displayed exact `BONSAI-EXACT-PIN-ONE` at TTFT `0.95s`, `31.8 tok/s`,
+  with zero reasoning deltas. The next new-chat warm-up restored `3007/3008`
+  with all 96 hybrid companion states and drained in `0.18s`.
+- Gemma 4 12B QAT JANG_4M: Thinking was visibly Off. The first exact-pin warm-up
+  stored typed format-v2 rotating payloads. The measured turn then restored
+  `1729/1747` (`remaining=18`) and displayed exact `GEMMA-EXACT-PIN-ONE` at
+  TTFT `0.65s`, `32.7 tok/s`, with zero reasoning deltas. The next new-chat
+  warm-up restored `1725/1729` and drained in `0.20s`. Bundle config contains
+  48 layers (8 `full_attention`, 40 `sliding_attention`); live storage reported
+  `requiredCompanion=true` plus rotating offsets, matching that mixed topology.
+
+Visible exact-pin answer artifacts:
+
+- `docs/internal/evidence/2026-07-22-prefill-queue/exact-merged-pin-lfm25-mxfp8.png`
+  (SHA-256 `f8b01fb868ea8cec70333b12b050fdc84f38f59531054ecaacb1aacef9ac5379`)
+- `docs/internal/evidence/2026-07-22-prefill-queue/exact-merged-pin-bonsai-ternary.png`
+  (SHA-256 `8f934593ede273bcd36ac08a1ae31abf6be1213d880be4432d83d6396d5c2597`)
+- `docs/internal/evidence/2026-07-22-prefill-queue/exact-merged-pin-gemma-jang4m.png`
+  (SHA-256 `c7df0859b270b42bc224fb2f2d209e3aeebcf5d3e7eaa5ce054e00a3ffafefeb`)
+
+This closes the exact-pin emergency representative gate only. It does not
+convert the open paged-RAM, TurboQuant-KV, unsupported-family, AppleScript, or
+all-model matrix rows below into passes.
 
 ## Required reproduction matrix
 
