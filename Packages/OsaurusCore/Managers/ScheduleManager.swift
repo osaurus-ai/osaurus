@@ -91,7 +91,7 @@ public final class ScheduleManager {
     /// to run synchronously on the main actor and showed up in hang
     /// reports; routing every read/write through one background queue
     /// keeps the main thread free and preserves write ordering.
-    private static let ioQueue = DispatchQueue(
+    private nonisolated static let ioQueue = DispatchQueue(
         label: "com.dinoki.osaurus.schedule-io", qos: .userInitiated)
 
     private nonisolated static func persist(_ work: @escaping @Sendable () -> Void) {
@@ -182,7 +182,7 @@ public final class ScheduleManager {
         var updated = schedule
         updated.updatedAt = Date()
         applyLocal(updated)
-        Self.persist { ScheduleStore.save(updated) }
+        Self.persist { [updated] in ScheduleStore.save(updated) }
         // Reconcile: `save` merges run history from the previous on-disk
         // copy, which the in-memory apply above can't see.
         refresh()
