@@ -518,10 +518,12 @@ private struct KnowledgeCollectionCard: View {
 
     private var okfLabel: String {
         switch okfStatus {
-        case .conformant: return "All categorized"
+        case .conformant: return L("All categorized")
         case .nonconforming(let count):
-            return count == 1 ? "1 doc uncategorized" : "\(count) docs uncategorized"
-        case .unknown: return "Checking categories…"
+            return count == 1
+                ? L("1 doc uncategorized")
+                : String(format: L("%lld docs uncategorized"), count)
+        case .unknown: return L("Checking categories…")
         }
     }
 
@@ -590,14 +592,20 @@ private struct KnowledgeCollectionCard: View {
     private var okfHelp: String {
         switch okfStatus {
         case .conformant:
-            return
+            return L(
                 "Every document has a category, so agents can filter the library by it. Categories come from frontmatter `type:` or are inferred automatically from folder names."
+            )
         case .nonconforming(let count):
             return count == 1
-                ? "1 document has no category. This is optional, agents can still search and read it. To let agents filter by category, add a `type:` line (e.g. `type: policy`) to the top of the file. Click for the list."
-                : "\(count) documents have no category. This is optional, agents can still search and read them. To let agents filter by category, add a `type:` line (e.g. `type: policy`) to the top of each file. Click for the list."
+                ? L(
+                    "1 document has no category. This is optional, agents can still search and read it. To let agents filter by category, add a `type:` line (e.g. `type: policy`) to the top of the file. Click for the list."
+                )
+                : String(
+                    format: L(
+                        "%lld documents have no category. This is optional, agents can still search and read them. To let agents filter by category, add a `type:` line (e.g. `type: policy`) to the top of each file. Click for the list."
+                    ), count)
         case .unknown:
-            return "Checking that every document declares a category (its `type`)…"
+            return L("Checking that every document declares a category (its `type`)…")
         }
     }
 
@@ -1648,7 +1656,8 @@ private struct KnowledgeCollectionDetailSheet: View {
             Text(
                 verbatim: doc.effectiveType.isEmpty
                     ? L("Uncategorized")
-                    : doc.isTypeInferred ? "\(doc.effectiveType) (auto)" : doc.effectiveType
+                    : doc.isTypeInferred
+                        ? String(format: L("%@ (auto)"), doc.effectiveType) : doc.effectiveType
             )
             .font(.system(size: 9, weight: .bold))
             .padding(.horizontal, 6)
