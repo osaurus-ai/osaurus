@@ -252,6 +252,9 @@ public struct SandboxProvisioningReport: Codable, Sendable, Equatable {
 public enum SandboxProvisioningDiagnostics {
     public static let schemaVersion = 1
     public static let defaultMinimumColdProvisionFreeBytes: Int64 = 12 * 1024 * 1024 * 1024
+    /// Free-space floor for the Seatbelt backend, which provisions no VM
+    /// image or rootfs — it only needs working room for agent files.
+    public static let defaultMinimumSeatbeltFreeBytes: Int64 = 1 * 1024 * 1024 * 1024
 
     public static func makeReport(
         generatedAt: Date = Date(),
@@ -259,6 +262,7 @@ public enum SandboxProvisioningDiagnostics {
         operatingSystemMajorVersion: Int = ProcessInfo.processInfo.operatingSystemVersion.majorVersion,
         isAppleSilicon: Bool = defaultIsAppleSilicon,
         environment: [String: String] = ProcessInfo.processInfo.environment,
+        backend: SandboxBackend = SandboxBackend.current,
         fileManager fm: FileManager = .default
     ) -> SandboxProvisioningReport {
         let rootSource = resolvedRootSource(environment: environment)
@@ -281,7 +285,11 @@ public enum SandboxProvisioningDiagnostics {
             )
         }
 
-        if operatingSystemMajorVersion < 26 {
+        // The macOS-version and Apple Silicon requirements belong to the
+        // Containerization VM runtime. The Seatbelt backend exists precisely
+        // for hosts that fail the version check, so those findings are
+        // skipped there.
+        if backend == .virtualMachine, operatingSystemMajorVersion < 26 {
             findings.append(
                 finding(
                     code: .sandboxUnavailable,
@@ -299,7 +307,7 @@ public enum SandboxProvisioningDiagnostics {
             )
         }
 
-        if !isAppleSilicon {
+        if backend == .virtualMachine, !isAppleSilicon {
             findings.append(
                 finding(
                     code: .unsupportedArchitecture,
@@ -316,7 +324,7 @@ public enum SandboxProvisioningDiagnostics {
 
         let configurationResult = loadConfiguration(fileManager: fm)
         let configuration = configurationResult.snapshot
-        let specs = locationSpecs(config: configurationResult.config)
+        let specs = locationSpecs(config: configurationResult.config, backend: backend)
         switch configuration.source {
         case .loaded:
             break
@@ -370,10 +378,16 @@ public enum SandboxProvisioningDiagnostics {
             findings.append(contentsOf: result.findings)
         }
 
+        // Seatbelt has no image download or rootfs materialization, so the
+        // multi-gigabyte cold-provision headroom requirement doesn't apply.
+        let effectiveMinimumFreeBytes =
+            backend == .seatbelt
+            ? min(minimumColdProvisionFreeBytes, defaultMinimumSeatbeltFreeBytes)
+            : minimumColdProvisionFreeBytes
         findings.append(
             contentsOf: volumeFindings(
                 locations: locations,
-                minimumColdProvisionFreeBytes: minimumColdProvisionFreeBytes
+                minimumColdProvisionFreeBytes: effectiveMinimumFreeBytes
             )
         )
 
@@ -385,7 +399,7 @@ public enum SandboxProvisioningDiagnostics {
             rootSource: rootSource,
             osMajorVersion: operatingSystemMajorVersion,
             isAppleSilicon: isAppleSilicon,
-            minimumColdProvisionFreeBytes: minimumColdProvisionFreeBytes,
+            minimumColdProvisionFreeBytes: effectiveMinimumFreeBytes,
             configuration: configuration,
             locations: locations,
             findings: findings
@@ -417,7 +431,23 @@ public enum SandboxProvisioningDiagnostics {
         let findings: [SandboxProvisioningFinding]
     }
 
-    private static func locationSpecs(config: SandboxConfiguration) -> [LocationSpec] {
+    /// Location IDs that only exist for the Containerization VM runtime:
+    /// kernel/initfs assets, the ext4 rootfs, VM container state, and the
+    /// vsock bridge socket. The Seatbelt backend runs directly on the host
+    /// filesystem, so preflight must not report these as missing there.
+    private static let vmOnlyLocationIDs: Set<SandboxProvisioningLocationID> = [
+        .containerKernelDirectory,
+        .containerKernelFile,
+        .containerInitFSFile,
+        .containerStateDirectory,
+        .containerRootFSFile,
+        .bridgeSocket,
+    ]
+
+    private static func locationSpecs(
+        config: SandboxConfiguration,
+        backend: SandboxBackend
+    ) -> [LocationSpec] {
         let containerState = OsaurusPaths.container()
             .appendingPathComponent("containers/osaurus-sandbox", isDirectory: true)
         let rootfs: (title: String, url: URL)
@@ -448,7 +478,7 @@ public enum SandboxProvisioningDiagnostics {
                 containerState.appendingPathComponent("rootfs.ext4")
             )
         }
-        return [
+        let specs: [LocationSpec] = [
             LocationSpec(
                 id: .root,
                 title: L("Osaurus root"),
@@ -615,6 +645,10 @@ public enum SandboxProvisioningDiagnostics {
                 minimumFileBytes: nil
             ),
         ]
+        guard backend == .virtualMachine else {
+            return specs.filter { !vmOnlyLocationIDs.contains($0.id) }
+        }
+        return specs
     }
 
     private static func checkLocation(
