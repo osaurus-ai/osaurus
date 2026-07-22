@@ -781,3 +781,111 @@ runtime trace, TTFT/token/s, and physical footprint.
    the effective load trace.
 
 No row is release-ready from this document yet.
+
+## 2026-07-22 final-candidate live findings (Computer Use driven)
+
+Proof environment before the final rebase:
+
+- isolated Release app: `/private/tmp/Osaurus CU Root Final 481d271e 20260722-r5.app`
+- bundle id: `com.dinoki.osaurus.curootproof202607220512`
+- binary SHA-256: `ae78205a1b16ed36b0f8a7b6b72f01e81cff1a2c20cbcf57c04f5c75f14231ec`
+- exact source at build time: `481d271e8c0bb204c0370daec66e3721704618c7`
+- exact pinned vMLX revision: `bbbf49e090449bb42f6cde8f50b6f230e3578aec`
+- UI settings observed before the rows: Ornith 1.0 9B JANG_4M parent,
+  Thinking Off, AppleScript 16B A4B JANG_4M helper, Confirm Each, Keep Warm.
+  Accessibility and Screen Recording showed Granted. The isolated bundle's
+  Automation card still showed `Not yet granted`; do not generalize the
+  successful Finder/TextEdit rows into a claim that every Automation target is
+  granted.
+
+Current live rows and what they exposed:
+
+| Scenario | Current evidence |
+| --- | --- |
+| Whole front TextEdit document -> exact two lines, no save | **PASSED on pre-rebase Release candidate.** Approval showed exactly one direct `set text of front document` using `Aster delta 482` / `Cedar echo 619`, no save, formatting, file, or shell operation. After approval, UI reported success (parent TTFT 1.23s, 99.6 tok/s, 38 tokens); TextEdit visibly contained exactly those two lines and remained `Edited`. Trace recorded `confirm_exact_textedit` and no helper-model step for the mutation. |
+| Same exact operation, user declines | **PASSED safety control.** The approval showed only the requested two lines. Decline produced an honest failed/declined row; TextEdit visibly remained `Aster delta 482` / `Cedar echo 619`. |
+| Finder name/path with Fast Reads Off and Thinking Off | **PASSED on pre-rebase Release candidate.** UI returned `Laguna-XS.2-JANGTQ` and `/Volumes/EricsLLMDrive/jangq-ai/Laguna-XS.2-JANGTQ/`; AppleScript row 4.4s, parent TTFT 1.49s, 71.9 tok/s, 44 tokens. Trace recorded AppleScript 16B, `disableThinking=true`, `reasoning_chars: 0`, and one read-only `target of front window as alias` script. |
+| Same Finder query with Thinking On | **PASSED control, with one recovered model error.** UI showed reasoning before and after the tool and returned the exact same name/path; AppleScript row 12.2s, parent TTFT 1.36s, 75.3 tok/s, 119 tokens. Every helper step recorded `requested_enable_thinking=Optional(true)` and `disableThinking=false`. The first helper script added a needless selection check and failed; the next script recovered read-only. Preserve this as model-quality evidence rather than hiding it. |
+| Feedback-only: Finder/TextEdit already succeeded | **PASSED on pre-rebase Release candidate.** Plain acknowledgment in 0.40s TTFT at 67.7 tok/s, 18 tokens. No `mac_query`, time/date query, or fabricated date appeared. |
+| Partial replacement inside a larger TextEdit document | **FAILED-LIVE and produced a new source fix.** With `Aster delta 482\nCedar echo 619` open, the request to change only `Aster delta 482` to `Birch nova 305` fell through to AppleScript 16B. Its proposed script contained invalid/generated `text items ... whose item is oldText`; it was declined. The UI showed two failed AppleScript rows and TextEdit remained unchanged. Trace recorded the exact bad script and Thinking-Off dispatch. |
+
+Root cause and current source correction for the newly found partial row:
+
+- The early verified-state path required the entire document to equal
+  `oldText`; therefore a valid substring replacement fell back to open-ended
+  helper synthesis.
+- Rebasing also showed the recognizer accepted `change the text` but not the
+  equally valid live wording `change only the text`.
+- Current rebased source `fc800bfd2fc815bc9239839b636853c692010387`
+  accepts that narrow wording, reads the real document, requires the exact old
+  literal to be present, computes the complete expected document in Swift,
+  expands it as one escaped data literal, gates one whole-document write, and
+  requires an exact OS read-back. It does not force thinking tags, alter
+  sampling, or synthesize success.
+- The new focused regression
+  `partialTextEditReplacementUsesDeterministicWholeDocumentWrite` initially
+  failed on the missing `only` grammar, then passed after that correction. A
+  current-post-rebase run and current Release UI rerun remain required below.
+
+Final merge gates still pending at this checkpoint:
+
+1. Finish the post-rebase focused and full scoped suites.
+2. Build/ad-hoc-sign the exact rebased Release candidate.
+3. Repeat the same partial TextEdit prompt through the real UI; approve only a
+   single exact whole-document assignment and verify visible exact text,
+   unsaved state, no repeat, and honest completion.
+4. Audit the final diff against `osaurus/main`, push, open the scoped PR, wait
+   for current CI, and merge only after those gates hold.
+
+### Post-rebase closeout evidence
+
+The source and live gates above were repeated after rebasing onto
+`osaurus/main` `22308112747f0ca3c34c6cc3e23b438437667bd9`:
+
+- code source: `fc800bfd2fc815bc9239839b636853c692010387`
+- isolated Release app:
+  `/private/tmp/Osaurus CU Root Final fc800bfd 20260722-r6.app`
+- bundle id: `com.dinoki.osaurus.curootproof202607220512`
+- binary SHA-256:
+  `a5272c4a334df626caba19e7d79193414966ddbd262a923b1ec567252998e292`
+- ad-hoc signature: `codesign --verify --deep --strict` accepted the app.
+- exact pinned vMLX revision:
+  `bbbf49e090449bb42f6cde8f50b6f230e3578aec`
+
+Post-rebase Computer Use proof:
+
+1. The real UI visibly showed Ornith Thinking **Off** and accepted the exact
+   same partial-replacement prompt that had failed on the prior candidate.
+2. The approval sheet contained exactly one script:
+   `tell application "TextEdit" to set text of front document to "Birch nova 305\nCedar echo 619"`.
+   It contained no save, `changed=false`, formatting, file, shell, or repeated
+   action.
+3. After UI approval, Osaurus reported success (AppleScript feed 37.0s including
+   the approval wait; parent TTFT 1.32s, 71.8 tok/s, 32 tokens). TextEdit visibly
+   contained exactly `Birch nova 305\nCedar echo 619` and its title still showed
+   `Edited`.
+4. Trace lines 335-336 contained only the exact dispatch context and
+   `decision=confirm_exact_textedit`; there was no helper-model generation step,
+   correction loop, or second execution for this run.
+5. A fresh feedback-only chat message received a plain acknowledgment at 0.38s
+   TTFT / 70.7 tok/s / 21 tokens. The AppleScript trace line count stayed at
+   336, proving that this acknowledgment did not invoke `mac_query` or the
+   AppleScript helper; no fabricated date appeared.
+
+Post-rebase source verification:
+
+- result bundle:
+  `/private/tmp/osaurus-cu-final-scoped-rebased-20260722.xcresult`
+- 277 passed, 0 failed, 0 skipped across AppleScript classification/loop/schema/
+  routing/knowledge/executor suites, Computer Use evidence/background/act/model/
+  recipe suites, subagent session and chat-turn reasoning-control suites, and
+  runtime-policy source checks.
+- `git diff --check` passed.
+- The final implementation diff remains scoped to the vMLX pin and Computer
+  Use/AppleScript routing, permission/error mapping, verified completion,
+  reasoning propagation, tests, and evidence. It contains no Laguna/Gemma/cache/
+  TurboQuant/MLXPress implementation change.
+
+At this point local source and live gates for this scoped PR are satisfied.
+Remote PR CI and the merge itself remain pending; this document does not claim
+a release or close any carry-forward matrix row above.
