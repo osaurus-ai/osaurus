@@ -268,7 +268,11 @@ struct MLXBatchAdapter {
     /// encoders are not safe to drive concurrently across solo engines.
     actor SoloGenerationGate {
         private var busy = false
-        private var waiters: [CheckedContinuation<Void, Never>] = []
+        private struct Waiter {
+            let id: UUID
+            let continuation: CheckedContinuation<Bool, Never>
+        }
+        private var waiters: [Waiter] = []
 
         struct Lease: @unchecked Sendable {
             fileprivate let gate: SoloGenerationGate
@@ -278,23 +282,39 @@ struct MLXBatchAdapter {
             }
         }
 
-        func acquire(modelName: String) async -> Lease {
+        func acquire(modelName: String) async -> Lease? {
+            guard !Task.isCancelled else { return nil }
             if !busy {
                 busy = true
                 return Lease(gate: self)
             }
 
-            await withCheckedContinuation { continuation in
-                waiters.append(continuation)
+            let id = UUID()
+            let acquired = await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    if Task.isCancelled {
+                        continuation.resume(returning: false)
+                    } else {
+                        waiters.append(Waiter(id: id, continuation: continuation))
+                    }
+                }
+            } onCancel: {
+                Task { await self.cancelWaiter(id) }
             }
-            return Lease(gate: self)
+            return acquired ? Lease(gate: self) : nil
+        }
+
+        private func cancelWaiter(_ id: UUID) {
+            guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+            let waiter = waiters.remove(at: index)
+            waiter.continuation.resume(returning: false)
         }
 
         private func release() {
             guard busy else { return }
             if !waiters.isEmpty {
                 let next = waiters.removeFirst()
-                next.resume()
+                next.continuation.resume(returning: true)
             } else {
                 busy = false
             }
@@ -574,7 +594,7 @@ struct MLXBatchAdapter {
             }
         }
 
-        func acquireSoloLease(for modelName: String) async -> SoloGenerationGate.Lease {
+        func acquireSoloLease(for modelName: String) async -> SoloGenerationGate.Lease? {
             await soloGate.acquire(modelName: modelName)
         }
 
@@ -1125,10 +1145,12 @@ struct MLXBatchAdapter {
         PrefillDebugLog.shared.log(
             "==GEN GENERATE-ENTER model=\(modelName) maxBatch=\(maxBatchSize)"
         )
-        let soloLease =
-            maxBatchSize == 1
-            ? await Registry.shared.acquireSoloLease(for: modelName)
-            : nil
+        let soloLease: SoloGenerationGate.Lease?
+        if maxBatchSize == 1 {
+            soloLease = await Registry.shared.acquireSoloLease(for: modelName)
+        } else {
+            soloLease = nil
+        }
         if Task.isCancelled {
             if let soloLease { await soloLease.release() }
             throw CancellationError()
@@ -1343,12 +1365,11 @@ struct MLXBatchAdapter {
         // reasoning + tool-call extraction handled inside vmlx. We re-wrap
         // it so we can attach a producer `Task` for cancellation.
         //
-        // Important: vmlx emits terminal `.info` before it performs the
-        // post-generation disk-cache store and then finishes its stream. The
-        // solo lease must be held until the upstream stream is actually done;
-        // releasing it at `.info` lets the next solo request enter
-        // `prepareInput` while the previous request is still materializing
-        // cache tensors on Metal.
+        // Important: the solo lease is held until the upstream stream is
+        // actually done. Current vmlx emits terminal `.info` after its
+        // post-generation disk-cache store, but stream completion remains the
+        // ownership boundary; relying on an event's relative order would let
+        // future producer cleanup overlap the next request's `prepareInput`.
         trace?.mark("batch_submit")
         CrashReportingService.recordBreadcrumb(
             category: "inference.generate",
@@ -1385,12 +1406,17 @@ struct MLXBatchAdapter {
                     }
                 }
             } onCancel: {
-                // The upstream stream is bound to a single request inside
-                // the engine; cancelling the consumer task closes it
-                // cooperatively (engine emits a final `.info(.cancelled)`
-                // and finishes the stream). Do not finish the wrapper from
-                // here; the operation body gets the chance to drain and
-                // forward that terminal `.info` event first.
+                // Breaking a wrapping AsyncStream's consumer is not itself an
+                // awaited drain boundary. Cancel the direct B=1 producer now;
+                // the operation body awaits the same idempotent drain below
+                // before it releases the process-wide solo/Metal gates.
+                guard soloLease != nil else { return }
+                Task {
+                    await engine.cancelActiveSoloGenerationAndWait()
+                }
+            }
+            if Task.isCancelled, soloLease != nil {
+                await engine.cancelActiveSoloGenerationAndWait()
             }
             // The upstream loop has fully drained (success or cancellation).
             // Finish the wrapper and release the solo lease *inline* —

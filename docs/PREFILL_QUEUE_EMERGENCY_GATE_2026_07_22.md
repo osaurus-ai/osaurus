@@ -1,10 +1,10 @@
 # Prefill Queue Emergency Gate — 2026-07-22
 
-Status: **PARTIAL — the released queue symptom predates current main; a distinct
-current-main LFM disk-restore bypass is fixed and live-proven on the exact
-merged vMLX pin in the isolated Release app. Bonsai/Qwen-hybrid and Gemma 4
-rotating-SWA representatives also pass that exact-pin cache gate, while the
-complete all-family/all-setting matrix is not closed.**
+Status: **PARTIAL — current main reproduces a Stop/New Chat cancellation stall.
+SSD partial restore works on completed turns, but a cancelled wrapped solo
+stream can leave the underlying vMLX producer running and the process-wide solo
+lease occupied. The cancellation/drain fix is source-implemented below and is
+not merge-ready until the named Release-app matrix passes.**
 
 Scope: shared Osaurus/vMLX request, warm-up, and cache lifecycle. This is not a
 Bonsai-only workaround. AppleScript, Laguna expansion, routing guidance, and
@@ -62,6 +62,51 @@ model unloading, SSD restore, cancellation, or UI progress projection.
   that warm-up to finish so the just-materialized SSD prefix can be reused. This
   can display the warm-up's queued/prefill phase in the foreground assistant row.
   Current-main live timing below did not strand the wait.
+
+## Current-main cancellation reproduction — 2026-07-22 follow-up
+
+The earlier current-main proof did not exercise the reported interruption hard
+enough and must not be treated as closure. A fresh isolated Release build of
+Osaurus `24af4289ff8338de9bd8796ae6fce3517d96ee4f`, pinned to vMLX
+`c59024a1b4b1314bf98ce962f99e1ffaaebfc247`, reproduced the failure with
+Bonsai 27B Ternary JANG through the real chat UI:
+
+- Prefix Cache On, GPU/Paged Cache Off, Disk Cache On, codec Engine Selected,
+  SSM Re-derive On, and Thinking Off were visibly active.
+- Completed new-chat turns did use SSD state: examples restored `3612/4067`,
+  `4060/5163`, and `3282/3283` prompt tokens.
+- A unique 15,109-token prompt restored its cached 3,282-token static prefix and
+  entered live prefill. Starting a new chat while that run was active left the
+  old runtime request alive after the chat UI had moved on.
+- The trace reached `STEP-PREFILL complete 15109/15109` but emitted no matching
+  `STREAM-DRAINED` or `LEASE-RELEASED`. At 97 seconds after the interruption,
+  the app process was still active at about 84% CPU and the next local send was
+  blocked by the old owner.
+
+Source owner:
+
+1. `MLXBatchAdapter.generate` wraps `BatchEngine.generate` in another
+   `AsyncStream` and owns the process-wide solo lease.
+2. Cancelling the chat cancels the wrapper producer, but its loop previously
+   kept iterating the upstream stream while merely dropping non-info events.
+3. Because the upstream iterator never terminated, vMLX's stream termination
+   handler never cancelled its direct B=1 generation task. Osaurus therefore
+   could not reach its lease-release code.
+4. Repeated new-chat warm-ups can also leave cancelled tasks in
+   `SoloGenerationGate`'s FIFO because its continuations were not
+   cancellation-aware.
+
+Scoped repair under test:
+
+- vMLX adds an awaited, idempotent direct-generation cancellation/drain
+  boundary. It cancels the producer, waits for its GPU/cache work to exit, and
+  clears the same solo id before a serving layer admits the next request.
+- Osaurus invokes that boundary immediately when the wrapping stream is
+  cancelled and again before releasing its solo/Metal leases.
+- The Osaurus solo FIFO removes cancelled waiters instead of letting abandoned
+  warm-ups acquire and hand off the lease later.
+- No sampler, prompt, parser, model-family, cache-boundary, paged-cache default,
+  or TurboQuant setting is changed. No new image artifact is part of this fix.
 
 ## Current-main isolated Release evidence
 
@@ -210,7 +255,7 @@ visible UI. CLI tests may diagnose but cannot close a row.
 | Same chat, second turn | Leaves Queued; enters prefill/decode; coherent answer; TTFT | PASS — Bonsai, Gemma |
 | New chat, same model | SSD counters before/after; restored tokens; remaining prefill; TTFT | PASS — Bonsai |
 | Send while background warm-up owns load | One load owner; foreground request cannot starve | PASS — Bonsai |
-| Stop/cancel then send | Cancelled slot/producer exits; next request starts | PARTIAL — stop recovered, immediate post-cancel send not isolated |
+| Stop/cancel then send | Cancelled slot/producer exits; next request starts | FAIL on merged main — reproduced 15,109-token Bonsai prefill owner leak; fix awaiting rebuilt Release proof |
 | Switch model and return | Old engine lifecycle completes; returned model starts | PARTIAL — forward switches passed; return-to-prior not rerun |
 | Quit/relaunch and send | Disk L2 restore is attached before request publication | PASS — Bonsai folded hybrid restore |
 | Paged RAM cache off, SSD on | Default user path; partial/exact disk hit truth | PASS — Bonsai, Gemma |

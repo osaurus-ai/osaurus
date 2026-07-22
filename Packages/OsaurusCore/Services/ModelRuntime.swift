@@ -472,7 +472,21 @@ public actor ModelRuntime {
         // Live voice runs inside the chat UI, so its residency is chat-scoped.
         lastUseSource[holder.name] = .chatUI
         await ModelLease.shared.acquire(holder.name)
-        let soloLease = await MLXBatchAdapter.Registry.shared.acquireSoloLease(for: holder.name)
+        guard
+            let soloLease = await MLXBatchAdapter.Registry.shared.acquireSoloLease(
+                for: holder.name
+            )
+        else {
+            await ModelLease.shared.release(holder.name)
+            await scheduleIdleResidency(for: holder.name)
+            return LiveVoiceAudioPreencodeResult(
+                status: .failed,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: "Cancelled before audio encoding started"
+            )
+        }
 
         final class OutBox: @unchecked Sendable {
             var result: LiveVoiceAudioPreencodeResult?

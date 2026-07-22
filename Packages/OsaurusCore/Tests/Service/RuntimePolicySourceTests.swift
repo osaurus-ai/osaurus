@@ -586,6 +586,7 @@ struct RuntimePolicySourceTests {
     @Test("vmlx pin uses consolidated package with runtime hardening")
     func vmlxPinIncludesRuntimeHardening() throws {
         let manifest = try Self.source("Package.swift")
+        let coreResolved = try Self.source("Package.resolved")
         let workspaceResolved = try Self.source(
             "../../osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved"
         )
@@ -748,6 +749,8 @@ struct RuntimePolicySourceTests {
         // vmlx-swift#175 preserves integer-valued JSON tool arguments as
         // integers across the Foundation bridge (instead of silently turning
         // `1` into `true`) and keeps nested Qwen XML argument marks lossless.
+        // vmlx-swift#177 adds the awaited direct-generation cancellation/drain
+        // boundary required before Osaurus can admit the next solo request.
         //
         // This assertion is a repin tripwire, and it earned its keep: PR #1986
         // shipped titled "(+ vmlx repin)" carrying no repin at all, and the live
@@ -756,15 +759,17 @@ struct RuntimePolicySourceTests {
         // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
         // xcworkspace Package.resolved files. Miss one and the app resolves a
         // revision nobody proved.
-        let expectedRuntimeHardenedRevision = "c59024a1b4b1314bf98ce962f99e1ffaaebfc247"
+        let expectedRuntimeHardenedRevision = "85d752e501240bfe2d5c39c6f5d08e7d4e139a68"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
+        let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
+        #expect(manifestRevision == coreResolvedRevision)
         #expect(manifestRevision == workspaceRevision)
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the merged vmlx-swift revision proven for lossless integer/nested tool arguments together with the existing runtime checkpoints. An internally-consistent older pin is still not wired"
+            "Osaurus must consume the merged vmlx-swift revision with the awaited solo cancellation/drain boundary together with the existing runtime checkpoints. An internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
@@ -1256,10 +1261,10 @@ struct RuntimePolicySourceTests {
     /// With the default `maxBatchSize == 1`, vmlx can use its solo
     /// TokenIterator-backed fast path. Osaurus must not let a second solo
     /// request run prompt tokenization / `MLXArray.asArray(...)` while that
-    /// decode is still active. vmlx emits `.info` before its post-generation
-    /// cache store finishes, so Osaurus also must not release the solo lease
-    /// at `.info`; otherwise a second request can enter `prepareInput` while
-    /// the first one is still materializing safetensors cache tensors on Metal.
+    /// decode is still active. Osaurus must release the solo lease only after
+    /// the upstream stream completes, never from one event's relative order;
+    /// otherwise a second request can enter `prepareInput` while the first one
+    /// is still draining GPU or cache work.
     @Test("MLXBatchAdapter gates solo generation and propagates stream cancellation")
     func mlxBatchAdapterGatesSoloGenerationAndCancelsProducer() throws {
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
@@ -1286,6 +1291,10 @@ struct RuntimePolicySourceTests {
             adapter.contains("continuation.onTermination = { @Sendable _ in")
                 && adapter.contains("producerTask.cancel()"),
             "adapter stream termination must cancel the producer so UI Stop reaches vmlx's upstream AsyncStream termination handler"
+        )
+        #expect(
+            adapter.contains("await engine.cancelActiveSoloGenerationAndWait()"),
+            "adapter cancellation must explicitly cancel and await the underlying vmlx solo producer before releasing its gate"
         )
     }
 

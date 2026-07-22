@@ -1280,7 +1280,7 @@ struct MLXBatchAdapterTests {
         }
 
         let gate = MLXBatchAdapter.SoloGenerationGate()
-        let first = await gate.acquire(modelName: "minimax-m2.7-jangtq")
+        let first = try #require(await gate.acquire(modelName: "minimax-m2.7-jangtq"))
         let secondAcquired = Flag()
         let second = Task {
             let lease = await gate.acquire(modelName: "minimax-m2.7-jangtq")
@@ -1295,7 +1295,7 @@ struct MLXBatchAdapterTests {
         )
 
         await first.release()
-        let secondLease = await second.value
+        let secondLease = try #require(await second.value)
         #expect(secondAcquired.get())
         await secondLease.release()
     }
@@ -1319,7 +1319,7 @@ struct MLXBatchAdapterTests {
         }
 
         let gate = MLXBatchAdapter.SoloGenerationGate()
-        let first = await gate.acquire(modelName: "minimax-m2.7-jangtq")
+        let first = try #require(await gate.acquire(modelName: "minimax-m2.7-jangtq"))
         let secondAcquired = Flag()
         let second = Task {
             let lease = await gate.acquire(modelName: "qwen3.5-30b-a3b-jangtq")
@@ -1334,9 +1334,28 @@ struct MLXBatchAdapterTests {
         )
 
         await first.release()
-        let secondLease = await second.value
+        let secondLease = try #require(await second.value)
         #expect(secondAcquired.get())
         await secondLease.release()
+    }
+
+    @Test func soloGenerationGate_removesCancelledWaiterWithoutTakingLease() async throws {
+        let gate = MLXBatchAdapter.SoloGenerationGate()
+        let first = try #require(await gate.acquire(modelName: "bonsai"))
+
+        let cancelled = Task {
+            await gate.acquire(modelName: "ornith")
+        }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        cancelled.cancel()
+        #expect(await cancelled.value == nil)
+
+        let next = Task {
+            await gate.acquire(modelName: "gemma-4")
+        }
+        await first.release()
+        let nextLease = try #require(await next.value)
+        await nextLease.release()
     }
 
     @Test func additionalContext_mapsDisableThinkingToEnableThinkingKwarg() {
