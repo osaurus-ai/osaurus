@@ -90,12 +90,15 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
 
     /// Non-opening variant of `schemaSnapshot`: reads only an
     /// already-open cached connection and returns nil otherwise.
-    /// Safe to call from the main thread.
+    /// Safe to call from the main thread: uses the database's cached
+    /// schema value rather than `schema()`, which hops onto the serial
+    /// DB queue and can park on SQLite's WAL lock for seconds while
+    /// another connection writes.
     public func schemaSnapshotIfOpen(agentId: UUID) -> String? {
         guard let database = AgentDatabaseStore.shared.cachedOpenDatabase(for: agentId) else {
             return nil
         }
-        guard let schema = try? database.schema() else { return nil }
+        guard let schema = database.schemaNonBlocking() else { return nil }
         return SchemaSnapshot.render(schema)
     }
 
