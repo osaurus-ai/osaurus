@@ -21,7 +21,7 @@ Expected:
 The text is replaced once and the task completes.
 
 Actual:
-The agent successfully types “Hello again” but appears not to recognise that it has succeeded. It retries the action multiple times, resulting in: 
+The agent successfully types “Hello again” but appears not to recognise that it has succeeded. It retries the action multiple times, resulting in:
 
 Hello againHello againHello againHello again
 
