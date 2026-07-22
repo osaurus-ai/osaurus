@@ -12153,6 +12153,7 @@
       }
     },
     "Absolute path or ~/... path for persisted block-cache entries." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -27363,6 +27364,7 @@
       }
     },
     "Block-based KV cache held in GPU memory. Required for cross-request sharing." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -34392,6 +34394,40 @@
         }
       }
     },
+    "Checking a secret in sandbox" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prüft ein Geheimnis in der Sandbox"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "샌드박스에서 비밀을 확인하는 중"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверка секрета в песочнице"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在沙盒中检查密钥"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在沙盒中檢查密鑰"
+          }
+        }
+      }
+    },
     "Checking cache" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -34423,40 +34459,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在檢查快取"
-          }
-        }
-      }
-    },
-    "Checking a secret in sandbox" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Prüft ein Geheimnis in der Sandbox"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "샌드박스에서 비밀을 확인하는 중"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Проверка секрета в песочнице"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在沙盒中检查密钥"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在沙盒中檢查密鑰"
           }
         }
       }
