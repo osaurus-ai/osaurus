@@ -200,8 +200,12 @@ extension ChatSession: ChatWarmupSessionContext {
         warmupController.scheduleWarmup(session: self)
     }
 
-    func handleWarmupAfterRunCompleted() {
-        warmupController.scheduleWarmup(session: self)
+    func handleWarmupAfterRunCompleted(wasCancelled: Bool, hadError: Bool) {
+        warmupController.handleRunCompleted(
+            session: self,
+            wasCancelled: wasCancelled,
+            hadError: hadError
+        )
     }
 
     func invalidateWarmupAfterContextShapeChange() {

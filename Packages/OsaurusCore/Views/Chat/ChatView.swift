@@ -3014,7 +3014,10 @@ final class ChatSession: ObservableObject {
             flushQueuedSendIfEligible()
         }
         suppressQueuedSendFlushForCurrentRun = false
-        handleWarmupAfterRunCompleted()
+        handleWarmupAfterRunCompleted(
+            wasCancelled: stopRequested,
+            hadError: lastStreamError != nil
+        )
     }
 
     /// A stopped (or errored) run can leave an assistant tool call that never

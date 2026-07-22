@@ -290,6 +290,25 @@ final class ChatWarmupController: ObservableObject {
         }
     }
 
+    /// Re-warm the completed transcript only after a natural, successful run.
+    /// A user Stop intentionally abandons the active prompt; warming that
+    /// abandoned (often very large) turn immediately starts a second hidden
+    /// prefill after the UI has returned to idle. Besides wasting work, that
+    /// hidden generation owns the solo-generation lease and makes the next
+    /// chat appear permanently queued. Errors are excluded for the same
+    /// reason: the failed prompt is not a stable checkpoint to precompute.
+    func handleRunCompleted(
+        session: ChatWarmupSessionContext,
+        wasCancelled: Bool,
+        hadError: Bool
+    ) {
+        guard !wasCancelled, !hadError else {
+            cancelScheduledWarmup()
+            return
+        }
+        scheduleWarmup(session: session)
+    }
+
     /// True when a send must run the async pre-send handshake first
     /// (model switch settling or a warm-up generation in flight).
     /// When false, sends can dispatch synchronously — preserving the

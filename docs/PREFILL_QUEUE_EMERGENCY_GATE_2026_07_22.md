@@ -108,6 +108,23 @@ Scoped repair under test:
 - No sampler, prompt, parser, model-family, cache-boundary, paged-cache default,
   or TurboQuant setting is changed. No new image artifact is part of this fix.
 
+The first exact-pin Release rerun caught a second owner before merge. With
+Ornith 1.0 9B JANG_4M selected, the UI visibly entered prefill at
+`1778/17485`; Stop drained and released the cancelled engine in 1.293 seconds.
+However, `completeRunCleanup()` then unconditionally scheduled a proactive
+warm-up over the abandoned 17k-token user turn. That hidden request began 585
+ms later, owned the same solo lease for another 7.555 seconds, and made the UI
+look idle while the next chat would still have to wait. This is the reported
+"third session stays queued" shape even though the original producer drain is
+now bounded.
+
+The follow-up policy repair is intentionally lifecycle-scoped: successful
+runs still schedule the completed-transcript checkpoint, while user-cancelled
+or errored runs cancel scheduled warm-up instead of replaying abandoned work.
+Focused tests prove both sides of that decision, alongside the full
+`MLXBatchAdapterTests` suite. The exact rebuilt Release app still has to prove
+Stop -> new chat through the visible UI before this row can pass.
+
 ## Current-main isolated Release evidence
 
 App:

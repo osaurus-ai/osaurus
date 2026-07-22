@@ -279,6 +279,74 @@ struct ChatWarmupControllerRequestTests {
     }
 }
 
+@Suite("ChatWarmupController completed-run policy")
+@MainActor
+struct ChatWarmupControllerCompletedRunTests {
+
+    @Test("stopped run does not launch a hidden transcript warm-up")
+    func stoppedRunDoesNotWarm() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [
+                ChatMessage(role: "system", content: "sys"),
+                ChatMessage(
+                    role: "user",
+                    content: String(repeating: "cancelled prompt ", count: 2_000)
+                ),
+            ],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|cancelled-run"
+        )
+
+        let controller = ChatWarmupController()
+        controller.handleRunCompleted(
+            session: session,
+            wasCancelled: true,
+            hadError: false
+        )
+
+        try? await Task.sleep(for: .milliseconds(650))
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.requestCount == 0)
+        #expect(controller.state == .cold)
+    }
+
+    @Test("successful run still refreshes the completed transcript checkpoint")
+    func successfulRunStillWarms() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|successful-run"
+        )
+
+        let controller = ChatWarmupController()
+        controller.handleRunCompleted(
+            session: session,
+            wasCancelled: false,
+            hadError: false
+        )
+
+        for _ in 0 ..< 100 {
+            if controller.state == .warm { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.requestCount == 1)
+        #expect(controller.state == .warm)
+    }
+}
+
 @Suite("ChatWarmupController runtime residency")
 @MainActor
 struct ChatWarmupControllerRuntimeResidencyTests {
