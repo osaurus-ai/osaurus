@@ -628,6 +628,8 @@ struct MemoryRelevanceGateTests {
     @Test func exactlyWithExplicitPriorWordsReturnsTranscript() {
         for query in [
             "What were my exact words about the deploy?",
+            "Exact words ultramarine prism-441",
+            "What exact words did I type for the memory fixture?",
             "What exactly did I say about the deployment?",
             "What did I write exactly?",
             "Repeat back what I typed.",

@@ -95,10 +95,11 @@ public enum MemoryRelevanceGate {
     /// pull unrelated transcript turns into `[Memory]`, which could then
     /// override the current task. Require an explicit reference to the user's
     /// earlier words while preserving natural questions such as "what exactly
-    /// did I say?" and "repeat back what I typed".
+    /// did I say?", "repeat back what I typed", and the established
+    /// search-style shorthand "exact words <terms>".
     private static let literalRecallPattern = try? NSRegularExpression(
         pattern:
-            #"\b(?:what\s+(?:were\s+)?my\s+exact\s+words|what\s+(?:exactly\s+)?did\s+i\s+(?:say|write|type)(?:\s+(?:exactly|verbatim|word\s+for\s+word))?|what\s+i\s+(?:said|wrote|typed)|(?:quote|repeat)\s+(?:back\s+)?(?:what\s+i\s+(?:said|wrote|typed)|my\s+(?:exact\s+)?words))\b"#,
+            #"^exact\s+words\b|\b(?:what\s+(?:were\s+)?my\s+exact\s+words|what\s+exact\s+words\s+did\s+i\s+(?:say|write|type)|what\s+(?:exactly\s+)?did\s+i\s+(?:say|write|type)(?:\s+(?:exactly|verbatim|word\s+for\s+word))?|what\s+i\s+(?:said|wrote|typed)|(?:quote|repeat)\s+(?:back\s+)?(?:what\s+i\s+(?:said|wrote|typed)|my\s+(?:exact\s+)?words))\b"#,
         options: [.caseInsensitive]
     )
 

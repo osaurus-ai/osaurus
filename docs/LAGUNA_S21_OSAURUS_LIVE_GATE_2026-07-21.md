@@ -149,7 +149,13 @@ itself close a live row.
    environment/upstream failures, not Laguna diffs. They remain honest failing
    full-suite rows. vMLX PR #174 is merged, but all of its GitHub jobs were
    skipped by the upstream-repository workflow guard, so they are not called
-   green. The Osaurus branch remains pending its own PR/CI gate.
+   green. Osaurus PR #2127 first passed seven of eight checks; `test-core`
+   exposed that the tightened memory classifier also rejected the established
+   start-of-query shorthand `exact words <terms>`. The follow-up preserves
+   that explicit recall form (plus `what exact words did I type`) without
+   restoring output-directive false positives. Focused
+   `MemoryRelevanceGateTests` and `MemoryUserPrefixTests` pass locally; the
+   full PR CI rerun is pending.
 10. **Bare `exactly` triggers stale transcript injection — VERIFIED-LIVE for
     the scoped classifier fix.** `MemoryRelevanceGate.literalRecallPhrases`
     previously classified any prompt containing `exactly` as literal recall.
