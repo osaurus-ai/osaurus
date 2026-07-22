@@ -77,10 +77,12 @@ let package = Package(
         // keeps every unproven cache topology fail-closed. PR #171 persists
         // stable system/tool warm-up boundaries in SSD L2 and excludes unsafe
         // exact hybrid/GDN candidates while preserving their matched recurrent
-        // companion state.
+        // companion state. The Laguna S 2.1 revision adds the released
+        // full-KV + rotating-SWA runtime contract, safe fresh-session SSD
+        // seeds, growing partial-leaf reuse, and complete TQ window restore.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "feb35555900398dc638c82a3e13e98f8b1adbf41"
+            revision: "a3b047e05871e1271fc86d2ef0ab2f8270aa832f"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

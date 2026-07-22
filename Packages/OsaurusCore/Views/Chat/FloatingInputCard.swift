@@ -2221,8 +2221,8 @@ extension FloatingInputCard {
 
     /// Effective thinking state for toggle-only reasoning models, shown as a
     /// brain glyph on the model chip (accent while on, muted while off) so
-    /// the state stays visible at a glance now that the control lives in the
-    /// picker's Model Options section. Nil hides the glyph: models with a
+    /// the state stays visible at a glance beside the footer control and the
+    /// picker's Model Options row. Nil hides the glyph: models with a
     /// segmented effort suffix, models without a thinking toggle, and Mode 2
     /// remote-agent runs — the remote agent owns its generation config
     /// server-side, so a local state readout would mislead.
@@ -2276,8 +2276,9 @@ extension FloatingInputCard {
                 // The interactive toggle chips collapse to icon-only when the
                 // chat area is too narrow to show every label (e.g. the sidebar
                 // is open) — `chipsCompact`, derived from the measured region
-                // width below, drives that. Chips carrying live state (folder
-                // name, sandbox download %) keep their text regardless; every
+                // width below, drives that. The primary Thinking control and
+                // chips carrying live state (folder name, sandbox download %)
+                // keep their text regardless; every
                 // collapsed chip still names itself on hover via help(). The
                 // ScrollView is the no-wrap safety net: it fills the space
                 // between the model chip and the meta cluster (so the meta
@@ -2343,6 +2344,7 @@ extension FloatingInputCard {
     /// screen (a remote-agent run, for instance, hides most of them).
     private var visibleToggleChipCount: Int {
         var count = 0
+        if inlineThinkingEnabled != nil { count += 1 }
         if autoSpeakAssistant { count += 1 }
         if !isRemoteAgentRun, !isDefaultConfigAgent, isSandboxAvailable { count += 1 }
         if !isRemoteAgentRun { count += 1 }  // folder or configuration chip
@@ -2354,17 +2356,23 @@ extension FloatingInputCard {
         return count
     }
 
-    /// The interactive toggle chips (auto-speak, sandbox, folder, clipboard)
-    /// as one horizontal group. The Thinking control lives in the model
-    /// picker's Model Options section, next to the rest of the per-model
-    /// options. `compact` drops each chip's text label to icon-only unless
-    /// the chip has live state worth spelling out; `selectorRow` renders one
-    /// rendering of this cluster, choosing `compact` from the measured
-    /// region width so the row degrades gracefully as it narrows without
-    /// re-measuring layout candidates every frame.
+    /// The interactive toggle chips (Thinking, auto-speak, sandbox, folder,
+    /// clipboard) as one horizontal group. Thinking stays directly available
+    /// in the chat footer as well as in the model picker's options section;
+    /// hiding the only switch in the picker made the active reasoning state
+    /// easy to miss during ordinary chat and agent runs. `compact` drops each
+    /// secondary chip's text label to icon-only unless the chip has live state
+    /// worth spelling out; Thinking stays labeled because an unlabeled brain
+    /// glyph recreates the discoverability regression. `selectorRow` renders
+    /// one rendering of this cluster,
+    /// choosing `compact` from the measured region width so the row degrades
+    /// gracefully as it narrows without re-measuring layout candidates every
+    /// frame.
     @ViewBuilder
     private func toggleChipCluster(compact: Bool) -> some View {
         HStack(spacing: 6) {
+            thinkingToggleChip(compact: compact)
+
             if autoSpeakAssistant {
                 autoSpeakToggleChip(compact: compact)
             }
@@ -2981,8 +2989,8 @@ extension FloatingInputCard {
                         }
 
                         // Toggle-only thinking state as a glyph: accent while
-                        // on, muted while off. The switch itself lives in the
-                        // picker's Model Options section.
+                        // on, muted while off. The interactive control remains
+                        // directly available in both the footer and picker.
                         if let thinkingOn = inlineThinkingEnabled {
                             Image(systemName: "brain")
                                 .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .semibold))
@@ -3130,7 +3138,7 @@ extension FloatingInputCard {
     /// server-side, so a local toggle wouldn't reach it.
     private func modelPickerThinkingControl(for model: String) -> ModelPickerThinkingControl? {
         guard !isRemoteAgentRun,
-            let thinkingOpt = ModelProfileRegistry.profile(for: model)?.thinkingOption
+            ModelProfileRegistry.profile(for: model)?.thinkingOption != nil
         else { return nil }
         let explicitEnabled = ModelProfileRegistry.thinkingEnabled(
             for: model,
@@ -3145,24 +3153,73 @@ extension FloatingInputCard {
                 // thinking suffix from `activeModelOptions`, and resizing the
                 // anchor during the popover's own update crashes NSPopover.
                 DispatchQueue.main.async {
-                    var updated = activeModelOptions
-                    if let enabled,
-                        let stored = ModelProfileRegistry.thinkingStoredOption(
-                            for: model,
-                            enabled: enabled
-                        )
-                    {
-                        updated[stored.id] = stored.value
-                    } else {
-                        // Reset: remove the override so the model's template
-                        // default applies naturally (nothing on the wire).
-                        updated.removeValue(forKey: thinkingOpt.id)
-                    }
-                    activeModelOptions = updated
-                    ModelOptionsStore.shared.saveOptions(updated, for: model)
+                    persistThinkingOverride(enabled, for: model)
                 }
             }
         )
+    }
+
+    /// Single semantic-to-stored write path shared by the footer button and
+    /// the picker row. Inverted profiles such as `disableThinking` must never
+    /// toggle their raw persisted boolean directly.
+    private func persistThinkingOverride(_ enabled: Bool?, for model: String) {
+        guard let thinkingOpt = ModelProfileRegistry.profile(for: model)?.thinkingOption else {
+            return
+        }
+        var updated = activeModelOptions
+        if let enabled,
+            let stored = ModelProfileRegistry.thinkingStoredOption(
+                for: model,
+                enabled: enabled
+            )
+        {
+            updated[stored.id] = stored.value
+        } else {
+            // Reset: remove the override so the model's template default
+            // applies naturally (nothing on the wire).
+            updated.removeValue(forKey: thinkingOpt.id)
+        }
+        activeModelOptions = updated
+        ModelOptionsStore.shared.saveOptions(updated, for: model)
+    }
+
+    // MARK: - Thinking Toggle
+
+    /// Primary, always-visible reasoning control for toggle-only models. The
+    /// model picker keeps its richer default/reset row, but users should not
+    /// have to open that popover merely to see or change the current mode.
+    @ViewBuilder
+    private func thinkingToggleChip(compact _: Bool) -> some View {
+        if let model = selectedModel, let isEnabled = inlineThinkingEnabled {
+            SelectorChip(isActive: isEnabled) {
+                withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
+                    persistThinkingOverride(!isEnabled, for: model)
+                }
+            } content: {
+                HStack(spacing: 5) {
+                    Image(systemName: "brain")
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                        .foregroundColor(isEnabled ? theme.accentColor : theme.tertiaryText)
+
+                    Text("Thinking", bundle: .module)
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        .foregroundColor(isEnabled ? theme.secondaryText : theme.tertiaryText)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+            }
+            .localizedHelp(
+                isEnabled
+                    ? "Thinking is on. Click to turn it off."
+                    : "Thinking is off. Click to turn it on."
+            )
+            .accessibilityLabel(Text("Thinking", bundle: .module))
+            .accessibilityValue(
+                isEnabled
+                    ? Text("On", bundle: .module)
+                    : Text("Off", bundle: .module)
+            )
+        }
     }
 
     // MARK: - Auto-Speak Toggle

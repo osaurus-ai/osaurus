@@ -752,7 +752,7 @@ struct RuntimePolicySourceTests {
         // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
         // xcworkspace Package.resolved files. Miss one and the app resolves a
         // revision nobody proved.
-        let expectedRuntimeHardenedRevision = "feb35555900398dc638c82a3e13e98f8b1adbf41"
+        let expectedRuntimeHardenedRevision = "a3b047e05871e1271fc86d2ef0ab2f8270aa832f"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -1408,6 +1408,14 @@ struct RuntimePolicySourceTests {
         #expect(
             !floatingInput.contains("let current = activeModelOptions[id]?.boolValue ?? false"),
             "The Thinking control must not toggle the raw stored bool directly; that reintroduces first-click explicit no-thinking for inverted profiles"
+        )
+        #expect(
+            floatingInput.contains("thinkingToggleChip(compact: compact)"),
+            "Toggle-only reasoning models must expose a standalone Thinking control in the ordinary chat footer, not only inside the model picker"
+        )
+        #expect(
+            floatingInput.contains("persistThinkingOverride(!isEnabled, for: model)"),
+            "The footer Thinking control must use the same semantic persistence path as the picker"
         )
     }
 
