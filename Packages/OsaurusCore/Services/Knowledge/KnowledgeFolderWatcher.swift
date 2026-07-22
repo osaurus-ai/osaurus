@@ -63,8 +63,15 @@ public final class KnowledgeFolderWatcher {
 
     // MARK: - Stream management
 
+    /// Serial queue owning the FSEvent stream lifecycle. `FSEventStreamStart`
+    /// blocks on IPC to fseventsd (`register_with_server`) and has hung the
+    /// main thread for seconds at launch, so create/start/stop never run on
+    /// main. Callbacks are still delivered on the main queue via
+    /// `FSEventStreamSetDispatchQueue`.
+    private nonisolated static let streamQueue = DispatchQueue(
+        label: "com.dinoki.osaurus.knowledge-fsevents", qos: .utility)
+
     private func rebuildEventStream() {
-        stopEventStream()
         watchedFolders.removeAll()
 
         for collection in KnowledgeManager.shared.collections where collection.isEnabled {
@@ -73,48 +80,59 @@ public final class KnowledgeFolderWatcher {
             let normalized = path.hasSuffix("/") ? path : path + "/"
             watchedFolders[normalized] = collection.id
         }
-        guard !watchedFolders.isEmpty else { return }
 
-        let pointer = Unmanaged.passUnretained(self).toOpaque()
-        var context = FSEventStreamContext(
-            version: 0,
-            info: pointer,
-            retain: nil,
-            release: nil,
-            copyDescription: nil
-        )
+        let folderPaths = watchedFolders.keys.map { String($0.dropLast()) }
+        Self.streamQueue.async { [self] in
+            stopEventStreamOnQueue()
+            guard !folderPaths.isEmpty else { return }
 
-        // Directory-level signals only — the content-hash pass handles
-        // change detection.
-        let flags: FSEventStreamCreateFlags =
-            UInt32(kFSEventStreamCreateFlagUseCFTypes)
-            | UInt32(kFSEventStreamCreateFlagNoDefer)
-
-        let paths = watchedFolders.keys.map { String($0.dropLast()) } as CFArray
-        guard
-            let stream = FSEventStreamCreate(
-                nil,
-                knowledgeFSEventsCallback,
-                &context,
-                paths,
-                FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-                1.0,
-                flags
+            let pointer = Unmanaged.passUnretained(self).toOpaque()
+            var context = FSEventStreamContext(
+                version: 0,
+                info: pointer,
+                retain: nil,
+                release: nil,
+                copyDescription: nil
             )
-        else {
-            KnowledgeLogger.index.error("Failed to create knowledge FSEvent stream")
-            return
-        }
 
-        eventStream = stream
-        FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
-        FSEventStreamStart(stream)
-        KnowledgeLogger.index.info(
-            "Knowledge FSEvent stream started for \(self.watchedFolders.count) collection folder(s)"
-        )
+            // Directory-level signals only — the content-hash pass handles
+            // change detection.
+            let flags: FSEventStreamCreateFlags =
+                UInt32(kFSEventStreamCreateFlagUseCFTypes)
+                | UInt32(kFSEventStreamCreateFlagNoDefer)
+
+            guard
+                let stream = FSEventStreamCreate(
+                    nil,
+                    knowledgeFSEventsCallback,
+                    &context,
+                    folderPaths as CFArray,
+                    FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+                    1.0,
+                    flags
+                )
+            else {
+                KnowledgeLogger.index.error("Failed to create knowledge FSEvent stream")
+                return
+            }
+
+            eventStream = stream
+            FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
+            FSEventStreamStart(stream)
+            KnowledgeLogger.index.info(
+                "Knowledge FSEvent stream started for \(folderPaths.count) collection folder(s)"
+            )
+        }
     }
 
     private func stopEventStream() {
+        Self.streamQueue.async { [self] in
+            stopEventStreamOnQueue()
+        }
+    }
+
+    /// Must run on `streamQueue`.
+    private nonisolated func stopEventStreamOnQueue() {
         guard let stream = eventStream else { return }
         FSEventStreamStop(stream)
         FSEventStreamInvalidate(stream)

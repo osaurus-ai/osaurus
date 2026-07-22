@@ -685,6 +685,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         if !keychainDisabledTestMode {
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(5))
+                // Sparkle's first XPC/installer-status setup runs on the main
+                // thread and has hung for seconds on memory-starved machines.
+                // Wait out resource pressure before arming the check cycle.
+                while Self.isUnderResourcePressure {
+                    try? await Task.sleep(for: .seconds(30))
+                }
                 self?.updater.checkForUpdatesInBackground()
             }
         }
