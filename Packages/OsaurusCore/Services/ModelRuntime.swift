@@ -745,6 +745,14 @@ public actor ModelRuntime {
         // greedy generation, so the first user request decodes with MTP.
         // Failure is non-fatal: the request path's cold-warmup rule remains
         // as the fallback.
+        //
+        // Pin the model for the duration of the warmup. `modelCache[name]`
+        // is already published and the loading record removed above, so an
+        // unload / strict-single-model eviction racing this window would
+        // otherwise see a zero lease count and tear the container down
+        // under the in-flight warmup generation. The lease is released on
+        // every exit path (`warmupNativeMTPAtLoad` never throws).
+        await ModelLease.shared.acquire(name)
         await MLXBatchAdapter.warmupNativeMTPAtLoad(
             modelName: name,
             container: holder.container,
@@ -752,6 +760,7 @@ public actor ModelRuntime {
             runtime: getConfig(),
             maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
         )
+        await ModelLease.shared.release(name)
 
         genLog.info(
             "loadContainer: loaded \(name, privacy: .public) isVLM=\(holder.isVLM, privacy: .public)"

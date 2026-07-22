@@ -290,6 +290,18 @@ struct MLXBatchAdapter {
             return Lease(gate: self)
         }
 
+        /// Non-queuing probe: returns a lease when the gate is free, `nil`
+        /// when another generation holds it. Never enqueues a waiter, so a
+        /// `nil` result has no effect on the gate or on queued `acquire`
+        /// callers. Used by the load-time MTP warmup, which must never wait
+        /// behind an unrelated model's generation while the process-wide
+        /// cold-load slot is held.
+        func tryAcquire(modelName: String) -> Lease? {
+            guard !busy else { return nil }
+            busy = true
+            return Lease(gate: self)
+        }
+
         private func release() {
             guard busy else { return }
             if !waiters.isEmpty {
@@ -578,6 +590,12 @@ struct MLXBatchAdapter {
             await soloGate.acquire(modelName: modelName)
         }
 
+        /// Non-queuing variant of `acquireSoloLease` — see
+        /// `SoloGenerationGate.tryAcquire(modelName:)`.
+        func tryAcquireSoloLease(for modelName: String) async -> SoloGenerationGate.Lease? {
+            await soloGate.tryAcquire(modelName: modelName)
+        }
+
         func consumeNativeMTPColdWarmup(modelName: String, requested: Bool) -> Bool {
             guard requested else { return false }
             if nativeMTPWarmModels.contains(modelName) {
@@ -608,8 +626,38 @@ struct MLXBatchAdapter {
 
     /// Escape hatch in case a family surfaces a first-generation issue that
     /// the two-token warmup does not absorb:
-    ///   defaults write ai.osaurus ai.osaurus.mtp.disableLoadWarmup -bool true
+    ///   defaults write com.dinoki.osaurus ai.osaurus.mtp.disableLoadWarmup -bool true
     static let mtpLoadWarmupDisabledKey = "ai.osaurus.mtp.disableLoadWarmup"
+
+    /// Deadline for draining the warmup generation. A 2-token greedy warmup
+    /// completes in well under 2 s on any supported hardware; 30 s means the
+    /// generation is wedged (hung engine actor, Metal stall). The caller
+    /// (`finishLoadedContainer`) holds the process-wide cold-load slot, so
+    /// an unbounded drain would block every subsequent model load.
+    static let mtpLoadWarmupDrainDeadlineNanoseconds: UInt64 = 30 * 1_000_000_000
+
+    /// Drain `stream`, giving up after `nanoseconds`. Returns `true` when
+    /// the stream finished, `false` on timeout. `AsyncStream` iteration is
+    /// cancellation-aware, so `cancelAll()` promptly unblocks the drain
+    /// child when the deadline child wins.
+    static func drainWithDeadline(
+        _ stream: AsyncStream<Generation>,
+        nanoseconds: UInt64
+    ) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                for await _ in stream {}
+                return true
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: nanoseconds)
+                return false
+            }
+            let finished = await group.next() ?? false
+            group.cancelAll()
+            return finished
+        }
+    }
 
     /// Runs the native-MTP cold warmup at model-load time instead of on the
     /// user's first request. The registry's cold-warmup rule forces the
@@ -635,6 +683,13 @@ struct MLXBatchAdapter {
 
         let startedAt = CFAbsoluteTimeGetCurrent()
         do {
+            // `.skipIfBusy`: at maxBatchSize == 1 a plain `generate` would
+            // QUEUE on the process-wide SoloGenerationGate. Under
+            // manualMultiModel that means loading model A during model B's
+            // long generation would stall A's entire load (the caller holds
+            // the cold-load slot) just to run a hidden 2-token warmup. If the
+            // gate is busy, `generate` throws before the warm flag is
+            // consumed and we skip the warmup entirely.
             let prepared = try await generate(
                 modelName: modelName,
                 container: container,
@@ -645,12 +700,38 @@ struct MLXBatchAdapter {
                 stopSequences: [],
                 draftStrategy: draftStrategy,
                 runtime: runtime,
-                maxBatchSize: maxBatchSize
+                maxBatchSize: maxBatchSize,
+                soloGateBehavior: .skipIfBusy
             )
-            for await _ in prepared.stream {}
+            // Bound the drain: an unbounded `for await` here would hang
+            // `finishLoadedContainer` — and with it the process-wide
+            // cold-load slot — forever on a wedged generation. See
+            // `mtpLoadWarmupDrainDeadlineNanoseconds` for the 30 s rationale.
+            let finished = await drainWithDeadline(
+                prepared.stream,
+                nanoseconds: mtpLoadWarmupDrainDeadlineNanoseconds
+            )
+            guard finished else {
+                prepared.genTask.cancel()
+                // The generation consumed the warm flag before wedging;
+                // reset it so the first real request runs the AR warmup.
+                await Registry.shared.resetNativeMTPWarmup(modelName: modelName)
+                batchAdapterLog.notice(
+                    "native MTP load warmup timed out after 30s for \(modelName, privacy: .public) — cancelled; load proceeds without MTP warm, first request falls back to AR warmup"
+                )
+                return
+            }
             let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
             batchAdapterLog.info(
                 "native MTP load warmup: completed for \(modelName, privacy: .public) in \(elapsedMs, privacy: .public)ms; first user request decodes with MTP"
+            )
+        } catch is SoloGateBusyError {
+            // Another model's generation holds the solo gate. The throw
+            // happens before `consumeNativeMTPColdWarmup`, so the warm flag
+            // is untouched — the first real request performs the AR warmup
+            // exactly as it did before load-time warmup existed.
+            batchAdapterLog.notice(
+                "native MTP load warmup: solo gate busy for \(modelName, privacy: .public) — deferring to first-request AR warmup"
             )
         } catch {
             // The failed generation may already have consumed the warm flag;
@@ -1098,6 +1179,24 @@ struct MLXBatchAdapter {
         }
     }
 
+    /// How `generate` treats the process-wide `SoloGenerationGate` when
+    /// `maxBatchSize == 1`.
+    enum SoloGateBehavior: Sendable {
+        /// Queue behind the current holder (regular request path).
+        case waitForTurn
+        /// Probe without queuing and throw `SoloGateBusyError` when another
+        /// generation holds the gate. Load-time warmup path only: the
+        /// warmup must never wait behind an unrelated model's generation
+        /// while `finishLoadedContainer` holds the process-wide cold-load
+        /// slot.
+        case skipIfBusy
+    }
+
+    /// Thrown by `generate(soloGateBehavior: .skipIfBusy)` when the solo
+    /// gate is held. Thrown before the native-MTP warm flag is consumed,
+    /// so callers can skip the warmup without un-warming anything.
+    struct SoloGateBusyError: Error {}
+
     /// Tokenize the chat + tools, fetch (or create) the per-model
     /// `BatchEngine`, and submit one request via `engine.generate`. Returns
     /// the resulting `Generation` stream wrapped with cancellation plumbing.
@@ -1112,7 +1211,8 @@ struct MLXBatchAdapter {
         stopSequences: [String],
         draftStrategy: MLXLMCommon.DraftStrategy?,
         runtime: RuntimeConfig,
-        maxBatchSize: Int
+        maxBatchSize: Int,
+        soloGateBehavior: SoloGateBehavior = .waitForTurn
     ) async throws -> PreparedStream {
         let trace = generation.ttftTrace
         trace?.mark("batch_prepare_start")
@@ -1125,10 +1225,21 @@ struct MLXBatchAdapter {
         PrefillDebugLog.shared.log(
             "==GEN GENERATE-ENTER model=\(modelName) maxBatch=\(maxBatchSize)"
         )
-        let soloLease =
-            maxBatchSize == 1
-            ? await Registry.shared.acquireSoloLease(for: modelName)
-            : nil
+        let soloLease: SoloGenerationGate.Lease?
+        if maxBatchSize == 1 {
+            switch soloGateBehavior {
+            case .waitForTurn:
+                soloLease = await Registry.shared.acquireSoloLease(for: modelName)
+            case .skipIfBusy:
+                guard let probed = await Registry.shared.tryAcquireSoloLease(for: modelName)
+                else {
+                    throw SoloGateBusyError()
+                }
+                soloLease = probed
+            }
+        } else {
+            soloLease = nil
+        }
         if Task.isCancelled {
             if let soloLease { await soloLease.release() }
             throw CancellationError()
