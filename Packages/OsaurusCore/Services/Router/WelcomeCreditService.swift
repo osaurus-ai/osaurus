@@ -181,7 +181,7 @@ final class WelcomeCreditService {
             // trigger (identity ready, clock fixed) may succeed.
             break
         case .transport, .invalidResponse, .server, .insufficientFunds,
-            .belowMinimumTopUp, .rateLimited:
+            .belowMinimumTopUp, .rateLimited, .paidWebDisabled, .idempotencyConflict:
             // Transient or unrelated server-side trouble: retry on the next
             // trigger.
             break

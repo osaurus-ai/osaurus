@@ -69,10 +69,23 @@ struct FileDiff: Equatable {
             !diffText.isEmpty
         else { return nil }
 
-        let path = (payload["path"] as? String) ?? ""
-        let isPreview = (payload["dry_run"] as? Bool) ?? false
-        let truncated = (payload["diff_truncated"] as? Bool) ?? false
+        return fromUnifiedDiff(
+            diffText,
+            path: (payload["path"] as? String) ?? "",
+            isPreview: (payload["dry_run"] as? Bool) ?? false,
+            truncated: (payload["diff_truncated"] as? Bool) ?? false
+        )
+    }
 
+    /// Builds a `FileDiff` from raw unified-diff text (the format produced by
+    /// `WorkspaceWriteSafety.unifiedDiffText`). Shared by the tool-result card
+    /// and the sandbox Changes sheet, which diffs baseline vs. live files.
+    static func fromUnifiedDiff(
+        _ diffText: String,
+        path: String,
+        isPreview: Bool = false,
+        truncated: Bool = false
+    ) -> FileDiff {
         var lines: [Line] = []
         var added = 0
         var removed = 0

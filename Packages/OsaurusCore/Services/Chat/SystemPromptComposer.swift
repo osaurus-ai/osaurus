@@ -687,7 +687,8 @@ public struct SystemPromptComposer: Sendable {
     ///                                (sandbox: build-ladder variant, canCreatePlugins-aware)
     ///  15. enabledManifest           static, frozen, gated on capabilities_load
     ///                                (all enabled tools + plugin skills + standalone skills)
-    ///  16. skillsGovern              static body, paired with enabledManifest
+    ///  16. skillsGovern              static body, only for verbose manifests
+    ///                                with a skill-governed tool group
     ///  17. pluginCreator             static, injected when plugin creation is enabled
     ///                                (session-constant gate — joins the cached prefix)
     ///  18. agentDBSchema             dynamic, live schema snapshot (mutates mid-session)
@@ -725,7 +726,8 @@ public struct SystemPromptComposer: Sendable {
         agentId: UUID,
         executionMode: ExecutionMode,
         soulSection: String? = nil,
-        trace: TTFTTrace? = nil
+        trace: TTFTTrace? = nil,
+        allowBlockingDBOpen: Bool = true
     ) {
         let tools = toolset.tools
         let effectiveToolsOff = toolset.effectiveToolsOff
@@ -772,7 +774,8 @@ public struct SystemPromptComposer: Sendable {
                     label: L("Self-Improvement"),
                     content: SystemPromptTemplates.selfImprovementGuidance(
                         canCreatePlugins: snapshot.canCreatePlugins,
-                        compact: toolset.prefersCompactPrompt
+                        compact: toolset.prefersCompactPrompt,
+                        hostWritableCombined: executionMode.allowsHostWriteTools
                     )
                 )
             )
@@ -799,7 +802,8 @@ public struct SystemPromptComposer: Sendable {
                     content: OnboardingPrompt.block
                 )
             )
-            let snapshotText = Self.renderSchemaSnapshot(agentId: agentId)
+            let snapshotText = Self.renderSchemaSnapshot(
+                agentId: agentId, allowOpen: allowBlockingDBOpen)
             if !snapshotText.isEmpty {
                 agentDBSchemaSection = snapshotText
             }
@@ -1019,6 +1023,35 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
+        // Knowledge grant manifest: schema-gated like `spawn` above. The
+        // retrieval tools resolving into the schema is not enough affordance
+        // on its own — their descriptions don't say what the granted corpora
+        // contain, so a small model never connects a domain question to
+        // `search_knowledge` and answers from thin air. Enumerating the
+        // ACTUAL grants (name + summary, captured on `snapshot`) makes the
+        // collection's own description the trigger. Static: the grant set is
+        // session-constant; a grant or summary edit re-renders it (a
+        // one-time cached-prefix bust, like the other config-driven
+        // sections).
+        if !effectiveToolsOff,
+            !resolvedNames.isDisjoint(with: Self.knowledgeToolNames),
+            !snapshot.knowledgeCollections.isEmpty
+        {
+            composer.append(
+                .static(
+                    id: "knowledge",
+                    label: L("Knowledge"),
+                    content: SystemPromptTemplates.knowledgeGuidance(
+                        collections: snapshot.knowledgeCollections,
+                        // Curator line only when the proposal tool actually
+                        // resolved — mirrors the section's own schema gate.
+                        curator: !resolvedNames.isDisjoint(
+                            with: Self.knowledgeCuratorToolNames)
+                    )
+                )
+            )
+        }
+
         // Agent-loop guidance: short cheat-sheet for the chat-layer-
         // intercepted tools (todo / complete / clarify / share_artifact).
         // Always rendered when any loop tool resolves into the schema:
@@ -1066,6 +1099,7 @@ public struct SystemPromptComposer: Sendable {
                     content: SystemPromptTemplates.sandbox(
                         home: sandboxHome,
                         hostReadCombined: executionMode.hostReadContext != nil,
+                        hostWritable: executionMode.allowsHostWriteTools,
                         backgroundEnabled: snapshot.autonomousConfig?.backgroundProcessEnabled ?? false,
                         compact: toolset.prefersCompactPrompt
                     )
@@ -1086,20 +1120,22 @@ public struct SystemPromptComposer: Sendable {
             if !state.isEmpty {
                 sandboxStateSection = state
             }
-            // Combined mode: a read-only host workspace rides alongside
-            // the sandbox. Append the read-only workspace section + the
-            // two-filesystem block AFTER the sandbox section so the agent
+            // Combined mode: a host workspace rides alongside the sandbox
+            // (read-only, or writable via the `allowHostFolderWrites`
+            // opt-in). Append the workspace section + the `## Files`
+            // path-routing block AFTER the sandbox section so the agent
             // reads sandbox framing first, then learns the workspace is a
-            // separate, read-only filesystem. Static so it joins the
-            // cached prefix.
+            // separate filesystem. Static so it joins the cached prefix.
             if let hostRead = executionMode.hostReadContext {
+                let writable = executionMode.allowsHostWriteTools
                 composer.append(
                     .static(
                         id: "combinedHostRead",
-                        label: L("Host Workspace (read-only)"),
+                        label: writable ? L("Host Workspace") : L("Host Workspace (read-only)"),
                         content: SystemPromptTemplates.combinedHostRead(
                             from: hostRead,
-                            allowSecretReads: snapshot.autonomousConfig?.allowHostSecretReads ?? false
+                            allowSecretReads: snapshot.autonomousConfig?.allowHostSecretReads ?? false,
+                            writable: writable
                         )
                     )
                 )
@@ -1133,26 +1169,32 @@ public struct SystemPromptComposer: Sendable {
             !effectiveToolsOff,
             tools.contains(where: { $0.function.name == "capabilities_discover" })
         {
-            // Sandbox mode swaps the terminus ("tell the user it is
-            // unavailable") for an escalation ladder that ends in a build
-            // step, not denial — the sandbox can assemble most integrations
-            // from primitives. Outside sandbox there are no such primitives,
-            // so the original nudge (with its terminus) stays. The ladder's
-            // plugin-build rung is further gated on `canCreatePlugins`.
-            let nudge =
-                executionMode.usesSandboxTools
-                ? SystemPromptTemplates.capabilityDiscoveryNudgeSandbox(
+            // Sandbox mode needs its explicit build/escalation ladder.
+            // Verbose non-sandbox prompts retain the discover/load tutorial.
+            // Compact non-sandbox prompts already carry the complete contract
+            // in compact Grounding + the discovery/load tool schemas, so a
+            // second prose section would only repeat those instructions.
+            let nudge: String?
+            if executionMode.usesSandboxTools {
+                nudge = SystemPromptTemplates.capabilityDiscoveryNudgeSandbox(
                     canCreatePlugins: snapshot.canCreatePlugins,
                     compact: toolset.prefersCompactPrompt
                 )
-                : SystemPromptTemplates.capabilityDiscoveryNudge
-            composer.append(
-                .static(
-                    id: "capabilityNudge",
-                    label: L("Capability Discovery"),
-                    content: nudge
+            } else {
+                nudge =
+                    toolset.prefersCompactPrompt
+                    ? nil
+                    : SystemPromptTemplates.capabilityDiscoveryNudge
+            }
+            if let nudge {
+                composer.append(
+                    .static(
+                        id: "capabilityNudge",
+                        label: L("Capability Discovery"),
+                        content: nudge
+                    )
                 )
-            )
+            }
         }
 
         // Enabled capabilities manifest: the grounded answer to "do you
@@ -1167,12 +1209,12 @@ public struct SystemPromptComposer: Sendable {
         // the old "Plugin Companions" and "Skill Suggestions" sections.
         //
         // The string is rendered+frozen in `resolveEnabledManifest` and
-        // injected as a STATIC section (paired with `skillsGovern`) so it
-        // joins the cached KV prefix and stays byte-stable across turns —
-        // the manifest no longer shrinks as the agent loads tools. Together
-        // with `pluginCreator` below it closes out the static block, so both
-        // must precede every dynamic section (the static prefix ends at the
-        // first dynamic section).
+        // injected as a STATIC section so it joins the cached KV prefix and
+        // stays byte-stable across turns — the manifest no longer shrinks as
+        // the agent loads tools. Verbose manifests receive the companion
+        // `skillsGovern` block only when a plugin actually contains both a
+        // skill and tools; compact manifests already encode that workflow in
+        // their single `plugin/<id> — skill-governed` load action.
         if let manifestSection = toolset.enabledManifest, !manifestSection.isEmpty {
             composer.append(
                 .static(
@@ -1181,13 +1223,18 @@ public struct SystemPromptComposer: Sendable {
                     content: manifestSection
                 )
             )
-            composer.append(
-                .static(
-                    id: "skillsGovern",
-                    label: L("Skills that govern tool groups"),
-                    content: SystemPromptTemplates.skillsGovernToolGroups
+            if SystemPromptTemplates.enabledManifestNeedsSkillGovernance(
+                manifestSection,
+                compact: toolset.prefersCompactPrompt
+            ) {
+                composer.append(
+                    .static(
+                        id: "skillsGovern",
+                        label: L("Skills that govern tool groups"),
+                        content: SystemPromptTemplates.skillsGovernToolGroups
+                    )
                 )
-            )
+            }
         }
 
         // Plugin-creator injection: inject the `## Building new tools` section
@@ -1229,7 +1276,9 @@ public struct SystemPromptComposer: Sendable {
                     id: "pluginCreator",
                     label: L("Plugin Creator"),
                     content: PluginCreatorGate.section(
-                        instructions: SystemPromptTemplates.pluginCreatorInstructions
+                        instructions: SystemPromptTemplates.pluginCreatorInstructionsBody(
+                            hostWritableCombined: executionMode.allowsHostWriteTools
+                        )
                     )
                 )
             )
@@ -1282,10 +1331,10 @@ public struct SystemPromptComposer: Sendable {
 
     }
 
-    /// Build the **complete** enabled-capabilities manifest: every tool and
-    /// skill the agent has enabled, regardless of what landed in this turn's
-    /// tool schema. Reads the agent's enabled tool + skill allowlists and the
-    /// live registry — MUST run on the main actor.
+    /// Build the **complete** enabled-capabilities manifest: every tool the
+    /// agent has enabled plus every installed skill, regardless of what landed
+    /// in this turn's tool schema. Reads the agent's enabled tool allowlist and
+    /// the live registries — MUST run on the main actor.
     ///
     /// This is a static enumeration, not a per-turn delta. Under Design C the
     /// rendered string is frozen at session start and injected as a static
@@ -1297,10 +1346,10 @@ public struct SystemPromptComposer: Sendable {
     ///
     /// Contents:
     /// - **Tools**: all enabled dynamic tools, grouped by plugin.
-    /// - **Plugin skills**: enabled skills carrying a `pluginId`, in their
+    /// - **Plugin skills**: installed skills carrying a `pluginId`, in their
     ///   plugin group (skills never enter the tool schema, so they are what
     ///   the "Skills that govern tool groups" rule binds to).
-    /// - **Standalone skills**: enabled skills with no `pluginId`, enumerated
+    /// - **Standalone skills**: installed skills with no `pluginId`, enumerated
     ///   directly from `SkillManager` into a trailing "Skills (no plugin)"
     ///   group — no embedding search, no query ranking.
     ///
@@ -1313,15 +1362,19 @@ public struct SystemPromptComposer: Sendable {
         agentId: UUID
     ) -> [SystemPromptTemplates.ManifestPluginGroup] {
         let allowedTools = AgentManager.shared.effectiveEnabledToolNames(for: agentId).map(Set.init)
-        let allowedSkills = AgentManager.shared.effectiveEnabledSkillNames(for: agentId).map(Set.init)
 
         // Tools: live dynamic catalog is already enabled-filtered; intersect
         // with the agent allowlist (nil = legacy global). The complete set —
         // no enabled-minus-loaded subtraction, so the manifest stays constant
         // as the agent loads tools mid-session.
         var toolsByGroup: [String: [SystemPromptTemplates.ManifestCapability]] = [:]
+        let hasEnabledAgentChannel = AgentChannelConfigurationStore.load()
+            .connections
+            .contains(where: \.enabled)
         for entry in ToolRegistry.shared.listDynamicTools() {
             guard allowedTools?.contains(entry.name) ?? true,
+                hasEnabledAgentChannel
+                    || !ToolRegistry.agentChannelToolNames.contains(entry.name),
                 let group = ToolRegistry.shared.groupName(for: entry.name),
                 !group.isEmpty
             else { continue }
@@ -1330,15 +1383,13 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
-        // Plugin skills (pluginId != nil) that the agent has enabled, plus
-        // standalone skills (pluginId == nil) collected for the trailing
-        // synthetic group. Both come straight from `SkillManager` — no search.
+        // Plugin skills (pluginId != nil), plus standalone skills
+        // (pluginId == nil) collected for the trailing synthetic group. Every
+        // installed skill is universally available to custom agents; both come
+        // straight from `SkillManager` — no search.
         var skillsByGroup: [String: [SystemPromptTemplates.ManifestCapability]] = [:]
         var standaloneCaps: [SystemPromptTemplates.ManifestCapability] = []
         for skill in SkillManager.shared.skills {
-            guard skill.enabled,
-                allowedSkills?.contains(skill.name) ?? true
-            else { continue }
             let cap = SystemPromptTemplates.ManifestCapability(
                 name: skill.name,
                 description: skill.description
@@ -1413,7 +1464,9 @@ public struct SystemPromptComposer: Sendable {
 
     /// Friendly plugin name for the manifest. Native plugins carry a
     /// `name` in their manifest; MCP / sandbox-plugin groups don't, so we
-    /// fall back to the raw group id.
+    /// fall back to the raw group id. Production prompt entry points wait for
+    /// `PluginManager.ensurePromptCatalogReady()` before reaching here, so
+    /// launch scheduling cannot alternate between the two representations.
     @MainActor
     private static func pluginDisplayName(for pluginId: String) -> String {
         if let loaded = PluginManager.shared.loadedPlugin(for: pluginId),
@@ -1614,13 +1667,39 @@ public struct SystemPromptComposer: Sendable {
         "schedule_next_run", "cancel_next_run", "notify",
     ]
 
+    /// Knowledge retrieval tools. Registered as built-ins but gated on
+    /// `AgentConfigSnapshot.knowledgeEnabled` (per-agent opt-in, pre-folded
+    /// with "has at least one granted collection") in `resolveTools`.
+    /// Collection scoping is enforced again at execution time inside the
+    /// tools, so this strip is a token-cost optimization, not the boundary.
+    static let knowledgeToolNames: Set<String> = [
+        "search_knowledge", "read_knowledge", "list_knowledge",
+        "flag_knowledge_stale", "list_knowledge_tickets",
+    ]
+
+    /// Curator-only knowledge tools, gated on
+    /// `AgentConfigSnapshot.knowledgeCuratorEnabled` in `resolveTools`.
+    /// The tool re-checks the role at execution time, so this strip is a
+    /// token-cost optimization, not the boundary.
+    static let knowledgeCuratorToolNames: Set<String> = [
+        "propose_knowledge_update", "update_knowledge_ticket",
+    ]
+
     /// Render the schema snapshot block injected after the onboarding
     /// prompt when `dbEnabled` is true. Best-effort: a failure to open
     /// the DB (e.g. the user just enabled the toggle and the first
     /// open hasn't run yet) falls back to the empty-state block so the
     /// agent never sees a half-rendered prompt. Sync because the
     /// underlying `LocalAgentBridge.schemaSnapshot` is sync.
-    static func renderSchemaSnapshot(agentId: UUID) -> String {
+    /// `allowOpen: false` (the preview/budget path, which runs during
+    /// SwiftUI body evaluation) reads only an already-open cached
+    /// connection — a first open does file I/O plus SQLCipher key
+    /// derivation and has hung the main thread for 3+ seconds.
+    static func renderSchemaSnapshot(agentId: UUID, allowOpen: Bool = true) -> String {
+        guard allowOpen else {
+            return LocalAgentBridge.shared.schemaSnapshotIfOpen(agentId: agentId)
+                ?? SchemaSnapshot.emptyStateBlock
+        }
         do {
             return try LocalAgentBridge.shared.schemaSnapshot(agentId: agentId)
         } catch {
@@ -1704,6 +1783,20 @@ public struct SystemPromptComposer: Sendable {
             agentId: agentId,
             modelOverride: model
         )
+        return composePreviewContext(snapshot: snapshot, executionMode: executionMode)
+    }
+
+    /// Snapshot-taking variant of `composePreviewContext`. Lets the agent
+    /// editor price a DRAFT capability state (local toggles that haven't
+    /// gone through the debounced save yet) by constructing the snapshot
+    /// itself instead of capturing the persisted one — while still running
+    /// the exact section + tool gates the next real send would.
+    @MainActor
+    static func composePreviewContext(
+        snapshot: AgentConfigSnapshot,
+        executionMode: ExecutionMode
+    ) -> ComposedContext {
+        let agentId = snapshot.agentId
         var composer = forChat(
             snapshot: snapshot,
             agentId: agentId,
@@ -1727,7 +1820,8 @@ public struct SystemPromptComposer: Sendable {
             toolset: toolset,
             agentId: agentId,
             executionMode: executionMode,
-            soulSection: soulSection
+            soulSection: soulSection,
+            allowBlockingDBOpen: false
         )
 
         let manifest = composer.manifest()
@@ -2073,6 +2167,21 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
+        // A chart assembled from live web data needs both halves of the web
+        // pipeline in the same turn: discovery (`web_search`) and retrieval
+        // (`search_and_extract`). Keeping extraction dynamic for ordinary
+        // chat still preserves the lean baseline, while the explicit Charts
+        // + Web capability combination is a strong signal that retrieval is
+        // required. Expose the real tool contract up front so small local
+        // models do not get trapped rephrasing discovery queries while trying
+        // to guess the capabilities-load transition.
+        if !isManual, snapshot.renderChartEnabled, snapshot.webSearchEnabled {
+            add(
+                ToolRegistry.shared.specs(forTools: ["search_and_extract"]),
+                replacingExisting: true
+            )
+        }
+
         // Per-agent built-in tool gates. These tools are registered as
         // built-ins (so direct execution + ChatView interception still
         // work) but stripped from the auto-mode schema unless the agent
@@ -2114,6 +2223,16 @@ public struct SystemPromptComposer: Sendable {
             }
             if !snapshot.selfSchedulingEnabled {
                 for name in schedulerToolNames where !keep.contains(name) {
+                    byName.removeValue(forKey: name)
+                }
+            }
+            if !snapshot.knowledgeEnabled {
+                for name in knowledgeToolNames where !keep.contains(name) {
+                    byName.removeValue(forKey: name)
+                }
+            }
+            if !snapshot.knowledgeCuratorEnabled {
+                for name in knowledgeCuratorToolNames where !keep.contains(name) {
                     byName.removeValue(forKey: name)
                 }
             }
@@ -2186,6 +2305,9 @@ public struct SystemPromptComposer: Sendable {
             // when its pool is non-empty, image when the global switch is on).
             // The first actual call prompts for permission + spawn-model choice.
             allowed.formUnion(visibleDelegation)
+            // Browser Use is a custom-agent capability (like `computer_use`):
+            // the Default agent never gets it, so it stays off this allowlist
+            // even if a stray snapshot carries the flag.
 
             // Small local models: the per-domain configure WRITE tools are
             // the bulk of this agent's turn-1 schema (~60%+ of prefill). On a
@@ -2424,7 +2546,7 @@ public struct SystemPromptComposer: Sendable {
         )
     }
 
-    /// Render the memory + screen-context block exactly as the per-turn
+    /// Render the memory + screen/automation-context blocks exactly as the per-turn
     /// injectors (`injectMemoryPrefix` + `injectScreenContextPrefix`) would
     /// prepend it to a non-empty user message, INCLUDING the trailing
     /// separator — so `prefix + originalContent` reproduces the legacy
@@ -2435,7 +2557,8 @@ public struct SystemPromptComposer: Sendable {
     /// Returns nil when both inputs are nil/blank.
     static func composeInjectedUserPrefix(
         memorySection: String?,
-        screenContext: String?
+        screenContext: String?,
+        automationContext: String? = nil
     ) -> String? {
         var prefix = ""
         if let memorySection {
@@ -2446,7 +2569,29 @@ public struct SystemPromptComposer: Sendable {
             let trimmed = screenContext.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { prefix = "\(trimmed)\n\n" + prefix }
         }
+        if let automationContext {
+            let trimmed = automationContext.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { prefix = "\(trimmed)\n\n" + prefix }
+        }
         return prefix.isEmpty ? nil : prefix
+    }
+
+    /// Minimal app identity needed by the parent to route working-document
+    /// anaphora to AppleScript. This is not Screen Context: it carries no UI,
+    /// window, draft, or accessibility content, and callers include it only
+    /// when `applescript` is actually exposed in the frozen tool schema.
+    static func appleScriptWorkingAppContext(appName: String?) -> String? {
+        guard let appName else { return nil }
+        let app = appName
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !app.isEmpty else { return nil }
+        return """
+            [Mac Automation Context]
+            Working app before this message: \(app)
+            If the request says `the file` or `the document`, it means that app's front open document. Use `applescript`; do not ask for a path or create a separate artifact.
+            [/Mac Automation Context]
+            """
     }
 
     /// Session-stable memory injection for surfaces whose history is owned

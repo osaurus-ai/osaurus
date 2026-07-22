@@ -91,13 +91,15 @@ struct SearchProviderConfigurationTests {
                 SearchProvider(definitionId: "ddg", enabled: false),
             ],
             routing: ["news": ["tavily"]],
-            pluginKeysMigrated: true
+            pluginKeysMigrated: true,
+            hostedSearchEnabled: false
         )
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(SearchProviderConfiguration.self, from: data)
         #expect(decoded.providers == original.providers)
         #expect(decoded.routing == original.routing)
         #expect(decoded.pluginKeysMigrated == original.pluginKeysMigrated)
+        #expect(decoded.hostedSearchEnabled == false)
     }
 
     @Test func configurationDecodesSparseJSONWithDefaults() throws {
@@ -106,6 +108,9 @@ struct SearchProviderConfigurationTests {
         #expect(decoded.providers.isEmpty)
         #expect(decoded.routing.isEmpty)
         #expect(!decoded.pluginKeysMigrated)
+        // Pre-premium configs decode as "never resolved" so the manager's
+        // one-time default resolution runs exactly once for them.
+        #expect(decoded.hostedSearchEnabled == nil)
     }
 
     @Test func definitionDecodesMinimalJSONWithDefaults() throws {

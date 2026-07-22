@@ -222,6 +222,16 @@ final class ChatSession: ObservableObject {
     /// on the intercept.
     @Published var awaitingClarify: ClarifyPayload?
 
+    /// This chat's working-folder state (context, security-scoped access,
+    /// persistable bookmark). Owned per session so picking/refreshing/
+    /// clearing a folder affects ONLY this chat — never other windows or
+    /// concurrent headless runs. Persisted through `ChatSessionData`.
+    let folderState = ChatFolderState()
+
+    /// Bridges `ChatFolderState.objectWillChange` up to the session so the
+    /// folder chip / previews re-render when this chat's folder changes.
+    nonisolated(unsafe) private var folderStateCancellable: AnyCancellable?
+
     /// Tracks expand/collapse state for tool calls, thinking blocks, etc.
     /// Lives on the session so state survives NSTableView cell reuse.
     let expandedBlocksStore = ExpandedBlocksStore()
@@ -298,6 +308,9 @@ final class ChatSession: ObservableObject {
     /// Mirrors `ChatSessionData.archived`. Required here so `toSessionData()`
     /// round-trips the flag instead of stamping `false` on every save.
     var archived: Bool = false
+    /// Mirrors `ChatSessionData.pinned`, for the same round-trip reason as
+    /// `archived`.
+    var pinned: Bool = false
 
     /// Tracks if session has unsaved content changes
     private var isDirty: Bool = false
@@ -476,6 +489,10 @@ final class ChatSession: ObservableObject {
     /// remote provider shows up in the picker live, without reopening the
     /// window (mirrors `AgentsView`'s `$items` subscription).
     nonisolated(unsafe) private var modelCacheCancellable: AnyCancellable?
+    /// Runtime residency changes can originate outside this window (HTTP,
+    /// plugins, subagents, other chats). Observe them so a model evicted behind
+    /// the window's back cannot keep a stale green warm indicator.
+    nonisolated(unsafe) private var runtimeResidencyObserver: NSObjectProtocol?
     /// Flag to prevent auto-persist during initial load or programmatic resets
     private var isLoadingModel: Bool = false
     /// The model the user last picked by hand this session. Picker-list
@@ -558,6 +575,28 @@ final class ChatSession: ObservableObject {
                 self?.objectWillChange.send()
             }
 
+        // Same bridge for the per-session folder state: the folder chip and
+        // context previews render from `folderState`, whose mutations must
+        // surface through the session object SwiftUI actually observes.
+        folderStateCancellable = folderState.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+
+        // Persist user folder mutations promptly: without this, a folder
+        // picked (or cleared) mid-conversation only reaches disk on the next
+        // turn/teardown save and is lost on a crash or force-quit. Fires only
+        // for user-initiated select/change/clear — never persistence restores
+        // — and only once the session has content to persist (`save()` skips
+        // empty sessions; a brand-new chat's folder is saved with its first
+        // turn). Folder mutations are rare click-driven events, so a direct
+        // save (already async via `saveAsync`) needs no debounce.
+        folderState.onFolderMutated = { [weak self] in
+            guard let self, !self.turns.isEmpty else { return }
+            self.isDirty = true
+            self.save()
+        }
+
         remoteModelsObserver = NotificationCenter.default.addObserver(
             forName: .remoteProviderModelsChanged,
             object: nil,
@@ -593,6 +632,21 @@ final class ChatSession: ObservableObject {
             .sink { [weak self] items in
                 Task { @MainActor in self?.applyPickerItems(items) }
             }
+
+        runtimeResidencyObserver = NotificationCenter.default.addObserver(
+            forName: .modelRuntimeResidencyChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            let residentModelNames = note.object as? [String] ?? []
+            Task { @MainActor in
+                guard let self else { return }
+                self.warmupController.reconcileRuntimeResidency(
+                    selectedModel: self.selectedModel,
+                    residentModelNames: residentModelNames
+                )
+            }
+        }
 
         // Mirror AgentTodoStore -> currentTodo so the inline UI block
         // updates whenever the agent calls `todo`. Filter by this window's
@@ -749,7 +803,7 @@ final class ChatSession: ObservableObject {
             voidNotification(.agentUpdated),
             voidNotification(.activeAgentChanged),
             voidNotification(.toolsListChanged),
-            FolderContextService.shared.objectWillChange
+            folderState.objectWillChange
                 .map { _ in () }.eraseToAnyPublisher(),
             $selectedModel.map { _ in () }.eraseToAnyPublisher(),
         ]
@@ -816,6 +870,9 @@ final class ChatSession: ObservableObject {
             NotificationCenter.default.removeObserver(observer)
         }
         if let observer = storageMutationObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = runtimeResidencyObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         modelSelectionCancellable = nil
@@ -1489,6 +1546,15 @@ final class ChatSession: ObservableObject {
         return preview
     }
 
+    /// Whether the next local UI send exposes at least one tool and will
+    /// therefore carry the same agent/tool marker consumed by
+    /// `ChatEngine.prepareDispatch`. The composer uses this exact preview
+    /// surface to present the untouched Thinking default truthfully.
+    var appliesAgentReasoningDefault: Bool {
+        guard !isRemoteAgentTarget else { return false }
+        return previewContext()?.tools.isEmpty == false
+    }
+
     /// Compose a fresh welcome/pre-send preview from the current agent /
     /// sandbox / tool / folder / model state. Pure — no caching, no
     /// `objectWillChange`. Single source of truth for the lazy read
@@ -1964,7 +2030,11 @@ final class ChatSession: ObservableObject {
         externalSessionKey = nil
         dispatchTaskId = nil
         archived = false
+        pinned = false
         isDirty = false
+        // A new chat starts folder-less; the outgoing session's folder stays
+        // persisted on its own row and does not leak into the fresh one.
+        folderState.clearFolder()
 
         // Reset agent-loop UI state.
         currentTodo = nil
@@ -2212,7 +2282,10 @@ final class ChatSession: ObservableObject {
             externalSessionKey: externalSessionKey,
             dispatchTaskId: dispatchTaskId,
             archived: archived,
-            capabilities: SessionCapability.derive(from: turnData)
+            pinned: pinned,
+            capabilities: SessionCapability.derive(from: turnData),
+            folderBookmark: folderState.persistedBookmark,
+            folderPath: folderState.persistedPath
         )
     }
 
@@ -2268,6 +2341,12 @@ final class ChatSession: ObservableObject {
         externalSessionKey = data.externalSessionKey
         dispatchTaskId = data.dispatchTaskId
         archived = data.archived
+        pinned = data.pinned
+
+        // Restore THIS session's persisted folder (fire-and-forget: the
+        // bookmark resolve + context build happen off the main actor and
+        // apply when done). Sessions without a folder simply clear it.
+        folderState.restore(bookmark: data.folderBookmark, path: data.folderPath)
 
         // Restore the persisted model when it's still valid; otherwise
         // fall back to the agent's preferred model. `isLoadingModel`
@@ -2885,15 +2964,18 @@ final class ChatSession: ObservableObject {
     /// to nil even when a folder is globally active — keeping the budget
     /// preview and the sent prompt folder-less and consistent.
     private func activeFolderContext(for agentId: UUID) -> FolderContext? {
-        agentId == Agent.defaultId ? nil : FolderContextService.shared.currentContext
+        agentId == Agent.defaultId ? nil : folderState.context
     }
 
     private func estimatedChatExecutionMode(agentId: UUID) -> ExecutionMode {
         let folder = activeFolderContext(for: agentId)
-        let autonomous = AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
+        let config = AgentManager.shared.effectiveAutonomousExec(for: agentId)
+        let autonomous = config?.enabled == true
+        let hostWrites = config?.allowHostFolderWrites == true
         let resolved = ToolRegistry.shared.resolveExecutionMode(
             folderContext: folder,
-            autonomousEnabled: autonomous
+            autonomousEnabled: autonomous,
+            allowHostFolderWrites: hostWrites
         )
         // Optimistic estimate: when autonomous is on but sandbox tools haven't
         // registered yet, report `.sandbox` so the budget preview matches what
@@ -2901,7 +2983,7 @@ final class ChatSession: ObservableObject {
         // Thread the folder through so the combined sandbox + host-read mode
         // is estimated correctly when a folder is also mounted.
         if autonomous && resolved.usesSandboxTools == false {
-            return .sandbox(hostRead: folder)
+            return .sandbox(hostRead: folder, hostWrite: folder != nil && hostWrites)
         }
         return resolved
     }
@@ -3099,13 +3181,15 @@ final class ChatSession: ObservableObject {
     /// `ToolRegistry` then applies the priority rule (sandbox > folder >
     /// none) and decides whether sandbox tools actually came online.
     func prepareChatExecutionMode(agentId: UUID) async -> ExecutionMode {
-        let autonomous = AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
+        let config = AgentManager.shared.effectiveAutonomousExec(for: agentId)
+        let autonomous = config?.enabled == true
         if autonomous {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
         }
         return ToolRegistry.shared.resolveExecutionMode(
             folderContext: activeFolderContext(for: agentId),
-            autonomousEnabled: autonomous
+            autonomousEnabled: autonomous,
+            allowHostFolderWrites: config?.allowHostFolderWrites == true
         )
     }
 
@@ -3770,7 +3854,8 @@ final class ChatSession: ObservableObject {
     /// `frozenSoul` freeze the static prompt side.
     private func freezeInjectedContextOntoLatestUserTurn(
         memorySection: String?,
-        screenContext: String?
+        screenContext: String?,
+        automationContext: String?
     ) {
         guard let turn = turns.last(where: { $0.role == .user }) else { return }
         // Regeneration re-runs an already-sent turn: keep the original
@@ -3793,7 +3878,8 @@ final class ChatSession: ObservableObject {
         guard
             let prefix = SystemPromptComposer.composeInjectedUserPrefix(
                 memorySection: memorySection,
-                screenContext: screenContext
+                screenContext: screenContext,
+                automationContext: automationContext
             )
         else { return }
         turn.injectedContextPrefix = prefix
@@ -3876,7 +3962,9 @@ final class ChatSession: ObservableObject {
     ) {
         guard activeRunId == nil, !isStreaming else {
             rollbackPreAppendedUserTurn(
-                preAppendedUserTurn, restoringDraft: (trimmed, attachments))
+                preAppendedUserTurn,
+                restoringDraft: (trimmed, attachments)
+            )
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
         }
@@ -3987,10 +4075,35 @@ final class ChatSession: ObservableObject {
         // detached task) couldn't tell what agent they belonged to.
         let turnAgentId = agentId ?? Agent.defaultId
         let imageSettings = imageComposerSettings
+        // Freeze prompt-affecting model controls at send time. Every model
+        // step in the agent loop reconstructs its request; reading the live UI
+        // dictionary inside that loop can change the prompt halfway through a
+        // run, and carrying only local-only `modelOptions` drops the explicit
+        // Thinking choice on any wire-encoded continuation.
+        let turnGenerationControls = ChatTurnGenerationControls.capture(
+            activeModelOptions: activeModelOptions
+        )
 
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
             guard self.isRunActive(runId) else { return }
+            // A send issued right after a session switch / app launch can
+            // race the fire-and-forget bookmark restore; wait for it so this
+            // turn composes WITH the folder instead of silently folder-less.
+            // Instant when no restore is pending. Default agent skips — it
+            // is folder-less by policy and must not wait on a restore.
+            if turnAgentId != Agent.defaultId {
+                _ = await self.folderState.contextWaitingForRestore()
+            }
+            guard self.isRunActive(runId) else { return }
+            // Bind THIS session's folder root for the whole turn. Folder
+            // tools, undo roots, combined-mode policy, and external-tool
+            // context all resolve the root from this TaskLocal, so a folder
+            // picked in another chat window mid-run can never redirect this
+            // chat's tools. Resolved AFTER the restore wait so the bound
+            // root and the composed prompt always agree.
+            let turnFolderRoot = self.activeFolderContext(for: turnAgentId)?.rootPath
+            await ChatExecutionContext.$currentFolderRoot.withValue(turnFolderRoot) { [self] in
             await ChatExecutionContext.$currentAgentId.withValue(turnAgentId) { [self] in
                 debugLog("send: task started runId=\(runId) model=\(self.selectedModel ?? "nil")")
                 lastStreamError = nil
@@ -4116,6 +4229,15 @@ final class ChatSession: ObservableObject {
                         self.isScreenContextFrozen = true
                     }
 
+                    // Keep the first real send byte-identical to warmup and
+                    // restart restore: plugin tools/skills are part of the
+                    // static prompt and must come from a completed catalog
+                    // snapshot, not launch-task timing.
+                    if !isRemoteAgentTarget {
+                        await PluginManager.shared.ensurePromptCatalogReady()
+                        guard isRunActive(runId) else { return }
+                    }
+
                     let context = await SystemPromptComposer.composeChatContext(
                         agentId: effectiveAgentId,
                         executionMode: executionMode,
@@ -4208,7 +4330,7 @@ final class ChatSession: ObservableObject {
                     budgetTracker.snapshot(context: context)
                     budgetTracker.updateScreenContext(tokens: cachedScreenContextTokens)
 
-                    // Freeze this turn's memory + screen-context prefix into
+                    // Freeze this turn's memory + screen/automation-context prefix into
                     // the turn history BEFORE any messages are rendered: the
                     // injected bytes become part of the turn's permanent
                     // rendering, so turn N+1 replays turn N byte-identically
@@ -4218,10 +4340,20 @@ final class ChatSession: ObservableObject {
                     // history on the next turn, re-prefilling the last
                     // exchange every turn.) Skipped in Mode 2: requests stay
                     // bare and the remote agent applies its own context.
+                    let appleScriptWorkingContext =
+                        !isRemoteAgentTarget
+                        && toolSpecs.contains(where: {
+                            $0.function.name == AppleScriptTool.toolName
+                        })
+                        ? SystemPromptComposer.appleScriptWorkingAppContext(
+                            appName: FrontmostAppTracker.shared.lastNonSelfAppName
+                        )
+                        : nil
                     if !isRemoteAgentTarget {
                         freezeInjectedContextOntoLatestUserTurn(
                             memorySection: context.memorySection,
-                            screenContext: screenContextEnabled ? frozenScreenContext : nil
+                            screenContext: screenContextEnabled ? frozenScreenContext : nil,
+                            automationContext: appleScriptWorkingContext
                         )
                     }
 
@@ -4339,11 +4471,11 @@ final class ChatSession: ObservableObject {
 
                     ttftTrace?.mark("pre_ttft_done")
 
-                    // Per-call card override for native image results: the model
-                    // keeps the compact `toolPayload` (a small quantized model
-                    // parrots the enriched metadata JSON as its answer), while the
-                    // artifact card needs the enriched SHARED_ARTIFACT block.
-                    var nativeImageCardOverrides: [String: String] = [:]
+                    // Per-call presentation override: the model keeps a compact
+                    // result while the card retains the full chart/image payload.
+                    // This prevents a large display artifact from being re-prefilled
+                    // through the model on the next agent-loop iteration.
+                    var toolCardOverrides: [String: String] = [:]
 
                     // Build the matching tool-result turn for a call. Every
                     // assistant `tool_use` MUST be paired with a tool turn
@@ -4370,7 +4502,7 @@ final class ChatSession: ObservableObject {
                             }) ?? assistantTurn
                         // Card uses the override when present (native image);
                         // every other tool falls back to the model-facing result.
-                        owner.setToolResult(nativeImageCardOverrides[callId] ?? result, for: callId)
+                        owner.setToolResult(toolCardOverrides[callId] ?? result, for: callId)
                         let toolTurn = ChatTurn(role: .tool, content: result)
                         toolTurn.toolCallId = callId
                         return toolTurn
@@ -4504,7 +4636,16 @@ final class ChatSession: ObservableObject {
                             }
                         }
 
-                        if inv.toolName == "share_artifact" {
+                        if inv.toolName == "render_chart",
+                            let compactResult = RenderChartTool.compactModelResult(from: resultText)
+                        {
+                            // The full marker renders the chart card, while the
+                            // model gets a compact confirmation instead of
+                            // re-prefilling every category/value and inventing
+                            // a second artifact-sharing step.
+                            toolCardOverrides[callId] = resultText
+                            resultText = compactResult
+                        } else if inv.toolName == "share_artifact" {
                             resultText = await self.processShareArtifactResult(
                                 toolResult: resultText,
                                 executionMode: executionMode
@@ -4522,7 +4663,7 @@ final class ChatSession: ObservableObject {
                                 toolResult: resultText
                             )
                             if enriched != resultText {
-                                nativeImageCardOverrides[callId] = enriched
+                                toolCardOverrides[callId] = enriched
                                 if let artifact = SharedArtifact.fromEnrichedToolResult(enriched) {
                                     await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
                                 }
@@ -4772,7 +4913,8 @@ final class ChatSession: ObservableObject {
                             ) { inv, callId in
                                 try await ChatExecutionContext.$toolExecutionScope.withValue(toolScope) {
                                     try await ChatExecutionContext.$currentSessionId.withValue(sessionIdForTools) {
-                                        try await ChatExecutionContext.$currentAssistantTurnId.withValue(turnIdForTools) {
+                                        try await ChatExecutionContext.$currentAssistantTurnId.withValue(turnIdForTools)
+                                        {
                                             try await ChatExecutionContext.$currentToolCallId.withValue(callId) {
                                                 try await ToolRegistry.shared.execute(
                                                     name: inv.toolName,
@@ -4908,11 +5050,19 @@ final class ChatSession: ObservableObject {
                                 self.turns.last(where: { $0.role == .user })?
                                 .injectedContextPrefix
                                 .map { ContextBudgetManager.estimateTokens(for: $0) } ?? 0
+                            // The dedicated AppleScript app-name hint is part of
+                            // the conversation, not the opt-in Screen Context
+                            // budget row. Add its tokens back after excluding
+                            // the memory/screen prefix from Conversation.
+                            let automationContextTokens =
+                                appleScriptWorkingContext.map {
+                                    ContextBudgetManager.estimateTokens(for: $0)
+                                } ?? 0
                             let convTokens =
                                 msgs
                                 .filter { $0.role != "system" }
                                 .reduce(0) { $0 + ContextBudgetManager.estimateTokens(for: $1.content) }
-                                - currentInjectedTokens
+                                - max(0, currentInjectedTokens - automationContextTokens)
                             self.budgetTracker.updateConversation(
                                 tokens: max(0, convTokens),
                                 finishedOutputTurn: assistantTurn
@@ -4999,8 +5149,13 @@ final class ChatSession: ObservableObject {
                             req.remoteAgentLogModel =
                                 self.isRemoteAgentTarget
                                 ? self.windowState?.pinnedRemoteAgentEffectiveModel : nil
-                            req.modelOptions =
-                                self.activeModelOptions.isEmpty ? nil : self.activeModelOptions
+                            // Freeze agent semantics for the whole logical run.
+                            // Tool schemas stay present on ordinary iterations,
+                            // but the cap finalizer below intentionally removes
+                            // them; the explicit marker keeps both paths on the
+                            // same reasoning policy.
+                            req.isAgentRequest = !toolSpecs.isEmpty || self.isRemoteAgentTarget
+                            turnGenerationControls.apply(to: &req)
                             req.backgroundModelLoad = (self.loadIntent == .background)
                             req.ttftTrace = ttftTrace
                             // Correlate the Insights log this send produces back to the
@@ -5211,6 +5366,12 @@ final class ChatSession: ObservableObject {
                             // Empty-turn recovery exhausted: render a visible
                             // message into the assistant turn so the user never
                             // sees a silent "No visible text was produced".
+                            // The same hook finalises the narrowly recovered
+                            // post-success desktop-tool repeat. Clear any
+                            // committed pending preview first so a suppressed
+                            // malformed call cannot leave a tool card spinning.
+                            assistantTurn.pendingToolName = nil
+                            assistantTurn.clearPendingToolArgs()
                             assistantTurn.appendContentAndNotify(text)
                             self.rebuildVisibleBlocks()
                         }
@@ -5275,7 +5436,8 @@ final class ChatSession: ObservableObject {
                             finalReq.remoteAgentLogModel =
                                 isRemoteAgentTarget
                                 ? windowState?.pinnedRemoteAgentEffectiveModel : nil
-                            finalReq.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
+                            finalReq.isAgentRequest = !toolSpecs.isEmpty || isRemoteAgentTarget
+                            turnGenerationControls.apply(to: &finalReq)
                             finalReq.backgroundModelLoad = (loadIntent == .background)
                             finalReq.turnId = assistantTurn.id
                             // Distinct logical step (the post-cap summarizing
@@ -5370,6 +5532,7 @@ final class ChatSession: ObservableObject {
                     noteInsufficientFundsIfNeeded(error: error, blockedTurn: assistantTurn)
                 }
             }  // ChatExecutionContext.$currentAgentId.withValue
+            }  // ChatExecutionContext.$currentFolderRoot.withValue
         }
     }
 
@@ -5956,6 +6119,15 @@ struct ChatView: View {
                                 }
                                 windowState.refreshSessions()
                             },
+                            onSetPinned: { id, pinned in
+                                ChatSessionsManager.shared.setPinned(id: id, pinned: pinned)
+                                // Keep the open view-model in sync so the
+                                // next auto-save doesn't clobber the flag.
+                                if session.sessionId == id {
+                                    session.pinned = pinned
+                                }
+                                windowState.refreshSessions()
+                            },
                             onExport: { metadata, format in
                                 ChatSessionExportCoordinator.run(
                                     metadataSession: metadata,
@@ -6041,6 +6213,7 @@ struct ChatView: View {
                                 isPrivacyReviewSheetVisible: pendingRedactionReview != nil,
                                 supportsImages: observedSession.selectedModelSupportsImages,
                                 estimatedContextTokens: observedSession.estimatedContextTokens,
+                                appliesAgentReasoningDefault: observedSession.appliesAgentReasoningDefault,
                                 contextBreakdown: observedSession.estimatedContextBreakdown,
                                 sessionSpendMicro: observedSession.sessionRouterSpendMicro,
                                 isRouterBilledSession: observedSession.isOsaurusRouterSession,
@@ -6087,7 +6260,8 @@ struct ChatView: View {
                                 },
                                 inputHistoryKey: observedSession.sessionId,
                                 warmModelsOnLoadEnabled: ChatConfigurationStore.load().warmModelsOnLoad,
-                                warmupController: observedSession.warmupController
+                                warmupController: observedSession.warmupController,
+                                folderState: observedSession.folderState
                             )
                             .frame(maxWidth: 1100)
                             .frame(maxWidth: .infinity)
@@ -6298,6 +6472,8 @@ struct ChatView: View {
                         AppDelegate.shared?.showManagementWindow(initialTab: .imageGeneration)
                     case .openSearchSettings:
                         AppDelegate.shared?.showManagementWindow(initialTab: .search)
+                    case .openKnowledgeSettings:
+                        AppDelegate.shared?.showManagementWindow(initialTab: .knowledge)
                     case .openSubagentSettings:
                         // Land on the first custom (non-built-in) agent's
                         // Subagents tab (per-agent spawn / image config). With
@@ -6317,6 +6493,17 @@ struct ChatView: View {
                 }
             )
             .environment(\.theme, windowState.theme)
+        }
+        // Session-scoped sandbox Changes list + undo, opened from the
+        // toolbar's Changes button.
+        .sheet(isPresented: $windowState.isChangesSheetPresented) {
+            if let sid = session.sessionId {
+                ChatChangesView(
+                    sessionId: sid,
+                    onClose: { windowState.isChangesSheetPresented = false }
+                )
+                .environment(\.theme, windowState.theme)
+            }
         }
         .sheet(item: $pendingDiscoveredAgent) { agent in
             if agent.isUnverifiableSecureChannelPeer {

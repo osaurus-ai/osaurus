@@ -503,19 +503,17 @@ public enum SearchProviderCatalog {
     public static let nativeProviders: [SearchProviderDefinition] = [
         SearchProviderDefinition(
             id: "brave_html",
-            name: L("Brave (free)"),
+            name: L("Brave (built-in)"),
             runtime: .native,
-            summary: L("Free Brave search results. No key needed."),
-            pricingNote: "Free",
+            summary: L("Brave search results. No key needed."),
             homepage: "https://search.brave.com",
             categories: [SearchCategory.web, SearchCategory.news]
         ),
         SearchProviderDefinition(
             id: "bing_html",
-            name: L("Bing (free)"),
+            name: L("Bing (built-in)"),
             runtime: .native,
-            summary: L("Free Bing search results. No key needed."),
-            pricingNote: "Free",
+            summary: L("Bing search results. No key needed."),
             homepage: "https://www.bing.com",
             categories: [SearchCategory.web, SearchCategory.news]
         ),
@@ -523,8 +521,7 @@ public enum SearchProviderCatalog {
             id: "ddg",
             name: "DuckDuckGo",
             runtime: .native,
-            summary: L("Free web, news, and image search. Used only when other sources fail."),
-            pricingNote: "Free",
+            summary: L("Web, news, and image search. No key needed; used only when other sources fail."),
             homepage: "https://duckduckgo.com",
             // DDG's anti-bot layer serves plausible-looking decoy results to
             // flagged clients, so its hits are only trusted as a last resort.

@@ -706,6 +706,43 @@ public enum SubagentJobEvaluator {
         )
     }
 
+    // MARK: - Browser Use lane (host + fixture world)
+
+    /// Drive the real `browser_use` host (`SubagentSession` + `BrowserUseKind`)
+    /// with the child's tool calls dispatched to `execute` (a fixture world in
+    /// the eval kit) instead of a live WebKit session. The model plans against
+    /// deterministic pages, so a failure attributes to planning/tool use — not
+    /// network or rendering flake. `execute` receives `(toolName, argsJSON)`
+    /// and returns the tool envelope.
+    public static func runBrowserUse(
+        goal: String,
+        modelId: String,
+        maxSteps: Int = 16,
+        execute: @escaping @Sendable (String, String) async -> String
+    ) async -> SubagentJobTranscript {
+        let toolCallId = freshToolCallId()
+        let kind = BrowserUseKind(
+            goal: goal,
+            maxSteps: max(1, maxSteps),
+            evalModel: modelId,
+            executeOverride: { invocation in
+                await execute(invocation.toolName, invocation.jsonArguments)
+            }
+        )
+        let started = Date()
+        let envelope = await withEvalScope(toolCallId: toolCallId) {
+            await SubagentSession.run(kind, tool: "browser_use")
+        }
+        let latency = Date().timeIntervalSince(started) * 1000
+        return transcript(
+            fromEnvelope: envelope,
+            tool: "browser_use",
+            kindId: "browser_use",
+            toolCallId: toolCallId,
+            latencyMs: latency
+        )
+    }
+
     // MARK: - Eval agent seeding
 
     /// Seed a spawnable agent named `name` for the duration of `body`, then

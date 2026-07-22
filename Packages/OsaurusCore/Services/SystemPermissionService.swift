@@ -109,14 +109,20 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         self.permissionStates = loadedStates
     }
 
-    /// Centralized helper to set permission and persist state
+    /// Centralized helper to set permission and persist state.
+    /// Skips the no-op assignment: writing an unchanged `@Published` dict still
+    /// fires the whole SwiftUI fan-out, and the periodic refresh calls this
+    /// every 2s — observers (e.g. the composer card) would re-render each tick.
     private func setPermission(_ permission: SystemPermission, isGranted: Bool) {
+        guard permissionStates[permission] != isGranted else { return }
         permissionStates[permission] = isGranted
         savePermissionStates()
     }
 
-    /// Batch update permissions and persist
+    /// Batch update permissions and persist. Same no-op guard as
+    /// `setPermission` so the periodic refresh only publishes real changes.
     private func setPermissions(_ states: [SystemPermission: Bool]) {
+        guard states.contains(where: { permissionStates[$0.key] != $0.value }) else { return }
         for (permission, isGranted) in states {
             permissionStates[permission] = isGranted
         }
@@ -952,7 +958,9 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             // Try to fetch calendars to verify
             let calendars = store.calendars(for: .event)
             if !calendars.isEmpty {
-                return L("SUCCESS: Authorized (Found \(calendars.count) calendars)")
+                return calendars.count == 1
+                    ? L("SUCCESS: Authorized (Found 1 calendar)")
+                    : L("SUCCESS: Authorized (Found \(calendars.count) calendars)")
             } else {
                 return L("SUCCESS: Authorized (No calendars found)")
             }
@@ -977,7 +985,9 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             let store = EKEventStore()
             let calendars = store.calendars(for: .reminder)
             if !calendars.isEmpty {
-                return L("SUCCESS: Authorized (Found \(calendars.count) lists)")
+                return calendars.count == 1
+                    ? L("SUCCESS: Authorized (Found 1 list)")
+                    : L("SUCCESS: Authorized (Found \(calendars.count) lists)")
             } else {
                 return L("SUCCESS: Authorized (No lists found)")
             }

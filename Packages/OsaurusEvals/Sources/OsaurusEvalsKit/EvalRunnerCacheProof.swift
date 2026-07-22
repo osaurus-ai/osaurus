@@ -21,6 +21,7 @@
 //
 
 import Foundation
+@preconcurrency import MLXLMCommon
 import OsaurusCore
 
 extension EvalRunner {
@@ -50,7 +51,8 @@ extension EvalRunner {
         let started = Date()
         let transcript = await CacheProofEvaluator.run(
             queries: queries,
-            maxTokens: exp.maxTokens ?? 128
+            maxTokens: exp.maxTokens ?? 128,
+            thinkingPerTurn: exp.thinkingPerTurn
         )
         let elapsedMs = Date().timeIntervalSince(started) * 1000
         let sample = sampler.stop()
@@ -157,6 +159,111 @@ extension EvalRunner {
                 fail: "hybrid rule: KV hits +\(transcript.kvPrefixHitsDelta) with ZERO companion "
                     + "hits — a KV hit alone is not a pass for hybrid-SSM models"
             )
+        }
+
+        // Strong hybrid rule for Qwen 3.5-class rows (Bonsai): companion
+        // movement alone is not FULL reuse proof either — older boundaries
+        // must demonstrably reach the disk-L2 lane (stores) or come back
+        // from it (hits). Non-hybrid topologies note-skip: the requirement
+        // is meaningless where no companion cache exists.
+        if exp.requireDiskL2EvidenceOnHybrid == true {
+            if transcript.hybridTopology {
+                let companionMoved =
+                    transcript.ssmCompanionHitsDelta > 0
+                    || transcript.ssmCompanionReDerivesDelta > 0
+                let diskMoved =
+                    transcript.diskL2StoresDelta > 0 || transcript.diskL2HitsDelta > 0
+                check(
+                    companionMoved && diskMoved,
+                    pass: "hybrid disk rule: companion "
+                        + "(+\(transcript.ssmCompanionHitsDelta) hits/+\(transcript.ssmCompanionReDerivesDelta) rederives) "
+                        + "AND disk-L2 (+\(transcript.diskL2HitsDelta) hits/+\(transcript.diskL2StoresDelta) stores) both moved",
+                    fail: "hybrid disk rule: companion moved=\(companionMoved) disk-L2 moved=\(diskMoved) "
+                        + "— a hybrid row needs BOTH companion and disk-L2 evidence"
+                )
+            } else {
+                notes.append(
+                    "note: requireDiskL2EvidenceOnHybrid skipped — non-hybrid topology"
+                )
+            }
+        }
+
+        // Multi-turn memory-growth gate: last-turn footprint − first-turn
+        // footprint must stay under the ceiling. Growth back toward the
+        // model's on-disk size fails here even when every reuse floor
+        // passed — the exact regression the bounded companion LRU exists
+        // to prevent.
+        if !transcript.footprintAfterTurnMb.isEmpty {
+            let series = transcript.footprintAfterTurnMb
+                .map { String(format: "%.0f", $0) }
+                .joined(separator: " → ")
+            notes.append("footprint after each turn (MB): \(series)")
+        }
+        if let growthCeiling = exp.maxFootprintGrowthMb {
+            if let first = transcript.footprintAfterTurnMb.first,
+                let last = transcript.footprintAfterTurnMb.last,
+                transcript.footprintAfterTurnMb.count >= 2
+            {
+                let growth = last - first
+                check(
+                    growth <= growthCeiling,
+                    pass: String(
+                        format: "footprint growth %.0f MB within %.0f MB across %d turns",
+                        growth, growthCeiling, transcript.footprintAfterTurnMb.count
+                    ),
+                    fail: String(
+                        format: "footprint grew %.0f MB across %d turns — EXCEEDS %.0f MB gate",
+                        growth, transcript.footprintAfterTurnMb.count, growthCeiling
+                    )
+                )
+            } else {
+                check(
+                    false,
+                    pass: "",
+                    fail: "maxFootprintGrowthMb set but per-turn footprint samples unavailable "
+                        + "(\(transcript.footprintAfterTurnMb.count) sample(s))"
+                )
+            }
+        }
+
+        // Production-resolved budget gate: the peak footprint must stay
+        // within the load budget the memory-safety plan ACTUALLY resolved
+        // for this process — which is the simulated 16 GiB budget when
+        // OSAURUS_EVALS_SIM_RAM_GB is in force. This ties the eval verdict
+        // to the same math production loads under, not a hand-picked MB.
+        if exp.gatePeakFootprintToResolvedBudget == true {
+            let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+                for: ServerRuntimeSettingsStore.snapshot()
+            )
+            if let budgetBytes = plan.resolvedLoadBudgetBytes {
+                let budgetMb = Double(budgetBytes) / (1024 * 1024)
+                if let peak = sample.peakPhysFootprintMb {
+                    check(
+                        peak <= budgetMb,
+                        pass: String(
+                            format: "peak footprint %.0f MB within resolved budget %.0f MB",
+                            peak, budgetMb
+                        ),
+                        fail: String(
+                            format: "peak footprint %.0f MB EXCEEDS resolved budget %.0f MB "
+                                + "(plan: %@)",
+                            peak, budgetMb, plan.displaySummary
+                        )
+                    )
+                } else {
+                    check(
+                        false,
+                        pass: "",
+                        fail: "gatePeakFootprintToResolvedBudget set but ResourceSampler "
+                            + "produced no reading"
+                    )
+                }
+            } else {
+                notes.append(
+                    "note: gatePeakFootprintToResolvedBudget — no budget resolved "
+                        + "(unlimited/diagnostic mode); gate not applied"
+                )
+            }
         }
 
         if let ceiling = exp.maxPeakPhysFootprintMb {

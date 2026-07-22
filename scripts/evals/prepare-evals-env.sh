@@ -118,18 +118,9 @@ else
   fi
 fi
 
-# ── 4. (opt-in) install the osaurus.browser plugin ───────────────────────
-# The capability_claims browser cases require the `osaurus.browser` native
-# plugin installed on disk. Installing it mutates ~/.osaurus, so it's
-# opt-in (most suites don't need it): export OSAURUS_EVALS_INSTALL_BROWSER=1
-# (the CapabilityClaims re-run does). Best-effort; never fails the prep.
-if [[ "${OSAURUS_EVALS_INSTALL_BROWSER:-0}" == "1" ]]; then
-  if command -v osaurus >/dev/null 2>&1; then
-    log "Installing osaurus.browser plugin (OSAURUS_EVALS_INSTALL_BROWSER=1)…"
-    osaurus tools install osaurus.browser || warn "osaurus.browser install failed; capability_claims browser cases will skip."
-  else
-    warn "OSAURUS_EVALS_INSTALL_BROWSER=1 but 'osaurus' CLI not found; skipping browser plugin install."
-  fi
-fi
+# Note: the capability_claims browser cases used to require the
+# `osaurus.browser` plugin (OSAURUS_EVALS_INSTALL_BROWSER=1). The browser is
+# now a NATIVE Osaurus capability (`browser_use`), so no plugin install is
+# needed and those cases run everywhere.
 
 log "Done."

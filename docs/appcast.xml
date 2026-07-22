@@ -3,6 +3,203 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.8</title>
+            <pubDate>Tue, 21 Jul 2026 05:06:25 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.8</sparkle:version>
+            <sparkle:shortVersionString>0.22.8</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.8/Osaurus-0.22.8.dmg" length="66478990" type="application/octet-stream" sparkle:edSignature="NMD/yn/1q3ljaDJaxXqBpURyrh+q0IyMdmtPOpLdFcQ0JcGmdBWTVFT/F62ofXbI4ePw5i0q51HpGHSEuUIEBQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Pin explicit Gemma 4 paged cache support (#2109) by @jjang-ai
+- Preserve visible generation telemetry across chat warmups (#2106) by @jjang-ai
+- fix: honor reasoning toggle across agent tool loops (#2105) by @jjang-ai
+- Preserve explicit Thinking mode across agent tool turns (#2101) by @jjang-ai
+
+## 🚀 Features
+
+- multi select chats to delete/archive in sidebar with Cmd+Click shortcut (#2114) by @RaajeevChandran
+- pin chats in sidebar (#2113) by @RaajeevChandran
+- add openai compatible tts server support (#2099) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Continue cap-truncated file\_read to the end of the file (#2112) by @tpae
+- Fix truncated remote tool arguments (#2108) by @tpae
+- fix prompt text deleted when escape dismisses the slash command   popup (#2103) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- Adopt native macOS theme defaults with system accent following (#2115) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.7...0.22.8
+]]></description>
+        </item>
+        <item>
+            <title>0.22.7</title>
+            <pubDate>Mon, 20 Jul 2026 05:45:40 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.7</sparkle:version>
+            <sparkle:shortVersionString>0.22.7</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.7/Osaurus-0.22.7.dmg" length="66381090" type="application/octet-stream" sparkle:edSignature="YILOxnOC9MDCc37rmQtR53XY8YYswOF7Gvn5+rJNNjjvy10VJJktgGVG3wsAtDZCpIi3oD6oWLQBMvB6CvE1DA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Pin paged cache eviction fix (#2097) by @jjang-ai
+- Pin Bonsai hybrid cache replay and disk quota fixes (#2093) by @jjang-ai
+- Fix Nemotron AIFF routing and hybrid cache restore (#2087) by @jjang-ai
+- Pin ZAYA cache fix and enable Nemotron Omni multimodal routing (#2086) by @jjang-ai
+- Publish plugin active version atomically (#1844) by @mimeding
+- Bound skill archive subprocesses (#1840) by @mimeding
+- Correct Gemma QAT cache settings and TQ telemetry (#2085) by @jjang-ai
+- Fix built-in Data Visualizer chart tool activation (#2084) by @jjang-ai
+- Update Simplified Chinese and Traditional Chinese translations (#2076) by @ftzahao
+- Fix JANG AppleScript success finalization (#2075) by @jjang-ai
+
+## 🚀 Features
+
+- Add combined-mode file\_copy bridge for binary files between workspace and sandbox (#2080) by @tpae
+- Track chat file changes with undo, and add writable combined mode (#2078) by @tpae
+- added knowledge base introduction modal (#2077) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Fix release job: reuse sentry-cli installed by the dSYM step (#2096) by @tpae
+- fixed app hangs (#2095) by @RaajeevChandran
+- Fix Gemma cache telemetry and Bonsai chart parsing (#2091) by @jjang-ai
+- Fix skill discovery metadata loss and MCP capability-load reliability seams (#2089) by @tpae
+- detect mcp server urls pasted into the api provider form and offer a redirect (#2082) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- Move Thinking toggle into the model picker's Model Options section (#2094) by @tpae
+- Isolate working-folder context per chat session (#2092) by @tpae
+- Fix Bonsai hybrid detection and add 16 GB eval coverage (#2090) by @tpae
+- Harden Agent DB tool contracts for import modes and saved views (#2083) by @tpae
+- Fix management-window sheet-swap crash and wire Sentry release telemetry (#2081) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.6...0.22.7
+]]></description>
+        </item>
+        <item>
+            <title>0.22.6</title>
+            <pubDate>Sat, 18 Jul 2026 04:46:49 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.6</sparkle:version>
+            <sparkle:shortVersionString>0.22.6</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.6/Osaurus-0.22.6.dmg" length="66045178" type="application/octet-stream" sparkle:edSignature="xJzsbZwnaTc5X7LVpfisRt1D76Lf59/bjjWjrPYtGYFt0EygyyRnCIVMMmuZX1i3QZQy7USYzc0bz+SoLzbSBA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Fix AppleScript Computer Use finalization and failure containment (#2071) by @jjang-ai
+- Add eval watcher scoreboard artifacts (#1708) by @mimeding
+- Stabilize Watchers pane layout (#1794) by @mimeding
+- Add runtime installation doctor (#2043) by @mimeding
+- Reliability audit: install integrity, loader/ABI validation, route timeouts, lifecycle ordering, CI coverage (#2061) by @tpae
+
+## 🧰 Maintenance
+
+- Fix singular and plural count labels (#2074) by @tpae
+- Overhaul Tools management UX around an everyday-user catalog (#2073) by @tpae
+- Redesign agent detail navigation and restyle the Tools tab (#2072) by @tpae
+- Normalize Bonsai recommendations for onboarding (#2069) by @tpae
+- Improve Models catalog browsability and tuck runtime diagnostics away (#2070) by @tpae
+- Polish context budget popover (#2068) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.5...0.22.6
+]]></description>
+        </item>
+        <item>
+            <title>0.22.5</title>
+            <pubDate>Fri, 17 Jul 2026 14:51:45 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.5</sparkle:version>
+            <sparkle:shortVersionString>0.22.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.5/Osaurus-0.22.5.dmg" length="65946724" type="application/octet-stream" sparkle:edSignature="RDKFZ34U9P5tlLBgt3Loz4Yr+6KAomoPzRUcIIqhvj09R3lR+xP4dqgT5m3oOZv6+H98USVKRdAIksS0y6nsCQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Recover observed Bonsai chart argument drift (#2065) by @jjang-ai
+- Fix AppleScript query completion outcomes (#2064) by @jjang-ai
+- Fix spawned agent tool execution scope (#2062) by @jjang-ai
+- Harden manual plugin receipt metadata (#1842) by @mimeding
+- Handle empty voice transcriptions (#1852) by @mimeding
+- Pin schema-1 JANG loader fix (#2047) by @jjang-ai
+
+## 🚀 Features
+
+- knowledge collections (#1815) by @RaajeevChandran
+- added cmd+= and cmd+- font zoom shortcuts (#2054) by @RaajeevChandran
+- Premium web search through the Osaurus router with search credits (#2055) by @tpae
+- Redesign agent feature flags into an Abilities overview with live context estimate (#2053) by @tpae
+- Universal skills library and tools-only agent UX (#2050) by @tpae
+
+## 🐛 Bug Fixes
+
+- updated knowledge empty state copy (#2067) by @RaajeevChandran
+- mcp bearer 401 classification (#2048) by @RaajeevChandran
+- Enforce selected memory safety limits during model loads (#2045) by @jjang-ai
+- Fix Bonsai structured charts and hybrid memory safety (#2041) by @jjang-ai
+
+## 🧰 Maintenance
+
+- Redesign agent Database workspace and settings navigation UX (#2052) by @tpae
+- Reduce redundant agent prompt context (#2051) by @tpae
+- improved AppleScript model search UX (#2046) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.4...0.22.5
+]]></description>
+        </item>
+        <item>
+            <title>0.22.4</title>
+            <pubDate>Wed, 15 Jul 2026 14:09:45 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.4</sparkle:version>
+            <sparkle:shortVersionString>0.22.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.4/Osaurus-0.22.4.dmg" length="65347438" type="application/octet-stream" sparkle:edSignature="zGBsWFE9Cu8mDcp5kWYjFuvC9FlAELa0C7UxSl/pyY/Ze0x3KSy5A5SCrVVYquvowuJX6UbjxsXK+JnmNbpLBg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- added bonsai models (#2040) by @RaajeevChandran
+- Pin vmlx for native 1-bit JANG support (#2037) by @jjang-ai
+- Update Simplified Chinese and Traditional Chinese translations (#2034) by @ftzahao
+- fixed window maximize bug (#2028) by @RaajeevChandran
+- updated readme (#2025) by @RaajeevChandran
+- Update README.md (#2024) by @RaajeevChandran
+
+## 🚀 Features
+
+- Upgrade notch task navigation and follow-ups (#2036) by @tpae
+
+## 🐛 Bug Fixes
+
+- Fix spawn\_model target contract (#2033) by @jjang-ai
+- Computer Use: open apps foreground so the window is visible and the model doesn't misreport failure (#2032) by @jjang-ai
+- fixed main thread hangs across launch, storage, tts, and streaming (#2030) by @RaajeevChandran
+- fix scheduled runs never completing by evicting finished headless tasks (#2031) by @RaajeevChandran
+- Computer Use AX bounding + AccessibilityBoundedElement test fix + vmlx repin (SpecDec tail flush #148) (#2029) by @jjang-ai
+- read the hugging face keychain outside the token cache lock (#2027) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- make the chat window responsive down to narrow widths (#2038) by @RaajeevChandran
+- Agent request lifecycles independent of the chat window (#2023) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.3...0.22.4
+]]></description>
+        </item>
+        <item>
             <title>0.22.3</title>
             <pubDate>Mon, 13 Jul 2026 08:05:10 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

@@ -33,6 +33,12 @@ public enum ToolResultClass: Equatable, Sendable {
     case partialListing
     /// File content (`kind: "file"`).
     case fileContent
+    /// File content whose RENDERED output was cut by the character cap
+    /// and which carries an exact continuation range (`next_start_line`
+    /// / `next_end_line`). Distinct from `.fileContent` so the harness
+    /// can stage a continuation notice instead of letting the model
+    /// review a truncated file as if it were complete (issue #2098).
+    case partialFileContent(path: String, nextStartLine: Int, nextEndLine: Int)
     /// A referenced path does not exist (`kind: "not_found"`).
     case notFound
     /// Any other failure envelope.
@@ -88,12 +94,16 @@ public final class AgentTaskState {
     /// whose `path` freshness is invalidated by a write to the same path.
     private static let readLikeTools: Set<String> = [
         "file_read", "file_search", "sandbox_read_file", "sandbox_search_files",
+        "web_search", "search_and_extract",
     ]
 
-    /// Search tools' results depend on MANY paths, so any write — not just
-    /// one to the searched path — invalidates their fresh entries.
+    /// Search tools have path-less freshness entries. Local search results
+    /// depend on MANY paths, so any write — not just one to the searched path
+    /// — invalidates them. Applying the same conservative invalidation to web
+    /// results permits a deliberate refresh after intervening work while still
+    /// replaying an immediate identical re-issue.
     private static let searchLikeTools: Set<String> = [
-        "file_search", "sandbox_search_files",
+        "file_search", "sandbox_search_files", "web_search", "search_and_extract",
     ]
 
     /// Tools that mutate a path; recording one invalidates any fresh read
@@ -154,6 +164,23 @@ public final class AgentTaskState {
     /// model just gets told it's looping.
     private static let repeatedCallThreshold = 3
 
+    /// `web_search` is discovery-only: it returns ranked URLs and snippets,
+    /// not the page body or downloadable dataset. Several searches can be
+    /// legitimate research, but a longer uninterrupted run — especially with
+    /// reworded queries — means the model is failing to transition to
+    /// extraction/download. Keep this separate from the generic planning
+    /// detector so productive consecutive calls to other web tools stay valid.
+    private static let webDiscoveryRunThreshold = 4
+
+    /// Concrete transitions that consume or process discovered data. Meta
+    /// operations such as capability discovery/loading and provider
+    /// configuration deliberately do not reset the search budget: the live
+    /// Bonsai loop used those as a detour and resumed rephrased discovery.
+    private static let webDiscoveryProgressTools: Set<String> = [
+        "search_and_extract", "render_chart", "browser_use", "http_request",
+        "file_read", "sandbox_read_file", "shell_run", "sandbox_exec",
+    ]
+
     // MARK: State
 
     /// A read result still considered fresh: the canonical path it read and
@@ -210,6 +237,9 @@ public final class AgentTaskState {
     /// reworded-planning-loop nudge (e.g. `todo` re-issued every turn).
     private var planningRunName: String?
     private var planningRunCount = 0
+    /// `web_search` executions since the last concrete retrieval/processing
+    /// action, regardless of argument changes or intervening meta tools.
+    private var webDiscoveryRunCount = 0
 
     public init(biasEnabled: Bool = true) {
         self.biasEnabled = biasEnabled
@@ -233,6 +263,7 @@ public final class AgentTaskState {
         repeatedCallName = nil
         planningRunName = nil
         planningRunCount = 0
+        webDiscoveryRunCount = 0
     }
 
     // MARK: Dedupe
@@ -272,6 +303,31 @@ public final class AgentTaskState {
             return held.envelope
         }
         return nil
+    }
+
+    /// Return a synthetic, structured transition result when the model keeps
+    /// issuing discovery searches after the bounded research window. Unlike
+    /// the bias notice, this is load-bearing: the next `web_search` is not sent
+    /// to a provider, so a small model cannot burn the rest of the run on
+    /// rephrased discovery queries and network latency. It remains a success
+    /// envelope because this is an agent-loop routing decision, not a provider
+    /// failure; the model can continue immediately with retrieval or report a
+    /// truthful blocker when retrieval is unavailable.
+    public func guardedResult(name: String) -> String? {
+        guard name == "web_search", webDiscoveryRunCount >= Self.webDiscoveryRunThreshold else {
+            return nil
+        }
+        return ToolEnvelope.success(
+            tool: name,
+            result: [
+                "kind": "transition_required",
+                "executed": false,
+                "reason": "discovery_limit_reached",
+                "message":
+                    "Discovery is complete. Do not issue another web_search. Retrieve a selected result with search_and_extract using its direct url, then process it and call render_chart when requested. If retrieval or chart rendering is unavailable, report that blocker now.",
+                "next_tools": ["search_and_extract", "render_chart"],
+            ]
+        )
     }
 
     /// Convenience boolean mirror of `heldResult`.
@@ -376,6 +432,17 @@ public final class AgentTaskState {
             planningRunCount = 0
         }
 
+        // Discovery-to-retrieval transition guard. Different query text and
+        // meta-tool detours must not defeat it: the observed Bonsai failure
+        // repeatedly rephrased the same request, then loaded/discovered more
+        // capabilities, then resumed searching. Only real retrieval or
+        // processing disarms the budget.
+        if name == "web_search" {
+            webDiscoveryRunCount += 1
+        } else if Self.webDiscoveryProgressTools.contains(name), ToolEnvelope.isSuccess(result) {
+            webDiscoveryRunCount = 0
+        }
+
         // Wandering counter: a listing is a step that hasn't reached a file
         // yet, so it increments. ONLY a successful file read counts as
         // progress and resets it. A `not_found` / `error` is a FAILED read —
@@ -387,11 +454,14 @@ public final class AgentTaskState {
         case .emptyListing, .populatedListing, .partialListing:
             consecutiveListingsWithoutRead += 1
             lastListing = parseListing(result)
-        case .fileContent:
+        case .fileContent, .partialFileContent:
+            // A partial read is still a successful descent into a file —
+            // progress for the wandering counter; its continuation steer is
+            // handled by `nextStepBias`, not here.
             consecutiveListingsWithoutRead = 0
         case .notFound, .error, .nativeImageGeneration, .other:
             break
-        }  // nativeImageGeneration carries associated values; matched without binding
+        }  // associated-value cases matched without binding
 
         // Mark a successful read-like result as fresh (with its exact
         // envelope) so a re-issue replays it until a write invalidates it.
@@ -440,6 +510,16 @@ public final class AgentTaskState {
                 "You have called `\(name)` \(Self.repeatedCallThreshold)+ times in a row without taking any other action. Re-planning is not progress — if you already have what you need, execute the next concrete step or finish the task; otherwise call a different tool. Do not issue another `\(name)` now."
         }
 
+        // Reworded discovery loop: the model has URLs/snippets but keeps
+        // searching instead of retrieving or processing a selected source.
+        // Name the real tool boundary and the dynamic-load path; if those
+        // capabilities are unavailable, require a truthful blocker instead of
+        // another cosmetic query rewrite.
+        if webDiscoveryRunCount >= Self.webDiscoveryRunThreshold {
+            return
+                "You have called `web_search` \(Self.webDiscoveryRunThreshold)+ times in a row. `web_search` is discovery-only and returns URLs/snippets, not page bodies or downloadable data. Stop searching. Use a returned source with an available extraction, download, or file tool; if available, load `tool/search_and_extract` with `capabilities_load`, then process the retrieved data and call `render_chart` when that tool is available. If retrieval or chart rendering is unavailable, report that blocker clearly instead of rephrasing the search again."
+        }
+
         // Listing nudges are reactive: suppressed until the model is observed
         // wandering (this many listings without an intervening read), so a
         // model that descends after its first listing is never nudged.
@@ -483,6 +563,12 @@ public final class AgentTaskState {
                 + "without `source_paths` again (that produces a brand-new unrelated image, not an "
                 + "edit of this one). Only if no such follow-up was requested should you give a brief "
                 + "final confirmation. Do not narrate the edit as the final answer instead of calling the tool."
+        case .partialFileContent(let path, let nextStart, let nextEnd):
+            // Reactive by nature — the read is observed incomplete. Without
+            // this steer, models treated the truncated render as the whole
+            // file and reviewed 426 of 499 lines as complete (issue #2098).
+            return
+                "The `file_read` of `\(path)` was truncated by the output cap — you have only seen part of the requested range. Before drawing conclusions about the whole file, call `file_read` again with {\"path\": \"\(path)\", \"start_line\": \(nextStart), \"end_line\": \(nextEnd)} to read the rest."
         case .fileContent, .error, .other:
             return nil
         }
@@ -512,6 +598,24 @@ public final class AgentTaskState {
             if payload["truncated"] as? Bool == true { return .partialListing }
             return .populatedListing
         case "file":
+            // A rendered-cap truncation with an exact continuation range is
+            // its own state: the tool read the whole file but the model only
+            // saw a prefix, and `next_start_line`/`next_end_line` say exactly
+            // how to resume. Raw byte-capped reads (`raw_bytes_truncated`)
+            // deliberately carry no continuation fields — a line-ranged
+            // re-read cannot reach bytes that were never loaded — so they
+            // stay plain `.fileContent` and keep the tool's own split-the-
+            // file guidance.
+            if payload["truncated"] as? Bool == true,
+                let nextStart = payload["next_start_line"] as? Int,
+                let nextEnd = payload["next_end_line"] as? Int
+            {
+                return .partialFileContent(
+                    path: payload["path"] as? String ?? "",
+                    nextStartLine: nextStart,
+                    nextEndLine: nextEnd
+                )
+            }
             return .fileContent
         case "native_image_generation_job":
             let paths = nativeImagePaths(from: payload)

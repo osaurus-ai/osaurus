@@ -35,13 +35,14 @@ private final class ScriptedLoopSurface {
     var dedupedCalls: [(name: String, callId: String, held: String)] = []
     var willProcessCallIds: [String] = []
     var batchOutcomes: [[AgentLoopToolOutcome]] = []
+    var emittedFinalTexts: [String] = []
 
     init(steps: [AgentLoopModelStep]) {
         self.steps = steps
     }
 
-    func makeHooks() -> AgentLoopHooks {
-        AgentLoopHooks(
+    func makeHooks(includeFallbackText: Bool = true) -> AgentLoopHooks {
+        var hooks = AgentLoopHooks(
             isCancelled: { self.cancelled },
             buildMessages: { notices in
                 self.builtNotices.append(notices)
@@ -70,6 +71,12 @@ private final class ScriptedLoopSurface {
             },
             pendingTodoCount: pendingTodos.map { count in { count } }
         )
+        if includeFallbackText {
+            hooks.emitFallbackText = { text in
+                self.emittedFinalTexts.append(text)
+            }
+        }
+        return hooks
     }
 }
 
@@ -144,6 +151,33 @@ struct AgentToolLoopTests {
         #expect(surface.batchOutcomes.count == 1)
         #expect(surface.batchOutcomes[0].map { $0.invocation.toolName } == ["file_search", "shell_run"])
         #expect(surface.batchOutcomes[0].allSatisfy { !$0.wasDeduped && !$0.wasError })
+    }
+
+    @Test func fifthRephrasedWebSearchReturnsTransitionWithoutExecutingProvider() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("web_search", #"{"query":"source 1"}"#)]),
+            .toolCalls([inv("web_search", #"{"query":"source 2"}"#)]),
+            .toolCalls([inv("web_search", #"{"query":"source 3"}"#)]),
+            .toolCalls([inv("web_search", #"{"query":"source 4"}"#)]),
+            .toolCalls([inv("web_search", #"{"query":"source 5"}"#)]),
+            .finalResponse,
+        ])
+        surface.toolResults["web_search"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(tool: "web_search", text: "ranked snippets")
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(maxIterations: 6),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result.exit == .finalResponse)
+        #expect(surface.executedCalls.count == 4)
+        let guarded = try #require(surface.batchOutcomes.last?.first)
+        #expect(guarded.result.contains("transition_required"))
+        #expect(!guarded.wasDeduped)
+        #expect(!guarded.wasError)
     }
 
     @Test func capabilitiesLoadKeepsToolSchemaFrozenAndCallableSameTurn() async throws {
@@ -284,6 +318,72 @@ struct AgentToolLoopTests {
         #expect(surface.batchOutcomes[1].first?.wasDeduped == true)
     }
 
+    /// Issue #2098: a `file_read` whose rendered output was cut by the
+    /// character cap carries `next_start_line`/`next_end_line`; the loop
+    /// must stage a continuation notice for the NEXT model step naming the
+    /// exact path and resume range, so the model reads the rest instead of
+    /// reviewing the visible prefix as the whole file.
+    @Test func partialFileReadStagesContinuationNoticeForNextStep() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("file_read", #"{"path":"BeatStrip.ino"}"#)]),
+            .finalResponse,
+        ])
+        surface.toolResults["file_read"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(
+                tool: "file_read",
+                result: [
+                    "kind": "file",
+                    "text": "Lines 1-426 of 499:\n...",
+                    "path": "BeatStrip.ino",
+                    "truncated": true,
+                    "next_start_line": 427,
+                    "next_end_line": 499,
+                ]
+            )
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+        #expect(result.exit == .finalResponse)
+        #expect(surface.builtNotices.count == 2)
+        let notice = try #require(surface.builtNotices[1].first)
+        #expect(notice.hasPrefix("[System Notice] "))
+        #expect(notice.contains("BeatStrip.ino"))
+        #expect(notice.contains(#""start_line": 427"#))
+        #expect(notice.contains(#""end_line": 499"#))
+    }
+
+    /// A COMPLETE file read must not stage any continuation notice — the
+    /// steer is reserved for reads observed truncated by the output cap.
+    @Test func completeFileReadStagesNoContinuationNotice() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("file_read", #"{"path":"small.txt"}"#)]),
+            .finalResponse,
+        ])
+        surface.toolResults["file_read"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(
+                tool: "file_read",
+                result: [
+                    "kind": "file",
+                    "text": "     1|hello\n",
+                    "path": "small.txt",
+                    "truncated": false,
+                ]
+            )
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+        #expect(result.exit == .finalResponse)
+        #expect(surface.builtNotices == [[], []])
+    }
+
     @Test func dedupeNoticeSuppressedForHeadlessPolicy() async throws {
         let args = #"{"path":"notes.txt"}"#
         let envelope = ToolEnvelope.success(
@@ -347,6 +447,284 @@ struct AgentToolLoopTests {
         #expect(surface.executedCalls.map(\.name) == ["bad_tool", "good_tool"])
         #expect(surface.batchOutcomes.count == 1)
         #expect(surface.batchOutcomes[0].map(\.wasError) == [true, false])
+    }
+
+    @Test func terminalComputerUseEnvelopeStopsChatWithoutParentFollowUp() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("computer_use")]),
+            .toolCalls([inv("computer_use")]),
+        ])
+        surface.toolResults["computer_use"] = AgentLoopToolExecution(
+            result: ToolEnvelope.failure(
+                kind: .executionError,
+                message: "The model could not produce a valid action.",
+                tool: "computer_use",
+                retryable: false
+            ),
+            isError: false
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .toolRejected, iterations: 1))
+        #expect(surface.executedCalls.map(\.name) == ["computer_use"])
+    }
+
+    @Test func terminalMacQueryEnvelopeStopsChatBeforeHallucinatedAnswer() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("mac_query")]),
+            .finalResponse,
+        ])
+        surface.toolResults["mac_query"] = AgentLoopToolExecution(
+            result: ToolEnvelope.failure(
+                kind: .executionError,
+                message: "The query failed.",
+                tool: "mac_query",
+                retryable: false
+            ),
+            isError: false
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .toolRejected, iterations: 1))
+        #expect(surface.builtNotices.count == 1, "No second model iteration may fabricate a value")
+    }
+
+    @Test func batchExecutorMarksReturnedTerminalDesktopFailureAsRejection() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("mac_query")]),
+            .finalResponse,
+        ])
+        var hooks = surface.makeHooks()
+        hooks.executeBatch = { calls in
+            calls.map { call in
+                AgentLoopToolExecution(
+                    result: ToolEnvelope.failure(
+                        kind: .executionError,
+                        message: "The query failed.",
+                        tool: call.invocation.toolName,
+                        retryable: false
+                    ),
+                    // Mirrors ToolRegistry-returned envelopes in ChatView:
+                    // the tool body returned JSON instead of throwing.
+                    isError: false
+                )
+            }
+        }
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: hooks
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .toolRejected, iterations: 1))
+        #expect(surface.batchOutcomes.count == 1)
+        #expect(surface.batchOutcomes[0].map(\.wasError) == [true])
+        #expect(surface.builtNotices.count == 1, "The real Chat batch path must not run the parent again")
+    }
+
+    @Test func correctableDesktopSubagentFailuresStillReachParentForPivot() async throws {
+        for kind in [ToolEnvelope.Kind.invalidArgs, .notFound] {
+            let surface = ScriptedLoopSurface(steps: [
+                .toolCalls([inv("mac_query")]),
+                .finalResponse,
+            ])
+            surface.toolResults["mac_query"] = AgentLoopToolExecution(
+                result: ToolEnvelope.failure(
+                    kind: kind,
+                    message: "correct this call",
+                    tool: "mac_query",
+                    retryable: false
+                ),
+                isError: false
+            )
+
+            let result = try await AgentToolLoop.run(
+                policy: chatPolicy(),
+                state: AgentTaskState(),
+                hooks: surface.makeHooks()
+            )
+
+            #expect(result.exit == .finalResponse, "kind=\(kind.rawValue)")
+            #expect(surface.builtNotices.count == 2, "kind=\(kind.rawValue)")
+        }
+    }
+
+    @Test func malformedAppleScriptRepeatAfterSuccessFinishesFromRealSummary() async throws {
+        let malformed = #"{"_error":"invalid_tool_arguments","_tool":"applescript","_field":"task","_message":"missing required argument: task","_expected":"required parameter"}"#
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("applescript", #"{"task":"Open TextEdit"}"#)]),
+            .toolCalls([inv("applescript", malformed)]),
+            .toolCalls([inv("never_runs")]),
+        ])
+        surface.toolResults["applescript"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(
+                tool: "applescript",
+                result: [
+                    "kind": "applescript",
+                    "status": "succeeded",
+                    "scripts_run": 1,
+                    "summary": "Ran 1 script(s) successfully.",
+                ]
+            )
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 2))
+        #expect(surface.executedCalls.map(\.name) == ["applescript"])
+        #expect(surface.willProcessCallIds.count == 1)
+        #expect(surface.emittedFinalTexts == ["Ran 1 script(s) successfully."])
+        #expect(surface.steps.count == 1)
+    }
+
+    @Test func malformedDesktopCallWithoutMatchingSuccessStillExecutes() async throws {
+        let malformed = #"{"_error":"invalid_tool_arguments","_tool":"applescript","_field":"task","_message":"missing required argument: task"}"#
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("file_read", #"{"path":"notes.txt"}"#)]),
+            .toolCalls([inv("applescript", malformed)]),
+        ])
+        surface.toolResults["applescript"] = AgentLoopToolExecution(
+            result: ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "missing required argument: task",
+                tool: "applescript"
+            )
+        )
+
+        _ = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(surface.executedCalls.map(\.name) == ["file_read", "applescript"])
+        #expect(surface.emittedFinalTexts.isEmpty)
+    }
+
+    @Test func malformedDesktopRepeatRecoveryRejectsNearMisses() {
+        let state = AgentTaskState()
+        state.record(
+            name: "applescript",
+            argsJSON: #"{"task":"Open TextEdit"}"#,
+            result: ToolEnvelope.success(
+                tool: "applescript",
+                result: ["summary": "Ran 1 script(s) successfully."]
+            )
+        )
+
+        let wrongField = inv(
+            "applescript",
+            #"{"_error":"invalid_tool_arguments","_tool":"applescript","_field":"content"}"#
+        )
+        let wrongToolEnvelope = inv(
+            "applescript",
+            #"{"_error":"invalid_tool_arguments","_tool":"computer_use","_field":"task"}"#
+        )
+        let unrelatedTool = inv(
+            "file_read",
+            #"{"_error":"invalid_tool_arguments","_tool":"file_read","_field":"path"}"#
+        )
+
+        #expect(
+            AgentToolLoop.completedDesktopSummaryBeforeMalformedRepeat(
+                invocation: wrongField,
+                state: state
+            ) == nil
+        )
+        #expect(
+            AgentToolLoop.completedDesktopSummaryBeforeMalformedRepeat(
+                invocation: wrongToolEnvelope,
+                state: state
+            ) == nil
+        )
+        #expect(
+            AgentToolLoop.completedDesktopSummaryBeforeMalformedRepeat(
+                invocation: unrelatedTool,
+                state: state
+            ) == nil
+        )
+
+        let emptySummaryState = AgentTaskState()
+        emptySummaryState.record(
+            name: "applescript",
+            argsJSON: #"{"task":"Open TextEdit"}"#,
+            result: ToolEnvelope.success(tool: "applescript", result: ["summary": "  "])
+        )
+        let exactMalformed = inv(
+            "applescript",
+            #"{"_error":"invalid_tool_arguments","_tool":"applescript","_field":"task"}"#
+        )
+        #expect(
+            AgentToolLoop.completedDesktopSummaryBeforeMalformedRepeat(
+                invocation: exactMalformed,
+                state: emptySummaryState
+            ) == nil
+        )
+    }
+
+    @Test func malformedAppleScriptRepeatStillExecutesOnHeadlessSurface() async throws {
+        let malformed = #"{"_error":"invalid_tool_arguments","_tool":"applescript","_field":"task"}"#
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("applescript", #"{"task":"Open TextEdit"}"#)]),
+            .toolCalls([inv("applescript", malformed)]),
+            .finalResponse,
+        ])
+        surface.toolResults["applescript"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(
+                tool: "applescript",
+                result: ["summary": "Ran 1 script(s) successfully."]
+            )
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: headlessPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeFallbackText: false)
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 3))
+        #expect(surface.executedCalls.map(\.name) == ["applescript", "applescript"])
+        #expect(surface.emittedFinalTexts.isEmpty)
+    }
+
+    @Test func unrelatedNonretryableExecutionFailureKeepsExistingPivotBehavior() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("file_read")]),
+            .finalResponse,
+        ])
+        surface.toolResults["file_read"] = AgentLoopToolExecution(
+            result: ToolEnvelope.failure(
+                kind: .executionError,
+                message: "read failed",
+                tool: "file_read",
+                retryable: false
+            ),
+            isError: false
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result.exit == .finalResponse)
+        #expect(surface.builtNotices.count == 2)
     }
 
     @Test func surfaceInterceptEndsRunWithoutRecording() async throws {

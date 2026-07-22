@@ -380,6 +380,15 @@ public enum ComputerUseLoop {
                 metrics.modelTokens += stepResult.tokens
                 metrics.recordDecodeTokensPerSecond(stepResult.tokensPerSecond)
                 parsed = stepResult.call
+            } catch where isMissingRequiredAgentActionError(error) {
+                // ChatEngine correctly fails closed when a named/required
+                // local tool turn reaches EOS without a parsed call. For
+                // Computer Use that error means exactly the same thing as a
+                // nil `agent_action`, so route it through the loop's bounded
+                // protocol re-ask below. Treating it as an inference failure
+                // here used to terminate a visibly successful desktop action
+                // before the model got one chance to emit `done`.
+                parsed = nil
             } catch {
                 return terminate(.failed(reason: error.localizedDescription))
             }
@@ -1310,6 +1319,16 @@ public enum ComputerUseLoop {
         var errorDescription: String? { "The model step timed out." }
     }
 
+    /// ChatEngine's fail-closed signal for a required/named local tool turn
+    /// that reached EOS without a parsed invocation. This is a protocol-shape
+    /// miss, not a transient inference transport failure: retrying the exact
+    /// same prompt inside `runModelStep` cannot supply the corrective
+    /// `agent_action` nudge owned by the outer Computer Use loop.
+    private static func isMissingRequiredAgentActionError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == "OsaurusToolChoice" && nsError.code == 422
+    }
+
     /// Run one model step with a per-step timeout and bounded retries. A throw
     /// or timeout is retried (with a short backoff) up to `maxRetries` times
     /// before propagating, so a single transient inference failure or hang
@@ -1328,6 +1347,9 @@ public enum ComputerUseLoop {
             } catch is CancellationError {
                 throw CancellationError()  // interrupt/teardown — don't retry
             } catch {
+                if isMissingRequiredAgentActionError(error) {
+                    throw error
+                }
                 if attempt >= maxRetries { throw error }
                 attempt += 1
                 feed.emit(

@@ -79,9 +79,16 @@
         /// download from silently growing into a multi-GB hash job.
         private static let maxArtifactDownloadBytes: Int = 512 * 1024 * 1024
 
-        /// Host-side Unix socket path for the bridge server (relayed into guest via vsock)
+        /// Host-side Unix socket path for the bridge server (relayed into guest via vsock).
+        /// Symlinks are resolved because a Unix socket path is capped at 104
+        /// bytes: the evals harness points `OsaurusPaths` at a deep temp root
+        /// whose `container/` is a symlink to the real (short) container dir,
+        /// and binding through the unresolved path overflows the cap
+        /// (`unixDomainSocketPathTooLong`) and kills every VM boot. In
+        /// production the path has no symlinks and is unchanged.
         private static var bridgeSocketPath: String {
-            OsaurusPaths.container().appendingPathComponent("bridge.sock").path
+            OsaurusPaths.container().resolvingSymlinksInPath()
+                .appendingPathComponent("bridge.sock").path
         }
         /// Where the bridge socket appears inside the guest container
         private static let guestBridgeSocketPath = "/tmp/osaurus-bridge.sock"
@@ -400,25 +407,27 @@
 
         /// The single host directory mounted into the sandbox at
         /// `/workspace`. Centralised + guarded so the combined sandbox +
-        /// host-read mode invariant cannot regress: the user's selected
-        /// folder is NEVER a sandbox mount source. Combined mode reads
+        /// host-read mode invariant cannot regress: no chat's selected
+        /// folder is EVER a sandbox mount source. Combined mode reads
         /// the host folder through host-side tools only (`file_read`
         /// etc.); the sandbox has no mount of it, which is the entire
-        /// security argument for the mode. If a future change ever wires
-        /// the folder root in as the workspace, the precondition trips
-        /// loudly instead of silently opening a hole. `nonisolated` so
-        /// the regression test can exercise it without the actor hop.
+        /// security argument for the mode. Folder ownership is per chat
+        /// session now, so the check runs against every live chat folder
+        /// root in the process, not one global folder. If a future change
+        /// ever wires a folder root in as the workspace, the precondition
+        /// trips loudly instead of silently opening a hole. `nonisolated`
+        /// so the regression test can exercise it without the actor hop.
         nonisolated static func validatedWorkspaceMountSource(
             workspace: String,
-            folderRoot: String?
+            folderRoots: [String]
         ) -> String {
-            if let folderRoot {
-                let normalizedWorkspace = URL(fileURLWithPath: workspace).standardized.path
+            let normalizedWorkspace = URL(fileURLWithPath: workspace).standardized.path
+            for folderRoot in folderRoots {
                 let normalizedFolder = URL(fileURLWithPath: folderRoot).standardized.path
                 precondition(
                     normalizedWorkspace != normalizedFolder,
-                    "Sandbox workspace mount must never be the host folder root — combined "
-                        + "mode reads the host via host-side tools, never a bind mount."
+                    "Sandbox workspace mount must never be a chat's host folder root — "
+                        + "combined mode reads the host via host-side tools, never a bind mount."
                 )
             }
             return workspace
@@ -936,7 +945,7 @@
                     let inputs = BootInputs(
                         workspace: Self.validatedWorkspaceMountSource(
                             workspace: OsaurusPaths.containerWorkspace().path,
-                            folderRoot: FolderContextService.cachedRootPath?.path
+                            folderRoots: ChatFolderState.liveRootPaths
                         ),
                         bridgeSocketPath: Self.bridgeSocketPath,
                         guestBridgeSocketPath: Self.guestBridgeSocketPath,

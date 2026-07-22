@@ -59,11 +59,17 @@ enum VLMDetection {
     }
 
     /// Check if a downloaded model at the given directory is a VLM.
-    /// Uses vision_config key presence in config.json as the definitive signal,
-    /// disambiguating model types registered in both LLM and VLM factories
-    /// (e.g. gemma4 has both text-only and vision variants).
+    /// Mirrors vMLX's factory dispatch: Nemotron Omni bundles are identified by
+    /// `config_omni.json` because their primary `config.json` deliberately
+    /// describes only the inner text decoder (`model_type: nemotron_h`). Other
+    /// families use `vision_config` presence to disambiguate model types
+    /// registered in both LLM and VLM factories (for example Gemma4).
     static func isVLM(at directory: URL) -> Bool {
         cachedVerdict("dir:\(directory.path)") {
+            let omniSidecar = directory.appendingPathComponent("config_omni.json")
+            if FileManager.default.fileExists(atPath: omniSidecar.path) {
+                return true
+            }
             guard let json = readConfigJSON(at: directory) else { return false }
             return json["vision_config"] != nil
         }

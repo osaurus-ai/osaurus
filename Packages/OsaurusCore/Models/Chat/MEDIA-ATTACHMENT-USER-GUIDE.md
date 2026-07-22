@@ -84,6 +84,7 @@ text, Laguna, Cascade-2 text, etc.)
 | `.flac` | `UTType.audio` parent | passthrough |
 | `.ogg` / `.opus` | `UTType.audio` parent | passthrough |
 | `.aac` / `.wma` | `UTType.audio` parent | passthrough |
+| `.aif` / `.aiff` / `.aifc` / `.caf` | `UTType.audio` parent | passthrough |
 
 The audit-fix in `ModelRuntime.materializeMediaDataUrl` ensures the
 audio-mime canonicalization (`mp4 → m4a`) only runs when the data URL

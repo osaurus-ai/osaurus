@@ -191,6 +191,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // (and so an in-app token authenticates the very first request).
         GitHubAuth.preloadInBackground()
 
+        // Warm the memoized default-models-directory resolution off the main
+        // thread. Its first access enumerates candidate folders (and can stall
+        // on iCloud-synced ~/Documents); paying that on a utility queue here
+        // means the first main-thread caller hits the cache.
+        DispatchQueue.global(qos: .utility).async {
+            _ = DirectoryPickerService.defaultModelsDirectory()
+        }
+
         // Same for the Hugging Face token: the Models → Catalog card reads its
         // presence synchronously at view-init (on the main thread), so warm the
         // cache here rather than racing that read from `ModelDownloadService`.
@@ -364,6 +372,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 // of osaurus.search plugin keys runs at launch, not lazily on
                 // the first web_search call / Settings visit.
                 _ = SearchProviderManager.shared
+                // Same for the superseded osaurus.browser plugin: copy each
+                // agent's exact WebKit profile UUID into the native session
+                // catalog so existing sign-ins carry over to Browser Use.
+                BrowserPluginMigration.migrateIfNeeded()
             }
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
@@ -468,6 +480,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     await MemoryConsolidator.shared.start()
                 }
             }
+        }
+
+        // Incremental knowledge index pass so collection folder changes
+        // made while the app was closed are picked up, then live folder
+        // watching for changes made while it runs. Waits for the embedder
+        // init to avoid competing with it; hash-incremental, so an
+        // unchanged corpus costs one folder scan per collection.
+        Task { @MainActor in
+            await embeddingInitTask.value
+            KnowledgeManager.shared.scheduleIndexAll()
+            KnowledgeFolderWatcher.shared.start()
         }
 
         // Setup global hotkey for Chat overlay (configured)
@@ -1184,6 +1207,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             SystemMonitorService.shared.stopMonitoring()
             ScheduleManager.shared.stop()
             WatcherManager.shared.stop()
+            KnowledgeFolderWatcher.shared.stop()
             await runWithDeadline(seconds: 2) {
                 await AgentChannelTransportSupervisor.shared.stop()
             }
@@ -1306,7 +1330,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         PluginRepositoryService.shared.stopBackgroundRefresh()
         ToastWindowController.shared.teardown()
         NotchWindowController.shared.teardown()
+        // Detach live browser WebViews and close their windows so WebKit's
+        // networking XPC processes wind down before `_exit` (stored profiles
+        // and the session catalog survive for the next run).
+        BrowserSessionManager.shared.shutdownAll()
         SharedConfigurationService.shared.remove()
+        SharedConfigurationService.shared.flushPendingWork()
         // `applicationWillTerminate` is sync and the process exits as
         // soon as it returns. Bridge to the actor synchronously so
         // any debounced greeting-pool entries land on disk — without
@@ -1321,6 +1350,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
         // Same for the Computer Use autonomy policy (its own coalescing writer).
         ComputerUsePolicyStore.flushPendingWrites()
+
+        // Same for the sandbox and agent-delegation stores.
+        SandboxConfigurationStore.flushPendingWrites()
+        SubagentConfigurationStore.flushPendingWrites()
 
         // Aptabase batches analytics in an in-memory queue and normally drains
         // it from its own `willTerminate` observer — but that flush is async and
@@ -1506,7 +1539,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // Keep plugin and repository work off the initial bind path;
             // crashes here are handled by the plugin loading marker.
             Task { @MainActor in
-                await PluginManager.shared.loadAll()
+                await PluginManager.shared.ensurePromptCatalogReady()
             }
             PluginRepositoryService.shared.startBackgroundRefresh()
         }
@@ -2289,7 +2322,29 @@ extension AppDelegate {
                 if hasDeeplink {
                     // Deeplink targets are baked into the view at creation, so the
                     // hosting controller has to be rebuilt to deliver them.
-                    existingWindow.contentViewController = NSHostingController(rootView: root)
+                    //
+                    // End any attached sheets FIRST: swapping the hosting
+                    // controller tears down the old SwiftUI graph, but a
+                    // SwiftUI `.sheet`'s presentation window stays attached to
+                    // this NSWindow and keeps observing parent frame changes.
+                    // The swap itself resizes the window (the new hosting
+                    // view's constraint pass updates the content-size extrema),
+                    // and the orphaned sheet's size callback then re-enters the
+                    // torn-down graph and traps inside SwiftUI
+                    // (Sentry APPLE-MACOS-EF).
+                    while let sheet = existingWindow.attachedSheet {
+                        existingWindow.endSheet(sheet)
+                    }
+                    let replacement = NSHostingController(rootView: root)
+                    // Match `WindowManager.createWindow`: AppKit owns this
+                    // window's size (defaultSize + frame autosave). Leaving the
+                    // default sizingOptions on lets the swapped-in hosting view
+                    // push its measured size back onto the window every layout
+                    // pass — the frame change seen in the EF crash stack.
+                    if #available(macOS 13.0, *) {
+                        replacement.sizingOptions = []
+                    }
+                    existingWindow.contentViewController = replacement
                 } else if let initialTab {
                     // No deeplink: drive navigation through the shared state the
                     // existing view already observes. Recreating the hosting

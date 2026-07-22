@@ -45,6 +45,12 @@ public struct CacheProofTranscript: Sendable, Codable {
     /// Token-weighted decode speed across turns, when reported — keeps
     /// every generation row carrying token/s per the runtime proof rules.
     public let decodeTokensPerSecond: Double?
+    /// Physical footprint (MB) sampled after EACH completed turn, in turn
+    /// order. The multi-turn growth signal: a bounded companion/KV plan
+    /// shows a plateau here; monotonic growth back toward the model's
+    /// on-disk size is the Bonsai-class failure this exists to catch.
+    /// Empty when the probe failed (treat as "not measured").
+    public let footprintAfterTurnMb: [Double]
 
     public init(
         visibleTurns: [String],
@@ -59,7 +65,8 @@ public struct CacheProofTranscript: Sendable, Codable {
         diskL2MissesDelta: Int = 0,
         diskL2StoresDelta: Int = 0,
         hybridTopology: Bool = false,
-        decodeTokensPerSecond: Double? = nil
+        decodeTokensPerSecond: Double? = nil,
+        footprintAfterTurnMb: [Double] = []
     ) {
         self.visibleTurns = visibleTurns
         self.error = error
@@ -74,6 +81,7 @@ public struct CacheProofTranscript: Sendable, Codable {
         self.diskL2StoresDelta = diskL2StoresDelta
         self.hybridTopology = hybridTopology
         self.decodeTokensPerSecond = decodeTokensPerSecond
+        self.footprintAfterTurnMb = footprintAfterTurnMb
     }
 }
 
@@ -86,10 +94,19 @@ public enum CacheProofEvaluator {
     /// return the diagnostics deltas across the whole exchange. Turn 2+
     /// shares turn 1's prefix (same session, history echoed), which is
     /// exactly the shape the prefix cache must hit on.
+    ///
+    /// `thinkingPerTurn`, when provided, sets the request's documented
+    /// `enable_thinking` switch per turn (index-aligned with the turn
+    /// order; missing indices leave the model default in force). This is
+    /// the hybrid-SSM boundary stressor: toggling Thinking mid-conversation
+    /// invalidates/re-derives companion states, the exact path the bounded
+    /// companion LRU (`ssmCompanionEntryLimit`) must keep from re-growing
+    /// to the model's full on-disk size.
     public static func run(
         queries: [String],
         model: String? = nil,
-        maxTokens: Int = 128
+        maxTokens: Int = 128,
+        thinkingPerTurn: [Bool]? = nil
     ) async -> CacheProofTranscript {
         let resolvedModel =
             model
@@ -104,10 +121,11 @@ public enum CacheProofEvaluator {
         var visibleTurns: [String] = []
         var runError: String?
         var lastDecodeTps: Double?
+        var footprintAfterTurnMb: [Double] = []
 
-        for query in queries {
+        for (turnIndex, query) in queries.enumerated() {
             history.append(ChatMessage(role: "user", content: query))
-            let request = ChatCompletionRequest(
+            var request = ChatCompletionRequest(
                 model: resolvedModel,
                 messages: history,
                 temperature: 0.0,
@@ -122,6 +140,9 @@ public enum CacheProofEvaluator {
                 tool_choice: nil,
                 session_id: sessionId
             )
+            if let thinkingPerTurn, turnIndex < thinkingPerTurn.count {
+                request.enable_thinking = thinkingPerTurn[turnIndex]
+            }
             var visible = ""
             var reasoning = ""
             do {
@@ -143,6 +164,9 @@ public enum CacheProofEvaluator {
                 break
             }
             visibleTurns.append(visible)
+            if let footprint = ProcessMemoryProbe.currentPhysFootprintMB() {
+                footprintAfterTurnMb.append(footprint)
+            }
             history.append(
                 ChatMessage(
                     role: "assistant",
@@ -182,7 +206,8 @@ public enum CacheProofEvaluator {
             diskL2MissesDelta: delta(\.diskL2Misses),
             diskL2StoresDelta: delta(\.diskL2Stores),
             hybridTopology: after.hybridModelCount > 0,
-            decodeTokensPerSecond: lastDecodeTps
+            decodeTokensPerSecond: lastDecodeTps,
+            footprintAfterTurnMb: footprintAfterTurnMb
         )
     }
 }

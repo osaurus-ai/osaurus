@@ -561,6 +561,7 @@ private struct ThemedAlertModifier: ViewModifier {
     let message: String?
     let accessory: AnyView?
     let buttons: [AlertButtonConfig]
+    let width: CGFloat?
     let presentationStyle: ThemedAlertPresentationStyle
 
     func body(content: Content) -> some View {
@@ -574,7 +575,7 @@ private struct ThemedAlertModifier: ViewModifier {
                         buttons: buttons,
                         showsCloseButton: false,
                         customContent: nil,
-                        width: nil,
+                        width: width,
                         presentationStyle: presentationStyle,
                         onDismiss: {
                             isPresented = false
@@ -688,6 +689,8 @@ public struct ThemedAlertHost: View {
 extension View {
     /// Present a themed alert dialog with glass effects and spring animations.
     /// Supports 1–3 (or more) buttons; when 3+, buttons stack vertically for better ergonomics.
+    /// `width` overrides the standard 340pt dialog width (honoured by the
+    /// `.contained` style only) — use when button labels would otherwise wrap.
     @ViewBuilder
     func themedAlert(
         _ title: String,
@@ -695,6 +698,7 @@ extension View {
         message: String? = nil,
         accessory: AnyView? = nil,
         buttons: [AlertButtonConfig],
+        width: CGFloat? = nil,
         presentationStyle: ThemedAlertPresentationStyle = .window
     ) -> some View {
         if presentationStyle == .contained {
@@ -705,6 +709,7 @@ extension View {
                     message: message,
                     accessory: accessory,
                     buttons: buttons,
+                    width: width,
                     presentationStyle: .contained
                 )
             )

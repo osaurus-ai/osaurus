@@ -105,15 +105,17 @@ struct FTS5MemorySearchTests {
             )
         )
 
-        // Full natural-language question: the FTS AND-match finds nothing,
-        // so the loose-term pass must surface the boat fact (and only it).
+        // Full natural-language question: the OR-with-prefix FTS recall
+        // (see `ftsMatchQuery`) surfaces the boat fact. A broad question may
+        // also pull in tangential facts that share common words, so assert
+        // the boat fact is recalled rather than a strict count (mirrors
+        // `transcriptSearchFindsKeywordsViaFTS`).
         let hits = try db.searchPinnedFactsText(
             query: "What is the name of my boat?",
             agentId: "a",
             limit: 5
         )
-        #expect(hits.count == 1)
-        #expect(hits.first?.content.contains("Peregrine Dusk") == true)
+        #expect(hits.contains { $0.content.contains("Peregrine Dusk") })
     }
 
     @Test
@@ -172,11 +174,14 @@ struct FTS5MemorySearchTests {
 
     @Test
     func querySanitizerStripsSQLOperators() {
-        // Single-word queries get quoted; multi-word with operator-ish
-        // characters should still produce safe quoted tokens.
-        #expect(MemoryDatabase.ftsMatchQuery("foo AND bar OR baz") == "\"foo\" \"AND\" \"bar\" \"OR\" \"baz\"")
-        #expect(MemoryDatabase.ftsMatchQuery("(rm -rf /)") == "\"rm\" \"-rf\"")
-        #expect(MemoryDatabase.ftsMatchQuery("\u{0}\"NEAR\"") == "\"NEAR\"")
+        // Terms are quoted, prefix-matched, and OR-joined; operator-ish
+        // characters embedded by the user become safe literal tokens.
+        #expect(
+            MemoryDatabase.ftsMatchQuery("foo AND bar OR baz")
+                == "\"foo\"* OR \"AND\"* OR \"bar\"* OR \"OR\"* OR \"baz\"*"
+        )
+        #expect(MemoryDatabase.ftsMatchQuery("(rm -rf /)") == "\"rm\"* OR \"-rf\"*")
+        #expect(MemoryDatabase.ftsMatchQuery("\u{0}\"NEAR\"") == "\"NEAR\"*")
         #expect(MemoryDatabase.ftsMatchQuery("   ") == nil)
     }
 }

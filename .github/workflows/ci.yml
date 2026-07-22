@@ -575,6 +575,88 @@ jobs:
         if: always()
         run: echo "::notice title=test-cli duration::$SECONDS seconds"
 
+  test-packages:
+    # Unit tests for the small SPM packages that had no CI lane at all:
+    #   - Packages/OsaurusRepository (plugin install manager, spec
+    #     resolution, bounded archive extraction — the security-sensitive
+    #     install path)
+    #   - Packages/OsaurusPluginTestKit (the harness plugin authors build
+    #     against)
+    # Both depend only on Foundation / OsaurusNetworking, so a cold build
+    # is a couple of minutes — no build cache needed.
+    #
+    # Pinned (was `macos-latest`) for the same reason as test-core.
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      # Same toolchain pinning rationale as test-cli: the packages require
+      # `swift-tools-version: 6.2`, which ships with the pinned Xcode.
+      - name: Verify Swift toolchain
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
+        run: swift --version
+
+      - name: Run OsaurusRepository tests
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
+          # Keychain wrappers no-op so hosted runners never hit the
+          # "wants to use your confidential information" prompt.
+          OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS: "1"
+        run: swift test --package-path Packages/OsaurusRepository --parallel
+
+      - name: Run OsaurusPluginTestKit tests
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
+          OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS: "1"
+        run: swift test --package-path Packages/OsaurusPluginTestKit --parallel
+
+      - name: Annotate timing
+        if: always()
+        run: echo "::notice title=test-packages duration::$SECONDS seconds"
+
+  test-statspack:
+    # Unit tests for the bundled StatsPack plugin
+    # (Packages/OsaurusPlugins/StatsPack), previously not run anywhere in
+    # CI. StatsPack depends on OsaurusCore, so a cold build compiles the
+    # whole graph (mlx-swift Cmlx C++ + SQLCipher amalgamation) under
+    # SwiftPM — the same ~25-30 min floor as test-evals. The .build cache
+    # below returns warm runs to single-digit minutes; the cache-key shape
+    # deliberately mirrors test-evals'.
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      SPM_BUILD: Packages/OsaurusPlugins/StatsPack/.build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Xcode ${{ env.XCODE_VERSION }}
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ env.XCODE_VERSION }}
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.SPM_BUILD }}
+          key: statspack-build-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-${{ hashFiles('Packages/**/Package.swift', 'Packages/**/*.swift', 'Packages/**/*.c', 'Packages/**/*.h') }}
+          restore-keys: |
+            statspack-build-${{ runner.os }}-${{ env.CACHE_SALT }}-xcode${{ env.XCODE_VERSION }}-
+            statspack-build-${{ runner.os }}-${{ env.CACHE_SALT }}-
+
+      - name: Run StatsPack tests
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
+          OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS: "1"
+        run: swift test --package-path Packages/OsaurusPlugins/StatsPack
+
+      - name: Annotate timing
+        if: always()
+        run: echo "::notice title=test-statspack duration::$SECONDS seconds"
+
   test-evals:
     # Harness unit tests for Packages/OsaurusEvals (fixture decode, scorer
     # contracts, regression-lab plumbing, judge resolution). Deterministic

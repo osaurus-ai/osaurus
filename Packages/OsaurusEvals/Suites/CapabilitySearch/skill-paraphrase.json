@@ -4,17 +4,7 @@
   "label": "capability search • skill • paraphrase",
   "query": "give me the gist of this article",
   "notes": "Probes the embed-still-needed class on the skills lane: 'gist' is a synonym of 'summarize' / 'tldr' / 'key-points'. FIXED + PROMOTED 2026-06-19 (W3): the gap was a recall/description gap, not a threshold problem — 'gist' shared no surface tokens with the 'Content Summarizer' skill and sat below the embedder's top hits. Resolution was pure data: enriched the skill's `keywords` array with paraphrase synonyms ('gist', 'overview', 'recap', 'synopsis', 'brief', 'abstract', 'main-points', 'takeaways', 'highlights', 'skim') so `SkillSearchService.buildIndexText` embeds them. Now matches Content Summarizer 1/1 and is enforced at minMatches=1 in recall_floors.json.",
-  "fixtures": {
-    "enableSkills": [
-      "Research Analyst",
-      "Creative Brainstormer",
-      "Study Tutor",
-      "Productivity Coach",
-      "Content Summarizer",
-      "Debug Assistant",
-      "Data Visualizer"
-    ]
-  },
+  "fixtures": {},
   "expect": {
     "capabilitySearch": {
       "expectedSkills": {

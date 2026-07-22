@@ -368,6 +368,46 @@ final class ComputerUseLoopRunTests: XCTestCase {
         XCTAssertEqual(attempts, 3, "Two retries after the initial attempt = three tries total")
     }
 
+    func testMissingRequiredAgentActionUsesProtocolReaskInsteadOfBlindInferenceRetry() async {
+        let d = driver([el("go", "button", "Go")])
+        let recorder = ModelStepInputRecorder()
+        let provider: AgentStepProvider = { input in
+            let attempt = await recorder.record(input)
+            if attempt == 1 {
+                throw NSError(
+                    domain: "OsaurusToolChoice",
+                    code: 422,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "The model did not produce a valid required tool call."
+                    ]
+                )
+            }
+            return ModelActionCall(
+                id: "done",
+                arguments: AgentAction(verb: .done, reason: "recovered").argumentsJSON()
+            )
+        }
+
+        let result = await run(
+            d,
+            provider: provider,
+            limits: RunLimits(
+                wallClockSeconds: 30,
+                modelStepTimeoutSeconds: 0,
+                maxInferenceRetries: 2
+            )
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess, "The bounded protocol re-ask should recover; got \(result.outcome)")
+        let inputs = await recorder.inputs
+        XCTAssertEqual(inputs.count, 2, "The protocol error must bypass same-prompt inference retries")
+        XCTAssertTrue(
+            inputs[1].transcript.last?.text.contains("You must respond by calling the agent_action tool") == true,
+            "The second model step must include the Computer Use loop's corrective protocol nudge"
+        )
+    }
+
     func testInferenceFailsAfterExhaustingRetries() async {
         let d = driver([el("go", "button", "Go")])
         let counter = AttemptCounter()
@@ -497,6 +537,15 @@ private actor AttemptCounter {
     func bump() -> Int {
         value += 1
         return value
+    }
+}
+
+private actor ModelStepInputRecorder {
+    private(set) var inputs: [AgentStepInput] = []
+
+    func record(_ input: AgentStepInput) -> Int {
+        inputs.append(input)
+        return inputs.count
     }
 }
 

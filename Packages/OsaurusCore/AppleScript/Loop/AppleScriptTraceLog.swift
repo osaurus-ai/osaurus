@@ -29,6 +29,42 @@ enum AppleScriptTraceLog {
 
     private static let queue = DispatchQueue(label: "com.osaurus.applescript-trace")
 
+    /// Record the behavior-neutral dispatch context that selected app
+    /// knowledge and grounded a working-document reference. Values of user
+    /// literals remain out of the trace; only their keys are recorded.
+    static func recordDispatchContext(
+        frontmost: String?,
+        targetApps: [String],
+        workingReference: Bool,
+        taskGrounded: Bool,
+        literalKeys: [String]
+    ) {
+        guard isEnabled else { return }
+        write(
+            "dispatch_context frontmost=\(String(reflecting: frontmost)) "
+                + "target_apps=\(targetApps) working_reference=\(workingReference) "
+                + "task_grounded=\(taskGrounded) literal_keys=\(literalKeys)"
+        )
+    }
+
+    /// Record the effective user setting and the gate selected for a proposed
+    /// script. This is trace-only evidence that the UI setting reached the
+    /// runtime; it never changes the decision.
+    static func recordGate(
+        mode: AppleScriptRunMode,
+        executionMode: AppleScriptExecutionMode,
+        effect: EffectClass,
+        verifying: Bool,
+        decision: String
+    ) {
+        guard isEnabled else { return }
+        write(
+            "gate mode=\(mode.rawValue) execution_mode=\(executionMode.rawValue) "
+                + "effect=\(String(describing: effect)) verifying=\(verifying) "
+                + "decision=\(decision)"
+        )
+    }
+
     /// Record one model step: request message shapes + the full raw response
     /// surface (content, tool-call arguments, finish reason, usage).
     static func record(

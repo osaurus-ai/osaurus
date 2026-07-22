@@ -28,6 +28,20 @@ struct AgentTaskStateTests {
         )
     }
 
+    private func partialFileEnvelope(path: String, nextStart: Int, nextEnd: Int) -> String {
+        ToolEnvelope.success(
+            tool: "file_read",
+            result: [
+                "kind": "file",
+                "text": "Lines 1-\(nextStart - 1) of \(nextEnd):\n...",
+                "path": path,
+                "truncated": true,
+                "next_start_line": nextStart,
+                "next_end_line": nextEnd,
+            ]
+        )
+    }
+
     private func listingEnvelope(
         path: String,
         entries: [(name: String, path: String, dir: Bool)],
@@ -69,6 +83,34 @@ struct AgentTaskStateTests {
 
     @Test func classify_fileContent() {
         #expect(AgentTaskState.classify(fileContentEnvelope(path: "a.txt")) == .fileContent)
+    }
+
+    /// Issue #2098: a rendered-cap-truncated read carrying an exact
+    /// continuation range classifies as its own state so the harness can
+    /// stage a continuation notice instead of treating it as complete.
+    @Test func classify_partialFileContent() {
+        let env = partialFileEnvelope(path: "BeatStrip.ino", nextStart: 427, nextEnd: 499)
+        #expect(
+            AgentTaskState.classify(env)
+                == .partialFileContent(path: "BeatStrip.ino", nextStartLine: 427, nextEndLine: 499)
+        )
+    }
+
+    /// A raw byte-capped read reports `truncated: true` but deliberately
+    /// carries NO continuation fields (line numbers can't reach unloaded
+    /// bytes) — it must stay plain `.fileContent`, never a continuation.
+    @Test func classify_byteCappedFileWithoutContinuationStaysFileContent() {
+        let env = ToolEnvelope.success(
+            tool: "file_read",
+            result: [
+                "kind": "file",
+                "text": "Lines 1-90000 of at least 90000 scanned:\n...",
+                "path": "huge.csv",
+                "truncated": true,
+                "raw_bytes_truncated": true,
+            ]
+        )
+        #expect(AgentTaskState.classify(env) == .fileContent)
     }
 
     @Test func classify_notFound() {
@@ -305,6 +347,73 @@ struct AgentTaskStateTests {
             argsJSON: #"{"path":"a.txt"}"#,
             result: fileContentEnvelope(path: "a.txt")
         )
+        #expect(state.nextStepBias() == nil)
+    }
+
+    /// Issue #2098: a rendered-cap-truncated read stages a continuation
+    /// notice naming the exact path and `start_line`/`end_line` to resume
+    /// with, so the model reads the rest instead of reviewing a prefix as
+    /// if it were the whole file.
+    @Test func bias_partialFileReadStagesExactContinuation() {
+        let state = AgentTaskState()
+        state.record(
+            name: "file_read",
+            argsJSON: #"{"path":"BeatStrip.ino"}"#,
+            result: partialFileEnvelope(path: "BeatStrip.ino", nextStart: 427, nextEnd: 499)
+        )
+        let bias = state.nextStepBias() ?? ""
+        #expect(bias.contains("BeatStrip.ino"))
+        #expect(bias.contains(#""start_line": 427"#))
+        #expect(bias.contains(#""end_line": 499"#))
+    }
+
+    /// The disabled-bias validation gate covers the continuation notice too.
+    @Test func bias_partialFileReadSilentWhenBiasDisabled() {
+        let state = AgentTaskState(biasEnabled: false)
+        state.record(
+            name: "file_read",
+            argsJSON: #"{"path":"BeatStrip.ino"}"#,
+            result: partialFileEnvelope(path: "BeatStrip.ino", nextStart: 427, nextEnd: 499)
+        )
+        #expect(state.nextStepBias() == nil)
+    }
+
+    /// A byte-capped read (`truncated: true` but no continuation fields)
+    /// must not receive a line-continuation steer that could not work.
+    @Test func bias_byteCappedReadGetsNoContinuationSteer() {
+        let state = AgentTaskState()
+        state.record(
+            name: "file_read",
+            argsJSON: #"{"path":"huge.csv"}"#,
+            result: ToolEnvelope.success(
+                tool: "file_read",
+                result: [
+                    "kind": "file",
+                    "text": "...",
+                    "path": "huge.csv",
+                    "truncated": true,
+                    "raw_bytes_truncated": true,
+                ]
+            )
+        )
+        #expect(state.nextStepBias() == nil)
+    }
+
+    /// A partial read is still a successful descent into a file: it resets
+    /// the wandering (listings-without-read) counter like a complete read.
+    @Test func bias_partialFileReadResetsWanderingCounter() {
+        let state = AgentTaskState()
+        let listing = listingEnvelope(path: ".", entries: [("a.txt", "a.txt", false)])
+        state.record(name: "file_read", argsJSON: #"{"path":"."}"#, result: listing)
+        state.record(name: "file_read", argsJSON: #"{"path":"x"}"#, result: listing)
+        #expect(state.nextStepBias()?.contains("result.entries") == true)
+        state.record(
+            name: "file_read",
+            argsJSON: #"{"path":"big.ino"}"#,
+            result: partialFileEnvelope(path: "big.ino", nextStart: 400, nextEnd: 499)
+        )
+        // One fresh listing after the reset is below the reactive threshold.
+        state.record(name: "file_read", argsJSON: #"{"path":"y"}"#, result: listing)
         #expect(state.nextStepBias() == nil)
     }
 
@@ -610,12 +719,21 @@ struct AgentTaskStateTests {
     /// and only on identical args, which these are not).
     @Test func planningLoop_productiveMultiTargetNotNudged() {
         let state = AgentTaskState()
-        state.record(name: "file_write", argsJSON: #"{"path":"a.txt","content":"1"}"#,
-            result: ToolEnvelope.success(tool: "file_write", text: "ok"))
-        state.record(name: "file_write", argsJSON: #"{"path":"b.txt","content":"2"}"#,
-            result: ToolEnvelope.success(tool: "file_write", text: "ok"))
-        state.record(name: "file_write", argsJSON: #"{"path":"c.txt","content":"3"}"#,
-            result: ToolEnvelope.success(tool: "file_write", text: "ok"))
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"a.txt","content":"1"}"#,
+            result: ToolEnvelope.success(tool: "file_write", text: "ok")
+        )
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"b.txt","content":"2"}"#,
+            result: ToolEnvelope.success(tool: "file_write", text: "ok")
+        )
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"c.txt","content":"3"}"#,
+            result: ToolEnvelope.success(tool: "file_write", text: "ok")
+        )
         #expect(state.nextStepBias() == nil, "multi-file writes are progress, not a loop")
     }
 
@@ -626,8 +744,11 @@ struct AgentTaskStateTests {
         let todoEnv = ToolEnvelope.success(tool: "todo", text: "Todo updated.")
         state.record(name: "todo", argsJSON: #"{"markdown":"- [ ] a"}"#, result: todoEnv)
         state.record(name: "todo", argsJSON: #"{"markdown":"- [ ] b"}"#, result: todoEnv)
-        state.record(name: "file_write", argsJSON: #"{"path":"a.txt","content":"x"}"#,
-            result: ToolEnvelope.success(tool: "file_write", text: "ok"))
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"a.txt","content":"x"}"#,
+            result: ToolEnvelope.success(tool: "file_write", text: "ok")
+        )
         state.record(name: "todo", argsJSON: #"{"markdown":"- [ ] c"}"#, result: todoEnv)
         #expect(state.nextStepBias() == nil, "interleaved action resets the planning run")
     }
@@ -641,16 +762,146 @@ struct AgentTaskStateTests {
     @Test func planningLoop_consecutiveNonPlanningToolNotNudged() {
         for tool in ["db_insert", "image", "web_search", "capabilities_load"] {
             let state = AgentTaskState()
-            state.record(name: tool, argsJSON: #"{"q":"1"}"#,
-                result: ToolEnvelope.success(tool: tool, text: "ok"))
-            state.record(name: tool, argsJSON: #"{"q":"2"}"#,
-                result: ToolEnvelope.success(tool: tool, text: "ok"))
-            state.record(name: tool, argsJSON: #"{"q":"3"}"#,
-                result: ToolEnvelope.success(tool: tool, text: "ok"))
+            state.record(
+                name: tool,
+                argsJSON: #"{"q":"1"}"#,
+                result: ToolEnvelope.success(tool: tool, text: "ok")
+            )
+            state.record(
+                name: tool,
+                argsJSON: #"{"q":"2"}"#,
+                result: ToolEnvelope.success(tool: tool, text: "ok")
+            )
+            state.record(
+                name: tool,
+                argsJSON: #"{"q":"3"}"#,
+                result: ToolEnvelope.success(tool: tool, text: "ok")
+            )
             #expect(
                 state.nextStepBias() == nil,
-                "3 consecutive \(tool) calls are work, not a planning loop")
+                "3 consecutive \(tool) calls are work, not a planning loop"
+            )
         }
+    }
+
+    /// Bonsai can rephrase the same discovery query indefinitely, so exact
+    /// argument matching is insufficient. Allow three research searches, then
+    /// make the required discovery -> retrieval transition explicit.
+    @Test func webSearchLoop_rewordedQueriesArmTransitionAtFourth() {
+        let state = AgentTaskState()
+        for n in 1 ... 3 {
+            state.record(
+                name: "web_search",
+                argsJSON: #"{"query":"S&P 500 CSV variation \#(n)"}"#,
+                result: ToolEnvelope.success(tool: "web_search", text: "ranked snippets")
+            )
+            #expect(state.nextStepBias() == nil, "search \(n) remains a legitimate research step")
+        }
+
+        state.record(
+            name: "web_search",
+            argsJSON: #"{"query":"S&P historical close dataset"}"#,
+            result: ToolEnvelope.success(tool: "web_search", text: "more ranked snippets")
+        )
+        let bias = state.nextStepBias() ?? ""
+        #expect(bias.contains("discovery-only"))
+        #expect(bias.contains("search_and_extract"))
+        #expect(bias.contains("render_chart"))
+        #expect(bias.contains("Stop searching"))
+    }
+
+    /// A retrieval/processing call is real progress and immediately disarms
+    /// the discovery-run advisory.
+    @Test func webSearchLoop_retrievalDisarmsTransition() {
+        let state = AgentTaskState()
+        for n in 1 ... 4 {
+            state.record(
+                name: "web_search",
+                argsJSON: #"{"query":"dataset \#(n)"}"#,
+                result: ToolEnvelope.success(tool: "web_search", text: "ranked snippets")
+            )
+        }
+        #expect(state.nextStepBias()?.contains("Stop searching") == true)
+
+        state.record(
+            name: "search_and_extract",
+            argsJSON: #"{"query":"selected source"}"#,
+            result: ToolEnvelope.success(tool: "search_and_extract", text: "page body")
+        )
+        #expect(state.nextStepBias() == nil, "retrieval resets the discovery-only run")
+    }
+
+    @Test func webSearchLoop_failedRetrievalDoesNotResetGuard() throws {
+        let state = AgentTaskState()
+        for n in 1 ... 4 {
+            state.record(
+                name: "web_search",
+                argsJSON: #"{"query":"dataset \#(n)"}"#,
+                result: ToolEnvelope.success(tool: "web_search", text: "ranked snippets")
+            )
+        }
+
+        state.record(
+            name: "search_and_extract",
+            argsJSON: #"{"url":"https://example.com/data.csv"}"#,
+            result: ToolEnvelope.failure(
+                kind: .notFound,
+                message: "search_and_extract is not available in this conversation.",
+                tool: "search_and_extract",
+                retryable: false
+            )
+        )
+
+        let guarded = try #require(state.guardedResult(name: "web_search"))
+        #expect(guarded.contains("transition_required"))
+    }
+
+    @Test func webSearchLoop_metaToolDetourDoesNotResetGuard() throws {
+        let state = AgentTaskState()
+        for n in 1 ... 4 {
+            state.record(
+                name: "web_search",
+                argsJSON: #"{"query":"dataset \#(n)"}"#,
+                result: ToolEnvelope.success(tool: "web_search", text: "ranked snippets")
+            )
+        }
+
+        state.record(
+            name: "capabilities_load",
+            argsJSON: #"{"ids":["skill/Data Visualizer"]}"#,
+            result: ToolEnvelope.success(tool: "capabilities_load", text: "loaded")
+        )
+        let guarded = try #require(state.guardedResult(name: "web_search"))
+        #expect(guarded.contains("transition_required"))
+    }
+
+    @Test func webSearchLoop_fifthDiscoveryIsGuardedWithoutProviderExecution() throws {
+        let state = AgentTaskState()
+        for n in 1 ... 4 {
+            state.record(
+                name: "web_search",
+                argsJSON: #"{"query":"dataset \#(n)"}"#,
+                result: ToolEnvelope.success(tool: "web_search", text: "ranked snippets")
+            )
+        }
+
+        let guarded = try #require(state.guardedResult(name: "web_search"))
+        #expect(ToolEnvelope.isSuccess(guarded))
+        #expect(guarded.contains("transition_required"))
+        #expect(guarded.contains("search_and_extract"))
+        #expect(state.guardedResult(name: "search_and_extract") == nil)
+    }
+
+    /// Identical successful web reads are replayable just like file reads;
+    /// re-executing the same query cannot add information to the current turn.
+    @Test func webSearchLoop_identicalSuccessfulSearchIsHeld() {
+        let state = AgentTaskState()
+        let args = #"{"query":"S&P 500 CSV"}"#
+        let envelope = ToolEnvelope.success(tool: "web_search", text: "ranked snippets")
+        state.record(name: "web_search", argsJSON: args, result: envelope)
+
+        #expect(AgentTaskState.isReplayEligible(name: "web_search"))
+        #expect(state.heldResult(name: "web_search", argsJSON: args) == envelope)
     }
 
     /// A different call between repeats disarms the pending nudge — the

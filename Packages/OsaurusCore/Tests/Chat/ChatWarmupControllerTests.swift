@@ -160,6 +160,7 @@ struct ChatWarmupControllerRAMGateTests {
             requiredAvailableBytes: requiredAvailable,
             softLimitBytes: soft,
             hardLimitBytes: hard,
+            automaticMemoryLimitsDisabled: false,
             // Budget unknown, so it never influences these warmup assertions.
             gpuBudgetBytes: 0,
             timestamp: Date()
@@ -274,6 +275,89 @@ struct ChatWarmupControllerRequestTests {
         #expect(engine.lastRequest?.modelOptions?["disableThinking"] == .bool(true))
         #expect(engine.lastRequest?.suppressProgressUI == true)
         #expect(engine.lastRequest?.warmupPrefill == true)
+        #expect(engine.lastRequest?.backgroundModelLoad == true)
+    }
+}
+
+@Suite("ChatWarmupController runtime residency")
+@MainActor
+struct ChatWarmupControllerRuntimeResidencyTests {
+
+    @Test("external eviction clears the warm claim and cached fingerprint")
+    func externalEvictionClearsWarmClaimAndFingerprint() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.selectedModel = "org/test-model"
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "org/test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "org/test-model|hint|"
+        )
+
+        let controller = ChatWarmupController()
+        controller.scheduleWarmup(session: session, debounce: .zero)
+
+        for _ in 0 ..< 100 {
+            if controller.state == .warm { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        await controller.awaitInFlightWarmup()
+        #expect(controller.state == .warm)
+        #expect(engine.requestCount == 1)
+
+        controller.reconcileRuntimeResidency(
+            selectedModel: session.selectedModel,
+            residentModelNames: ["different-model"]
+        )
+        #expect(controller.state == .cold)
+
+        controller.scheduleWarmup(session: session, debounce: .zero)
+        for _ in 0 ..< 100 {
+            if engine.requestCount == 2, controller.state == .warm { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        await controller.awaitInFlightWarmup()
+
+        // A second request proves eviction cleared the cached fingerprint;
+        // otherwise scheduleWarmup would immediately restore the green state
+        // without touching the runtime.
+        #expect(engine.requestCount == 2)
+        #expect(controller.state == .warm)
+    }
+
+    @Test("canonical and tail model identifiers preserve the warm claim")
+    func equivalentResidentIdentifierPreservesWarmClaim() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.selectedModel = "org/test-model"
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "org/test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "org/test-model|hint|"
+        )
+
+        let controller = ChatWarmupController()
+        controller.scheduleWarmup(session: session, debounce: .zero)
+        for _ in 0 ..< 100 {
+            if controller.state == .warm { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        await controller.awaitInFlightWarmup()
+        #expect(controller.state == .warm)
+
+        controller.reconcileRuntimeResidency(
+            selectedModel: session.selectedModel,
+            residentModelNames: ["test-model"]
+        )
+
+        #expect(controller.state == .warm)
+        #expect(engine.requestCount == 1)
     }
 }
 
@@ -351,9 +435,11 @@ private final class WarmupTestSession: ChatWarmupSessionContext {
 
 private final class WarmupRecordingEngine: ChatEngineProtocol, @unchecked Sendable {
     var lastRequest: ChatCompletionRequest?
+    var requestCount = 0
 
     func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
         lastRequest = request
+        requestCount += 1
         return AsyncThrowingStream { $0.finish() }
     }
 

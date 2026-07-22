@@ -257,7 +257,7 @@ struct SubagentFeedView: View {
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
                 .frame(width: 16)
-            Text("\(count) earlier steps", bundle: .module)
+            Text(count == 1 ? L("1 earlier step") : L("\(count) earlier steps"))
                 .font(.system(size: 10))
                 .foregroundColor(theme.tertiaryText)
             Spacer(minLength: 0)

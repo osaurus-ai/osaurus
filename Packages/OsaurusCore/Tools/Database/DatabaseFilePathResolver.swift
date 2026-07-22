@@ -265,9 +265,10 @@ enum DatabaseFilePathResolver {
     }
 
     private static func hostWorkingFolderRoot() async -> URL? {
-        await MainActor.run {
-            FolderToolManager.shared.registeredContext?.rootPath
-        }
+        // The EXECUTING chat's folder root from the TaskLocal execution
+        // scope — folder ownership is per chat session, so a concurrent
+        // chat's folder can never hijack this resolver's host candidates.
+        ChatExecutionContext.currentFolderRoot
     }
 
     // MARK: - Path mapping (mirrors SharedArtifact sandbox resolution)

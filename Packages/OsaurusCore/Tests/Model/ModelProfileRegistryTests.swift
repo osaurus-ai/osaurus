@@ -74,6 +74,36 @@ struct ModelProfileRegistryTests {
         #expect(hasNoThinkingToggle, "Qwen3-Coder is non-thinking; toggle would silently no-op")
     }
 
+    @Test("thinkingStoredOption converts semantic enabled state through inverted options")
+    func thinkingStoredOption_semanticConversion() {
+        // Inverted profile (Qwen `disableThinking`): semantic ON stores
+        // false, semantic OFF stores true, and both round-trip back through
+        // `thinkingEnabled`.
+        let qwen = "qwen3.5-35b-a3b-4bit"
+        let on = ModelProfileRegistry.thinkingStoredOption(for: qwen, enabled: true)
+        #expect(on?.id == "disableThinking")
+        #expect(on?.value == .bool(false))
+        if let on {
+            #expect(
+                ModelProfileRegistry.thinkingEnabled(for: qwen, values: [on.id: on.value]) == true
+            )
+        }
+
+        let off = ModelProfileRegistry.thinkingStoredOption(for: qwen, enabled: false)
+        #expect(off?.value == .bool(true))
+        if let off {
+            #expect(
+                ModelProfileRegistry.thinkingEnabled(for: qwen, values: [off.id: off.value]) == false
+            )
+        }
+
+        // Models without a thinking toggle produce no stored option — the
+        // UI has nothing to persist for them.
+        let none = ModelProfileRegistry.thinkingStoredOption(for: "qwen3-coder-plus", enabled: true)
+        let hasNoStoredOption = none == nil
+        #expect(hasNoStoredOption, "Qwen3-Coder has no thinking toggle to persist")
+    }
+
     @Test("Foundation (Apple built-in) does not match any thinking profile")
     func foundation_noProfile() {
         let profile = ModelProfileRegistry.profile(for: "foundation")

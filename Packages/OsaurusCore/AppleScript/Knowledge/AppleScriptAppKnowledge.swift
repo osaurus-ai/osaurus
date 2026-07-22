@@ -11,8 +11,10 @@
 //  Detection is deliberately conservative: an app is a target only when its
 //  name appears in the task text (word-boundary, case-insensitive), or — when
 //  the task names no app but asks about the "frontmost"/"current" app — the
-//  frontmost app. No match → no injection (a battery query gets no Safari
-//  dictionary just because Safari is frontmost).
+//  frontmost app. The same fallback covers narrow working-document anaphora
+//  ("the file" / "the document") because users must switch into Osaurus to
+//  submit those tasks. No match → no injection (a battery query gets no Safari
+//  dictionary just because Safari was the working app).
 //
 
 import Foundation
@@ -49,8 +51,8 @@ public enum AppleScriptAppKnowledge {
     /// The app names `task` targets, in task order, capped at `limit`.
     /// Candidates are the running apps plus the recipe catalog's known names
     /// (so "Notes" matches even when Notes isn't running yet — the model may
-    /// launch it). Falls back to the frontmost app only when the task names no
-    /// app but refers to the frontmost/current/active app.
+    /// launch it). Falls back to the frontmost/working app only when the task
+    /// names no app but refers to that app or its current file/document.
     public static func detectTargetApps(
         task: String,
         frontmost: String?,
@@ -80,10 +82,35 @@ public enum AppleScriptAppKnowledge {
                 result.append(match.name)
             }
         }
-        if result.isEmpty, let frontmost, !frontmost.isEmpty, mentionsFrontmost(task) {
+        if result.isEmpty, let frontmost, !frontmost.isEmpty, mentionsWorkingApp(task) {
             result = [frontmost]
         }
         return result
+    }
+
+    /// Resolve narrow working-app anaphora into the child task once the live
+    /// desktop snapshot has identified exactly one target app. The parent may
+    /// legitimately say "the file" because that is how a user refers to the
+    /// document they just left to open Osaurus; leaving the app name only in a
+    /// separate system section proved too weak for small AppleScript models,
+    /// which could reinterpret the old text as a filename and search disk.
+    ///
+    /// This does not guess an app and does not change an explicitly named
+    /// target. It only adds the app identity already resolved from the live
+    /// frontmost-app handoff, while preserving the original task and literals.
+    public static func groundingWorkingAppReference(task: String, resolvedApp: String?) -> String {
+        guard mentionsWorkingApp(task), let resolvedApp else { return task }
+        let app = resolvedApp
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !app.isEmpty, wordRange(of: app, in: task) == nil else { return task }
+        let grounding = "\nWorking app resolved from the live desktop: \(app). "
+        if mentionsWorkingDocument(task) {
+            return task + grounding
+                + "Interpret the file/document as that app's front open document. "
+                + "Do not search for another file, and do not save unless the task explicitly asks."
+        }
+        return task + grounding + "Use that app as the frontmost/current/active app in this task."
     }
 
     /// Word-boundary, case-insensitive occurrence of `name` in `text`.
@@ -95,11 +122,21 @@ public enum AppleScriptAppKnowledge {
         )
     }
 
-    private static func mentionsFrontmost(_ task: String) -> Bool {
+    static func mentionsWorkingApp(_ task: String) -> Bool {
         let lower = task.lowercased()
         return lower.contains("frontmost") || lower.contains("front app")
             || lower.contains("current app") || lower.contains("active app")
             || lower.contains("front window") || lower.contains("this app")
+            || mentionsWorkingDocument(task)
+    }
+
+    private static func mentionsWorkingDocument(_ task: String) -> Bool {
+        let lower = task.lowercased()
+        return lower.contains("the file") || lower.contains("this file")
+            || lower.contains("the text file") || lower.contains("this text file")
+            || lower.contains("current file") || lower.contains("open file")
+            || lower.contains("the document") || lower.contains("this document")
+            || lower.contains("current document") || lower.contains("open document")
     }
 
     // MARK: - Composition

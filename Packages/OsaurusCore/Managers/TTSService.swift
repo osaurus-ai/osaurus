@@ -237,11 +237,18 @@ public final class TTSService: ObservableObject {
 
     // MARK: - Public API
 
-    /// True when the model is fully loaded and ready to synthesize.
+    /// True when the active provider can synthesize right now. The remote
+    /// provider has no local model to download, so it is always "ready";
+    /// connection failures surface at playback time via `lastRemoteError`.
     public var isModelReady: Bool {
+        if TTSConfigurationStore.load().provider == .openAICompatible { return true }
         if case .ready = modelState { return true }
         return false
     }
+
+    /// Most recent remote-synthesis failure, shown in the TTS settings tab.
+    /// Cleared when a later playback starts.
+    @Published public private(set) var lastRemoteError: String?
 
     /// Toggle speech for a given message. Tapping the currently-playing
     /// message stops playback; tapping a different message switches to it.
@@ -412,6 +419,20 @@ public final class TTSService: ObservableObject {
     // MARK: - Playback
 
     private func startPlayback(text: String, messageId: UUID, voiceOverride: String? = nil) {
+        let config = TTSConfigurationStore.load()
+        switch config.provider {
+        case .pocketTTS:
+            startPocketPlayback(
+                text: text, messageId: messageId, voiceOverride: voiceOverride, config: config)
+        case .openAICompatible:
+            startRemotePlayback(
+                text: text, messageId: messageId, voiceOverride: voiceOverride, config: config)
+        }
+    }
+
+    private func startPocketPlayback(
+        text: String, messageId: UUID, voiceOverride: String?, config: TTSConfiguration
+    ) {
         guard let manager else {
             playingMessageId = nil
             return
@@ -420,7 +441,6 @@ public final class TTSService: ObservableObject {
         streamFinished = false
         pendingBufferCount = 0
 
-        let config = TTSConfigurationStore.load()
         let trimmedOverride = voiceOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
         let requestedVoice = (trimmedOverride?.isEmpty == false ? trimmedOverride! : config.voice)
         // Fall back to the default when the configured/overridden voice isn't a
@@ -459,6 +479,64 @@ public final class TTSService: ObservableObject {
             } catch {
                 self?.handleStreamError(error, for: messageId)
             }
+        }
+    }
+
+    private func startRemotePlayback(
+        text: String, messageId: UUID, voiceOverride: String?, config: TTSConfiguration
+    ) {
+        streamFinished = false
+        pendingBufferCount = 0
+        lastRemoteError = nil
+
+        let trimmedOverride = voiceOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let voice = (trimmedOverride?.isEmpty == false ? trimmedOverride! : config.remoteVoice)
+
+        playbackTask = Task { [weak self] in
+            // Keychain read is blocking XPC; a detached task keeps it off the
+            // main actor (a plain `Task {}` here would inherit it).
+            let apiKey = await Task.detached(priority: .userInitiated) {
+                TTSRemoteAPIKeyStore.loadSync()
+            }.value
+            guard !Task.isCancelled else { return }
+            let client = OpenAICompatibleTTSClient(
+                endpoint: config.remoteEndpoint,
+                model: config.remoteModel,
+                voice: voice,
+                speed: config.remoteSpeed,
+                apiKey: apiKey
+            )
+            do {
+                try await self?.pipeline.prepareAndPlay()
+            } catch {
+                self?.lastRemoteError = error.localizedDescription
+                self?.playingMessageId = nil
+                return
+            }
+            guard !Task.isCancelled else { return }
+            do {
+                let stream = try client.synthesizeStreaming(text: text)
+                for try await samples in stream {
+                    if Task.isCancelled { break }
+                    self?.schedule(samples: samples)
+                }
+                self?.markStreamFinished(for: messageId)
+            } catch is CancellationError {
+                // stop() already cleared state
+            } catch {
+                self?.handleRemoteStreamError(error, for: messageId)
+            }
+        }
+    }
+
+    private func handleRemoteStreamError(_ error: Error, for messageId: UUID) {
+        TTSLogger.service.error(
+            "Remote TTS synthesis failed: \(error.localizedDescription, privacy: .public)")
+        // Unlike the local path, don't touch `modelState`: that tracks the
+        // PocketTTS download and a network hiccup shouldn't flip it to failed.
+        lastRemoteError = error.localizedDescription
+        if playingMessageId == messageId {
+            stop()
         }
     }
 

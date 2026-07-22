@@ -50,6 +50,13 @@ public final class OnboardingService: ObservableObject {
     public func performFactoryReset() async {
         print("[OnboardingService] Initiating factory reset...")
 
+        // Wipe every native browser profile FIRST, while the session catalog
+        // (in ~/.osaurus) still holds the WebKit profile UUIDs needed to open
+        // each store. Deleting the root directory below removes the catalog
+        // but NOT the WKWebsiteDataStore data under ~/Library — without this
+        // step the authenticated stores would be orphaned on disk forever.
+        await BrowserSessionManager.shared.resetAllSessions()
+
         // wipe all Osaurus items from the Keychain
         wipeKeychain()
 

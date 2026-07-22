@@ -707,6 +707,82 @@ enum AgentToolLoop {
         return (obj["ok"] as? Bool) == true
     }
 
+    /// Interactive desktop subagents can partially affect external state
+    /// before returning a terminal failure. Once one reports a canonical,
+    /// non-retryable failure, the chat surface must not ask the parent model
+    /// to guess what happened or launch another blind automation attempt.
+    ///
+    /// `invalid_args` and `not_found` deliberately remain recoverable: the
+    /// parent can correct the call shape or choose a different target. Other
+    /// tools retain their existing envelope/pivot behavior; this safety stop
+    /// is scoped to the three desktop subagent entry points implicated by the
+    /// shared execution/finalization contract.
+    static func isTerminalDesktopSubagentFailure(toolName: String, result: String) -> Bool {
+        guard ["computer_use", "applescript", "mac_query"].contains(toolName) else {
+            return false
+        }
+        guard ToolEnvelope.isError(result),
+            let data = result.data(using: .utf8),
+            let envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            envelope["retryable"] as? Bool == false,
+            let rawKind = envelope["kind"] as? String,
+            let kind = ToolEnvelope.Kind(rawValue: rawKind)
+        else { return false }
+
+        switch kind {
+        case .invalidArgs, .notFound:
+            return false
+        case .rejected, .timeout, .executionError, .toolNotFound, .unavailable, .userDenied:
+            return true
+        }
+    }
+
+    /// Recover one narrow post-success failure mode without executing a
+    /// second desktop mutation. Small local parent models can correctly run a
+    /// desktop subagent, receive its successful structured result, then emit
+    /// the same tool again with its primary required field omitted. The vMLX
+    /// parser truthfully turns that malformed call into an
+    /// `invalid_tool_arguments` envelope; feeding it back invites a blind
+    /// retry even though the requested desktop work already succeeded.
+    ///
+    /// This is intentionally NOT a general invalid-arguments repair. It only
+    /// returns the real summary from the immediately preceding successful
+    /// result when all of these are true: one of the three desktop subagent
+    /// tools is repeated, the parser reports that tool's primary required
+    /// field missing, and the prior success envelope belongs to that same
+    /// tool. Any other malformed call still executes normally and reaches the
+    /// parent for correction.
+    static func completedDesktopSummaryBeforeMalformedRepeat(
+        invocation: ServiceToolInvocation,
+        state: AgentTaskState
+    ) -> String? {
+        let requiredField: String
+        switch invocation.toolName {
+        case "computer_use": requiredField = "goal"
+        case "applescript": requiredField = "task"
+        case "mac_query": requiredField = "question"
+        default: return nil
+        }
+
+        guard
+            let argsData = invocation.jsonArguments.data(using: .utf8),
+            let args = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any],
+            args["_error"] as? String == "invalid_tool_arguments",
+            args["_tool"] as? String == invocation.toolName,
+            args["_field"] as? String == requiredField,
+            let priorEnvelope = state.lastResultEnvelope,
+            ToolEnvelope.isSuccess(priorEnvelope),
+            let priorData = priorEnvelope.data(using: .utf8),
+            let prior = try? JSONSerialization.jsonObject(with: priorData) as? [String: Any],
+            prior["tool"] as? String == invocation.toolName,
+            let result = prior["result"] as? [String: Any],
+            let rawSummary = result["summary"] as? String
+        else { return nil }
+
+        let summary = rawSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        return summary.isEmpty ? nil : summary
+    }
+
     /// Shared user-facing text for the `.overBudget` exit: the request
     /// cannot fit the model's context window even after every compaction
     /// lever was exhausted. Each surface wraps this in its own envelope
@@ -1108,6 +1184,26 @@ enum AgentToolLoop {
                 // A productive turn — reset the empty-turn recovery budget so
                 // a later unrelated empty turn gets its own fresh allowance.
                 consecutiveEmptyTurns = 0
+
+                // A desktop subagent already completed successfully, and the
+                // very next model step emitted only a malformed repeat of that
+                // same tool. Do not materialise or execute the duplicate call:
+                // finish with the prior tool's real summary. Requiring the
+                // surface text hook keeps this recovery on user-facing chat;
+                // headless/API surfaces retain their existing invalid-args
+                // contract instead of silently manufacturing a response.
+                if invocations.count == 1,
+                    let invocation = invocations.first,
+                    let summary = Self.completedDesktopSummaryBeforeMalformedRepeat(
+                        invocation: invocation,
+                        state: state
+                    ),
+                    let emitFinalText = hooks.emitFallbackText
+                {
+                    await emitFinalText(summary)
+                    return RunResult(exit: .finalResponse, iterations: iteration)
+                }
+
                 var outcomes: [AgentLoopToolOutcome] = []
                 outcomes.reserveCapacity(invocations.count)
 
@@ -1135,6 +1231,16 @@ enum AgentToolLoop {
                     for (slot, invocation) in invocations.enumerated() {
                         let callId = Self.callId(for: invocation)
                         await hooks.willProcessCall(invocation, callId)
+                        if let guarded = state.guardedResult(name: invocation.toolName) {
+                            slotted[slot] = AgentLoopToolOutcome(
+                                invocation: invocation,
+                                callId: callId,
+                                result: guarded,
+                                wasDeduped: false,
+                                wasError: false
+                            )
+                            continue
+                        }
                         if let held = state.heldResult(
                             name: invocation.toolName,
                             argsJSON: invocation.jsonArguments
@@ -1182,12 +1288,17 @@ enum AgentToolLoop {
                         for (index, entry) in toExecute.enumerated()
                         where index < executions.count {
                             let execution = executions[index]
+                            let wasError = execution.isError
+                                || Self.isTerminalDesktopSubagentFailure(
+                                    toolName: entry.invocation.toolName,
+                                    result: execution.result
+                                )
                             slotted[entry.slot] = AgentLoopToolOutcome(
                                 invocation: entry.invocation,
                                 callId: entry.callId,
                                 result: execution.result,
                                 wasDeduped: false,
-                                wasError: execution.isError
+                                wasError: wasError
                             )
                             if execution.endRun {
                                 endRunSlots.insert(entry.slot)
@@ -1238,12 +1349,17 @@ enum AgentToolLoop {
                             } else if let execution = await executeBatch(
                                 [(deferred.invocation, deferred.callId)]
                             ).first {
+                                let wasError = execution.isError
+                                    || Self.isTerminalDesktopSubagentFailure(
+                                        toolName: deferred.invocation.toolName,
+                                        result: execution.result
+                                    )
                                 slotted[slot] = AgentLoopToolOutcome(
                                     invocation: deferred.invocation,
                                     callId: deferred.callId,
                                     result: execution.result,
                                     wasDeduped: false,
-                                    wasError: execution.isError
+                                    wasError: wasError
                                 )
                                 if execution.endRun {
                                     endRunSlots.insert(slot)
@@ -1284,6 +1400,32 @@ enum AgentToolLoop {
                         let callId = Self.callId(for: invocation)
                         await hooks.willProcessCall(invocation, callId)
 
+                        // Bounded discovery guard: once the state machine has
+                        // enough ranked sources, synthesize a structured
+                        // transition result instead of paying for another
+                        // rephrased provider call. The outcome still lands in
+                        // surface history through `onBatchComplete` below.
+                        if let guarded = state.guardedResult(name: invocation.toolName) {
+                            state.record(
+                                name: invocation.toolName,
+                                argsJSON: invocation.jsonArguments,
+                                result: guarded
+                            )
+                            if let bias = state.nextStepBias() {
+                                pendingStateNotice = "[System Notice] " + bias
+                            }
+                            outcomes.append(
+                                AgentLoopToolOutcome(
+                                    invocation: invocation,
+                                    callId: callId,
+                                    result: guarded,
+                                    wasDeduped: false,
+                                    wasError: false
+                                )
+                            )
+                            continue
+                        }
+
                         // Consecutive-identical dedupe: replay the EXACT envelope
                         // the model already received instead of re-executing.
                         if let held = state.heldResult(
@@ -1309,6 +1451,11 @@ enum AgentToolLoop {
                         }
 
                         let execution = await hooks.executeTool(invocation, callId)
+                        let wasError = execution.isError
+                            || Self.isTerminalDesktopSubagentFailure(
+                                toolName: invocation.toolName,
+                                result: execution.result
+                            )
 
                         // Surface intercepts (chat `complete`/`clarify`) end the
                         // run before the call is recorded — the intercept already
@@ -1335,14 +1482,14 @@ enum AgentToolLoop {
                                 callId: callId,
                                 result: execution.result,
                                 wasDeduped: false,
-                                wasError: execution.isError
+                                wasError: wasError
                             )
                         )
 
                         if await hooks.isCancelled() {
                             return RunResult(exit: .cancelled, iterations: iteration)
                         }
-                        if execution.isError, policy.stopOnToolRejection {
+                        if wasError, policy.stopOnToolRejection {
                             return RunResult(exit: .toolRejected, iterations: iteration)
                         }
                     }

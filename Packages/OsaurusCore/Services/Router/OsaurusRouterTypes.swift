@@ -127,6 +127,13 @@ enum OsaurusRouterAPIError: LocalizedError, Sendable {
     case accountFrozen
     case unauthorized
     case rateLimited(retryAfter: String?)
+    /// 402 `PAID_WEB_DISABLED`: the user turned off balance billing for web
+    /// search; the free grant is exhausted. Not an error state for the UI —
+    /// the client falls back to the local cascade silently.
+    case paidWebDisabled
+    /// 409 `IDEMPOTENCY_CONFLICT`: same key reused with a different body or
+    /// while the original is still in flight. Indicates a client bug.
+    case idempotencyConflict
 
     var errorDescription: String? {
         switch self {
@@ -150,6 +157,10 @@ enum OsaurusRouterAPIError: LocalizedError, Sendable {
             return "Router authentication failed. Check your clock and identity."
         case .rateLimited:
             return "Too many router requests. Please try again in a moment."
+        case .paidWebDisabled:
+            return "Paid web search is turned off. Remaining search credits still work."
+        case .idempotencyConflict:
+            return "Duplicate router request detected."
         }
     }
 
@@ -165,6 +176,10 @@ enum OsaurusRouterAPIError: LocalizedError, Sendable {
             return .unauthorized
         case "RATE_LIMITED":
             return .rateLimited(retryAfter: retryAfter)
+        case "PAID_WEB_DISABLED":
+            return .paidWebDisabled
+        case "IDEMPOTENCY_CONFLICT":
+            return .idempotencyConflict
         default:
             return .server(code: code, message: message, status: status)
         }
@@ -384,4 +399,240 @@ public struct RouterBillingSummary: Codable, Equatable, Sendable {
         self.inputTokens = summary.inputTokens
         self.outputTokens = summary.outputTokens
     }
+}
+
+// MARK: - Hosted web search (`/v1/search`, `/v1/contents`, `/credits/web-*`)
+
+/// `POST /v1/search` body. Field names are the wire names; the canonical
+/// encoder sorts keys so the signed bytes equal the sent bytes.
+struct OsaurusRouterWebSearchRequestBody: Encodable, Sendable {
+    var query: String
+    var category: String?
+    var num_results: Int?
+    var site: String?
+    var file_type: String?
+    var time_range: String?
+    var region: String?
+    var contents: OsaurusRouterWebContentsSpec?
+    var idempotency_key: String
+}
+
+/// `POST /v1/contents` body.
+struct OsaurusRouterWebContentsRequestBody: Encodable, Sendable {
+    var urls: [String]
+    var contents: OsaurusRouterWebContentsSpec?
+    var idempotency_key: String
+}
+
+/// The optional `contents` extraction spec shared by both POST routes.
+struct OsaurusRouterWebContentsSpec: Encodable, Sendable {
+    struct Text: Encodable, Sendable {
+        var max_characters: Int
+    }
+
+    var text: Text?
+    var highlights: Bool?
+}
+
+/// Lifetime free-request grant state for one operation. Grants never refill;
+/// `nil` on a response means the account holds no one-time grant.
+struct OsaurusRouterWebAllowance: Decodable, Equatable, Sendable {
+    let includedTotal: Int
+    let usedTotal: Int
+    let remainingTotal: Int
+
+    enum CodingKeys: String, CodingKey {
+        case includedTotal = "included_total"
+        case usedTotal = "used_total"
+        case remainingTotal = "remaining_total"
+    }
+}
+
+/// The `osaurus` billing object every hosted search/contents response carries.
+struct OsaurusRouterWebBilling: Decodable, Equatable, Sendable {
+    let requestId: String?
+    let operation: String
+    let provider: String?
+    /// "free" (inside the grant) or "paid" (billed against the balance).
+    let billing: String
+    let costMicro: String
+    let allowance: OsaurusRouterWebAllowance?
+    let status: String?
+
+    enum CodingKeys: String, CodingKey {
+        case operation, provider, billing, allowance, status
+        case requestId = "request_id"
+        case costMicro = "cost_micro"
+    }
+}
+
+/// One result row from `/v1/search` or `/v1/contents`. `text` / `highlights`
+/// / `summary` appear only when requested and returned.
+struct OsaurusRouterWebResult: Decodable, Sendable {
+    let title: String?
+    let url: String?
+    let publishedDate: String?
+    let author: String?
+    let highlights: [String]?
+    let text: String?
+    let summary: String?
+
+    enum CodingKeys: String, CodingKey {
+        case title, url, author, highlights, text, summary
+        case publishedDate = "published_date"
+    }
+}
+
+struct OsaurusRouterWebSearchResponse: Decodable, Sendable {
+    let requestId: String?
+    let results: [OsaurusRouterWebResult]
+    let warnings: [String]?
+    /// True when this idempotency key already completed server-side: billing
+    /// metadata is authoritative but `results` is empty (content is never
+    /// persisted, so it cannot be replayed).
+    let replayed: Bool?
+    let osaurus: OsaurusRouterWebBilling?
+
+    enum CodingKeys: String, CodingKey {
+        case results, warnings, replayed, osaurus
+        case requestId = "request_id"
+    }
+}
+
+/// Per-URL fetch outcome in a `/v1/contents` response. Failed pages are not
+/// billed; the client falls back locally per URL.
+struct OsaurusRouterWebURLStatus: Decodable, Equatable, Sendable {
+    let url: String
+    let status: String
+    let error: String?
+}
+
+struct OsaurusRouterWebContentsResponse: Decodable, Sendable {
+    let requestId: String?
+    let results: [OsaurusRouterWebResult]
+    let statuses: [OsaurusRouterWebURLStatus]?
+    let replayed: Bool?
+    let osaurus: OsaurusRouterWebBilling?
+
+    enum CodingKeys: String, CodingKey {
+        case results, statuses, replayed, osaurus
+        case requestId = "request_id"
+    }
+}
+
+/// `GET/POST /credits/web-settings`: the paid-web-search switch plus the
+/// current lifetime grant state per operation.
+struct OsaurusRouterWebSettingsResponse: Decodable, Equatable, Sendable {
+    struct Grants: Decodable, Equatable, Sendable {
+        var search: OsaurusRouterWebAllowance?
+        var contents: OsaurusRouterWebAllowance?
+    }
+
+    var autoPayEnabled: Bool
+    var grants: Grants?
+
+    enum CodingKeys: String, CodingKey {
+        case grants
+        case autoPayEnabled = "auto_pay_enabled"
+    }
+
+    init(autoPayEnabled: Bool, grants: Grants?) {
+        self.autoPayEnabled = autoPayEnabled
+        self.grants = grants
+    }
+}
+
+struct OsaurusRouterWebUsageResponse: Decodable, Sendable {
+    let data: [OsaurusRouterWebUsageItem]
+    let nextCursor: String?
+
+    enum CodingKeys: String, CodingKey {
+        case data
+        case nextCursor = "next_cursor"
+    }
+}
+
+/// One metadata-only billed web request from `GET /credits/web-usage` — no
+/// queries, URLs, or content, by design.
+struct OsaurusRouterWebUsageItem: Decodable, Identifiable, Equatable, Sendable {
+    struct Units: Decodable, Equatable, Sendable {
+        let requests: Int?
+        let extraResults: Int?
+        let contentPages: Int?
+        let summaryPages: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case requests
+            case extraResults = "extra_results"
+            case contentPages = "content_pages"
+            case summaryPages = "summary_pages"
+        }
+    }
+
+    let id: String
+    let requestId: String?
+    let operation: String
+    let provider: String?
+    let billing: String
+    let units: Units?
+    let costMicro: String
+    let status: String
+    let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, operation, provider, billing, units, status
+        case requestId = "request_id"
+        case costMicro = "cost_micro"
+        case createdAt = "created_at"
+    }
+}
+
+/// Local, persistable snapshot of one hosted web search/contents billing
+/// outcome — the web analogue of `RouterBillingSummary`. Metadata only:
+/// never a query, URL, or page content.
+public struct RouterWebBillingSummary: Codable, Equatable, Sendable {
+    public var requestId: String?
+    /// "search" or "contents".
+    public var operation: String
+    /// "free" (grant) or "paid" (balance).
+    public var billing: String
+    public var costMicro: String
+    public var allowanceIncluded: Int?
+    public var allowanceUsed: Int?
+    public var allowanceRemaining: Int?
+    public var status: String?
+
+    public init(
+        requestId: String? = nil,
+        operation: String,
+        billing: String,
+        costMicro: String,
+        allowanceIncluded: Int? = nil,
+        allowanceUsed: Int? = nil,
+        allowanceRemaining: Int? = nil,
+        status: String? = nil
+    ) {
+        self.requestId = requestId
+        self.operation = operation
+        self.billing = billing
+        self.costMicro = costMicro
+        self.allowanceIncluded = allowanceIncluded
+        self.allowanceUsed = allowanceUsed
+        self.allowanceRemaining = allowanceRemaining
+        self.status = status
+    }
+
+    init(_ billing: OsaurusRouterWebBilling) {
+        self.requestId = billing.requestId
+        self.operation = billing.operation
+        self.billing = billing.billing
+        self.costMicro = billing.costMicro
+        self.allowanceIncluded = billing.allowance?.includedTotal
+        self.allowanceUsed = billing.allowance?.usedTotal
+        self.allowanceRemaining = billing.allowance?.remainingTotal
+        self.status = billing.status
+    }
+
+    /// True when the request rode the lifetime free grant.
+    public var isIncluded: Bool { billing.lowercased() == "free" }
 }

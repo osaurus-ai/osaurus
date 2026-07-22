@@ -44,6 +44,16 @@ struct MLXBatchAdapter {
         await Registry.shared.snapshotDiagnostics()
     }
 
+    /// Exact live cache-class transitions keyed by the model name used to
+    /// create each BatchEngine. Unlike the aggregate compression counter,
+    /// these snapshots prove how many layers converted and which mixed-cache
+    /// layers remained native.
+    static func turboQuantCacheTransitionsSnapshot() async
+        -> [String: TurboQuantCacheTransitionSnapshot]
+    {
+        await Registry.shared.turboQuantCacheTransitionsSnapshot()
+    }
+
     static func lastEffectiveGenerationSettingsSnapshot() async -> [String: EffectiveGenerationSettings] {
         await Registry.shared.lastEffectiveGenerationSettingsSnapshot()
     }
@@ -85,6 +95,7 @@ struct MLXBatchAdapter {
         modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
         nativeMTPExplicitSamplingFallback: Bool = false,
+        cacheTopology: ModelCacheTopologySnapshot? = nil,
         stage: String = "resolved"
     ) -> EffectiveGenerationSettings {
         let defaultTemperature: Float? = {
@@ -128,7 +139,8 @@ struct MLXBatchAdapter {
                 ? false
                 : shouldEnableCompiledBatchDecode(
                     modelName: modelName,
-                    maxBatchSize: maxBatchSize
+                    maxBatchSize: maxBatchSize,
+                    cacheTopology: cacheTopology
                 )
         )
     }
@@ -139,6 +151,12 @@ struct MLXBatchAdapter {
         runtimeDefaults: VMLXServerGenerationDefaults,
         maxBatchSize: Int
     ) async {
+        // `last_effective_generation` is user/API request telemetry. Chat
+        // prefill warm-ups deliberately submit `temperature=0, maxTokens=1`
+        // after a visible turn; letting that housekeeping request overwrite
+        // the row makes the admin endpoint describe the warm-up instead of
+        // the generation the user just observed.
+        guard shouldRecordAsLastEffectiveGeneration(generation) else { return }
         let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelName)
         let effective = Self.effectiveGenerationSettings(
             modelName: modelName,
@@ -152,6 +170,12 @@ struct MLXBatchAdapter {
             modelName: modelName,
             settings: effective
         )
+    }
+
+    static func shouldRecordAsLastEffectiveGeneration(
+        _ generation: GenerationParameters
+    ) -> Bool {
+        !generation.warmupPrefill
     }
 
     static func effectiveDraftStrategy(
@@ -415,6 +439,19 @@ struct MLXBatchAdapter {
             lastEffectiveGenerationSettings
         }
 
+        func turboQuantCacheTransitionsSnapshot() async
+            -> [String: TurboQuantCacheTransitionSnapshot]
+        {
+            let entries = await coalescer.resolvedEntries()
+            var result: [String: TurboQuantCacheTransitionSnapshot] = [:]
+            for (modelName, engine) in entries {
+                if let transition = await engine.lastTurboQuantCacheTransitionForDiagnostics {
+                    result[modelName] = transition
+                }
+            }
+            return result
+        }
+
         /// Aggregate live BatchEngine diagnostics across every resolved
         /// engine in the registry. Used by the Server → Settings panel
         /// to render the "Live Diagnostics" subsection. Returns `nil`
@@ -436,6 +473,7 @@ struct MLXBatchAdapter {
             var pagedIncompatible = 0
             var prefixHits = 0
             var prefixMisses = 0
+            var pagedEvictions = 0
             var diskL2Hits = 0
             var diskL2Misses = 0
             var diskL2Stores = 0
@@ -453,6 +491,7 @@ struct MLXBatchAdapter {
                 if let pagedStats = stats.pagedStats {
                     prefixHits += pagedStats.cacheHits
                     prefixMisses += pagedStats.cacheMisses
+                    pagedEvictions += pagedStats.evictions
                 }
                 if let diskStats = stats.diskStats {
                     diskL2Hits += diskStats.hits
@@ -489,6 +528,7 @@ struct MLXBatchAdapter {
                 pagedIncompatibleModelCount: pagedIncompatible,
                 prefixHits: prefixHits,
                 prefixMisses: prefixMisses,
+                pagedEvictions: pagedEvictions,
                 diskL2Hits: diskL2Hits,
                 diskL2Misses: diskL2Misses,
                 diskL2Stores: diskL2Stores,
@@ -1012,8 +1052,26 @@ struct MLXBatchAdapter {
         }
     }
 
-    static func shouldEnableCompiledBatchDecode(modelName: String, maxBatchSize: Int) -> Bool {
-        maxBatchSize == 1
+    /// Compiled B=1 decode eligibility. Architecture-driven when the REAL
+    /// cache topology is known (the loaded container's per-layer cache list):
+    /// any SSM/Arrays/ZayaCCA companion or composite `CacheList` layer means
+    /// vmlx's compile stages can't trace the slot (`CacheFamily` `.mamba` /
+    /// `.zayaCCA` / `.heterogeneous` are not compile-eligible), so requesting
+    /// it only buys a per-iterator `eval(cache)` + failed promotion. The
+    /// name matcher remains the fallback for call sites that run before the
+    /// container is loaded (`pending_preload` stage) and as a belt for
+    /// families with known non-topology denials.
+    static func shouldEnableCompiledBatchDecode(
+        modelName: String,
+        maxBatchSize: Int,
+        cacheTopology: ModelCacheTopologySnapshot? = nil
+    ) -> Bool {
+        if let cacheTopology,
+            cacheTopology.requiresSSMCompanionState || cacheTopology.cacheListLayerCount > 0
+        {
+            return false
+        }
+        return maxBatchSize == 1
             && !Hy3ReasoningProfile.matches(modelId: modelName)
             && !ModelFamilyNames.isMiniMaxFamily(modelName)
             && !ModelFamilyNames.isStepFamily(modelName)
@@ -1170,6 +1228,11 @@ struct MLXBatchAdapter {
         )
         let nativeMTPExplicitSamplingFallback =
             draftStrategy?.usesNativeMTP == true && effectiveDraftStrategy == nil
+        // Fetched BEFORE the effective settings so compiled-decode
+        // eligibility can key off the container's REAL per-layer cache
+        // shape (hybrid companion slots deny compile) rather than only the
+        // name matcher; also reused for the KV-mode resolution below.
+        let cacheTopology = await container.cacheTopologySnapshot()
         let effective = Self.effectiveGenerationSettings(
             modelName: modelName,
             generation: generation,
@@ -1178,12 +1241,15 @@ struct MLXBatchAdapter {
             modelDefaults: modelDefaults,
             draftStrategy: effectiveDraftStrategy,
             nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback,
+            cacheTopology: cacheTopology,
             stage: "submitted_to_batch_engine"
         )
-        await Registry.shared.recordEffectiveGenerationSettings(
-            modelName: modelName,
-            settings: effective
-        )
+        if Self.shouldRecordAsLastEffectiveGeneration(generation) {
+            await Registry.shared.recordEffectiveGenerationSettings(
+                modelName: modelName,
+                settings: effective
+            )
+        }
         var mlxParams = ModelRuntime.makeGenerateParameters(
             temperature: effective.temperature,
             maxTokens: effective.maxTokens,
@@ -1212,7 +1278,6 @@ struct MLXBatchAdapter {
         // autoregressive models.
         mlxParams.diffusionMaxDenoisingSteps =
             runtime.generation.diffusionMaxDenoisingSteps
-        let cacheTopology = await container.cacheTopologySnapshot()
         let effectiveKVMode = ModelRuntime.defaultKVMode(
             for: ServerRuntimeSettingsStore.snapshot().cache,
             modelName: modelName,
@@ -1416,6 +1481,7 @@ struct MLXBatchAdapter {
         }
         guard !hasMedia else { return nil }
 
+        var probeStableBoundaries: [[Int]] = []
         let prefix = await warmupSendInvariantPrefixTokens(chat: chat) { probeText in
             var probeChat = chat
             probeChat.append(.user(probeText))
@@ -1428,6 +1494,7 @@ struct MLXBatchAdapter {
             guard let prepared = try? await processor.prepare(input: input),
                 !prepared.hasMediaContent
             else { return nil }
+            probeStableBoundaries.append(prepared.cacheStablePrefixTokenCounts)
             return prepared.text.tokenIds
                 ?? MLXCacheIOLock.withSerializedMLXCacheIO {
                     prepared.text.tokens.asArray(Int.self)
@@ -1444,8 +1511,19 @@ struct MLXBatchAdapter {
         // The scope salt is derived from additionalContext alone, so the
         // probe render's salt matches the real send's.
         let scopeSalt = MLXLMCommon.cacheScopeSalt(from: additionalContext)
+        let stableBoundaries =
+            probeStableBoundaries.count == 2
+            ? agreedWarmupStableBoundaries(
+                probeA: probeStableBoundaries[0],
+                probeB: probeStableBoundaries[1],
+                invariantPrefixCount: prefix.count
+            )
+            : []
+        let cacheBoundaries = warmupCacheBoundaryLists(
+            stableBoundaries: stableBoundaries
+        )
         batchAdapterLog.info(
-            "warmupPrefill: truncated prompt to send-invariant prefix of \(prefix.count, privacy: .public) tokens"
+            "warmupPrefill: truncated prompt to send-invariant prefix of \(prefix.count, privacy: .public) tokens; stable boundaries \(stableBoundaries, privacy: .public)"
         )
         // Prompt tokens are batch-shaped [1, N] by processor contract (see
         // `truncatingToCanonicalCacheBoundary`).
@@ -1453,9 +1531,35 @@ struct MLXBatchAdapter {
             tokens: MLXArray(prefix).expandedDimensions(axis: 0),
             tokenIds: prefix,
             cacheScopeSalt: scopeSalt,
-            cachePrefixTokenCounts: [],
+            cachePrefixTokenCounts: cacheBoundaries.all,
+            cacheStablePrefixTokenCounts: cacheBoundaries.stable,
             toolSchemas: toolsSpec
         )
+    }
+
+    /// vMLX stores boundaries by iterating `cachePrefixTokenCounts`; the
+    /// stable list is metadata that selects the safe re-derive path. A stable
+    /// warm-up boundary must therefore be present in both lists or it can be
+    /// preferred for lookup but is never persisted.
+    static func warmupCacheBoundaryLists(
+        stableBoundaries: [Int]
+    ) -> (all: [Int], stable: [Int]) {
+        let stable = Array(Set(stableBoundaries.filter { $0 > 0 })).sorted()
+        return (all: stable, stable: stable)
+    }
+
+    /// Keep only stable cache boundaries independently derived by both probe
+    /// renders and contained strictly inside their send-invariant prefix.
+    /// A one-probe-only boundary is discarded: warm-up must not persist a
+    /// supposedly cross-chat checkpoint unless both template renders agree.
+    static func agreedWarmupStableBoundaries(
+        probeA: [Int],
+        probeB: [Int],
+        invariantPrefixCount: Int
+    ) -> [Int] {
+        guard invariantPrefixCount > 1 else { return [] }
+        let agreed = Set(probeA).intersection(probeB)
+        return agreed.filter { $0 > 0 && $0 < invariantPrefixCount }.sorted()
     }
 
     /// Token-level core of ``prepareWarmupInputAtSendInvariantPrefix``:

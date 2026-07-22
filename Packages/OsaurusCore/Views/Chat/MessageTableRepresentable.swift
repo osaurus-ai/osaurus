@@ -721,6 +721,9 @@ extension MessageTableRepresentable {
             // fonts. capture the previous theme so we can force a reconfigure
             // (and height-cache flush) like the width change path does
             let previousThemeConfig = ctx.theme.customThemeConfig
+            // The global font zoom lives on the theme instance, not in the
+            // config, so compare it separately or zoom-only changes are missed.
+            let previousFontScale = (ctx.theme as? CustomizableTheme)?.fontScale
 
             // if width changed, invalidate the entire height cache
             if widthChanged { heightCache.removeAll() }
@@ -728,7 +731,9 @@ extension MessageTableRepresentable {
             ctx = context
             self.groupHeaderMap = groupHeaderMap
 
-            let themeChanged = previousThemeConfig != context.theme.customThemeConfig
+            let themeChanged =
+                previousThemeConfig != context.theme.customThemeConfig
+                || previousFontScale != (context.theme as? CustomizableTheme)?.fontScale
             if themeChanged { heightCache.removeAll() }
 
             // Editing state lives in the context, not in the blocks themselves.

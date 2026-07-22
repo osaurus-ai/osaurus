@@ -148,7 +148,7 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
         "Find additional tools or skills the current schema does not include. "
         + "Use this to discover or confirm any capability, including whether a named tool exists in the enabled set. "
         + "Your current tool list is a fixed subset, not the full set. "
-        + "Returns ranked IDs (e.g. `tool/sandbox_exec`, `skill/plot-data`) you then pass to `capabilities_load`. "
+        + "Returns ranked IDs copied from the live capability index; pass only those exact returned IDs to `capabilities_load`. "
         + "Example: `{\"query\": \"convert csv to json\"}`."
 
     let agentId: UUID?
@@ -290,6 +290,7 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
             }
             return result
         }
+        let requestExposedToolNames = ChatExecutionContext.toolExecutionScope?.authorizedNames ?? []
 
         if hits.isEmpty {
             let queryList = queries.map { "'\($0)'" }.joined(separator: ", ")
@@ -335,7 +336,11 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
             }
             + hits.tools.map {
                 var extraLines = ["runtime: \($0.entry.runtime.rawValue)"]
-                if let availability = toolAvailabilityByName[$0.entry.id] {
+                if requestExposedToolNames.contains($0.entry.id) {
+                    extraLines.append(
+                        "availability: already_loaded - exposed and callable in the current request"
+                    )
+                } else if let availability = toolAvailabilityByName[$0.entry.id] {
                     extraLines.append("availability: \(availability.compactSummary)")
                     if let groupName = availability.groupName {
                         extraLines.append("provider: \(groupName)")
@@ -593,13 +598,32 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
 // MARK: - capabilities_load
 
 final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
+    /// Total character budget for a loaded skill's reference materials
+    /// (~8k tokens). Skill loads ride in tool results that persist in
+    /// conversation history, so an unbounded reference dump would tax every
+    /// subsequent turn. Past the budget, remaining files collapse to a named
+    /// omission note; `/skill-name` invocation stays uncapped because it
+    /// injects for a single message only.
+    static let skillReferenceBudget = 32_000
+
+    /// Built-in skills are not plugin-backed, so they have no dynamic tool
+    /// group for `loadSkill` to cascade automatically. Keep their concrete
+    /// tool dependencies explicit here instead of parsing tool names out of
+    /// prose. Data Visualizer otherwise teaches a small model to call
+    /// `render_chart` while leaving that gated built-in outside the live
+    /// execution scope.
+    private static let builtInSkillToolDependencies: [UUID: [String]] = [
+        UUID(uuidString: "00000001-0000-0000-0000-000000000007")!: ["render_chart"]
+    ]
+
     let name = "capabilities_load"
     let description =
         "Load capabilities into the current session by ID. IDs come from the Enabled capabilities list "
         + "or from `capabilities_discover` results — do not invent IDs. After loading, the named tools are "
         + "callable for the rest of the session; a named skill's instructions are returned in this tool's "
         + "result for you to follow. A `plugin/<id>` id loads that plugin's whole tool group (and any "
-        + "governing skill) in one call. Example: `{\"ids\": [\"plugin/calendar\", \"tool/sandbox_exec\", \"skill/plot-data\"]}`."
+        + "governing skill) in one call. Do not call this tool unless the user request needs a capability "
+        + "whose exact ID was present in the live list or returned by discovery."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -609,7 +633,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("array"),
                 "items": .object(["type": .string("string")]),
                 "description": .string(
-                    "IDs from the Enabled capabilities list or capabilities_discover results (e.g. 'plugin/calendar', 'method/abc', 'tool/sandbox_exec', 'skill/swift-best-practices')"
+                    "Exact IDs copied from the Enabled capabilities list or capabilities_discover results"
                 ),
             ])
         ]),
@@ -639,7 +663,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                         kind: .invalidArgs,
                         message:
                             "Invalid ID format '\(id)' — expected `<type>/<id>` "
-                            + "(e.g. `tool/sandbox_exec`, `skill/plot-data`). Use IDs from the Enabled capabilities list or `capabilities_discover`.",
+                            + "copied exactly from the Enabled capabilities list or `capabilities_discover`.",
                         field: "ids"
                     )
                 )
@@ -948,6 +972,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     /// load). Without a session in context we can't know — return false
     /// and let the buffer path run (harmless, just redundant).
     private func isAlreadyLoadedInSession(_ toolId: String) async -> Bool {
+        if ChatExecutionContext.toolExecutionScope?.permits(toolId) == true { return true }
         guard let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty,
             let state = await SessionToolStateStore.shared.get(sessionId)
         else { return false }
@@ -1017,8 +1042,11 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 )
             )
         }
-        let skill = await MainActor.run {
-            SkillManager.shared.skill(named: skillName)
+        let (skill, sameNamed) = await MainActor.run {
+            (
+                SkillManager.shared.skill(named: skillName),
+                SkillManager.shared.skills(named: skillName)
+            )
         }
         guard let skill = skill else {
             return .failure(
@@ -1029,8 +1057,36 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         if !skill.description.isEmpty {
             output += "*\(skill.description)*\n\n"
         }
-        output += skill.instructions
+        // Parity with `/skill-name`: instructions AND reference materials.
+        // The budget keeps a reference-heavy skill from flooding the tool
+        // result; past it, files collapse to a named omission note.
+        output += await SkillManager.shared.buildFullInstructions(
+            for: skill,
+            referenceBudget: Self.skillReferenceBudget
+        )
         output += "\n\n"
+        if sameNamed.count > 1 {
+            let alternates = sameNamed
+                .filter { $0.id != skill.id }
+                .map { alt -> String in
+                    if let pluginId = alt.pluginId, !pluginId.isEmpty {
+                        return "one from plugin `\(pluginId)`"
+                    }
+                    return alt.isBuiltIn ? "a built-in" : "a user skill"
+                }
+            output +=
+                "Note: \(alternates.count) other installed skill(s) share this name "
+                + "(\(alternates.joined(separator: ", "))). Loaded: "
+                + (skill.isFromPlugin
+                    ? "the plugin skill." : skill.isBuiltIn ? "the built-in." : "the user skill.")
+            output += "\n\n"
+        }
+
+        if skill.isBuiltIn,
+            let requiredTools = Self.builtInSkillToolDependencies[skill.id]
+        {
+            output += await bufferToolSpecs(named: requiredTools)
+        }
 
         // A plugin skill governs its sibling tools, so auto-load the plugin's
         // whole dynamic tool group (agent-scoped) instead of forcing a
@@ -1129,7 +1185,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         // ordering a name-only manifest can't convey. Mirrors `loadSkill`.
         var output = ""
         let governingSkills = await MainActor.run {
-            SkillManager.shared.skills.filter { $0.enabled && $0.pluginId == pluginId }
+            SkillManager.shared.skills.filter { $0.pluginId == pluginId }
         }
         for skill in governingSkills {
             output += "## Skill: \(skill.name)\n"

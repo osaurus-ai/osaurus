@@ -9,13 +9,17 @@ struct WalletActivityProjector {
     /// Newest-first merged rows, capped at `limit`. Ledger debits with an
     /// unrecognized `entry_type` are dropped: they mirror per-request spend the
     /// usage rows already list, and including both double-counts every charge.
+    /// Web `settle` debits are likewise dropped — `webUsageItems` already
+    /// carries every billed web request.
     func rows(
         usageItems: [OsaurusRouterUsageItem],
         transactions: [OsaurusRouterTransactionItem],
+        webUsageItems: [OsaurusRouterWebUsageItem] = [],
         limit: Int = 4
     ) -> [WalletActivityRow] {
         let merged =
             usageItems.map(WalletActivityRow.init(usage:))
+            + webUsageItems.map(WalletActivityRow.init(webUsage:))
             + transactions
                 .filter(WalletActivityRow.isWalletVisible)
                 .map(WalletActivityRow.init(transaction:))
@@ -34,6 +38,8 @@ struct WalletActivityRow: Identifiable, Equatable {
         case usage
         /// A ledger transaction (top-up, refund, future agent purchase).
         case transaction
+        /// A billed web search/contents request (from `/credits/web-usage`).
+        case webUsage
     }
 
     let id: String
@@ -47,44 +53,94 @@ struct WalletActivityRow: Identifiable, Equatable {
     /// True when the amount adds to the balance (row tints as a credit).
     let isCredit: Bool
     let stateKind: CreditsActivityStateKind
+    /// True for a hosted web request that rode the lifetime free grant —
+    /// rendered in the premium (accent) family, one shade apart from paid.
+    let isIncludedWebRequest: Bool
     /// Parsed timestamp used for merge ordering; nil when the server value is
     /// unparseable (such rows sort last).
     let date: Date?
+
+    init(
+        id: String,
+        kind: Kind,
+        title: String,
+        amountLabel: String,
+        isCredit: Bool,
+        stateKind: CreditsActivityStateKind,
+        isIncludedWebRequest: Bool = false,
+        date: Date?
+    ) {
+        self.id = id
+        self.kind = kind
+        self.title = title
+        self.amountLabel = amountLabel
+        self.isCredit = isCredit
+        self.stateKind = stateKind
+        self.isIncludedWebRequest = isIncludedWebRequest
+        self.date = date
+    }
 }
 
 extension WalletActivityRow {
     init(usage item: OsaurusRouterUsageItem) {
-        self.id = "usage-\(item.id)"
-        self.kind = .usage
+        let title: String
         if !item.model.isEmpty {
-            self.title = item.model
+            title = item.model
         } else if !item.provider.isEmpty {
-            self.title = item.provider
+            title = item.provider
         } else {
-            self.title = "Model request"
+            title = "Model request"
         }
         let micro = Int64(item.costMicro) ?? 0
-        self.amountLabel =
-            micro > 0
-            ? "-" + OsaurusRouter.formatMicroUSDPrecise(item.costMicro)
-            : OsaurusRouter.formatMicroUSDPrecise(item.costMicro)
-        self.isCredit = false
-        self.stateKind = CreditsActivityRow.state(forStatus: item.status).kind
-        self.date = CreditsActivityProjector.date(fromRouterTimestamp: item.createdAt)
+        self.init(
+            id: "usage-\(item.id)",
+            kind: .usage,
+            title: title,
+            amountLabel: micro > 0
+                ? "-" + OsaurusRouter.formatMicroUSDPrecise(item.costMicro)
+                : OsaurusRouter.formatMicroUSDPrecise(item.costMicro),
+            isCredit: false,
+            stateKind: CreditsActivityRow.state(forStatus: item.status).kind,
+            date: CreditsActivityProjector.date(fromRouterTimestamp: item.createdAt)
+        )
     }
 
     init(transaction item: OsaurusRouterTransactionItem) {
-        self.id = "txn-\(item.id)"
-        self.kind = .transaction
         let micro = Int64(item.amountMicro) ?? 0
-        self.isCredit = micro >= 0
-        self.title = Self.transactionTitle(entryType: item.entryType, isCredit: micro >= 0)
-        self.amountLabel =
-            micro >= 0
-            ? "+" + OsaurusRouter.formatMicroUSD(item.amountMicro)
-            : OsaurusRouter.formatMicroUSD(item.amountMicro)
-        self.stateKind = micro >= 0 ? .success : .secondary
-        self.date = CreditsActivityProjector.date(fromRouterTimestamp: item.createdAt)
+        self.init(
+            id: "txn-\(item.id)",
+            kind: .transaction,
+            title: Self.transactionTitle(entryType: item.entryType, isCredit: micro >= 0),
+            amountLabel: micro >= 0
+                ? "+" + OsaurusRouter.formatMicroUSD(item.amountMicro)
+                : OsaurusRouter.formatMicroUSD(item.amountMicro),
+            isCredit: micro >= 0,
+            stateKind: micro >= 0 ? .success : .secondary,
+            date: CreditsActivityProjector.date(fromRouterTimestamp: item.createdAt)
+        )
+    }
+
+    init(webUsage item: OsaurusRouterWebUsageItem) {
+        let included = item.billing.lowercased() == "free"
+        let micro = Int64(item.costMicro) ?? 0
+        let amountLabel: String
+        if included {
+            amountLabel = "Included"
+        } else if micro > 0 {
+            amountLabel = "-" + OsaurusRouter.formatMicroUSDPrecise(item.costMicro)
+        } else {
+            amountLabel = OsaurusRouter.formatMicroUSDPrecise(item.costMicro)
+        }
+        self.init(
+            id: "web-\(item.id)",
+            kind: .webUsage,
+            title: item.operation == "contents" ? "Page extract" : "Web search",
+            amountLabel: amountLabel,
+            isCredit: false,
+            stateKind: CreditsActivityRow.state(forStatus: item.status).kind,
+            isIncludedWebRequest: included,
+            date: CreditsActivityProjector.date(fromRouterTimestamp: item.createdAt)
+        )
     }
 
     /// Whether a ledger transaction belongs in the wallet's mini activity list.

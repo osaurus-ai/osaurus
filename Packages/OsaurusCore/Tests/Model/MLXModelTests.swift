@@ -178,6 +178,13 @@ struct MLXModelTests {
         #expect(highPrecision == efficient)
     }
 
+    @Test func simplifiedName_normalizesBonsaiLowBitVariants() {
+        let ternary = model(named: "Bonsai 27b Ternary JANG").simplifiedName
+        let oneBit = model(named: "Bonsai 27b 1bit JANG").simplifiedName
+        #expect(ternary == "Bonsai 27b")
+        #expect(oneBit == ternary)
+    }
+
     /// If stripping would leave nothing, fall back to the original name rather
     /// than rendering an empty row title.
     @Test func simplifiedName_fallsBackWhenAllTokensAreJargon() {

@@ -212,6 +212,34 @@ private extension osaurusApp {
             } label: {
                 Text(verbatim: L("Theme"))
             }
+
+            Divider()
+
+            Button {
+                themeManager.zoomFontIn()
+            } label: {
+                Text(verbatim: L("Zoom In"))
+            }
+            // "=" is the unshifted key under "+", matching how ⌘+ zoom is
+            // reached without holding Shift in browsers.
+            .keyboardShortcut("=", modifiers: .command)
+            .disabled(!themeManager.canZoomFontIn)
+
+            Button {
+                themeManager.zoomFontOut()
+            } label: {
+                Text(verbatim: L("Zoom Out"))
+            }
+            .keyboardShortcut("-", modifiers: .command)
+            .disabled(!themeManager.canZoomFontOut)
+
+            Button {
+                themeManager.resetFontScale()
+            } label: {
+                Text(verbatim: L("Actual Size"))
+            }
+            .keyboardShortcut("0", modifiers: .command)
+            .disabled(themeManager.isDefaultFontScale)
         }
     }
 

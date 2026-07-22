@@ -21,6 +21,12 @@ extension ChatSession: ChatWarmupSessionContext {
         let effectiveAgentId = agentId ?? Agent.defaultId
         let executionMode = await prepareChatExecutionMode(agentId: effectiveAgentId)
 
+        // The plugin catalog is part of the static system/tool prefix. Wait
+        // for its one-time launch snapshot before warming, otherwise the same
+        // installed plugins can render a different prefix across process
+        // restarts and bypass an otherwise valid disk-L2 cache entry.
+        await PluginManager.shared.ensurePromptCatalogReady()
+
         let liveToolMode = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId)
         let liveFingerprint = SessionToolState.fingerprint(
             executionMode: executionMode,

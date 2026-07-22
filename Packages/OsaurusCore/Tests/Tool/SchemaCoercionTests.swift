@@ -65,6 +65,68 @@ struct SchemaCoercionTests {
         #expect((config["depth"] as? Int) == 3 || (config["depth"] as? NSNumber)?.intValue == 3)
     }
 
+    @Test func unwrapsStringifiedFunctionArgumentsEnvelope() throws {
+        let schema: JSONValue = .object([
+            "type": .string("object"),
+            "additionalProperties": .bool(false),
+            "properties": .object([
+                "dataRef": .object(["type": .string("string")]),
+                "chartType": .object(["type": .string("string")]),
+                "series": .object([
+                    "type": .string("array"),
+                    "items": .object(["type": .string("string")]),
+                ]),
+            ]),
+        ])
+        let raw: [String: Any] = [
+            "arguments":
+                #"{"chartType":"line","dataRef":"webdata:123","series":["AAPL.Open"]}"#
+        ]
+
+        let coerced = try #require(
+            SchemaValidator.coerceArguments(raw, against: schema) as? [String: Any]
+        )
+        #expect(coerced["arguments"] == nil)
+        #expect(coerced["chartType"] as? String == "line")
+        #expect(coerced["dataRef"] as? String == "webdata:123")
+        #expect((coerced["series"] as? [String]) == ["AAPL.Open"])
+        #expect(SchemaValidator.validate(arguments: coerced, against: schema).isValid)
+    }
+
+    @Test func declaredOrUnrelatedArgumentsEnvelopeIsNotUnwrapped() throws {
+        let declaredSchema: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "arguments": .object(["type": .string("string")]),
+                "dataRef": .object(["type": .string("string")]),
+            ]),
+        ])
+        let declared = try #require(
+            SchemaValidator.coerceArguments(
+                ["arguments": #"{"dataRef":"webdata:123"}"#],
+                against: declaredSchema
+            ) as? [String: Any]
+        )
+        #expect(declared["arguments"] as? String == #"{"dataRef":"webdata:123"}"#)
+        #expect(declared["dataRef"] == nil)
+
+        let strictSchema: JSONValue = .object([
+            "type": .string("object"),
+            "additionalProperties": .bool(false),
+            "properties": .object([
+                "dataRef": .object(["type": .string("string")])
+            ]),
+        ])
+        let unrelated = try #require(
+            SchemaValidator.coerceArguments(
+                ["arguments": #"{"unknown":true}"#],
+                against: strictSchema
+            ) as? [String: Any]
+        )
+        #expect(unrelated["arguments"] != nil)
+        #expect(!SchemaValidator.validate(arguments: unrelated, against: strictSchema).isValid)
+    }
+
     // MARK: - Scalar string coercion (mirrors ArgumentCoercion)
 
     @Test func unwrapsStringifiedIntegerToNative() throws {

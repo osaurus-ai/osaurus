@@ -1,0 +1,14 @@
+{
+  "id": "http_api.multimodal-video-order",
+  "domain": "http_api",
+  "label": "http api • real video payload: temporal color order must be answered correctly",
+  "query": "multimodal video contract",
+  "notes": "Real-video proof: a tiny generated H.264 MP4 (four solid red frames, then four solid blue frames) is sent as a video_url data URL and the model must name both colors in the right temporal order. Mirrors the Bonsai bundle's runtime-verification video fixture ('red frames followed by blue frames'), so this row is directly comparable to the bundle's upstream proof. SKIPs with the server's typed reason on routes without video support. Off-CI (needs a local video-capable model).",
+  "fixtures": {},
+  "expect": {
+    "httpAPI": {
+      "scenario": "multimodal_video",
+      "maxTokens": 512
+    }
+  }
+}

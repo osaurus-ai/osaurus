@@ -206,6 +206,26 @@ public final class ToolRegistry: ObservableObject {
             CapabilitiesLoadTool(),
             // Persistent memory recall — one tool, dispatched by `scope`.
             SearchMemoryTool(),
+            // Knowledge collection retrieval (read-only). Registered as
+            // built-ins so the runtime can execute them; the system prompt
+            // composer strips them unless the agent opts in via
+            // `knowledgeEnabled` with at least one granted collection.
+            // Collection scoping is additionally enforced at execution
+            // time inside each tool.
+            SearchKnowledgeTool(),
+            ReadKnowledgeTool(),
+            ListKnowledgeTool(),
+            // Knowledge curation loop: staleness tickets (annotation only,
+            // same gate as the retrieval tools). The corpus itself is never
+            // written by a tool.
+            FlagKnowledgeStaleTool(),
+            ListKnowledgeTicketsTool(),
+            // Curator-only draft path (`.ask` policy, external-surface
+            // denied). Creates pending proposals; the user approves them
+            // in the Knowledge tab before anything lands in the corpus.
+            ProposeKnowledgeUpdateTool(),
+            // Curator queue coordination (claim/release tickets).
+            UpdateKnowledgeTicketTool(),
             // Native web search (Settings → Search providers). Always loaded;
             // the composer strips it per-agent via `webSearchEnabled`. Its
             // sibling `search_and_extract` is registered as a dynamic native
@@ -274,6 +294,15 @@ public final class ToolRegistry: ObservableObject {
             // PermissionedTool: execution preflights Accessibility +
             // Screen Recording before the loop runs.
             ComputerUseTool(),
+            // Browser Use (persistent per-agent WebKit session — the native
+            // replacement for the osaurus.browser plugin). Registered as a
+            // built-in so the runtime can execute it and ChatView can
+            // intercept its live activity feed, but the composer strips it
+            // authoritatively unless the agent opts in via
+            // `browserUseEnabled` (custom agents; the Default agent opts in
+            // from Settings → Browser). The `browser_*` primitives are
+            // PRIVATE to the nested runner and are never registered here.
+            BrowserUseTool(),
             // AppleScript subagent. Like the other delegation-family tools it
             // is registered as a built-in so the runtime can execute it and
             // ChatView can intercept its feed, but the composer strips it
@@ -430,7 +459,9 @@ public final class ToolRegistry: ObservableObject {
     /// list below stays a derived union with a single source of truth per
     /// tool family.
     nonisolated static let externallyDeniedHostToolNames: Set<String> = [
-        "file_write", "file_edit", "shell_run", "git_commit", "file_undo",
+        "file_write", "file_edit", "file_copy", "shell_run", "git_commit", "file_undo",
+        // Curator draft path: never invocable from external surfaces.
+        "propose_knowledge_update",
     ]
 
     /// Tool classes that must never be invocable from EXTERNAL surfaces
@@ -456,6 +487,19 @@ public final class ToolRegistry: ObservableObject {
     /// on every external surface regardless of authentication.
     nonisolated static let hostFolderAllowedWhenAuthenticated: Set<String> = [
         "file_write", "file_edit",
+    ]
+
+    /// `.ask` tools that may run without an approval card on an UNATTENDED,
+    /// app-authored background dispatch (`ChatExecutionContext.isUnattendedDispatch`
+    /// — schedule / self-schedule / watcher, never external). Membership is
+    /// justified per tool by a SEPARATE human gate downstream: the curator's
+    /// `propose_knowledge_update` only queues an inert draft that the user must
+    /// still review and approve (with a diff) in the Knowledge tab before any
+    /// document is written. Without this, a scheduled Knowledge/Curator agent
+    /// stalls forever on an approval card nobody is present to click. The
+    /// interactive chat surface is unaffected — it still shows the card.
+    nonisolated static let unattendedAutoApprovableToolNames: Set<String> = [
+        "propose_knowledge_update",
     ]
 
     /// Whether `name` is blocked for the current execution because an
@@ -562,6 +606,13 @@ public final class ToolRegistry: ObservableObject {
                 } else if ChatExecutionContext.isExternalSurface {
                     // External MCP/HTTP callers cannot interact with GUI prompts.
                     approved = false
+                } else if ChatExecutionContext.isUnattendedDispatch
+                    && Self.unattendedAutoApprovableToolNames.contains(name)
+                {
+                    // Unattended schedule/watcher run with no user to click the
+                    // card. Approved only for tools whose real human gate is
+                    // downstream (see `unattendedAutoApprovableToolNames`).
+                    approved = true
                 } else {
                     approved = await ToolPermissionPromptService.requestApproval(
                         toolName: name,
@@ -733,7 +784,12 @@ public final class ToolRegistry: ObservableObject {
         // Coerce + preflight against the tool's schema. Returns either
         // a (possibly rewritten) `argumentsJSON` ready for dispatch, or
         // a structured failure envelope to short-circuit with.
-        switch Self.preflight(argumentsJSON: argumentsJSON, schema: tool.parameters, toolName: name) {
+        let normalizedArguments = tool.normalizeArgumentsBeforeValidation(argumentsJSON)
+        switch Self.preflight(
+            argumentsJSON: normalizedArguments,
+            schema: tool.parameters,
+            toolName: name
+        ) {
         case .rejected(let envelopeJSON):
             return envelopeJSON
         case .ready(let effectiveArgumentsJSON):
@@ -785,30 +841,92 @@ public final class ToolRegistry: ObservableObject {
             // mode, leaving plain folder + plain sandbox modes untouched.
             let policy = combinedHostReadPolicy
             let sandboxAgent = activeSandboxAgentName
-            let result = try await ChatExecutionContext.$hostReadOnlyScope.withValue(policy.scope) {
-                try await ChatExecutionContext.$allowHostSecretReads.withValue(policy.allowSecretReads) {
-                    try await ChatExecutionContext.$sandboxReadBridge.withValue(combinedSandboxReadBridge) {
-                        try await ChatExecutionContext.$sandboxAgentName.withValue(sandboxAgent) {
-                            if tool.bypassRegistryTimeout {
-                                return Self.normalizeToolResult(
-                                    try await Self.runToolBodyUntimed(
-                                        tool,
-                                        argumentsJSON: effectiveArgumentsJSON
-                                    ),
-                                    tool: name
-                                )
-                            }
-                            return Self.normalizeToolResult(
-                                try await Self.runToolBody(
-                                    tool,
-                                    argumentsJSON: effectiveArgumentsJSON,
-                                    timeoutSeconds: Self.defaultToolTimeoutSeconds
-                                ),
-                                tool: name
+            // Sandbox change tracking: wrap mutation-capable sandbox tools
+            // in a workspace checkpoint so every file the call creates,
+            // edits, deletes, or moves lands in the owning chat's Changes
+            // list. Only when the call is attributable (session id bound)
+            // and a sandbox agent identity is resolvable.
+            let readBridge = combinedSandboxReadBridge
+            // Sandbox tools checkpoint the sandbox roots; host-folder tools
+            // checkpoint the user-selected folder. In WRITABLE combined mode
+            // the unified `file_write`/`file_edit` can mutate EITHER
+            // filesystem (a `/workspace/...` path routes through the sandbox
+            // bridge), so they take both checkpoints — the untouched side
+            // diffs to zero rows and costs one manifest scan.
+            var changeCheckpoints: [SandboxWorkspaceChangeTracker.CheckpointToken] = []
+            if let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty {
+                if tool.mutatesSandboxWorkspace, let agentName = sandboxAgent {
+                    changeCheckpoints.append(
+                        await SandboxWorkspaceChangeTracker.shared.beginCheckpoint(
+                            sessionId: sessionId,
+                            agentName: agentName,
+                            sourceTool: name
+                        )
+                    )
+                } else if tool.mutatesHostFolder {
+                    // The EXECUTING chat's folder root (TaskLocal, bound by
+                    // the send/run surface) — never a process-wide folder, so
+                    // concurrent chats checkpoint their own roots.
+                    if let folderRoot = ChatExecutionContext.currentFolderRoot {
+                        changeCheckpoints.append(
+                            await SandboxWorkspaceChangeTracker.shared.beginHostCheckpoint(
+                                sessionId: sessionId,
+                                folderPath: folderRoot.standardizedFileURL.path,
+                                sourceTool: name
                             )
+                        )
+                    }
+                    if let bridge = readBridge {
+                        changeCheckpoints.append(
+                            await SandboxWorkspaceChangeTracker.shared.beginCheckpoint(
+                                sessionId: sessionId,
+                                agentName: bridge.agentName,
+                                sourceTool: name
+                            )
+                        )
+                    }
+                }
+            }
+            let result: String
+            do {
+                result = try await ChatExecutionContext.$hostReadOnlyScope.withValue(policy.scope) {
+                    try await ChatExecutionContext.$allowHostSecretReads.withValue(policy.allowSecretReads) {
+                        try await ChatExecutionContext.$allowHostFolderWrites.withValue(policy.allowFolderWrites) {
+                            try await ChatExecutionContext.$sandboxReadBridge.withValue(readBridge) {
+                                try await ChatExecutionContext.$sandboxAgentName.withValue(sandboxAgent) {
+                                    if tool.bypassRegistryTimeout {
+                                        return Self.normalizeToolResult(
+                                            try await Self.runToolBodyUntimed(
+                                                tool,
+                                                argumentsJSON: effectiveArgumentsJSON
+                                            ),
+                                            tool: name
+                                        )
+                                    }
+                                    return Self.normalizeToolResult(
+                                        try await Self.runToolBody(
+                                            tool,
+                                            argumentsJSON: effectiveArgumentsJSON,
+                                            timeoutSeconds: Self.defaultToolTimeoutSeconds
+                                        ),
+                                        tool: name
+                                    )
+                                }
+                            }
                         }
                     }
                 }
+            } catch {
+                // Bodies normally fold errors into envelopes, but the
+                // checkpoints must still reconcile whatever was written
+                // before a throw (e.g. cancellation mid-write).
+                for checkpoint in changeCheckpoints {
+                    await SandboxWorkspaceChangeTracker.shared.endCheckpoint(checkpoint)
+                }
+                throw error
+            }
+            for checkpoint in changeCheckpoints {
+                await SandboxWorkspaceChangeTracker.shared.endCheckpoint(checkpoint)
             }
             if PrefillDebugLog.shared.isEnabled, name.hasPrefix("capabilities_") {
                 let flat = result.replacingOccurrences(of: "\n", with: " ")
@@ -827,11 +945,16 @@ public final class ToolRegistry: ObservableObject {
     /// `.sandbox(hostRead: ctx)`. Resolved once per call so the two
     /// task-locals stay consistent, and inert (`nil` / `false`) in plain
     /// folder and plain sandbox modes.
-    private var combinedHostReadPolicy: (scope: URL?, allowSecretReads: Bool) {
+    private var combinedHostReadPolicy: (scope: URL?, allowSecretReads: Bool, allowFolderWrites: Bool) {
         guard toolsByName.keys.contains("sandbox_exec"),
-            let root = FolderContextService.cachedRootPath
-        else { return (nil, false) }
-        return (root, resolvedAutonomousExecConfig?.allowHostSecretReads ?? false)
+            let root = ChatExecutionContext.currentFolderRoot
+        else { return (nil, false, false) }
+        let config = resolvedAutonomousExecConfig
+        return (
+            root,
+            config?.allowHostSecretReads ?? false,
+            config?.allowHostFolderWrites ?? false
+        )
     }
 
     /// Sandbox identity bound around every tool body in combined mode so the
@@ -842,7 +965,7 @@ public final class ToolRegistry: ObservableObject {
     /// modes so they stay untouched.
     private var combinedSandboxReadBridge: SandboxReadBridge? {
         guard toolsByName.keys.contains("sandbox_exec"),
-            FolderContextService.cachedRootPath != nil
+            ChatExecutionContext.currentFolderRoot != nil
         else { return nil }
         // Prefer the identity captured at sandbox-tool registration; it
         // can't go stale mid-turn and doesn't require `currentAgentId` to
@@ -1540,6 +1663,13 @@ public final class ToolRegistry: ObservableObject {
         Set(FolderToolManager.shared.folderToolNames)
     }
 
+    /// The git subset of the folder tools. Registered process-wide with the
+    /// core set; visible only when the executing session's folder is a git
+    /// repo (schema filtering in `excludedToolNames`).
+    static let gitToolNames: Set<String> = [
+        "git_status", "git_diff", "git_commit",
+    ]
+
     /// The read-only subset of the folder tools. In combined sandbox +
     /// host-read mode these stay visible (the agent reads the host
     /// workspace) while every other folder tool — host write / edit /
@@ -1548,6 +1678,24 @@ public final class ToolRegistry: ObservableObject {
     /// `excludedToolNames` and the combined-mode tests.
     static let folderReadOnlyToolNames: Set<String> = [
         "file_read", "file_search",
+    ]
+
+    /// The write subset of the folder tools that joins the schema in
+    /// WRITABLE combined mode (`allowHostFolderWrites` opt-in). Only the
+    /// file writers — never `shell_run` / git / `file_undo`, so exec
+    /// stays sandbox-only and undo stays in the Changes sheet.
+    static let folderWriteToolNames: Set<String> = [
+        "file_write", "file_edit",
+    ]
+
+    /// Folder tools that exist ONLY for combined mode. `file_copy` bridges
+    /// file bytes between the workspace and the sandbox — meaningless in
+    /// plain folder mode (shell `cp` covers host-side copies) and in plain
+    /// sandbox mode (no workspace). Visible in BOTH read-only and writable
+    /// combined mode; host-bound destinations are gated at execute time on
+    /// the `allowHostFolderWrites` grant, not by hiding the tool.
+    static let combinedModeBridgeToolNames: Set<String> = [
+        "file_copy"
     ]
 
     /// Runtime-managed tools are execution infrastructure, always loaded when registered.
@@ -1600,12 +1748,33 @@ public final class ToolRegistry: ObservableObject {
             // Combined sandbox + host-read mode keeps the read-only host
             // subset (`file_read` / `file_search`) visible while still
             // hiding host write / edit / shell / git — exec is
-            // sandbox-only, the host is read-only.
+            // sandbox-only. With the `allowHostFolderWrites` opt-in the
+            // file writers (`file_write` / `file_edit`) join too; shell /
+            // git / `file_undo` stay hidden regardless.
             var folderExcluded = Self.folderToolNames
             if mode.allowsHostReadTools {
                 folderExcluded.subtract(Self.folderReadOnlyToolNames)
+                // The workspace<->sandbox byte bridge is visible in BOTH
+                // combined variants — copies INTO the workspace are gated
+                // at execute time on the write grant.
+                folderExcluded.subtract(Self.combinedModeBridgeToolNames)
+            }
+            if mode.allowsHostWriteTools {
+                folderExcluded.subtract(Self.folderWriteToolNames)
             }
             excluded.formUnion(folderExcluded)
+        } else {
+            // Plain folder mode: hide the combined-mode-only bridge —
+            // there is no sandbox to bridge to, and `shell_run` (`cp`)
+            // covers host-side copies.
+            excluded.formUnion(Self.combinedModeBridgeToolNames)
+            // Git tools are registered process-wide with the rest of the
+            // folder surface but only make sense against a repo — filter
+            // them per request from THIS session's folder context (the old
+            // behavior registered them per folder; now it's schema-level).
+            if mode.folderContext?.isGitRepo != true {
+                excluded.formUnion(Self.gitToolNames)
+            }
         }
         if !mode.usesSandboxTools {
             excluded.formUnion(builtInSandboxToolNames)
@@ -1617,6 +1786,13 @@ public final class ToolRegistry: ObservableObject {
             // lists directories). They stay registered (just hidden from the
             // schema) so tear-down and capability indexing see them.
             excluded.formUnion(Self.sandboxReadToolNames)
+            if mode.allowsHostWriteTools {
+                // Writable combined mode: `file_write` / `file_edit` are the
+                // single, path-routed WRITE family too (`/workspace/...`
+                // routes to the sandbox writer), so hide the redundant
+                // `sandbox_write_file` the same way.
+                excluded.formUnion(Self.sandboxWriteToolNames)
+            }
         }
         if mode.usesHostFolderTools || mode.usesSandboxTools {
             excluded.formUnion(folderConflictingToolNames)
@@ -1639,6 +1815,13 @@ public final class ToolRegistry: ObservableObject {
         "sandbox_read_file", "sandbox_search_files",
     ]
 
+    /// Sandbox write tool made redundant by the path-routed `file_write` /
+    /// `file_edit` in WRITABLE combined mode. Hidden from the schema there
+    /// (still registered, mirroring `sandboxReadToolNames`).
+    static let sandboxWriteToolNames: Set<String> = [
+        "sandbox_write_file"
+    ]
+
     /// Resolve the active execution mode for a chat send. Single source of
     /// truth: callers pass the user's explicit intent (autonomous toggle +
     /// optional folder context) and we apply the priority rule once.
@@ -1656,15 +1839,21 @@ public final class ToolRegistry: ObservableObject {
     /// `autonomousEnabled` alone implied `.sandbox`.
     func resolveExecutionMode(
         folderContext: FolderContext?,
-        autonomousEnabled: Bool
+        autonomousEnabled: Bool,
+        allowHostFolderWrites: Bool = false
     ) -> ExecutionMode {
         if autonomousEnabled, toolsByName.keys.contains("sandbox_exec") {
             // Combined mode: exec runs in the sandbox, and any mounted
-            // folder rides along as a read-only host workspace
-            // (`hostRead`). When no folder is picked this is plain
-            // sandbox mode. Either way exec is confined to the VM, which
-            // has no mount of the host workspace.
-            return .sandbox(hostRead: folderContext)
+            // folder rides along as a host workspace (`hostRead`) —
+            // read-only unless the agent's `allowHostFolderWrites`
+            // opt-in grants `file_write`/`file_edit`. When no folder is
+            // picked this is plain sandbox mode. Either way exec is
+            // confined to the VM, which has no mount of the host
+            // workspace.
+            return .sandbox(
+                hostRead: folderContext,
+                hostWrite: folderContext != nil && allowHostFolderWrites
+            )
         }
         if let folderContext {
             return .hostFolder(folderContext)
@@ -1808,10 +1997,10 @@ public final class ToolRegistry: ObservableObject {
     /// auto-injects them into the schema when the owning agent flag is on and
     /// strips them otherwise. Indexing them would let the model "discover" a
     /// capability it can never load (the per-agent gate re-strips it), so they
-    /// are kept out of the search index entirely. `computer_use` is the sole
-    /// member today.
+    /// are kept out of the search index entirely.
     static let nonDiscoverableBuiltInToolNames: Set<String> = [
-        ComputerUseTool.toolName
+        ComputerUseTool.toolName,
+        BrowserUseTool.toolName,
     ]
 
     /// Always-loaded tool specs: built-in + runtime-managed tools.
@@ -1863,21 +2052,67 @@ public final class ToolRegistry: ObservableObject {
         " In this mode the `path` may also be an absolute `/workspace/...` location, "
         + "which reads the Linux sandbox scratch area instead of your workspace."
 
+    /// Write-tool variant of the routing note for WRITABLE combined mode.
+    private static let combinedModeWriteRoutingNote =
+        " In this mode the `path` decides the filesystem: a relative path writes the user's "
+        + "folder (tracked, undoable), an absolute `/workspace/...` path writes the Linux "
+        + "sandbox scratch area."
+
+    /// Staging hint appended to `sandbox_exec`'s rendered description in
+    /// combined mode: commands cannot see the workspace, and `file_copy`
+    /// (not `file_read`+`file_write`) is how bytes — especially binaries —
+    /// get into the sandbox first.
+    private static let combinedModeExecStagingNote =
+        " The sandbox has no mount of the user's workspace — stage a workspace file "
+        + "(any type, including binaries like PDFs and images) into `/workspace/...` "
+        + "with `file_copy` before processing it."
+
     /// In combined sandbox + host-read mode the host `file_*` tools are the
-    /// single, path-routed read family. Annotate their rendered specs so
-    /// the model knows they reach `/workspace/...` sandbox paths too. Inert
-    /// (returns `specs` unchanged) in every other mode and for every other
-    /// tool, so pure folder / pure sandbox schemas are untouched.
+    /// single, path-routed read family (and, with the write grant, the
+    /// single write family). Annotate their rendered specs so the model
+    /// knows they reach `/workspace/...` sandbox paths too, and retarget
+    /// `sandbox_exec`'s `sandbox_write_file` references at the unified
+    /// writers when `sandbox_write_file` is hidden. Inert (returns `specs`
+    /// unchanged) in every other mode and for every other tool, so pure
+    /// folder / pure sandbox schemas are untouched.
     private func annotatedForCombinedMode(_ specs: [Tool], mode: ExecutionMode) -> [Tool] {
         guard mode.usesSandboxTools, mode.allowsHostReadTools else { return specs }
+        let writable = mode.allowsHostWriteTools
         return specs.map { spec in
-            guard Self.folderReadOnlyToolNames.contains(spec.function.name) else { return spec }
+            let name = spec.function.name
             let base = spec.function.description ?? ""
+            let description: String
+            if Self.folderReadOnlyToolNames.contains(name) {
+                description = base + Self.combinedModeFileRoutingNote
+            } else if writable, Self.folderWriteToolNames.contains(name) {
+                description = base + Self.combinedModeWriteRoutingNote
+            } else if name == "sandbox_exec" {
+                var updated = base
+                if writable {
+                    // `sandbox_write_file` is hidden in writable combined
+                    // mode; don't advertise a tool that isn't in the schema
+                    // — point at the unified writer.
+                    updated = updated.replacingOccurrences(
+                        of: "`sandbox_write_file`",
+                        with: "`file_write` (with a `/workspace/...` path)"
+                    )
+                }
+                description = updated + Self.combinedModeExecStagingNote
+            } else if writable, base.contains("`sandbox_write_file`") {
+                // Any other tool referencing the hidden `sandbox_write_file`
+                // in writable combined mode gets the same retarget.
+                description = base.replacingOccurrences(
+                    of: "`sandbox_write_file`",
+                    with: "`file_write` (with a `/workspace/...` path)"
+                )
+            } else {
+                return spec
+            }
             return Tool(
                 type: spec.type,
                 function: ToolFunction(
-                    name: spec.function.name,
-                    description: base + Self.combinedModeFileRoutingNote,
+                    name: name,
+                    description: description,
                     parameters: spec.function.parameters
                 )
             )

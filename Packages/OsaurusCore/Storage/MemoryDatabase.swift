@@ -2351,6 +2351,14 @@ public final class MemoryDatabase: @unchecked Sendable {
     /// (`AND`, `OR`, `NEAR`, parens, etc.) embedded by the user get
     /// treated as literal tokens. Empty result returns nil so callers
     /// can short-circuit to the LIKE fallback.
+    ///
+    /// Terms are combined with `OR` and prefix-matched (`"term"*`), not
+    /// joined by whitespace. Whitespace in FTS5 is an implicit AND, which
+    /// forces every word of a natural-language query into a single row —
+    /// so a multi-word recall query almost never matches. OR keeps recall
+    /// (BM25 still ranks rows matching more terms first), and the prefix
+    /// aligns singular/plural forms under the non-stemming `unicode61`
+    /// tokenizer.
     static func ftsMatchQuery(_ raw: String) -> String? {
         let allowed = CharacterSet.alphanumerics.union(.whitespaces).union(CharacterSet(charactersIn: "-_"))
         let scrubbed = String(raw.unicodeScalars.map { allowed.contains($0) ? Character($0) : " " })
@@ -2360,7 +2368,7 @@ public final class MemoryDatabase: @unchecked Sendable {
             .map { String($0) }
             .filter { !$0.isEmpty }
         guard !words.isEmpty else { return nil }
-        return words.map { "\"\($0)\"" }.joined(separator: " ")
+        return words.map { "\"\($0)\"*" }.joined(separator: " OR ")
     }
 
     public func pruneTranscript(olderThanDays days: Int) throws -> Int {

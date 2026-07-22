@@ -141,7 +141,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
 
     /// Highest schema version this build knows how to produce. Opening a DB
     /// stamped newer than this is refused (forward-version fail-fast).
-    private static let latestSchemaVersion = 8
+    /// Internal (not private) so migration-repair tests assert "reconciled
+    /// to the latest" against the real constant instead of a stale literal.
+    static let latestSchemaVersion = 11
 
     private func runMigrations() throws {
         let current = try getSchemaVersion()
@@ -165,6 +167,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if current < 6 { try runMigrationStep(6, migrateToV6) }
         if current < 7 { try runMigrationStep(7, migrateToV7) }
         if current < 8 { try runMigrationStep(8, migrateToV8) }
+        if current < 9 { try runMigrationStep(9, migrateToV9) }
+        if current < 10 { try runMigrationStep(10, migrateToV10) }
+        if current < 11 { try runMigrationStep(11, migrateToV11) }
     }
 
     /// Run one migration body atomically. Called only from `runMigrations`,
@@ -332,6 +337,57 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private func migrateToV8() throws {
         try addColumnIfMissing("turns", "router_billing", "TEXT")
         try setSchemaVersion(8)
+    }
+
+    /// v9: add `sandbox_changes` — one row per net outstanding sandbox
+    /// workspace change per chat session, backing the chat "Changes" list
+    /// and its undo across app relaunches. No FK on sessions: a change can
+    /// be recorded before the session row's first save lands; cleanup is
+    /// explicit in `deleteSession`.
+    private func migrateToV9() throws {
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS sandbox_changes (
+                    id                 TEXT PRIMARY KEY,
+                    session_id         TEXT NOT NULL,
+                    agent_name         TEXT NOT NULL,
+                    root               TEXT NOT NULL,
+                    relative_path      TEXT NOT NULL,
+                    entry_type         TEXT NOT NULL,
+                    kind               TEXT NOT NULL,
+                    state              TEXT NOT NULL,
+                    baseline_signature TEXT,
+                    current_signature  TEXT,
+                    source_tool        TEXT NOT NULL DEFAULT '',
+                    first_changed_at   REAL NOT NULL,
+                    last_changed_at    REAL NOT NULL,
+                    UNIQUE(session_id, agent_name, root, relative_path)
+                )
+            """
+        )
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_sandbox_changes_session ON sandbox_changes (session_id)"
+        )
+        try setSchemaVersion(9)
+    }
+
+    /// v10: per-session working folder. `folder_bookmark` is the
+    /// security-scoped bookmark blob (nil = no folder); `folder_path` is the
+    /// non-sensitive display path that survives a stale bookmark. Both
+    /// nullable — legacy rows simply have no folder, matching the pre-v10
+    /// behavior where the (process-global) folder was never persisted per
+    /// chat.
+    private func migrateToV10() throws {
+        try addColumnIfMissing("sessions", "folder_bookmark", "BLOB")
+        try addColumnIfMissing("sessions", "folder_path", "TEXT")
+        try setSchemaVersion(10)
+    }
+
+    /// v11: add `pinned` flag on sessions so the sidebar can float
+    /// frequently-used conversations to the top of the list.
+    private func migrateToV11() throws {
+        try addColumnIfMissing("sessions", "pinned", "INTEGER NOT NULL DEFAULT 0")
+        try setSchemaVersion(11)
     }
 
     // MARK: - Public API: sessions
@@ -689,6 +745,12 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             Self.bindText(stmt, index: 1, value: id.uuidString)
         }
 
+        // Manual cascade: sandbox change rows are keyed by session id but
+        // carry no FK (they can be written before the session row exists).
+        _ = try? executeUpdate("DELETE FROM sandbox_changes WHERE session_id = ?1") { stmt in
+            Self.bindText(stmt, index: 1, value: id.uuidString)
+        }
+
         // Best-effort GC. We re-check each hash against the surviving
         // rows; anything still referenced stays.
         for hash in ownedRefs {
@@ -696,6 +758,123 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
                 AttachmentBlobStore.delete(hash)
             }
         }
+    }
+
+    // MARK: - Public API: sandbox changes
+
+    /// Insert or update one net sandbox-workspace change row. Coalescing
+    /// happens upstream in `SandboxWorkspaceChangeTracker`; here we only
+    /// guarantee at most one row per (session, agent, root, path) even when
+    /// the in-memory cache and a prior on-disk row disagree on the row id.
+    public func upsertSandboxChange(_ change: SandboxWorkspaceChange) throws {
+        try inTransaction { _ in
+            try self.transactionalStep(
+                """
+                DELETE FROM sandbox_changes
+                WHERE id = ?1
+                   OR (session_id = ?2 AND agent_name = ?3 AND root = ?4 AND relative_path = ?5)
+                """
+            ) { stmt in
+                Self.bindText(stmt, index: 1, value: change.id.uuidString)
+                Self.bindText(stmt, index: 2, value: change.sessionId)
+                Self.bindText(stmt, index: 3, value: change.agentName)
+                Self.bindText(stmt, index: 4, value: change.root.rawValue)
+                Self.bindText(stmt, index: 5, value: change.relativePath)
+            }
+            try self.transactionalStep(
+                """
+                INSERT INTO sandbox_changes
+                    (id, session_id, agent_name, root, relative_path, entry_type,
+                     kind, state, baseline_signature, current_signature, source_tool,
+                     first_changed_at, last_changed_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                """
+            ) { stmt in
+                Self.bindText(stmt, index: 1, value: change.id.uuidString)
+                Self.bindText(stmt, index: 2, value: change.sessionId)
+                Self.bindText(stmt, index: 3, value: change.agentName)
+                Self.bindText(stmt, index: 4, value: change.root.rawValue)
+                Self.bindText(stmt, index: 5, value: change.relativePath)
+                Self.bindText(stmt, index: 6, value: change.entryType.rawValue)
+                Self.bindText(stmt, index: 7, value: change.kind.rawValue)
+                Self.bindText(stmt, index: 8, value: change.state.rawValue)
+                Self.bindText(stmt, index: 9, value: change.baselineSignature)
+                Self.bindText(stmt, index: 10, value: change.currentSignature)
+                Self.bindText(stmt, index: 11, value: change.sourceTool)
+                sqlite3_bind_double(stmt, 12, change.firstChangedAt.timeIntervalSince1970)
+                sqlite3_bind_double(stmt, 13, change.lastChangedAt.timeIntervalSince1970)
+            }
+        }
+    }
+
+    public func deleteSandboxChange(id: UUID) throws {
+        _ = try executeUpdate("DELETE FROM sandbox_changes WHERE id = ?1") { stmt in
+            Self.bindText(stmt, index: 1, value: id.uuidString)
+        }
+    }
+
+    public func deleteSandboxChanges(sessionId: String) throws {
+        _ = try executeUpdate("DELETE FROM sandbox_changes WHERE session_id = ?1") { stmt in
+            Self.bindText(stmt, index: 1, value: sessionId)
+        }
+    }
+
+    public func loadSandboxChanges(sessionId: String) -> [SandboxWorkspaceChange] {
+        var changes: [SandboxWorkspaceChange] = []
+        do {
+            try prepareAndExecute(
+                """
+                SELECT id, session_id, agent_name, root, relative_path, entry_type,
+                       kind, state, baseline_signature, current_signature, source_tool,
+                       first_changed_at, last_changed_at
+                FROM sandbox_changes
+                WHERE session_id = ?1
+                ORDER BY relative_path ASC
+                """,
+                bind: { stmt in Self.bindText(stmt, index: 1, value: sessionId) },
+                process: { stmt in
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        guard
+                            let id = UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0))),
+                            let root = SandboxWorkspaceRootKind(
+                                rawValue: String(cString: sqlite3_column_text(stmt, 3))),
+                            let entryType = SandboxChangeEntryType(
+                                rawValue: String(cString: sqlite3_column_text(stmt, 5))),
+                            let kind = SandboxChangeKind(
+                                rawValue: String(cString: sqlite3_column_text(stmt, 6))),
+                            let state = SandboxChangeState(
+                                rawValue: String(cString: sqlite3_column_text(stmt, 7)))
+                        else { continue }
+                        changes.append(
+                            SandboxWorkspaceChange(
+                                id: id,
+                                sessionId: String(cString: sqlite3_column_text(stmt, 1)),
+                                agentName: String(cString: sqlite3_column_text(stmt, 2)),
+                                root: root,
+                                relativePath: String(cString: sqlite3_column_text(stmt, 4)),
+                                entryType: entryType,
+                                kind: kind,
+                                state: state,
+                                baselineSignature: sqlite3_column_text(stmt, 8).map {
+                                    String(cString: $0)
+                                },
+                                currentSignature: sqlite3_column_text(stmt, 9).map {
+                                    String(cString: $0)
+                                },
+                                sourceTool: String(cString: sqlite3_column_text(stmt, 10)),
+                                firstChangedAt: Date(
+                                    timeIntervalSince1970: sqlite3_column_double(stmt, 11)),
+                                lastChangedAt: Date(
+                                    timeIntervalSince1970: sqlite3_column_double(stmt, 12))
+                            )
+                        )
+                    }
+                }
+            )
+        } catch {
+            print("[ChatHistoryDatabase] loadSandboxChanges failed: \(error)")
+        }
+        return changes
     }
 
     /// Returns true when at least one turn (in any session) still
@@ -737,6 +916,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             Self.bindText(stmt, index: 10, value: session.dispatchTaskId?.uuidString)
             sqlite3_bind_int(stmt, 11, session.archived ? 1 : 0)
             Self.bindText(stmt, index: 12, value: SessionCapability.encode(session.capabilities))
+            Self.bindBlob(stmt, index: 13, value: session.folderBookmark)
+            Self.bindText(stmt, index: 14, value: session.folderPath)
+            sqlite3_bind_int(stmt, 15, session.pinned ? 1 : 0)
         }
     }
 
@@ -943,7 +1125,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private static let baseSessionSelectSQL = """
         SELECT id, title, created_at, updated_at, selected_model, agent_id,
                source, source_plugin_id, external_session_key, dispatch_task_id,
-               archived, capabilities
+               archived, capabilities, folder_bookmark, folder_path, pinned
         FROM sessions
         """
 
@@ -953,8 +1135,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         INSERT INTO sessions
             (id, title, created_at, updated_at, selected_model, agent_id,
              source, source_plugin_id, external_session_key, dispatch_task_id,
-             archived, capabilities)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             archived, capabilities, folder_bookmark, folder_path, pinned)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
         ON CONFLICT(id) DO UPDATE SET
             title                = excluded.title,
             updated_at           = excluded.updated_at,
@@ -965,7 +1147,10 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             external_session_key = excluded.external_session_key,
             dispatch_task_id     = excluded.dispatch_task_id,
             archived             = excluded.archived,
-            capabilities         = excluded.capabilities
+            capabilities         = excluded.capabilities,
+            folder_bookmark      = excluded.folder_bookmark,
+            folder_path          = excluded.folder_path,
+            pinned               = excluded.pinned
         """
 
     private static let insertTurnSQL = """
@@ -1020,6 +1205,11 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         let dispatchId = sqlite3_column_text(stmt, 9).map { String(cString: $0) }.flatMap { UUID(uuidString: $0) }
         let archived = sqlite3_column_int(stmt, 10) != 0
         let capabilitiesRaw = sqlite3_column_text(stmt, 11).map { String(cString: $0) } ?? ""
+        let folderBookmark: Data? = sqlite3_column_blob(stmt, 12).map { base in
+            Data(bytes: base, count: Int(sqlite3_column_bytes(stmt, 12)))
+        }
+        let folderPath = sqlite3_column_text(stmt, 13).map { String(cString: $0) }
+        let pinned = sqlite3_column_int(stmt, 14) != 0
         return ChatSessionData(
             id: UUID(uuidString: idStr) ?? UUID(),
             title: title,
@@ -1033,7 +1223,10 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             externalSessionKey: externalKey,
             dispatchTaskId: dispatchId,
             archived: archived,
-            capabilities: SessionCapability.decode(capabilitiesRaw)
+            pinned: pinned,
+            capabilities: SessionCapability.decode(capabilitiesRaw),
+            folderBookmark: folderBookmark,
+            folderPath: folderPath
         )
     }
 
@@ -1180,6 +1373,18 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         OpaquePointer(bitPattern: -1),
         to: sqlite3_destructor_type.self
     )
+
+    static func bindBlob(_ stmt: OpaquePointer, index: Int, value: Data?) {
+        if let value {
+            _ = value.withUnsafeBytes { bytes in
+                sqlite3_bind_blob(
+                    stmt, Int32(index), bytes.baseAddress, Int32(value.count), SQLITE_TRANSIENT
+                )
+            }
+        } else {
+            sqlite3_bind_null(stmt, Int32(index))
+        }
+    }
 
     static func bindText(_ stmt: OpaquePointer, index: Int, value: String?) {
         if let value {

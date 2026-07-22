@@ -450,6 +450,20 @@ public enum SettingsSearchIndex {
             title: "Computer Use",
             keywords: ["screen control", "cursor", "automation", "accessibility", "per-app"]
         ),
+        .init(
+            id: "browser.enable",
+            tab: .browser,
+            title: "Browser Use",
+            keywords: [
+                "browser", "web", "browse", "session", "sign in", "login", "cookies", "webkit",
+            ]
+        ),
+        .init(
+            id: "browser.sessions",
+            tab: .browser,
+            title: "Browser Sessions",
+            keywords: ["sessions", "profiles", "signed in", "reset browser", "browsing data"]
+        ),
 
         // MARK: Channels / Integrations
         .init(
@@ -638,6 +652,31 @@ public enum SettingsSearchIndex {
             subTab: "settings"
         ),
 
+        // MARK: Agents
+        // Landing anchors live on the Agents screen (`AgentsView`): the header
+        // glows for the overview entry; the agent grid glows for the database
+        // entry, where each custom agent card exposes an Open Database
+        // shortcut into that agent's Database workspace.
+        .init(
+            id: "agents.overview",
+            tab: .agents,
+            title: "Agents",
+            keywords: [
+                "agent", "assistant", "persona", "custom agent", "create agent",
+                "system prompt", "agent settings",
+            ]
+        ),
+        .init(
+            id: "agents.database",
+            tab: .agents,
+            section: "Knowledge",
+            title: "Agent Database",
+            keywords: [
+                "database", "tables", "rows", "saved views", "sql", "sqlite",
+                "agent data", "structured data", "encrypted database", "db",
+            ]
+        ),
+
         // MARK: Search
         .init(
             id: "search.providers",
@@ -646,6 +685,25 @@ public enum SettingsSearchIndex {
             keywords: [
                 "web search", "search engine", "tavily", "exa", "brave", "serper", "parallel",
                 "google", "kagi", "duckduckgo", "bing", "api key", "internet",
+            ]
+        ),
+        .init(
+            id: "search.premium",
+            tab: .search,
+            title: "Premium Search",
+            keywords: [
+                "premium search", "hosted search", "osaurus search", "router search",
+                "paid search", "web search credits",
+            ]
+        ),
+        .init(
+            id: "credits.webSearch",
+            tab: .credits,
+            section: "Web search",
+            title: "Search Credits",
+            keywords: [
+                "web search", "premium search", "free searches", "search credits",
+                "auto pay", "search billing", "page extract", "grant",
             ]
         ),
         .init(

@@ -287,6 +287,39 @@ public enum OsaurusPaths {
         root().appendingPathComponent("methods", isDirectory: true)
     }
 
+    /// Knowledge system data directory (`~/.osaurus/knowledge/`)
+    public static func knowledge() -> URL {
+        root().appendingPathComponent("knowledge", isDirectory: true)
+    }
+
+    /// Knowledge collection registry directory — one JSON file per collection.
+    public static func knowledgeCollections() -> URL {
+        knowledge().appendingPathComponent("collections", isDirectory: true)
+    }
+
+    /// Derived knowledge index database: `~/.osaurus/knowledge/knowledge.sqlite`.
+    /// Rebuildable from the collection folders (the markdown source of truth).
+    public static func knowledgeDatabaseFile() -> URL {
+        knowledge().appendingPathComponent("knowledge.sqlite")
+    }
+
+    /// Per-collection VecturaKit vector index directory. Like the memory
+    /// vectors, always a derivable artifact of the indexed corpus.
+    public static func knowledgeVecturaDirectory(for id: UUID) -> URL {
+        knowledge()
+            .appendingPathComponent("vectura", isDirectory: true)
+            .appendingPathComponent(id.uuidString, isDirectory: true)
+    }
+
+    /// Managed content directory for a collection cloned from a git
+    /// remote: `~/.osaurus/knowledge/<uuid>/content/`. Collections that
+    /// point at a user-chosen folder never use this.
+    public static func knowledgeManagedContentDirectory(for id: UUID) -> URL {
+        knowledge()
+            .appendingPathComponent(id.uuidString, isDirectory: true)
+            .appendingPathComponent("content", isDirectory: true)
+    }
+
     /// On-device Osaurus Router billing ledger directory (`~/.osaurus/billing/`).
     public static func billing() -> URL {
         root().appendingPathComponent("billing", isDirectory: true)
@@ -441,6 +474,17 @@ public enum OsaurusPaths {
     public static func toolConfigFile() -> URL { config().appendingPathComponent("tools.json") }
     public static func computerUseConfigFile() -> URL {
         config().appendingPathComponent("computer-use.json")
+    }
+    /// Native Browser Use config (the Default agent's opt-in lives here since
+    /// the built-in Default agent has no per-agent settings editor).
+    public static func browserConfigFile() -> URL {
+        config().appendingPathComponent("browser.json")
+    }
+    /// Persistent catalog of native browser sessions (agent id → WebKit
+    /// profile UUID + last-known page + observed auth status). The WebKit
+    /// on-disk store itself is owned by `WKWebsiteDataStore(forIdentifier:)`.
+    public static func browserSessionsFile() -> URL {
+        config().appendingPathComponent("browser-sessions.json")
     }
     public static func toastConfigFile() -> URL { config().appendingPathComponent("toast.json") }
     public static func sandboxConfigFile() -> URL { config().appendingPathComponent("sandbox.json") }

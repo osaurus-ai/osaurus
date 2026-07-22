@@ -20,6 +20,12 @@ import os.log
 
 private let genLog = Logger(subsystem: "com.dinoki.osaurus", category: "Generation")
 
+extension Notification.Name {
+    /// Posted after the set of resident local model containers changes.
+    /// The object is the complete `[String]` resident-name snapshot.
+    static let modelRuntimeResidencyChanged = Notification.Name("modelRuntimeResidencyChanged")
+}
+
 // Force-link both trampolines so ModelFactoryRegistry discovers them at runtime.
 // `loadModelContainer` iterates factories in order — without touching each
 // `.shared` the trampoline's static initializer may never run, and a model
@@ -128,6 +134,10 @@ public actor ModelRuntime {
         let draftStrategy: MLXLMCommon.DraftStrategy?
         let nativeMTPStatus: String?
         let nativeMTPReason: String?
+        /// Allocator-cache cap resolved from the user-visible memory-safety
+        /// plan used for this exact load. `nil` preserves performance mode's
+        /// explicit unlimited policy.
+        let allocatorCacheLimitBytes: Int?
         var cacheTopology: ModelCacheTopologySnapshot?
         init(
             name: String,
@@ -137,7 +147,8 @@ public actor ModelRuntime {
             isVLM: Bool = false,
             draftStrategy: MLXLMCommon.DraftStrategy? = nil,
             nativeMTPStatus: String? = nil,
-            nativeMTPReason: String? = nil
+            nativeMTPReason: String? = nil,
+            allocatorCacheLimitBytes: Int? = nil
         ) {
             self.name = name
             self.container = container
@@ -147,6 +158,7 @@ public actor ModelRuntime {
             self.draftStrategy = draftStrategy
             self.nativeMTPStatus = nativeMTPStatus
             self.nativeMTPReason = nativeMTPReason
+            self.allocatorCacheLimitBytes = allocatorCacheLimitBytes
         }
     }
 
@@ -216,6 +228,10 @@ public actor ModelRuntime {
     /// `lastRAMFeasibilitySnapshot()` so `/health` and the model picker can
     /// show why a load was flagged as tight without re-scanning.
     private var lastRAMFeasibility: RAMFeasibility?
+
+    /// Exact bundle-aware Memory Safety result for the most recent cold load
+    /// attempt, including refused attempts.
+    private var lastMemorySafetyLoadDecision: MemorySafetyLoadDecision?
 
     /// Every in-flight generation wrapper task, keyed by a monotonic id.
     /// `ModelLease` is the authoritative "is anyone still using the model"
@@ -722,10 +738,6 @@ public actor ModelRuntime {
         currentModelName = name
         Memory.cacheLimit = mlxCacheLimit()
 
-        // Enable multi-tier KV caching via vmlx-swift's CacheCoordinator.
-        // Cache tier config is entirely osaurus-internal — not user-visible.
-        await installCacheCoordinator(on: holder)
-
         // Native-MTP bundles historically ran their FIRST request in plain
         // autoregressive mode (the registry's cold-warmup rule), so the one
         // request most users judge a model by silently lost the speculative
@@ -744,6 +756,7 @@ public actor ModelRuntime {
         genLog.info(
             "loadContainer: loaded \(name, privacy: .public) isVLM=\(holder.isVLM, privacy: .public)"
         )
+        publishResidencyChange()
         return holder
     }
 
@@ -791,11 +804,12 @@ public actor ModelRuntime {
         // here forces the buffer to complete while its weights are still valid.
         Stream.gpu.synchronize()
 
-        autoreleasepool {
-            _ = modelCache.removeValue(forKey: name)
+        let didRemove = autoreleasepool {
+            modelCache.removeValue(forKey: name) != nil
         }
         lastUseSource.removeValue(forKey: name)
         if currentModelName == name { currentModelName = nil }
+        if didRemove { publishResidencyChange() }
 
         Memory.cacheLimit = mlxCacheLimit()
         // Fully settle the teardown before returning so the NEXT GPU producer
@@ -951,6 +965,7 @@ public actor ModelRuntime {
         supersededLoadingTaskIDs.removeAll()
         currentModelName = nil
         cachedConfig = nil
+        publishResidencyChange()
 
         // `clearAll` empties `modelCache`, so `mlxCacheLimit()` returns 0
         // anyway — but route through the shared helper so the policy stays
@@ -960,6 +975,16 @@ public actor ModelRuntime {
         Stream.gpu.synchronize()
         Memory.clearCache()
         if !quit { await MetalGate.shared.exitModelTeardown(model: "all-models") }
+    }
+
+    /// Broadcast a value snapshot rather than the actor-owned dictionary so
+    /// UI observers can invalidate stale warm indicators without crossing
+    /// actor isolation or polling the runtime.
+    private func publishResidencyChange() {
+        NotificationCenter.default.post(
+            name: .modelRuntimeResidencyChanged,
+            object: Array(modelCache.keys)
+        )
     }
 
     /// Invalidates the cached RuntimeConfig so the next request reads fresh values.
@@ -999,16 +1024,42 @@ public actor ModelRuntime {
         let totalWeights = Int(modelCache.values.reduce(Int64(0)) { $0 + $1.weightsSizeBytes })
         let byModel = max(totalWeights / 4, 1 * 1024 * 1024 * 1024)
         let bySystem = min(systemRAM / 8, 8 * 1024 * 1024 * 1024)
-        return min(byModel, bySystem)
+        let dynamicLimit = min(byModel, bySystem)
+        return Self.effectiveMLXCacheLimit(
+            dynamicLimit: dynamicLimit,
+            configuredLimits: modelCache.values.map(\.allocatorCacheLimitBytes)
+        )
+    }
+
+    /// Keep Osaurus's weight-scaled reuse heuristic as a ceiling, but never
+    /// exceed the allocator cap visibly resolved for any resident model. The
+    /// previous post-load assignment discarded Safe Auto's 128 MiB cap and
+    /// silently replaced it with at least 1 GiB.
+    nonisolated static func effectiveMLXCacheLimit(
+        dynamicLimit: Int,
+        configuredLimits: [Int?]
+    ) -> Int {
+        guard dynamicLimit > 0 else { return 0 }
+        guard let configuredLimit = configuredLimits.compactMap({ $0 }).min() else {
+            return dynamicLimit
+        }
+        return min(dynamicLimit, max(0, configuredLimit))
     }
 
     /// Flexible-mode resident-weights soft cap. Also read by
     /// `SubagentResidency`'s coexistence gate, which must stay under it —
     /// loading past this triggers `unloadForFlexibleResidentBudget`'s own
     /// eviction, which would evict the orchestrator with no restore lease.
-    static func flexibleResidentBudgetBytes() -> Int64 {
+    static func flexibleResidentBudgetBytes(
+        physicalMemoryBytes: Int64 = Int64(ProcessInfo.processInfo.physicalMemory),
+        automaticMemoryLimitsDisabled: Bool =
+            ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled()
+    ) -> Int64 {
+        if automaticMemoryLimitsDisabled {
+            return .max
+        }
         let thresholds = ServerRuntimeSettingsStore.modelLoadRAMThresholds()
-        return Int64(Double(ProcessInfo.processInfo.physicalMemory) * thresholds.soft)
+        return Int64(Double(physicalMemoryBytes) * thresholds.soft)
     }
 
     /// Snapshot of the most recent pre-load RAM feasibility assessment.
@@ -1035,6 +1086,7 @@ public actor ModelRuntime {
         public let requiredAvailableBytes: Int64
         public let softLimitBytes: Int64
         public let hardLimitBytes: Int64
+        public let automaticMemoryLimitsDisabled: Bool
         /// What Metal will actually keep resident on this machine. Zero when
         /// it can't be determined.
         public let gpuBudgetBytes: Int64
@@ -1085,7 +1137,7 @@ public actor ModelRuntime {
             if residentProjection > hardLimitBytes
                 || incomingLoadFootprintBytes > physicalMemoryBytes
             {
-                return .block
+                return automaticMemoryLimitsDisabled ? .warn : .block
             }
             // A working set past the GPU budget gets paged even on an
             // otherwise idle Mac, so it warns no matter how much RAM happens
@@ -1100,6 +1152,17 @@ public actor ModelRuntime {
             if projectedBytes > softLimitBytes { return .warn }
             return .none
         }
+    }
+
+    public struct MemorySafetyLoadDecision: Sendable, Equatable {
+        public let modelName: String
+        public let estimatedWorkingSetBytes: UInt64?
+        public let resolvedLoadBudgetBytes: UInt64?
+        public let allowed: Bool
+        public let displaySummary: String
+        public let useMmapSafetensors: Bool
+        public let blockingIssues: [String]
+        public let timestamp: Date
     }
 
     /// Estimated KV-cache + activation headroom an incoming load needs beyond
@@ -1293,6 +1356,38 @@ public actor ModelRuntime {
         lastRAMFeasibility
     }
 
+    public func lastMemorySafetyLoadDecisionSnapshot() -> MemorySafetyLoadDecision? {
+        lastMemorySafetyLoadDecision
+    }
+
+    static func estimatedMemorySafetyWorkingSetBytes(
+        loadFootprintBytes: Int64,
+        physicalMemoryBytes: UInt64
+    ) -> UInt64? {
+        guard physicalMemoryBytes > 0 else { return nil }
+        return GPUMemoryBudget.estimatedChatWorkingSetBytes(
+            onDiskBytes: loadFootprintBytes
+        )
+    }
+
+    static func memorySafetyRequestEstimateMessage(
+        estimatedWorkingSetBytes: UInt64?,
+        resolvedLoadBudgetBytes: UInt64?
+    ) -> String {
+        guard let estimatedWorkingSetBytes, let resolvedLoadBudgetBytes else {
+            return "The request exceeds the selected Memory Safety load budget."
+        }
+        let bytesPerGB = Double(1 << 30)
+        let estimatedGB = Double(estimatedWorkingSetBytes) / bytesPerGB
+        let budgetGB = Double(resolvedLoadBudgetBytes) / bytesPerGB
+        return String(
+            format:
+                "Estimated request working set ~%.1f GB exceeds the selected ~%.1f GB load budget.",
+            estimatedGB,
+            budgetGB
+        )
+    }
+
     /// Shared verdict math for the pre-load advisory gate
     /// (`checkRAMFeasibility`) and the chat input's candidate-load projection
     /// (`projectedLoadFeasibility`), so the two assessments can't drift.
@@ -1314,7 +1409,9 @@ public actor ModelRuntime {
         inflightOther: Int64,
         kvHeadroom: Int64,
         physical: Int64,
-        available: Int64
+        available: Int64,
+        automaticMemoryLimitsDisabled: Bool =
+            ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled()
     ) -> RAMFeasibility {
         let requiredAvailable = incomingLoadFootprintBytes + kvHeadroom
         let projected = resident + inflightOther + incomingLoadFootprintBytes + kvHeadroom
@@ -1349,6 +1446,7 @@ public actor ModelRuntime {
             requiredAvailableBytes: requiredAvailable,
             softLimitBytes: softLimit,
             hardLimitBytes: hardLimit,
+            automaticMemoryLimitsDisabled: automaticMemoryLimitsDisabled,
             gpuBudgetBytes: Self.gpuBudgetBytes(physicalMemoryBytes: physical),
             timestamp: Date()
         )
@@ -1379,7 +1477,9 @@ public actor ModelRuntime {
         incomingLoadFootprintBytes: Int64,
         excludingResident excludedName: String?,
         modelDirectory: URL? = nil,
-        refuseOnShortfall: Bool = false
+        refuseOnShortfall: Bool = false,
+        automaticMemoryLimitsDisabled: Bool =
+            ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled()
     ) throws {
         let physical = Int64(ProcessInfo.processInfo.physicalMemory)
         guard physical > 0, incomingWeightsBytes > 0 else { return }
@@ -1402,7 +1502,8 @@ public actor ModelRuntime {
             inflightOther: inflightOther,
             kvHeadroom: kvHeadroom,
             physical: physical,
-            available: Self.availableMemoryBytes()
+            available: Self.availableMemoryBytes(),
+            automaticMemoryLimitsDisabled: automaticMemoryLimitsDisabled
         )
 
         lastRAMFeasibility = assessment
@@ -1979,14 +2080,20 @@ public actor ModelRuntime {
         // reclaims file cache, so proceeding into a shortfall dies as a
         // Metal command-buffer abort mid-load, not graceful pressure
         // (observed live: available 101 GB loaded clean, 89 GB crashed).
+        let preloadServerSettings = ServerRuntimeSettingsStore.snapshot()
+        let automaticMemoryLimitsDisabled =
+            ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled(
+                for: preloadServerSettings
+            )
+        let preliminaryMemorySafetyPlan = Self.resolveMemorySafetyLoadPlan(
+            modelName: name,
+            modelDirectory: localURL,
+            settings: preloadServerSettings,
+            baseLoadConfiguration: .osaurusProduction,
+            inspectBundleFacts: true
+        )
         let willMaterialize =
-            !Self.resolveMemorySafetyLoadPlan(
-                modelName: name,
-                modelDirectory: localURL,
-                settings: ServerRuntimeSettingsStore.snapshot(),
-                baseLoadConfiguration: .osaurusProduction,
-                inspectBundleFacts: true
-            ).loadConfiguration.useMmapSafetensors
+            !preliminaryMemorySafetyPlan.loadConfiguration.useMmapSafetensors
         let loadFootprintBytes =
             willMaterialize
             ? weightsBytes
@@ -1998,6 +2105,52 @@ public actor ModelRuntime {
         genLog.info(
             "loadContainer: pre-load checks done model=\(name, privacy: .public) weightsBytes=\(weightsBytes, privacy: .public) loadFootprintBytes=\(loadFootprintBytes, privacy: .public) materialized=\(willMaterialize, privacy: .public)"
         )
+
+        let estimatedWorkingSetBytes = Self.estimatedMemorySafetyWorkingSetBytes(
+            loadFootprintBytes: loadFootprintBytes,
+            physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory
+        )
+        let admissionPlan = Self.resolveMemorySafetyLoadPlan(
+            modelName: name,
+            modelDirectory: localURL,
+            settings: preloadServerSettings,
+            baseLoadConfiguration: .osaurusProduction,
+            inspectBundleFacts: true,
+            request: VMLXMemoryRequestEstimate(
+                workingSetBytes: estimatedWorkingSetBytes
+            )
+        )
+        let blockingIssueMessages = admissionPlan.blockingIssues.map { issue in
+            if issue.field == "memorySafety.requestEstimate" {
+                return
+                    "\(issue.field): \(Self.memorySafetyRequestEstimateMessage(estimatedWorkingSetBytes: estimatedWorkingSetBytes, resolvedLoadBudgetBytes: admissionPlan.resolvedLoadBudgetBytes))"
+            }
+            return "\(issue.field): \(issue.message)"
+        }
+        lastMemorySafetyLoadDecision = MemorySafetyLoadDecision(
+            modelName: name,
+            estimatedWorkingSetBytes: estimatedWorkingSetBytes,
+            resolvedLoadBudgetBytes: admissionPlan.resolvedLoadBudgetBytes,
+            allowed: blockingIssueMessages.isEmpty,
+            displaySummary: admissionPlan.displaySummary,
+            useMmapSafetensors: admissionPlan.loadConfiguration.useMmapSafetensors,
+            blockingIssues: blockingIssueMessages,
+            timestamp: Date()
+        )
+        if !blockingIssueMessages.isEmpty {
+            let issueSummary = blockingIssueMessages.joined(separator: "; ")
+            genLog.error(
+                "loadContainer: memory safety refused \(name, privacy: .public): \(issueSummary, privacy: .public)"
+            )
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 507,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Memory Safety refused to load \(name). \(issueSummary) Increase the selected budget or choose Safe Auto / No Automatic Limits in Server Settings, then retry."
+                ]
+            )
+        }
 
         // Reserve this load's footprint the instant it's known, BEFORE the
         // feasibility gate and the task registration below, so a concurrent
@@ -2032,7 +2185,8 @@ public actor ModelRuntime {
             incomingLoadFootprintBytes: loadFootprintBytes,
             excludingResident: name,
             modelDirectory: localURL,
-            refuseOnShortfall: willMaterialize
+            refuseOnShortfall: willMaterialize && !automaticMemoryLimitsDisabled,
+            automaticMemoryLimitsDisabled: automaticMemoryLimitsDisabled
         )
 
         // Tool-call format + reasoning parser are stamped automatically by
@@ -2110,7 +2264,7 @@ public actor ModelRuntime {
             genLog.info(
                 "loadContainer: task loaded model=\(name, privacy: .public) loadID=\(loadID, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public) isVLM=\(isVLM, privacy: .public)"
             )
-            return SessionHolder(
+            let holder = SessionHolder(
                 name: name,
                 container: container,
                 weightsSizeBytes: loadFootprintBytes,
@@ -2118,8 +2272,24 @@ public actor ModelRuntime {
                 isVLM: isVLM,
                 draftStrategy: mtpPlan.draftStrategy,
                 nativeMTPStatus: mtpPlan.statusLine,
-                nativeMTPReason: mtpPlan.reason
+                nativeMTPReason: mtpPlan.reason,
+                allocatorCacheLimitBytes: mtpPlan.loadConfiguration.maxResidentBytes
+                    .applyAsCacheLimitInt(
+                        physicalMemory: ProcessInfo.processInfo.physicalMemory
+                    )
             )
+
+            // Install the cache coordinator before the coalesced load task
+            // returns its holder. `finishLoadedContainer` publishes the holder
+            // in `modelCache` and is actor-reentrant across its post-load MTP
+            // warm-up; installing there let a rapid UI send observe a loaded
+            // model whose BatchEngine still had no coordinator. The request
+            // then generated coherently but could neither fetch nor store its
+            // SSD prefix. Keeping this inside the single shared load task makes
+            // "load complete" mean the configured prefix/paged/L2 policy is
+            // already attached for every waiter.
+            await Self.installCacheCoordinator(on: holder)
+            return holder
         }
 
         loadingTasks[name] = LoadingTaskRecord(id: loadID, task: task)
@@ -2206,8 +2376,10 @@ public actor ModelRuntime {
     // Per-request explicit values still override these. We continue to
     // pass `modelKey` (per-model isolation) and `diskCacheDir` /
     // `enableDiskCache` (osaurus-managed disk path, sandbox-aware).
-    // Everything else (`maxCacheBlocks`, `diskCacheMaxGB`, `pagedBlockSize`,
-    // `ssmMaxEntries`) is left at the library default.
+    // Everything else (`maxCacheBlocks`, `diskCacheMaxGB`, `pagedBlockSize`)
+    // is left at the library default. Hybrid SSM companion snapshots are an
+    // exception: the library default retains 50 fully materialized GPU-state
+    // copies, so the app's Memory Safety mode must also bound that live LRU.
 
     /// Builds a `CacheCoordinatorConfig` with the overrides recommended
     /// by vmlx-swift's `OSAURUS-INTEGRATION.md` (Coordinator-owned KV
@@ -2229,7 +2401,8 @@ public actor ModelRuntime {
         // the two diverged and the slider never reached the coordinator.
         var resolvedSettings = settings
         resolvedSettings.cache =
-            settings.resolvedMemorySafetyPlan(
+            ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+                for: settings,
                 host: MemoryStatus.snapshot()
             ).cache
         let diskCacheDir = Self.cacheDiskDirectoryOverride(for: resolvedSettings.cache)
@@ -2286,7 +2459,9 @@ public actor ModelRuntime {
         var config = resolvedSettings.cacheCoordinatorConfig(
             modelKey: scopedKey,
             diskCacheDirectory: diskDirUsable ? diskCacheDir : nil,
-            ssmMaxEntries: 50
+            ssmMaxEntries: Self.ssmCompanionEntryLimit(
+                for: resolvedSettings.memorySafety.mode
+            )
         )
         config.defaultKVMode = effectiveDefaultKVMode
         if diskCacheDir != nil, !diskDirUsable {
@@ -2295,6 +2470,30 @@ public actor ModelRuntime {
         }
         applyHostAwareDiskCacheCeiling(to: &config, diskCacheDir: diskCacheDir)
         return config
+    }
+
+    /// Bound the in-memory hybrid/linear-attention companion LRU with the same
+    /// user-visible Memory Safety mode that governs load and allocator caps.
+    ///
+    /// Each entry is a materialized GPU snapshot, not lightweight metadata.
+    /// Bonsai/Qwen 3.5 retained several hundred MiB per boundary under the
+    /// library default of 50, allowing ordinary multi-turn chat plus a Thinking
+    /// toggle to grow back to the model's full on-disk size even though Safe
+    /// Auto visibly promised a bounded plan. Disk L2 remains available for
+    /// older boundaries; the small live LRU keeps the newest cross-turn states.
+    nonisolated static func ssmCompanionEntryLimit(
+        for mode: VMLXMemorySafetyMode
+    ) -> Int {
+        switch mode {
+        case .performance, .diagnosticDangerous:
+            return 50
+        case .balanced:
+            return 8
+        case .safeAuto:
+            return 2
+        case .strict:
+            return 1
+        }
     }
 
     /// Bound the L2 disk-cache cap to a fraction of CURRENT free disk so a
@@ -2453,9 +2652,8 @@ public actor ModelRuntime {
         // shipped default) therefore resolves to native fp16 KV for every
         // model.
         //
-        // vMLX's settings resolve `.engineSelected -> .turboQuant()`, so this
-        // runtime gate is the single point that decides whether engine-
-        // selected actually turns TurboQuant on. Previously it returned true
+        // This host gate and the pinned vMLX settings default both resolve
+        // engine-selected to native KV. Previously this gate returned true
         // for full-KV families (MiniMax) and for any topology with KV layers
         // and no rotating/hybrid layers — which silently force-enabled
         // TurboQuant on multiple families. TurboQuant's per-step
@@ -2503,7 +2701,8 @@ public actor ModelRuntime {
             let entries = try? fm.contentsOfDirectory(
                 at: directory,
                 includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
-                options: [.skipsHiddenFiles])
+                options: [.skipsHiddenFiles]
+            )
         else {
             // Unreadable bundle: fall back to a value that never matches a previous
             // load, so we take a cold prefill rather than risk a wrong-weights hit.
@@ -2607,10 +2806,10 @@ public actor ModelRuntime {
     }
 
     /// Installs the cache coordinator on a freshly-loaded holder.
-    private func installCacheCoordinator(on holder: SessionHolder) async {
+    private nonisolated static func installCacheCoordinator(on holder: SessionHolder) async {
         let cacheTopology = await holder.container.cacheTopologySnapshot()
         holder.cacheTopology = cacheTopology
-        let cacheConfig = Self.buildCacheCoordinatorConfig(
+        let cacheConfig = buildCacheCoordinatorConfig(
             modelName: holder.name,
             weightsFingerprint: holder.weightsFingerprint,
             cacheTopology: cacheTopology
@@ -2660,6 +2859,15 @@ public actor ModelRuntime {
         // 35B the qwen3_5_moe variant; both need the eager setHybrid flip
         // and the compiled-B=1-trace opt-out that the family already gets.
         if lower.contains("ornith") {
+            return true
+        }
+        // Bonsai (prism-ml, OsaurusAI re-bakes) — qwen3_5 model_type dense
+        // VL backbone (48 linear_attention + 16 full_attention layers →
+        // `MambaCache` companion slots), but the bundle ids carry no "qwen"
+        // substring — same situation as Ornith above. Without this entry the
+        // family silently missed the eager hybrid flip, the compiled-decode
+        // opt-out, and the `layers=hybrid-ssm` cache-key tag.
+        if lower.contains("bonsai") {
             return true
         }
         // Qwen3-Next (qwen3_next model_type) — newer hybrid MoE that vmlx
@@ -3249,7 +3457,16 @@ public actor ModelRuntime {
         } else {
             unsetenv("VMLX_ENABLE_UNSAFE_COMPILE")
         }
-        CacheStoreBudget.policy = settings.memorySafety.mode.cacheStorePolicy
+        CacheStoreBudget.policy = cacheStorePolicy(for: settings)
+    }
+
+    nonisolated static func cacheStorePolicy(
+        for settings: VMLXServerRuntimeSettings
+    ) -> CacheStorePolicy {
+        if ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled(for: settings) {
+            return CacheStorePolicy(headroomFraction: 1.0)
+        }
+        return settings.memorySafety.mode.cacheStorePolicy
     }
 
     nonisolated static func makeGenerateParameters(
@@ -3402,24 +3619,26 @@ public actor ModelRuntime {
         modelDirectory: URL,
         settings: VMLXServerRuntimeSettings,
         baseLoadConfiguration: LoadConfiguration,
-        inspectBundleFacts: Bool
+        inspectBundleFacts: Bool,
+        request: VMLXMemoryRequestEstimate? = nil
     ) -> VMLXResolvedMemorySafetyPlan {
         let bundleFacts =
             inspectBundleFacts
             ? LoadBundleFacts.inspect(bundleURL: modelDirectory)
             : nil
-        let plan = settings.resolvedMemorySafetyPlan(
+        let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+            for: settings,
             baseLoadConfiguration: baseLoadConfiguration,
             bundleFacts: bundleFacts,
             host: MemoryStatus.snapshot(),
-            request: nil
+            request: request
         )
         if !plan.blockingIssues.isEmpty {
             let issueSummary = plan.blockingIssues
                 .map { "\($0.field): \($0.message)" }
                 .joined(separator: "; ")
             genLog.warning(
-                "loadContainer: memory safety plan produced advisory blocking issues for \(modelName, privacy: .public): \(issueSummary, privacy: .public)"
+                "loadContainer: memory safety plan produced blocking issues for \(modelName, privacy: .public): \(issueSummary, privacy: .public)"
             )
         }
         return plan

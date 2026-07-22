@@ -133,6 +133,35 @@ final class ChatWarmupController: ObservableObject {
         if state == .warm { state = .cold }
     }
 
+    /// A load from another surface (HTTP, plugin, subagent, another window)
+    /// can evict this session's selected model without touching its warm-up
+    /// controller. Drop the green-dot claim and its fingerprint when the
+    /// runtime snapshot no longer contains the selected model. Do not schedule
+    /// a replacement warm-up here: doing so would immediately evict the model
+    /// the other surface intentionally loaded.
+    func reconcileRuntimeResidency(
+        selectedModel: String?,
+        residentModelNames: [String]
+    ) {
+        guard state == .warm, let selectedModel, !selectedModel.isEmpty else { return }
+        guard !Self.isSelectedModelResident(selectedModel, in: residentModelNames) else { return }
+        invalidateWarmState()
+    }
+
+    nonisolated static func isSelectedModelResident(
+        _ selectedModel: String,
+        in residentModelNames: [String]
+    ) -> Bool {
+        let selectedTail = selectedModel.split(separator: "/").last.map(String.init) ?? selectedModel
+        return residentModelNames.contains { resident in
+            let residentTail = resident.split(separator: "/").last.map(String.init) ?? resident
+            return resident.caseInsensitiveCompare(selectedModel) == .orderedSame
+                || resident.caseInsensitiveCompare(selectedTail) == .orderedSame
+                || residentTail.caseInsensitiveCompare(selectedModel) == .orderedSame
+                || residentTail.caseInsensitiveCompare(selectedTail) == .orderedSame
+        }
+    }
+
     // MARK: - Model switch
 
     /// Handle a model selection change immediately: cancel any warm-up still
@@ -337,19 +366,6 @@ final class ChatWarmupController: ObservableObject {
         guard !Task.isCancelled else { return }
         guard shouldAttemptWarmup(session: session) else { return }
 
-        // Never warm up over a load already in flight: under strict
-        // single-model residency this warm-up's own load would cancel the
-        // in-flight one (an explicit API request, or another window), and
-        // its prefill can be torn down mid-encode by the reciprocal
-        // eviction — a Metal command-buffer abort, not a graceful skip.
-        if await ModelRuntime.shared.hasLoadInFlight() {
-            state = .cold
-            debugLog(
-                "[ChatWarmup] skipped model=\(payload.model): another model load is in flight"
-            )
-            return
-        }
-
         // Speculative warm-ups must not evict. Loading a non-resident model
         // under strict single-model residency evicts whoever IS resident —
         // observed live as a launch-time warm-up for the restored UI
@@ -359,7 +375,13 @@ final class ChatWarmupController: ObservableObject {
         //
         // Resolved ONCE here and threaded down, so the early gate below and the
         // load intent in `runWarmupGeneration` can never disagree about whether
-        // this warm-up carries the user's intent.
+        // this warm-up carries the user's intent. Do not preflight the
+        // runtime's load-in-flight state here: that snapshot is stale after
+        // the actor hop and made a new chat permanently skip its static-prefix
+        // warm-up while the same model was still finishing a cancelled prior
+        // warm-up. The background load intent below is the atomic gate: it
+        // coalesces a same-model load and refuses a conflicting load before it
+        // can evict or cancel anything.
         let userIntent = consumeUserIntent(for: payload.model)
 
         if !userIntent,
@@ -376,7 +398,11 @@ final class ChatWarmupController: ObservableObject {
         let id = UUID()
         let task = Task { @MainActor in
             await runWarmupGeneration(
-                session: session, payload: payload, id: id, userIntent: userIntent)
+                session: session,
+                payload: payload,
+                id: id,
+                userIntent: userIntent
+            )
         }
         inFlightWarmup = task
         inFlightWarmupID = id
@@ -452,7 +478,7 @@ final class ChatWarmupController: ObservableObject {
         defer { WarmupProgressHub.shared.finish(model: payload.model) }
         do {
             let stream = try await engine.streamChat(request: request)
-            for try await _ in stream { /* discard warm-up output */ }
+            for try await _ in stream { /* discard warm-up output */  }
             // Stale-writer guard: a reset() (chat cleared / agent switched)
             // during the generation dropped this warm-up's claim; its result
             // must not resurrect a warm dot for a payload that no longer

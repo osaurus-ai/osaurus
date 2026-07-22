@@ -270,6 +270,26 @@ extension EvalRunner {
                     port: port, maxTokens: maxTokens,
                     echoTokens: exp.echoTokens ?? ["ALPHA-7391", "BRAVO-2648"], check: check
                 )
+            case "multimodal_image":
+                if let skip = try await runMultimodalImage(
+                    port: port, maxTokens: maxTokens, check: check,
+                    note: { notes.append($0) }
+                ) {
+                    return .terminal(
+                        id: testCase.id, label: label, domain: testCase.domain,
+                        outcome: .skipped, notes: notes + ["SKIP: \(skip)"], modelId: modelId
+                    )
+                }
+            case "multimodal_video":
+                if let skip = try await runMultimodalVideo(
+                    port: port, maxTokens: maxTokens, check: check,
+                    note: { notes.append($0) }
+                ) {
+                    return .terminal(
+                        id: testCase.id, label: label, domain: testCase.domain,
+                        outcome: .skipped, notes: notes + ["SKIP: \(skip)"], modelId: modelId
+                    )
+                }
             default:
                 return Self.errored(
                     testCase, label: label, modelId: modelId,
@@ -772,6 +792,187 @@ extension EvalRunner {
             )
         }
         note("content: \(String(content.prefix(160)))")
+    }
+
+    // MARK: Multimodal scenarios
+
+    /// Chat-completion body whose user message carries a text part plus one
+    /// media content part (`image_url` / `video_url` with a data: URL).
+    private static func multimodalBody(
+        prompt: String,
+        mediaType: String,
+        dataURL: String,
+        maxTokens: Int
+    ) -> [String: Any] {
+        let mediaPart: [String: Any] =
+            mediaType == "video_url"
+            ? ["type": "video_url", "video_url": ["url": dataURL]]
+            : ["type": "image_url", "image_url": ["url": dataURL]]
+        return [
+            "model": evalRequestModel(),
+            "messages": [
+                [
+                    "role": "user",
+                    "content": [
+                        ["type": "text", "text": prompt],
+                        mediaPart,
+                    ],
+                ]
+            ],
+            "max_tokens": maxTokens,
+            "temperature": 0,
+            "stream": false,
+        ]
+    }
+
+    private static func chatContent(_ json: [String: Any]?) -> String {
+        ((((json?["choices"] as? [[String: Any]])?.first)?["message"] as? [String: Any])?[
+            "content"
+        ] as? String) ?? ""
+    }
+
+    /// Real-image contract + the media-salt cache check, in one case:
+    ///   1. image A (red background, centered blue square) — the answer
+    ///      must say the background is red;
+    ///   2. the IDENTICAL request again — same correct answer (identical
+    ///      media may reuse the media-salted cache, but must stay correct);
+    ///   3. the inverted twin (blue background, red square) — the answer
+    ///      must flip to blue. A stale cross-media cache hit (the failure
+    ///      media salts exist to prevent) surfaces here as image B being
+    ///      answered with image A's colors.
+    /// Cache-stats aggregates are recorded around the sequence for triage.
+    /// Returns a skip reason when the route/model has no image support.
+    private static func runMultimodalImage(
+        port: Int,
+        maxTokens: Int,
+        check: (Bool, String, String) -> Void,
+        note: (String) -> Void
+    ) async throws -> String? {
+        guard
+            let imageA = EvalMediaFixtures.pngDataURL(background: .red, square: .blue),
+            let imageB = EvalMediaFixtures.pngDataURL(background: .blue, square: .red)
+        else {
+            check(false, "", "PNG fixture generation failed (CoreGraphics)")
+            return nil
+        }
+        let prompt =
+            "Look at the image. What color is the background (not the small centered square)? "
+            + "Answer with exactly one word."
+
+        // 1. Image A, cold.
+        let (statusA, jsonA, rawA) = try await httpJSON(
+            port: port, path: "/v1/chat/completions",
+            body: multimodalBody(
+                prompt: prompt, mediaType: "image_url", dataURL: imageA, maxTokens: maxTokens
+            )
+        )
+        if statusA != 200 {
+            // Typed unsupported-media errors are a capability boundary, not
+            // an HTTP-contract failure: SKIP with the server's reason.
+            return "image request returned \(statusA): \(String(rawA.prefix(200)))"
+        }
+        let answerA = chatContent(jsonA)
+        note("image A answer: \(String(answerA.prefix(120)))")
+        check(!answerA.isEmpty, "image A answer non-empty", "image A answer empty")
+        check(
+            answerA.lowercased().contains("red"),
+            "image A: background identified as red",
+            "image A: expected 'red' in answer, got: \(String(answerA.prefix(120)))"
+        )
+
+        // 2. Identical request — the media-salted replay.
+        let (statusA2, jsonA2, _) = try await httpJSON(
+            port: port, path: "/v1/chat/completions",
+            body: multimodalBody(
+                prompt: prompt, mediaType: "image_url", dataURL: imageA, maxTokens: maxTokens
+            )
+        )
+        check(statusA2 == 200, "image A replay status 200", "image A replay status \(statusA2)")
+        let answerA2 = chatContent(jsonA2)
+        note("image A replay answer: \(String(answerA2.prefix(120)))")
+        check(
+            answerA2.lowercased().contains("red"),
+            "image A replay: still red (cache replay stayed correct)",
+            "image A replay: expected 'red', got: \(String(answerA2.prefix(120)))"
+        )
+
+        // 3. Inverted twin — must NOT be served image A's answer.
+        let (statusB, jsonB, _) = try await httpJSON(
+            port: port, path: "/v1/chat/completions",
+            body: multimodalBody(
+                prompt: prompt, mediaType: "image_url", dataURL: imageB, maxTokens: maxTokens
+            )
+        )
+        check(statusB == 200, "image B status 200", "image B status \(statusB)")
+        let answerB = chatContent(jsonB)
+        note("image B answer: \(String(answerB.prefix(120)))")
+        check(
+            answerB.lowercased().contains("blue"),
+            "image B: background identified as blue (no stale cross-media reuse)",
+            "image B: expected 'blue' in answer, got: \(String(answerB.prefix(120))) "
+                + "— a 'red' answer here is the media-salt cache failure"
+        )
+
+        let (_, statsAfter, _) = try await httpJSON(
+            port: port, path: "/admin/cache-stats", method: "GET"
+        )
+        if let aggregate = statsAfter?["aggregate"] as? [String: Any] {
+            let hits = aggregate["prefix_hits"] as? Int ?? 0
+            let l2Hits = aggregate["disk_l2_hits"] as? Int ?? 0
+            let l2Stores = aggregate["disk_l2_stores"] as? Int ?? 0
+            note("cache-stats after sequence: prefix_hits=\(hits) disk_l2_hits=\(l2Hits) disk_l2_stores=\(l2Stores)")
+        }
+        return nil
+    }
+
+    /// Real-video contract: a tiny generated MP4 of red frames followed by
+    /// blue frames, asked as a temporal-order question. Returns a skip
+    /// reason when the route/model has no video support (typed error).
+    private static func runMultimodalVideo(
+        port: Int,
+        maxTokens: Int,
+        check: (Bool, String, String) -> Void,
+        note: (String) -> Void
+    ) async throws -> String? {
+        guard
+            let video = await EvalMediaFixtures.mp4DataURL(first: .red, second: .blue)
+        else {
+            check(false, "", "MP4 fixture generation failed (AVFoundation)")
+            return nil
+        }
+        let prompt =
+            "This short video shows one solid color, then a different solid color. "
+            + "Which color appears FIRST and which appears SECOND? "
+            + "Answer in the form: first=<color> second=<color>."
+
+        let (status, json, raw) = try await httpJSON(
+            port: port, path: "/v1/chat/completions",
+            body: multimodalBody(
+                prompt: prompt, mediaType: "video_url", dataURL: video, maxTokens: maxTokens
+            )
+        )
+        if status != 200 {
+            return "video request returned \(status): \(String(raw.prefix(200)))"
+        }
+        let answer = chatContent(json)
+        note("video answer: \(String(answer.prefix(160)))")
+        check(!answer.isEmpty, "video answer non-empty", "video answer empty")
+        let lowered = answer.lowercased()
+        check(
+            lowered.contains("red") && lowered.contains("blue"),
+            "video: both colors named",
+            "video: expected 'red' and 'blue' in answer, got: \(String(answer.prefix(160)))"
+        )
+        if let redIdx = lowered.range(of: "red")?.lowerBound,
+            let blueIdx = lowered.range(of: "blue")?.lowerBound
+        {
+            check(
+                redIdx < blueIdx,
+                "video: temporal order correct (red before blue)",
+                "video: order wrong — 'blue' named before 'red': \(String(answer.prefix(160)))"
+            )
+        }
+        return nil
     }
 
     private static func runConcurrentIsolation(

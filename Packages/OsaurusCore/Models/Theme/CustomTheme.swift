@@ -241,6 +241,79 @@ public struct ThemeColors: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - System Accent Derivation
+
+extension ThemeColors {
+    /// Returns a copy with the accent-adjacent colors re-derived from
+    /// `accentHex`. Everything else (backgrounds, text, status colors, …)
+    /// is left untouched.
+    ///
+    /// When `accentHex` already matches the stored `accentColor` the
+    /// receiver is returned unchanged, so themes hand-tuned against the
+    /// default accent keep their exact authored values.
+    public func applyingAccent(_ accentHex: String, isDark: Bool) -> ThemeColors {
+        guard let accent = Self.parseHexRGB(accentHex),
+            Self.normalizedHex(accentHex) != Self.normalizedHex(accentColor)
+        else { return self }
+
+        let accentString = Self.formatHexRGB(accent)
+        let white: (Double, Double, Double) = (255, 255, 255)
+        let black: (Double, Double, Double) = (0, 0, 0)
+
+        var derived = self
+        derived.accentColor = accentString
+        derived.focusBorder = accentString
+        derived.cursorColor = accentString
+        derived.accentColorLight = Self.formatHexRGB(Self.blend(accent, toward: white, fraction: 0.4))
+        // Keep the canonical selection alphas (see darkDefault/lightDefault).
+        derived.selectionColor = accentString + (isDark ? "45" : "26")
+        if isDark {
+            // Factors tuned so the default blue accent lands close to the
+            // hand-picked #0a3d70 / #d8e8ff selected-row colors.
+            derived.sidebarSelectedBackground = Self.formatHexRGB(Self.blend(accent, toward: black, fraction: 0.55))
+            derived.infoColor = derived.accentColorLight
+        } else {
+            derived.sidebarSelectedBackground = Self.formatHexRGB(Self.blend(accent, toward: white, fraction: 0.84))
+            derived.infoColor = accentString
+        }
+        return derived
+    }
+
+    private static func normalizedHex(_ hex: String) -> String {
+        let trimmed = hex.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return trimmed.hasPrefix("#") ? String(trimmed.dropFirst()) : trimmed
+    }
+
+    private static func parseHexRGB(_ hex: String) -> (Double, Double, Double)? {
+        let body = normalizedHex(hex)
+        guard body.count == 6, body.allSatisfy(\.isHexDigit) else { return nil }
+        var int: UInt64 = 0
+        Scanner(string: body).scanHexInt64(&int)
+        return (Double(int >> 16 & 0xFF), Double(int >> 8 & 0xFF), Double(int & 0xFF))
+    }
+
+    private static func formatHexRGB(_ rgb: (Double, Double, Double)) -> String {
+        String(
+            format: "#%02x%02x%02x",
+            Int(rgb.0.rounded()),
+            Int(rgb.1.rounded()),
+            Int(rgb.2.rounded())
+        )
+    }
+
+    private static func blend(
+        _ from: (Double, Double, Double),
+        toward target: (Double, Double, Double),
+        fraction: Double
+    ) -> (Double, Double, Double) {
+        (
+            from.0 + (target.0 - from.0) * fraction,
+            from.1 + (target.1 - from.1) * fraction,
+            from.2 + (target.2 - from.2) * fraction
+        )
+    }
+}
+
 // MARK: - Theme Background
 
 /// Background configuration for the theme
@@ -674,6 +747,12 @@ public struct CustomTheme: Codable, Equatable, Sendable {
     public var isBuiltIn: Bool
     public var isDark: Bool
 
+    /// When true, accent-adjacent colors are re-derived from the user's
+    /// system accent color (System Settings > Appearance) at theme-build
+    /// time. The stored hex values act as the palette for the default
+    /// (blue) accent. See `ThemeColors.applyingAccent(_:isDark:)`.
+    public var followsSystemAccent: Bool
+
     public init(
         metadata: ThemeMetadata = ThemeMetadata(),
         colors: ThemeColors = ThemeColors(),
@@ -687,7 +766,8 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         codeHighlightTheme: String? = nil,
         library: ThemeLibraryInfo? = nil,
         isBuiltIn: Bool = false,
-        isDark: Bool = true
+        isDark: Bool = true,
+        followsSystemAccent: Bool = false
     ) {
         self.metadata = metadata
         self.colors = colors
@@ -702,6 +782,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         self.library = library
         self.isBuiltIn = isBuiltIn
         self.isDark = isDark
+        self.followsSystemAccent = followsSystemAccent
     }
 
     /// Backward-compatible decoding: new fields fall back to defaults if missing
@@ -720,14 +801,218 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         library = try container.decodeIfPresent(ThemeLibraryInfo.self, forKey: .library)
         isBuiltIn = try container.decode(Bool.self, forKey: .isBuiltIn)
         isDark = try container.decode(Bool.self, forKey: .isDark)
+        followsSystemAccent = try container.decodeIfPresent(Bool.self, forKey: .followsSystemAccent) ?? false
     }
 
-    /// Default dark theme
+    /// Default dark theme — native macOS dark palette (issue #2102)
     public static var darkDefault: CustomTheme {
         CustomTheme(
             metadata: ThemeMetadata(
                 id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
                 name: "Dark",
+                version: "2.0",
+                author: "Osaurus"
+            ),
+            colors: ThemeColors(
+                primaryText: "#f5f5f7",
+                secondaryText: "#d1d1d6",
+                tertiaryText: "#98989d",
+                primaryBackground: "#1c1c1e",
+                secondaryBackground: "#2c2c2e",
+                tertiaryBackground: "#3a3a3c",
+                sidebarBackground: "#252527",
+                sidebarSelectedBackground: "#0a3d70",
+                accentColor: "#0a84ff",
+                accentColorLight: "#64d2ff",
+                primaryBorder: "#38383a",
+                secondaryBorder: "#48484a",
+                focusBorder: "#0a84ff",
+                successColor: "#30d158",
+                warningColor: "#ff9f0a",
+                errorColor: "#ff453a",
+                infoColor: "#64d2ff",
+                cardBackground: "#2c2c2e",
+                cardBorder: "#48484a",
+                buttonBackground: "#3a3a3c",
+                buttonBorder: "#545458",
+                inputBackground: "#2c2c2e",
+                inputBorder: "#545458",
+                glassTintOverlay: "#00000050",
+                codeBlockBackground: "#1c1c1e",
+                shadowColor: "#000000",
+                selectionColor: "#0a84ff45",
+                cursorColor: "#0a84ff",
+                placeholderText: "#8e8e93"
+            ),
+            background: .default,
+            glass: ThemeGlass(
+                enabled: true,
+                sidebarEnabled: true,
+                inputEnabled: false,
+                material: .windowBackground,
+                blurRadius: 20,
+                opacityPrimary: 0.82,
+                opacitySecondary: 0.68,
+                opacityTertiary: 0.5,
+                tintColor: "#000000",
+                tintOpacity: 0.12,
+                edgeLight: "#ffffff30",
+                windowBackingOpacity: 0.94
+            ),
+            typography: ThemeTypography(
+                primaryFont: "SF Pro",
+                monoFont: "SF Mono",
+                titleSize: 26,
+                headingSize: 18,
+                bodySize: 15,
+                captionSize: 12,
+                codeSize: 13
+            ),
+            animationConfig: ThemeAnimation(
+                durationQuick: 0.15,
+                durationMedium: 0.25,
+                durationSlow: 0.35,
+                springResponse: 0.35,
+                springDamping: 0.82
+            ),
+            shadows: ThemeShadows(
+                shadowOpacity: 0.32,
+                cardShadowRadius: 10,
+                cardShadowRadiusHover: 18,
+                cardShadowY: 3,
+                cardShadowYHover: 7
+            ),
+            messages: ThemeMessages(
+                bubbleCornerRadius: 18,
+                userBubbleOpacity: 0.2,
+                assistantBubbleOpacity: 0.95,
+                borderWidth: 0.5,
+                showEdgeLight: true,
+                showInlineAvatar: true,
+                inlineAvatarSize: 24,
+                showAgentName: true,
+                agentNameSize: 13
+            ),
+            borders: ThemeBorders(
+                defaultWidth: 1,
+                cardCornerRadius: 10,
+                inputCornerRadius: 7,
+                borderOpacity: 0.5
+            ),
+            isBuiltIn: true,
+            isDark: true,
+            followsSystemAccent: true
+        )
+    }
+
+    /// Default light theme — native macOS light palette (issue #2102)
+    public static var lightDefault: CustomTheme {
+        CustomTheme(
+            metadata: ThemeMetadata(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+                name: "Light",
+                version: "2.0",
+                author: "Osaurus"
+            ),
+            colors: ThemeColors(
+                primaryText: "#1d1d1f",
+                secondaryText: "#515154",
+                tertiaryText: "#6e6e73",
+                primaryBackground: "#f5f5f7",
+                secondaryBackground: "#ececf0",
+                tertiaryBackground: "#f9f9fb",
+                sidebarBackground: "#e9e9ed",
+                sidebarSelectedBackground: "#d8e8ff",
+                accentColor: "#007aff",
+                accentColorLight: "#5ac8fa",
+                primaryBorder: "#d1d1d6",
+                secondaryBorder: "#c7c7cc",
+                focusBorder: "#007aff",
+                successColor: "#248a3d",
+                warningColor: "#b26a00",
+                errorColor: "#d70015",
+                infoColor: "#007aff",
+                cardBackground: "#ffffff",
+                cardBorder: "#d1d1d6",
+                buttonBackground: "#f6f6f7",
+                buttonBorder: "#c7c7cc",
+                inputBackground: "#ffffff",
+                inputBorder: "#c7c7cc",
+                glassTintOverlay: "#ffffff70",
+                codeBlockBackground: "#f2f2f7",
+                shadowColor: "#000000",
+                selectionColor: "#007aff26",
+                cursorColor: "#007aff",
+                placeholderText: "#8e8e93"
+            ),
+            background: .default,
+            glass: ThemeGlass(
+                enabled: true,
+                sidebarEnabled: true,
+                inputEnabled: false,
+                material: .windowBackground,
+                blurRadius: 20,
+                opacityPrimary: 0.78,
+                opacitySecondary: 0.62,
+                opacityTertiary: 0.45,
+                tintColor: "#ffffff",
+                tintOpacity: 0.08,
+                edgeLight: "#ffffffcc",
+                windowBackingOpacity: 0.92
+            ),
+            typography: ThemeTypography(
+                primaryFont: "SF Pro",
+                monoFont: "SF Mono",
+                titleSize: 26,
+                headingSize: 18,
+                bodySize: 15,
+                captionSize: 12,
+                codeSize: 13
+            ),
+            animationConfig: ThemeAnimation(
+                durationQuick: 0.15,
+                durationMedium: 0.25,
+                durationSlow: 0.35,
+                springResponse: 0.35,
+                springDamping: 0.82
+            ),
+            shadows: ThemeShadows(
+                shadowOpacity: 0.12,
+                cardShadowRadius: 8,
+                cardShadowRadiusHover: 16,
+                cardShadowY: 2,
+                cardShadowYHover: 6
+            ),
+            messages: ThemeMessages(
+                bubbleCornerRadius: 18,
+                userBubbleOpacity: 0.16,
+                assistantBubbleOpacity: 0.95,
+                borderWidth: 0.5,
+                showEdgeLight: true,
+                showInlineAvatar: true,
+                inlineAvatarSize: 24,
+                showAgentName: true,
+                agentNameSize: 13
+            ),
+            borders: ThemeBorders(
+                defaultWidth: 1,
+                cardCornerRadius: 10,
+                inputCornerRadius: 7,
+                borderOpacity: 0.45
+            ),
+            isBuiltIn: true,
+            isDark: false,
+            followsSystemAccent: true
+        )
+    }
+
+    /// Osaurus Dark — the previous default dark palette, retained as a
+    /// selectable built-in preset after the macOS-native defaults landed.
+    public static var osaurusDarkPreset: CustomTheme {
+        CustomTheme(
+            metadata: ThemeMetadata(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000007")!,
+                name: "Osaurus Dark",
                 version: "1.1",
                 author: "Osaurus"
             ),
@@ -800,12 +1085,13 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         )
     }
 
-    /// Default light theme
-    public static var lightDefault: CustomTheme {
+    /// Osaurus Light — the previous default light palette, retained as a
+    /// selectable built-in preset after the macOS-native defaults landed.
+    public static var osaurusLightPreset: CustomTheme {
         CustomTheme(
             metadata: ThemeMetadata(
-                id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
-                name: "Light",
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000008")!,
+                name: "Osaurus Light",
                 version: "1.1",
                 author: "Osaurus"
             ),
@@ -1216,7 +1502,10 @@ public struct CustomTheme: Codable, Equatable, Sendable {
 
     /// All built-in theme presets
     public static var allBuiltInPresets: [CustomTheme] {
-        [.darkDefault, .lightDefault, .neonPreset, .nordPreset, .paperPreset, .terminalPreset]
+        [
+            .darkDefault, .lightDefault, .neonPreset, .nordPreset, .paperPreset, .terminalPreset,
+            .osaurusDarkPreset, .osaurusLightPreset,
+        ]
     }
 }
 

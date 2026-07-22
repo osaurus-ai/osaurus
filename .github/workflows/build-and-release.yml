@@ -158,6 +158,17 @@ jobs:
           SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
         run: bash scripts/build/upload_dsyms_sentry.sh
 
+      # Register the Sentry release with commit + deploy association so triage
+      # can attribute regressions to shipped commits and read adoption against
+      # a real deploy timestamp. Best-effort: no-ops without the secrets.
+      - name: Register Sentry release (commits + deploy)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: bash scripts/build/sentry_release.sh
+
       - name: Get Release Notes from Draft
         id: changelog
         env:

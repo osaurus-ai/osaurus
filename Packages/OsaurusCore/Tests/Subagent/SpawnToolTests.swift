@@ -17,6 +17,51 @@ import Testing
 
 struct SpawnToolTests {
 
+    @Test func childToolNamesFoldInKnowledgeBuiltins() {
+        // A knowledge (non-curator) agent's spawned child carries the knowledge
+        // read/annotate tools even with an EMPTY manual allowlist — they are
+        // feature-gated builtins, not manual-list entries, so without this fold a
+        // spawned knowledge agent would be silently tool-less.
+        let knowledge = Set(
+            TextSubagentKind.childToolNames(
+                manual: [], knowledgeEnabled: true, knowledgeCuratorEnabled: false
+            )
+        )
+        #expect(knowledge.contains("list_knowledge"))
+        #expect(knowledge.contains("search_knowledge"))
+        #expect(knowledge.contains("flag_knowledge_stale"))
+        // Curator-only tools stay out until the curator role is on.
+        #expect(!knowledge.contains("propose_knowledge_update"))
+        #expect(!knowledge.contains("update_knowledge_ticket"))
+
+        // A curator agent additionally carries the proposal/ticket tools.
+        let curator = Set(
+            TextSubagentKind.childToolNames(
+                manual: [], knowledgeEnabled: true, knowledgeCuratorEnabled: true
+            )
+        )
+        #expect(curator.contains("propose_knowledge_update"))
+        #expect(curator.contains("update_knowledge_ticket"))
+
+        // Knowledge off → the manual allowlist only, no knowledge tools.
+        let plain = Set(
+            TextSubagentKind.childToolNames(
+                manual: ["read_file"], knowledgeEnabled: false, knowledgeCuratorEnabled: false
+            )
+        )
+        #expect(plain == ["read_file"])
+
+        // Spawn-capability tools and `clarify` are always dropped for children.
+        let filtered = Set(
+            TextSubagentKind.childToolNames(
+                manual: ["read_file", "clarify", SubagentCapabilityRegistry.spawnAgentToolName],
+                knowledgeEnabled: false,
+                knowledgeCuratorEnabled: false
+            )
+        )
+        #expect(filtered == ["read_file"])
+    }
+
     @Test func refusesRecursion() async throws {
         // The recursion guard is the unified host guard
         // (`SubagentSession.activeKindId`), shared across the whole subagent

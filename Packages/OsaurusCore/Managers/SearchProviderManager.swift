@@ -45,12 +45,18 @@ public final class SearchProviderManager: ObservableObject {
     @Published public private(set) var lastOutcome: LastSearchOutcome?
 
     private let engine: SearchEngine
+    private let hostedBackend: OsaurusRouterSearchBackend
 
-    init(engine: SearchEngine = .shared) {
+    init(
+        engine: SearchEngine = .shared,
+        hostedBackend: OsaurusRouterSearchBackend = OsaurusRouterSearchBackend()
+    ) {
         self.engine = engine
+        self.hostedBackend = hostedBackend
         self.configuration = SearchProviderConfigurationStore.load()
         self.customDefinitions = SearchProviderDefinitionStore.loadCustom()
         migratePluginKeysIfNeeded()
+        resolveHostedSearchDefaultIfNeeded()
         refreshConfiguredProviderIds()
     }
 
@@ -236,6 +242,97 @@ public final class SearchProviderManager: ObservableObject {
         }
     }
 
+    // MARK: - Hosted (premium) search preference
+
+    /// User preference for premium (Router-hosted) search. Resolved once at
+    /// init when unset; see `resolveHostedSearchDefault`.
+    public var hostedSearchEnabled: Bool {
+        configuration.hostedSearchEnabled ?? true
+    }
+
+    public func setHostedSearchEnabled(_ enabled: Bool) {
+        configuration.hostedSearchEnabled = enabled
+        persist()
+    }
+
+    /// True when the user runs their own search stack: any enabled custom
+    /// definition, or any enabled API-key provider with its secrets present.
+    /// Premium search then defaults off so their setup keeps winning.
+    public var hasActiveUserProviderSetup: Bool {
+        Self.hasActiveUserProviderSetup(
+            configuration: configuration,
+            customDefinitions: customDefinitions,
+            definitionFor: { id in definitions.first { $0.id == id } },
+            hasSecrets: { $0.hasAllSecrets() }
+        )
+    }
+
+    /// Pure resolution predicate, injectable for tests (Keychain reads are
+    /// behind `hasSecrets`).
+    nonisolated static func hasActiveUserProviderSetup(
+        configuration: SearchProviderConfiguration,
+        customDefinitions: [SearchProviderDefinition],
+        definitionFor: (String) -> SearchProviderDefinition?,
+        hasSecrets: (SearchProviderDefinition) -> Bool
+    ) -> Bool {
+        let customIds = Set(customDefinitions.map(\.id))
+        return configuration.providers.contains { provider in
+            guard provider.enabled, let def = definitionFor(provider.definitionId) else {
+                return false
+            }
+            if customIds.contains(def.id) { return true }
+            return !def.isKeyless && hasSecrets(def)
+        }
+    }
+
+    /// One-time default resolution for the premium-search preference:
+    /// free-only setups get premium on (billed searches ride the free grant
+    /// and then the balance, falling back to free scrapers gracefully);
+    /// users who already configured their own API/custom providers keep
+    /// their stack and premium defaults off. Never overrides an explicit
+    /// user choice — those persist as non-nil.
+    private func resolveHostedSearchDefaultIfNeeded() {
+        guard configuration.hostedSearchEnabled == nil else { return }
+        let resolved = !hasActiveUserProviderSetup
+        configuration.hostedSearchEnabled = resolved
+        // Persist only when a config file already exists; a fresh default
+        // config stays lazy (the same value re-resolves deterministically on
+        // every launch and lands on disk with the first user mutation).
+        let configFileExists = FileManager.default.fileExists(
+            atPath: OsaurusPaths.searchProviderConfigFile().path)
+        if configFileExists {
+            SearchProviderConfigurationStore.save(configuration)
+        }
+    }
+
+    /// Gate for a hosted try-first attempt (spec: identity + router switch +
+    /// premium preference + supported category + availability backoff).
+    func shouldTryHostedSearch(category: String) -> Bool {
+        Self.shouldTryHostedSearch(
+            category: category,
+            hostedSearchEnabled: hostedSearchEnabled,
+            routerEnabled: OsaurusRouter.isEnabled,
+            identityExists: OsaurusIdentity.existsCached(),
+            hostedAvailable: RouterWebSearchAvailability.shared.isAvailable
+        )
+    }
+
+    /// Pure gate predicate, injectable for tests. Note the top-up state is
+    /// deliberately absent: `INSUFFICIENT_FUNDS` falls back per request and
+    /// premium stays enabled, so a later top-up recovers without a reset.
+    nonisolated static func shouldTryHostedSearch(
+        category: String,
+        hostedSearchEnabled: Bool,
+        routerEnabled: Bool,
+        identityExists: Bool,
+        hostedAvailable: Bool
+    ) -> Bool {
+        guard hostedSearchEnabled, routerEnabled, identityExists, hostedAvailable else {
+            return false
+        }
+        return category != SearchCategory.images && category != "videos" && category != "video"
+    }
+
     // MARK: - Search entry points
 
     /// Full cascade for a request (used by the tools and the Try-it playground).
@@ -249,6 +346,151 @@ public final class SearchProviderManager: ObservableObject {
             hitCount: outcome.hits.count
         )
         return outcome
+    }
+
+    /// Premium-first search for the tools: try the hosted Router backend when
+    /// gated on, then fall through to the unchanged provider cascade for any
+    /// failure, empty result, or replay. Billing metadata reaches the Credits
+    /// UI in every case — fallback hides search failures, not billing state.
+    public func runHostedFirstSearch(
+        _ request: SearchRequest,
+        idempotencyKey: String,
+        extractTextMaxCharacters: Int? = nil
+    ) async -> HostedFirstSearchResult {
+        var hostedAttempt: SearchAttempt?
+        var billing: RouterWebBillingSummary?
+        var fallbackReason: String?
+
+        if shouldTryHostedSearch(category: request.category) {
+            let started = Date()
+            let result = await hostedBackend.search(
+                request,
+                extractTextMaxCharacters: extractTextMaxCharacters,
+                idempotencyKey: idempotencyKey
+            )
+            switch result {
+            case .success(let hosted):
+                billing = hosted.billing
+                if let summary = hosted.billing {
+                    OsaurusRouterAccountService.shared.noteWebBilling(summary)
+                }
+                if !hosted.hits.isEmpty {
+                    let outcome = SearchEngineOutcome(
+                        hits: hosted.hits,
+                        provider: OsaurusRouterSearchBackend.providerId,
+                        attempts: [
+                            SearchAttempt(
+                                provider: OsaurusRouterSearchBackend.providerId,
+                                ok: true,
+                                count: hosted.hits.count
+                            )
+                        ],
+                        elapsed: Date().timeIntervalSince(started)
+                    )
+                    lastOutcome = LastSearchOutcome(
+                        date: Date(),
+                        ok: true,
+                        providerId: OsaurusRouterSearchBackend.providerId,
+                        hitCount: hosted.hits.count
+                    )
+                    return HostedFirstSearchResult(
+                        outcome: outcome,
+                        source: .premium,
+                        billing: billing,
+                        hostedTextByURL: hosted.textByURL,
+                        hostedFallbackReason: nil
+                    )
+                }
+                // Empty or replayed: billed as returned, content must come
+                // from the local cascade.
+                fallbackReason = hosted.replayed ? "replayed" : "empty"
+                hostedAttempt = SearchAttempt(
+                    provider: OsaurusRouterSearchBackend.providerId, ok: true, count: 0)
+            case .failure(let failure):
+                fallbackReason = failure.reason
+                hostedAttempt = SearchAttempt(
+                    provider: OsaurusRouterSearchBackend.providerId,
+                    ok: false,
+                    kind: failure.attemptKind,
+                    error: failure.reason
+                )
+                noteHostedFailure(failure)
+            }
+        }
+
+        var outcome = await runSearch(request)
+        if let hostedAttempt {
+            outcome.attempts.insert(hostedAttempt, at: 0)
+        }
+        return HostedFirstSearchResult(
+            outcome: outcome,
+            source: classifySource(providerId: outcome.provider),
+            billing: billing,
+            hostedTextByURL: [:],
+            hostedFallbackReason: fallbackReason
+        )
+    }
+
+    /// Hosted URL extraction for `search_and_extract` URL mode. Returns nil
+    /// when hosted search is not gated on (caller extracts everything
+    /// locally); on success, pages that failed upstream carry
+    /// `succeeded == false` and only those need the local fallback.
+    func hostedExtract(
+        urls: [String],
+        idempotencyKey: String
+    ) async -> HostedContentsOutcome? {
+        guard shouldTryHostedSearch(category: SearchCategory.web) else { return nil }
+        let result = await hostedBackend.contents(urls: urls, idempotencyKey: idempotencyKey)
+        switch result {
+        case .success(let outcome):
+            if let summary = outcome.billing {
+                OsaurusRouterAccountService.shared.noteWebBilling(summary)
+            }
+            return outcome
+        case .failure(let failure):
+            noteHostedFailure(failure)
+            return nil
+        }
+    }
+
+    /// Billing/auth outcomes must reach the UI even when the fallback
+    /// succeeds (spec section 5). The preference itself never flips here:
+    /// premium recovers automatically after a top-up or setting change.
+    private func noteHostedFailure(_ failure: HostedSearchFailure) {
+        switch failure {
+        case .insufficientFunds:
+            OsaurusRouterAccountService.shared.noteWebInsufficientFunds()
+        case .paidWebDisabled:
+            OsaurusRouterAccountService.shared.noteWebPaidDisabled()
+        case .accountFrozen:
+            Task { await OsaurusRouterAccountService.shared.refreshBalance() }
+        case .featureUnavailable, .rateLimited, .idempotencyConflict, .invalidRequest,
+            .unauthorized, .providerError, .transport:
+            break
+        }
+    }
+
+    /// Classify a cascade winner for the UI's source states: keyless bundled
+    /// scrapers are "free"; anything the user brought (API keys or custom
+    /// definitions) is "custom".
+    func classifySource(providerId: String?) -> WebSearchSource {
+        Self.classifySource(
+            providerId: providerId,
+            customDefinitionIds: Set(customDefinitions.map(\.id)),
+            definitionFor: { id in definitions.first { $0.id == id } }
+        )
+    }
+
+    nonisolated static func classifySource(
+        providerId: String?,
+        customDefinitionIds: Set<String>,
+        definitionFor: (String) -> SearchProviderDefinition?
+    ) -> WebSearchSource {
+        guard let id = providerId else { return .free }
+        if id == OsaurusRouterSearchBackend.providerId { return .premium }
+        if customDefinitionIds.contains(id) { return .custom }
+        guard let def = definitionFor(id) else { return .free }
+        return def.isKeyless ? .free : .custom
     }
 
     /// Pinned single-provider run; updates the published `testStatus` so
@@ -367,6 +609,31 @@ public final class SearchProviderManager: ObservableObject {
             SearchProviderConfigurationStore.save(configuration)
         }
     }
+}
+
+// MARK: - Hosted-first search results
+
+/// Which stack served a completed search, for the UI's visual states:
+/// premium = Osaurus Router hosted, custom = the user's own API/custom
+/// providers, free = the bundled keyless scrapers.
+public enum WebSearchSource: String, Sendable, Equatable {
+    case premium
+    case custom
+    case free
+}
+
+/// Outcome of a premium-first search run: the winning cascade outcome plus
+/// hosted billing metadata (present whenever a hosted attempt was billed,
+/// even if the local cascade served the results).
+public struct HostedFirstSearchResult: Sendable {
+    public var outcome: SearchEngineOutcome
+    public var source: WebSearchSource
+    public var billing: RouterWebBillingSummary?
+    /// Lowercased URL -> hosted-extracted text (query-mode search_and_extract).
+    public var hostedTextByURL: [String: String]
+    /// Diagnostic token when a hosted attempt was made but the cascade served
+    /// the results ("insufficient_funds", "empty", "unavailable", …).
+    public var hostedFallbackReason: String?
 }
 
 // MARK: - Schema state bridge

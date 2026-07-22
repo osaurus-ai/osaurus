@@ -178,6 +178,30 @@ struct SpawnToolsetTests {
         #expect(ToolEnvelope.isError(second))
     }
 
+    @Test("agent tool dispatch publishes the child scope instead of inheriting the parent scope")
+    func agentToolDispatchUsesChildExecutionScope() async throws {
+        let parentScope = ToolExecutionScope(exposed: [spec("spawn_agent")])
+        let toolset = await TextSubagentKind.makeToolset(
+            access: SpawnToolAccess.none,
+            maxToolCalls: 4,
+            feed: nil,
+            agentSpecs: [spec("get_events")],
+            dispatch: { invocation in
+                ChatExecutionContext.toolExecutionScope?.permits(invocation.toolName) == true
+                    ? "child-scope"
+                    : "wrong-scope"
+            }
+        )
+        let set = try #require(toolset)
+
+        let result = await ChatExecutionContext.$toolExecutionScope.withValue(parentScope) {
+            await set.execute(invocation("get_events"))
+        }
+
+        #expect(result == "child-scope")
+        #expect(!parentScope.permits("get_events"))
+    }
+
     @Test("subagent-capability tools and clarify are excluded from a child schema")
     func childExclusions() {
         #expect(TextSubagentKind.isExcludedChildTool("spawn_agent"))

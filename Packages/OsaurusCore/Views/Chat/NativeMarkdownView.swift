@@ -529,6 +529,12 @@ final class NativeMarkdownView: NSView {
         }
         ChatPerfTrace.shared.count("markdown.configure.applied")
 
+        // Fonts live in the attributed-string attributes, and the incremental
+        // text-storage path diffs blocks only — it would no-op on a theme-only
+        // change (e.g. font zoom). Drop the block memo so the apply path takes
+        // the full rebuild branch and re-derives every attribute.
+        if themeChanged { lastBlocks = [] }
+
         invalidateHeightMemo()
         // Content is changing — any width observed by a previous tenancy of
         // this (possibly recycled) view no longer counts as "already measured".
@@ -590,6 +596,10 @@ final class NativeMarkdownView: NSView {
         let streamingChanged = isStreaming != lastIsStreaming
 
         guard textChanged || widthChanged || themeChanged || streamingChanged else { return }
+
+        // Same as configure(): a theme-only change must not take the
+        // incremental path, whose block diff would no-op and keep stale fonts.
+        if themeChanged { lastBlocks = [] }
 
         invalidateHeightMemo()
         lastLayoutWidthForHeight = -1
@@ -1082,13 +1092,15 @@ final class NativeMarkdownView: NSView {
                     lv = NSTextField(labelWithString: "")
                     lv.translatesAutoresizingMaskIntoConstraints = false
                     lv.isEditable = false; lv.isSelectable = true; lv.isBordered = false; lv.drawsBackground = false
-                    lv.font = NSFont.monospacedSystemFont(ofSize: CGFloat(theme.codeSize), weight: .regular)
-                    lv.textColor = NSColor(theme.primaryText)
                     lv.maximumNumberOfLines = 0
                     lv.lineBreakMode = .byWordWrapping
                     addSubview(lv)
                     register(lv)
                 }
+                // Set on every pass, not just creation, so reused labels pick
+                // up theme/font-zoom changes.
+                lv.font = NSFont.monospacedSystemFont(ofSize: CGFloat(theme.codeSize), weight: .regular)
+                lv.textColor = NSColor(theme.primaryText)
                 if case .math(let latex) = seg.kind { lv.stringValue = latex }
                 segView = lv
 

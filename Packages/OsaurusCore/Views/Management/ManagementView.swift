@@ -204,6 +204,8 @@ private extension ManagementView {
             SlashCommandsView()
         case .memory:
             MemoryView()
+        case .knowledge:
+            KnowledgeView()
         case .schedules:
             SchedulesView()
         case .watchers:
@@ -220,6 +222,8 @@ private extension ManagementView {
             PermissionsView()
         case .computerUse:
             ComputerUseSettingsView()
+        case .browser:
+            BrowserSettingsView()
         case .privacy:
             PrivacyView()
         case .identity:

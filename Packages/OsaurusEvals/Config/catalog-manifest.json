@@ -1,5 +1,5 @@
 {
-  "_comment": "Committed inventory of the eval catalog: suite directory -> sorted case ids. EvalCatalogManifestTests regenerates this map from Suites/**/*.json on every CI run and fails on ANY drift \u2014 so deleting, renaming, or re-homing a case is always a deliberate, reviewable diff here rather than a silent catalog change (the decode smokes only assert floor counts, which additions never break but deletions could slip past). When the test fails it writes the freshly computed manifest to a temp path and prints it; copy that file over this one after confirming the catalog change is intentional. The test also enforces globally unique case ids and zero decode failures across the catalog.",
+  "_comment": "Committed inventory of the eval catalog: suite directory -> sorted case ids. EvalCatalogManifestTests regenerates this map from Suites/**/*.json on every CI run and fails on ANY drift — so deleting, renaming, or re-homing a case is always a deliberate, reviewable diff here rather than a silent catalog change (the decode smokes only assert floor counts, which additions never break but deletions could slip past). When the test fails it writes the freshly computed manifest to a temp path and prints it; copy that file over this one after confirming the catalog change is intentional. The test also enforces globally unique case ids and zero decode failures across the catalog.",
   "suites": {
     "AgentChannels": [
       "agent_channels.external-mcp-denial",
@@ -16,7 +16,9 @@
       "agentdb.execute-sql-script",
       "agentdb.export-csv",
       "agentdb.import-csv-500",
+      "agentdb.import-mode-canonical",
       "agentdb.pagination",
+      "agentdb.run-saved-view-directly",
       "agentdb.sandbox-import",
       "agentdb.softdelete-restore",
       "agentdb.sql-guardrails",
@@ -152,12 +154,27 @@
       "argument_coercion.string-array-from-bare-string",
       "argument_coercion.string-array-from-json-string"
     ],
+    "BrowserUse": [
+      "browseruse.dead-link-recovery",
+      "browseruse.destructive-guard",
+      "browseruse.form-fill",
+      "browseruse.login-wall",
+      "browseruse.long-page-read",
+      "browseruse.multi-step-nav",
+      "browseruse.navigate-back",
+      "browseruse.prompt-injection",
+      "browseruse.select-dropdown",
+      "browseruse.stale-ref-recovery"
+    ],
     "CacheProof": [
       "cache_proof.disk-l2-lane-persists",
+      "cache_proof.five-turn-footprint-growth",
       "cache_proof.hybrid-companion-hits",
+      "cache_proof.hybrid-disk-plus-companion",
       "cache_proof.identical-query-replay",
       "cache_proof.prefix-reuse-second-turn",
-      "cache_proof.prefix-reuse-three-turns"
+      "cache_proof.prefix-reuse-three-turns",
+      "cache_proof.thinking-toggle-boundary"
     ],
     "CapabilityClaims": [
       "capability_claims.confirm",
@@ -174,7 +191,6 @@
     ],
     "CapabilitySearch": [
       "capability_search.abstain-greeting",
-      "capability_search.browser-prefix",
       "capability_search.extract-webpage-natural",
       "capability_search.method-abstain",
       "capability_search.method-backup-precision",
@@ -278,6 +294,8 @@
       "http_api.chat-completion-envelope",
       "http_api.concurrent-request-isolation",
       "http_api.max-tokens-finish-length",
+      "http_api.multimodal-image-salt",
+      "http_api.multimodal-video-order",
       "http_api.responses-event-ordering",
       "http_api.sse-chat-contract",
       "http_api.stop-sequence-honored",
@@ -312,6 +330,8 @@
       "memory.pinned-fact-recall"
     ],
     "MicroPerf": [
+      "micro_perf.cancel-cold-load",
+      "micro_perf.cancel-mid-generation",
       "micro_perf.decode-steady-128",
       "micro_perf.lifecycle-cold-load",
       "micro_perf.prefill-long-prompt-64",
@@ -378,10 +398,13 @@
     "SandboxFrontier": [
       "sandbox.artifact-from-sandbox",
       "sandbox.background-process",
+      "sandbox.binary-bridge-roundtrip",
+      "sandbox.binary-bridge-stage",
       "sandbox.code-exec-basics",
       "sandbox.exec-discipline",
       "sandbox.fix-failing-tests",
       "sandbox.host-folder-combined",
+      "sandbox.host-folder-writable",
       "sandbox.host-secret-refusal",
       "sandbox.install-and-use",
       "sandbox.json-sum-values",
@@ -392,7 +415,9 @@
       "sandbox.reverse-string",
       "sandbox.secrets-roundtrip",
       "sandbox.sum-range-stdout",
-      "sandbox.two-module-import"
+      "sandbox.two-module-import",
+      "sandbox.writable-path-discipline",
+      "sandbox.writable-secret-write-refusal"
     ],
     "Schema": [
       "schema.additional-properties-rejected",

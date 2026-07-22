@@ -114,6 +114,10 @@ final class ChatSessionsManager: ObservableObject {
             currentSessionId = nil
         }
         sessions.removeAll { $0.id == id }
+        // Drop the session's tracked sandbox changes + baseline snapshot
+        // (the DB rows cascade in deleteSession; this clears the in-memory
+        // cache, pending background-job records, and baseline clone).
+        Task { await SandboxWorkspaceChangeTracker.shared.purgeSession(id.uuidString) }
     }
 
     /// Rename a session.
@@ -143,6 +147,20 @@ final class ChatSessionsManager: ObservableObject {
         else { return }
         guard session.archived != archived else { return }
         session.archived = archived
+        ChatSessionStore.save(session)
+        upsertInMemory(session)
+    }
+
+    /// Toggle a session's pin flag. Like `setArchived`, this does not touch
+    /// `updatedAt`: pinning is a display-ordering concern handled by the
+    /// sidebar and must not bubble the row up the recency list.
+    func setPinned(id: UUID, pinned: Bool) {
+        guard
+            var session = sessions.first(where: { $0.id == id })
+                ?? ChatSessionStore.load(id: id)
+        else { return }
+        guard session.pinned != pinned else { return }
+        session.pinned = pinned
         ChatSessionStore.save(session)
         upsertInMemory(session)
     }

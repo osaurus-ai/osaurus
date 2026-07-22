@@ -342,26 +342,34 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             agentSpecs: agentToolSpecs
         )
 
-        let result = try await AgentSubagentRunner.run(
-            modelName: resolved.name,
-            seedMessages: seed,
-            maxTokens: budgets.maxDelegateTokens,
-            maxIterations: budgets.maxDelegateTurns,
-            deadline: deadline,
-            sessionId: sessionId,
-            temperature: temperature,
-            isInterrupted: { interrupt.isInterrupted },
-            toolset: toolset,
-            onProgress: { [feed] tokens, tokensPerSecond in
-                // Live "generating" row: coalesced in place by the feed, so
-                // long generations show advancing tokens + tok/s.
-                var detail = "\(tokens) tokens"
-                if let tokensPerSecond {
-                    detail += String(format: " · %.1f tok/s", tokensPerSecond)
+        // Knowledge tools inside the child resolve grants + curator role against
+        // the TARGET agent (isolation), not the inherited launcher identity that
+        // keeps billing budget/limiter to the launcher. `nil` for `spawn_model`
+        // (no agent, no knowledge tools) simply falls back to `currentAgentId`.
+        let result = try await ChatExecutionContext.$knowledgeGrantAgentIdOverride
+            .withValue(resolvedAgentId)
+        {
+            try await AgentSubagentRunner.run(
+                modelName: resolved.name,
+                seedMessages: seed,
+                maxTokens: budgets.maxDelegateTokens,
+                maxIterations: budgets.maxDelegateTurns,
+                deadline: deadline,
+                sessionId: sessionId,
+                temperature: temperature,
+                isInterrupted: { interrupt.isInterrupted },
+                toolset: toolset,
+                onProgress: { [feed] tokens, tokensPerSecond in
+                    // Live "generating" row: coalesced in place by the feed, so
+                    // long generations show advancing tokens + tok/s.
+                    var detail = "\(tokens) tokens"
+                    if let tokensPerSecond {
+                        detail += String(format: " · %.1f tok/s", tokensPerSecond)
+                    }
+                    feed.emitProgress("generating", step: tokens, detail: detail)
                 }
-                feed.emitProgress("generating", step: tokens, detail: detail)
-            }
-        )
+            )
+        }
         let elapsed = Date().timeIntervalSince(started)
 
         switch result.exit {
@@ -479,9 +487,39 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// only ever sees live tools.
     @MainActor
     static func agentChildToolSpecs(agentId: UUID) -> [Tool] {
-        let names = AgentManager.shared.effectiveEnabledToolNames(for: agentId) ?? []
+        let caps = AgentManager.shared.effectiveCapabilities(for: agentId)
+        let names = childToolNames(
+            manual: AgentManager.shared.effectiveEnabledToolNames(for: agentId) ?? [],
+            knowledgeEnabled: caps.knowledgeEnabled,
+            knowledgeCuratorEnabled: caps.knowledgeCuratorEnabled
+        )
         guard !names.isEmpty else { return [] }
-        return ToolRegistry.shared.specs(forTools: names.filter { !isExcludedChildTool($0) })
+        return ToolRegistry.shared.specs(forTools: names)
+    }
+
+    /// The tool NAMES a spawned child carries: the target agent's manual
+    /// allowlist plus the feature-gated knowledge/curator built-ins it has
+    /// enabled. Those built-ins are controlled by the Knowledge / Curator
+    /// toggles (not the tools list) so they never appear in `manualToolNames`;
+    /// folding them here mirrors the chat resolver, otherwise a spawned
+    /// knowledge/curator agent is silently tool-less. The grant boundary is
+    /// unchanged — collections resolve per-agent via `currentAgentId` at
+    /// execution, so the child sees only its OWN granted collections (and is
+    /// denied when it has none). Pure, so it is unit-testable without the
+    /// registry. Spawn-capability tools and `clarify` are dropped for children.
+    static func childToolNames(
+        manual: [String],
+        knowledgeEnabled: Bool,
+        knowledgeCuratorEnabled: Bool
+    ) -> [String] {
+        var names = manual
+        if knowledgeEnabled {
+            names.append(contentsOf: SystemPromptComposer.knowledgeToolNames)
+            if knowledgeCuratorEnabled {
+                names.append(contentsOf: SystemPromptComposer.knowledgeCuratorToolNames)
+            }
+        }
+        return Array(Set(names.filter { !isExcludedChildTool($0) }))
     }
 
     /// Build the child's toolset: the target agent's own tools (agent mode,
@@ -526,6 +564,14 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         }
         guard !specs.isEmpty else { return nil }
         let allowed = Set(specs.map { $0.function.name })
+        // The parent chat publishes its own request scope. A spawned
+        // agent executes inside that task, so leaving the TaskLocal inherited
+        // makes the registry reject the child's legitimately exposed tools as
+        // "not available in this conversation". Publish a distinct scope from
+        // the child's exact schema for the lifetime of every child dispatch.
+        // Keep one scope for the whole run so capabilities_load can grow it
+        // additively, just like the direct chat loop.
+        let childExecutionScope = ToolExecutionScope(exposed: specs)
         let cap = maxToolCalls > 0 ? maxToolCalls : defaultReadOnlyToolCallCap
         let counter = ToolCallCounter()
         let dispatchCall: @Sendable (ServiceToolInvocation) async -> String =
@@ -572,7 +618,11 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
                         detail: Self.toolCallDetail(invocation)
                     )
                 )
-                return await dispatchCall(invocation)
+                return await ChatExecutionContext.$toolExecutionScope.withValue(
+                    childExecutionScope
+                ) {
+                    await dispatchCall(invocation)
+                }
             }
         )
     }

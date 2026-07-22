@@ -569,6 +569,42 @@ harness bugs; they're scored honestly and tracked across model versions.
   blocked by the provider). Headless/automated secret seeding with gpt-5.5
   is unreliable; store secrets via the UI prompt flow instead.
 
+## PR eval evidence
+
+Agent-loop-impacting changes should attach a standard eval report bundle rather
+than ad hoc terminal output. From the repo root:
+
+```bash
+make evals-pr-report \
+  LOCAL_MODEL=foundation \
+  FRONTIER_MODEL=openai/gpt-4o-mini
+
+make evals-pr-report-baseline \
+  BASELINE_DIR=build/evals/main-report \
+  LOCAL_MODEL=foundation \
+  FRONTIER_MODEL=openai/gpt-4o-mini
+```
+
+The bundle writes `manifest.json`, `summary.md`, `summary.json`, raw
+`reports/<model>/<suite>.json`, and baseline `compare.md` / `compare.json` when
+`BASELINE_DIR` is supplied. Required default suites are `AgentLoop` and
+`AgentLoopFrontier` for both local and frontier lanes. `SandboxFrontier` remains
+off by default because it needs sandbox host prerequisites.
+
+Use this rule:
+
+- No report: docs-only changes, UI-only inspection, isolated storage, and
+  non-agent diagnostics.
+- Focused report: eval harness, provider bootstrap, or scoring changes.
+- Local + frontier report: default tools, tool schemas, prompt/tool
+  interaction, agent-loop routing, memory/tool routing, and model-facing
+  defaults.
+
+The short PR evidence block should include the local model result, frontier
+model result, baseline regression count, and artifact path. Full all-model
+scoreboards are a later compute-backed workflow; per-PR review evidence should
+stay small enough to run intentionally.
+
 ## Testing a new model
 
 ```bash

@@ -109,13 +109,12 @@ public final class AgentManager: ObservableObject {
     private var lastStorageWarningAt: [UUID: Date] = [:]
     private static let storageWarningCooldown: TimeInterval = 24 * 60 * 60
 
-    /// `UserDefaults` keys for the persisted snapshot of every
-    /// tool/skill name the registry has ever reported via
-    /// `.toolsListChanged`. Used by the observer to tell *brand-new*
-    /// capabilities apart from ones the user has explicitly disabled
-    /// (both look "absent from the agent's allowlist" otherwise).
+    /// `UserDefaults` key for the persisted snapshot of every tool name the
+    /// registry has ever reported via `.toolsListChanged`. Used by the
+    /// observer to tell *brand-new* tools apart from ones the user has
+    /// explicitly disabled (both look "absent from the agent's allowlist"
+    /// otherwise).
     private static let knownToolNamesKey = "AgentManager.knownToolNames.v1"
-    private static let knownSkillNamesKey = "AgentManager.knownSkillNames.v1"
 
     private init() {
         refresh()
@@ -128,12 +127,10 @@ public final class AgentManager: ObservableObject {
             }
         }
 
-        // Auto-grow per-agent enabled sets when new tools/skills register so users
+        // Auto-grow per-agent enabled tool sets when new tools register so users
         // who explicitly seeded their picker don't silently lose access to a freshly
         // installed plugin's capabilities. Skipped for un-seeded (nil) agents which
         // still fall back to the global registry — see `effectiveEnabledToolNames`.
-        // Skills ride this same notification because plugin skills register alongside
-        // their tools (see `PluginManager._loadAll`).
         //
         // We only grow with names that are *new* relative to the persisted registry
         // snapshot. On the first observation after this fix shipped the snapshot is
@@ -150,11 +147,6 @@ public final class AgentManager: ObservableObject {
                     live: Set(ToolRegistry.shared.listDynamicTools().map(\.name)),
                     key: Self.knownToolNamesKey,
                     grow: self.growEnabledToolNames
-                )
-                self.growNewlyDiscoveredCapabilities(
-                    live: Set(SkillManager.shared.skills.map(\.name)),
-                    key: Self.knownSkillNamesKey,
-                    grow: self.growEnabledSkillNames
                 )
             }
         }
@@ -564,11 +556,19 @@ public final class AgentManager: ObservableObject {
 
         refresh()
 
+        // Tear down plugin state FIRST and wait for it to finish. Plugins
+        // deregister webhooks inside `on_config_changed(tunnel_url="")`
+        // and read their per-agent config (e.g. Telegram's `bot_token`)
+        // while doing so — the secrets must still exist at that point.
+        // Sweeping the keychain before this call left webhooks registered
+        // upstream forever because the plugin found no token to
+        // deregister with.
+        await PluginManager.shared.tearDownPluginsForRemovedAgent(agentId: id)
+
         // Sweep every plugin's per-agent secrets for this agent. Without
         // this, deleting an agent would leave its `bot_token` / OAuth
         // credentials / `tunnel_url` / etc. in Keychain Access forever.
-        // Done before posting `.agentRemoved` so subscribers see the
-        // post-cleanup keychain state.
+        // Done only AFTER plugin teardown completed (see above).
         ToolSecretsKeychain.deleteAllSecrets(forAgent: id)
 
         // Drop any greetings the pool was holding for this agent. We
@@ -581,9 +581,16 @@ public final class AgentManager: ObservableObject {
         // doesn't accumulate one VecturaKit instance per deleted agent.
         await MemorySearchService.shared.evictAgent(agentId: id.uuidString)
 
-        // Notify subscribers (e.g. PluginManager) so plugins can
-        // deregister webhooks (push tunnel_url=nil) and tear down any
-        // per-agent state of their own.
+        // Wipe the agent's native browser profile (cookies / sign-ins /
+        // history) and drop its session-catalog record. Without this a
+        // deleted agent's authenticated WebKit store would sit on disk
+        // forever with nothing left that can open — or reset — it.
+        await BrowserSessionManager.shared.resetSession(for: id)
+
+        // Notify remaining subscribers. Plugin webhook deregistration
+        // already happened synchronously above; PluginManager's own
+        // `.agentRemoved` handler only performs an idempotent repeat
+        // (deduped plugin-side).
         NotificationCenter.default.post(
             name: .agentRemoved,
             object: nil,
@@ -833,7 +840,11 @@ extension AgentManager {
                 webSearchEnabled: true,
                 selfSchedulingEnabled: false,
                 computerUseEnabled: false,
-                screenContextEnabled: false
+                screenContextEnabled: false,
+                // Like Computer Use, Browser Use is a custom-agent capability:
+                // the Default agent is locked to its fixed baseline and never
+                // gets browser access.
+                browserUseEnabled: false
             )
         }
 
@@ -852,13 +863,30 @@ extension AgentManager {
             // screen-context flag AND Computer Use itself must be on.
             screenContextEnabled: agent.settings.computerUseEnabled
                 && agent.settings.screenContextEnabled,
+            browserUseEnabled: agent.settings.browserUseEnabled,
             spawnDelegationEnabled: agent.settings.spawnDelegationEnabled,
             imageEnabled: agent.settings.imageEnabled,
             appleScriptEnabled: agent.settings.appleScriptEnabled,
             spawnableAgentNames: agent.settings.spawnableAgentNames,
             spawnableModelNames: agent.settings.spawnableModelNames,
-            spawnableModelNotes: agent.settings.spawnableModelNotes
+            spawnableModelNotes: agent.settings.spawnableModelNotes,
+            knowledgeEnabled: agent.settings.knowledgeEnabled,
+            knowledgeCollectionIds: agent.settings.knowledgeCollectionIds,
+            // Curator is a child of the knowledge opt-in.
+            knowledgeCuratorEnabled: agent.settings.knowledgeEnabled
+                && agent.settings.knowledgeCuratorEnabled
         )
+    }
+
+    /// Knowledge collections the agent may search/read: its grant list,
+    /// filtered to enabled collections, empty when the opt-in is off.
+    /// This is the execution-time scope source for the knowledge tools —
+    /// the tools resolve it via `ChatExecutionContext.currentAgentId`, so
+    /// the grant list (not the model-visible schema) is the boundary.
+    public func effectiveKnowledgeCollections(for agentId: UUID) -> [KnowledgeCollection] {
+        let caps = effectiveCapabilities(for: agentId)
+        guard caps.knowledgeEnabled, !caps.knowledgeCollectionIds.isEmpty else { return [] }
+        return KnowledgeManager.shared.enabledCollections(withIds: caps.knowledgeCollectionIds)
     }
 
     /// Whether tools are disabled for an agent. Thin negative-polarity
@@ -902,18 +930,6 @@ extension AgentManager {
         return agent.manualToolNames
     }
 
-    /// Get the manually selected skill names for an agent, or nil when not in manual mode.
-    public func effectiveManualSkillNames(for agentId: UUID) -> [String]? {
-        guard let agent = agent(for: agentId) else { return nil }
-        if agent.id == Agent.defaultId {
-            let config = DefaultAgentConfigurationStore.load()
-            guard config.toolSelectionMode == .manual else { return nil }
-            return config.manualSkillNames
-        }
-        guard agent.toolSelectionMode == .manual else { return nil }
-        return agent.manualSkillNames
-    }
-
     /// Tool names this agent has enabled (as a unified allow-list) regardless of mode.
     /// In Auto mode this scopes the pre-flight catalog; in Manual mode this is the strict
     /// allowlist. Returns `nil` for legacy / un-seeded agents — callers should treat that
@@ -924,16 +940,6 @@ extension AgentManager {
             return DefaultAgentConfigurationStore.load().manualToolNames
         }
         return agent.manualToolNames
-    }
-
-    /// Skill names this agent has enabled regardless of mode. Mirrors
-    /// `effectiveEnabledToolNames` for the skills side.
-    public func effectiveEnabledSkillNames(for agentId: UUID) -> [String]? {
-        guard let agent = agent(for: agentId) else { return nil }
-        if agent.id == Agent.defaultId {
-            return DefaultAgentConfigurationStore.load().manualSkillNames
-        }
-        return agent.manualSkillNames
     }
 
     /// Get the theme ID for an agent (nil if agent uses global theme)
@@ -950,45 +956,28 @@ extension AgentManager {
         return agent.themeId
     }
 
-    /// Seed an agent's enabled tool/skill set from the live registries the first time
+    /// Seed an agent's enabled tool set from the live registry the first time
     /// the user opens the new capability picker. Idempotent: only writes when the field
     /// is `nil`. Without seeding, `nil` would mean "no allowlist" at runtime — i.e. the
     /// agent gets the global registry, which is what legacy auto-mode agents already
     /// expect. After seeding, every per-item toggle is a real disable, even in Auto.
     public func seedEnabledCapabilitiesIfNeeded(
         for agentId: UUID,
-        defaultToolNames: [String],
-        defaultSkillNames: [String]
+        defaultToolNames: [String]
     ) {
         guard let agent = agent(for: agentId) else { return }
         if agent.id == Agent.defaultId {
             var config = DefaultAgentConfigurationStore.load()
-            var changed = false
             if config.manualToolNames == nil {
                 config.manualToolNames = defaultToolNames
-                changed = true
-            }
-            if config.manualSkillNames == nil {
-                config.manualSkillNames = defaultSkillNames
-                changed = true
-            }
-            if changed {
                 DefaultAgentConfigurationStore.save(config)
                 NotificationCenter.default.post(name: .agentUpdated, object: Agent.defaultId)
             }
             return
         }
-        var updated = agent
-        var changed = false
-        if updated.manualToolNames == nil {
+        if agent.manualToolNames == nil {
+            var updated = agent
             updated.manualToolNames = defaultToolNames
-            changed = true
-        }
-        if updated.manualSkillNames == nil {
-            updated.manualSkillNames = defaultSkillNames
-            changed = true
-        }
-        if changed {
             update(updated)
         }
     }
@@ -1004,20 +993,6 @@ extension AgentManager {
         }
         guard var agent = agent(for: agentId), !agent.isBuiltIn else { return }
         agent.manualToolNames = names
-        update(agent)
-    }
-
-    /// Update the agent's enabled skill allowlist (used by the capability picker).
-    public func updateEnabledSkillNames(_ names: [String], for agentId: UUID) {
-        if agentId == Agent.defaultId {
-            var config = DefaultAgentConfigurationStore.load()
-            config.manualSkillNames = names
-            DefaultAgentConfigurationStore.save(config)
-            NotificationCenter.default.post(name: .agentUpdated, object: agentId)
-            return
-        }
-        guard var agent = agent(for: agentId), !agent.isBuiltIn else { return }
-        agent.manualSkillNames = names
         update(agent)
     }
 
@@ -1064,41 +1039,6 @@ extension AgentManager {
             guard current.count != before else { continue }
             var updated = agent
             updated.manualToolNames = current
-            updated.updatedAt = Date()
-            AgentStore.save(updated)
-            anyAgentChanged = true
-        }
-        if anyAgentChanged {
-            refresh()
-        }
-    }
-
-    /// Additively insert newly-discovered skill names into every seeded agent. Mirror of
-    /// `growEnabledToolNames` for skills. Called when a plugin registers skills.
-    public func growEnabledSkillNames(_ liveNames: Set<String>) {
-        var configChanged = false
-        var config = DefaultAgentConfigurationStore.load()
-        if var current = config.manualSkillNames {
-            let before = current.count
-            for name in liveNames where !current.contains(name) { current.append(name) }
-            if current.count != before {
-                config.manualSkillNames = current
-                configChanged = true
-            }
-        }
-        if configChanged {
-            DefaultAgentConfigurationStore.save(config)
-            NotificationCenter.default.post(name: .agentUpdated, object: Agent.defaultId)
-        }
-
-        var anyAgentChanged = false
-        for agent in agents where !agent.isBuiltIn {
-            guard var current = agent.manualSkillNames else { continue }
-            let before = current.count
-            for name in liveNames where !current.contains(name) { current.append(name) }
-            guard current.count != before else { continue }
-            var updated = agent
-            updated.manualSkillNames = current
             updated.updatedAt = Date()
             AgentStore.save(updated)
             anyAgentChanged = true

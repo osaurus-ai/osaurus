@@ -11,6 +11,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     private let services: [ModelService]
     private let installedModelsProvider: @Sendable () -> [String]
     private let remoteServicesProvider: @Sendable () async -> [ModelService]
+    private let reasoningCapabilityProvider: @Sendable (String) -> LocalReasoningCapability.Capability
+    private let agentModelOptionsProvider:
+        @Sendable (String) async -> [String: ModelOptionValue]?
 
     /// Source of the inference (for logging purposes)
     private var inferenceSource: InferenceSource = .httpAPI
@@ -25,11 +28,25 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 RemoteProviderManager.shared.connectedServices().map { $0 as ModelService }
             }
         },
+        reasoningCapabilityProvider:
+            @escaping @Sendable (String) ->
+            LocalReasoningCapability.Capability = {
+                LocalReasoningCapability.capability(forModelId: $0)
+            },
+        agentModelOptionsProvider:
+            @escaping @Sendable (String) async ->
+            [String: ModelOptionValue]? = { modelId in
+                await MainActor.run {
+                    ModelOptionsStore.shared.loadOptions(for: modelId)
+                }
+            },
         source: InferenceSource = .httpAPI
     ) {
         self.services = services
         self.installedModelsProvider = installedModelsProvider
         self.remoteServicesProvider = remoteServicesProvider
+        self.reasoningCapabilityProvider = reasoningCapabilityProvider
+        self.agentModelOptionsProvider = agentModelOptionsProvider
         self.inferenceSource = source
     }
     /// Errors thrown by `ChatEngine` that carry a classification so the
@@ -127,9 +144,27 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let repPenalty: Float? = nil
         let seedBits: UInt64? = request.seed.map { UInt64(bitPattern: Int64($0)) }
         let isJSONObject = (request.response_format?.type == "json_object")
+        // Internal UI-owned agent loops (Computer Use, AppleScript, and
+        // delegated text agents) construct fresh requests on every step. They
+        // do not own a composer-local option snapshot, so resolve the same
+        // persisted per-model choice the visible picker writes. Keep this
+        // strictly on `.chatUI` + explicit agent requests: ordinary chat,
+        // OpenAI tool requests, plugins, scheduled work, P2P, and remote-agent
+        // execution must not silently inherit GUI preferences.
+        let requestModelOptions: [String: ModelOptionValue]? =
+            if let explicit = request.modelOptions {
+                explicit
+            } else if inferenceSource == .chatUI,
+                request.isAgentRequest,
+                !request.runAsRemoteAgent
+            {
+                await agentModelOptionsProvider(request.model)
+            } else {
+                nil
+            }
         var modelOptions = Self.normalizedModelOptions(
             for: request.model,
-            requestOptions: request.modelOptions
+            requestOptions: requestModelOptions
         )
         let isHy3 = Hy3ReasoningProfile.matches(modelId: request.model)
         let requestReasoningEffort: String? = {
@@ -140,6 +175,36 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             else { return nil }
             return value
         }()
+
+        // An agent/tool run must not inherit a toggleable template's
+        // reasoning-on default merely because the caller stayed silent. That
+        // made every Ornith tool step spend thousands of hidden tokens before
+        // trivial calls. Detect the contract from the installed bundle rather
+        // than a model-name alias, and preserve every explicit UI/API choice.
+        // A schema paired with OpenAI `tool_choice: none` is an ordinary
+        // no-tool request, not an agent turn. Explicit agent markers still
+        // win because cap finalizers intentionally remove their tool schema.
+        let hasEnabledToolSurface =
+            request.tools?.isEmpty == false
+            && Self.allowsLocalToolDispatch(request.tool_choice)
+        let isAgentOrToolRequest = request.isAgentRequest || hasEnabledToolSurface
+        let usesReasoningEffortControl = ModelProfileRegistry.options(for: request.model)
+            .contains { $0.id == "reasoningEffort" }
+        if !request.runAsRemoteAgent,
+            !isHy3,
+            let agentEnableThinking = AgentReasoningPolicy.defaultEnableThinking(
+                isAgentOrToolRequest: isAgentOrToolRequest,
+                explicitEnableThinking: request.enable_thinking,
+                explicitReasoningEffort: requestReasoningEffort,
+                modelOptions: modelOptions,
+                usesReasoningEffortControl: usesReasoningEffortControl,
+                capability: reasoningCapabilityProvider(request.model)
+            ),
+            request.enable_thinking == nil,
+            modelOptions["disableThinking"] == nil
+        {
+            modelOptions["disableThinking"] = .bool(!agentEnableThinking)
+        }
 
         if isHy3 {
             if let requestReasoningEffort {

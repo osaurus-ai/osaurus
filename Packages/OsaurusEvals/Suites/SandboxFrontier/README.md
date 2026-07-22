@@ -62,6 +62,7 @@ agent's `AutonomousExecConfig`:
 | `backgroundProcessEnabled` | `backgroundProcessEnabled`   | `false` |
 | `networkEnabled`           | `sandboxNetworkEnabled`      | `true`¹ |
 | `allowHostSecretReads`     | `allowHostSecretReads`       | `false` |
+| `allowHostFolderWrites`    | `allowHostFolderWrites`      | `false` |
 | `maxCommandsPerTurn`       | `maxCommandsPerTurn`         | `10`    |
 
 ¹ honored at VM boot — flipping it per-case does not restart a running
@@ -70,7 +71,17 @@ container.
 - `hostFolder: true` → **combined mode**: the case temp workspace (with
   `workspaceFiles`) becomes the read-only host context
   (`ExecutionMode.sandbox(hostRead: ctx)`); `file_read` / `file_search` stay
-  host-side. Omitted/false → pure sandbox mode.
+  host-side. Omitted/false → pure sandbox mode. Combined mode also surfaces
+  `file_copy`, the byte bridge that moves files (including binaries) between
+  the workspace and the sandbox; host-bound destinations require
+  `allowHostFolderWrites`.
+- `allowHostFolderWrites: true` (combined mode only) → **writable combined
+  mode** (`ExecutionMode.sandbox(hostRead: ctx, hostWrite: true)`):
+  `file_write` / `file_edit` join the schema, path-routed like the readers
+  (relative = host workspace, `/workspace/...` = sandbox);
+  `sandbox_write_file` is hidden. Host writes are change-tracked; secret
+  paths are still refused. Score host-side outcomes with `files`,
+  VM-side with `sandboxFiles`.
 - `seedFiles` are written into the eval agent's VM home **before** the run
   via guest-side exec (ownership matches the agent user).
 - `seedSecrets` are pre-seeded into `AgentSecretsKeychain` for the eval agent

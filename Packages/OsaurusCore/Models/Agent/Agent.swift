@@ -126,8 +126,6 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var toolSelectionMode: ToolSelectionMode?
     /// Tool names explicitly selected by the user when toolSelectionMode is .manual
     public var manualToolNames: [String]?
-    /// Skill names explicitly selected by the user when toolSelectionMode is .manual
-    public var manualSkillNames: [String]?
     /// Whether this agent may use tools / preflight context. Default true.
     /// Positive polarity (matches `AgentSettings.*Enabled`); the legacy
     /// negative `disableTools` key is read on decode for back-compat.
@@ -187,7 +185,6 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         bonjourEnabled: Bool = false,
         toolSelectionMode: ToolSelectionMode? = nil,
         manualToolNames: [String]? = nil,
-        manualSkillNames: [String]? = nil,
         toolsEnabled: Bool = true,
         memoryEnabled: Bool = true,
         avatar: String? = nil,
@@ -220,7 +217,6 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.bonjourEnabled = bonjourEnabled
         self.toolSelectionMode = toolSelectionMode
         self.manualToolNames = manualToolNames
-        self.manualSkillNames = manualSkillNames
         self.toolsEnabled = toolsEnabled
         self.memoryEnabled = memoryEnabled
         self.avatar = avatar
@@ -338,7 +334,8 @@ extension Agent {
         bonjourEnabled = try c.decodeIfPresent(Bool.self, forKey: .bonjourEnabled) ?? false
         toolSelectionMode = try c.decodeIfPresent(ToolSelectionMode.self, forKey: .toolSelectionMode)
         manualToolNames = try c.decodeIfPresent([String].self, forKey: .manualToolNames)
-        manualSkillNames = try c.decodeIfPresent([String].self, forKey: .manualSkillNames)
+        // Legacy `manualSkillNames` keys are intentionally ignored: skills are
+        // universally available to custom agents.
         // Positive polarity (`toolsEnabled` / `memoryEnabled`, default true).
         // Older agent JSON only has the negative `disableTools` /
         // `disableMemory` keys; read those from a legacy container and
@@ -387,6 +384,11 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
     /// workspace. Defaults `false` (refuse) — the user opts in explicitly,
     /// trading the exfiltration protection for convenience.
     public var allowHostSecretReads: Bool
+    /// Combined mode: allow `file_write` / `file_edit` to mutate the
+    /// selected host folder (writes are change-tracked and undoable via
+    /// the Changes sheet; exec stays sandbox-only). Defaults `false` —
+    /// the folder rides along read-only until the user opts in.
+    public var allowHostFolderWrites: Bool
     /// Whether the sandbox VM gets outbound network. Defaults `true`
     /// (egress on) so a first-time user's sandbox can fetch packages and
     /// live data without an extra opt-in. Set `false` to cut the network
@@ -413,6 +415,7 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
         maxCommandsPerTurn: 10,
         pluginCreate: true,
         allowHostSecretReads: false,
+        allowHostFolderWrites: false,
         sandboxNetworkEnabled: true,
         backgroundProcessEnabled: false
     )
@@ -422,6 +425,7 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
         maxCommandsPerTurn: Int = 10,
         pluginCreate: Bool = true,
         allowHostSecretReads: Bool = false,
+        allowHostFolderWrites: Bool = false,
         sandboxNetworkEnabled: Bool = true,
         sandboxAllowedDomains: [String]? = nil,
         backgroundProcessEnabled: Bool = false
@@ -430,6 +434,7 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
         self.maxCommandsPerTurn = maxCommandsPerTurn
         self.pluginCreate = pluginCreate
         self.allowHostSecretReads = allowHostSecretReads
+        self.allowHostFolderWrites = allowHostFolderWrites
         self.sandboxNetworkEnabled = sandboxNetworkEnabled
         self.sandboxAllowedDomains = sandboxAllowedDomains
         self.backgroundProcessEnabled = backgroundProcessEnabled
@@ -437,7 +442,7 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case enabled, maxCommandsPerTurn, pluginCreate
-        case allowHostSecretReads, sandboxNetworkEnabled
+        case allowHostSecretReads, allowHostFolderWrites, sandboxNetworkEnabled
         case sandboxAllowedDomains
         case backgroundProcessEnabled
     }
@@ -453,6 +458,8 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
         maxCommandsPerTurn = try c.decodeIfPresent(Int.self, forKey: .maxCommandsPerTurn) ?? 10
         pluginCreate = try c.decodeIfPresent(Bool.self, forKey: .pluginCreate) ?? true
         allowHostSecretReads = try c.decodeIfPresent(Bool.self, forKey: .allowHostSecretReads) ?? false
+        allowHostFolderWrites =
+            try c.decodeIfPresent(Bool.self, forKey: .allowHostFolderWrites) ?? false
         sandboxNetworkEnabled = try c.decodeIfPresent(Bool.self, forKey: .sandboxNetworkEnabled) ?? true
         sandboxAllowedDomains = try c.decodeIfPresent([String].self, forKey: .sandboxAllowedDomains)
         backgroundProcessEnabled =
@@ -493,6 +500,11 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// Use: `computerUseEnabled && AgentSettings.screenContextEnabled`, so it
     /// is always false when Computer Use is off (including the Default agent).
     public var screenContextEnabled: Bool
+    /// Browser Use (`browser_use` entry tool) exposed to the model. Custom
+    /// agents opt in per-agent (`AgentSettings.browserUseEnabled`); the
+    /// Default agent's opt-in lives in `BrowserConfigurationStore` (edited
+    /// from Settings → Browser).
+    public var browserUseEnabled: Bool
     /// Spawn (`spawn`) exposed to the model — per-agent opt-in.
     public var spawnDelegationEnabled: Bool
     /// Image (`image`) exposed to the model — per-agent opt-in, split from
@@ -515,6 +527,18 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// Optional "when/how to use" note per spawnable model id, surfaced in the
     /// spawn guidance descriptor. Pure metadata — the gate is `spawnableModelNames`.
     public var spawnableModelNotes: [String: String]
+    /// Knowledge tools (`search_knowledge` / `read_knowledge` /
+    /// `list_knowledge`) exposed to the model — per-agent opt-in.
+    public var knowledgeEnabled: Bool
+    /// Knowledge collections this agent may search/read. Scoping is
+    /// enforced at tool execution time (not just schema stripping), so an
+    /// agent can never reach a collection it wasn't granted. Empty → the
+    /// knowledge tools stay hidden (nothing to search).
+    public var knowledgeCollectionIds: [UUID]
+    /// Curator role: `propose_knowledge_update` exposed to the model.
+    /// A child of `knowledgeEnabled` — proposals still only ever create
+    /// pending drafts reviewed by the user.
+    public var knowledgeCuratorEnabled: Bool
 
     public init(
         toolsEnabled: Bool,
@@ -527,12 +551,16 @@ public struct AgentCapabilities: Sendable, Equatable {
         selfSchedulingEnabled: Bool,
         computerUseEnabled: Bool = false,
         screenContextEnabled: Bool = false,
+        browserUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
         appleScriptEnabled: Bool = false,
         spawnableAgentNames: [String] = [],
         spawnableModelNames: [String] = [],
-        spawnableModelNotes: [String: String] = [:]
+        spawnableModelNotes: [String: String] = [:],
+        knowledgeEnabled: Bool = false,
+        knowledgeCollectionIds: [UUID] = [],
+        knowledgeCuratorEnabled: Bool = false
     ) {
         self.toolsEnabled = toolsEnabled
         self.memoryEnabled = memoryEnabled
@@ -544,12 +572,16 @@ public struct AgentCapabilities: Sendable, Equatable {
         self.selfSchedulingEnabled = selfSchedulingEnabled
         self.computerUseEnabled = computerUseEnabled
         self.screenContextEnabled = screenContextEnabled
+        self.browserUseEnabled = browserUseEnabled
         self.spawnDelegationEnabled = spawnDelegationEnabled
         self.imageEnabled = imageEnabled
         self.appleScriptEnabled = appleScriptEnabled
         self.spawnableAgentNames = spawnableAgentNames
         self.spawnableModelNames = spawnableModelNames
         self.spawnableModelNotes = spawnableModelNotes
+        self.knowledgeEnabled = knowledgeEnabled
+        self.knowledgeCollectionIds = knowledgeCollectionIds
+        self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
     }
 }
 
@@ -792,6 +824,13 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// `computerUseEnabled` (see `AgentManager.effectiveCapabilities`), so it is
     /// inert while Computer Use is off — including the Default agent.
     public var screenContextEnabled: Bool
+    /// Per-agent opt-in for Browser Use (the `browser_use` entry tool that
+    /// drives an isolated per-agent WebKit session). Default off; gated
+    /// authoritatively in `resolveTools` (stripped in BOTH auto and manual
+    /// mode unless enabled). The built-in Default agent has no per-agent
+    /// settings editor, so its opt-in lives in `BrowserConfigurationStore`
+    /// (Settings → Browser) instead of here.
+    public var browserUseEnabled: Bool
     /// Per-agent opt-in for the `spawn` tool. Default off; gated
     /// authoritatively in `resolveTools` (stripped unless enabled AND the agent
     /// has at least one spawnable agent). The global `SubagentConfiguration`
@@ -856,6 +895,21 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// `subagentPermissions` — so a new kind needs no new field. The Default
     /// agent uses the global `SubagentConfiguration.subagentModelOverrides`.
     public var subagentModelOverrides: [String: String]
+    /// Per-agent opt-in for the knowledge tools (`search_knowledge` /
+    /// `read_knowledge` / `list_knowledge`). Default off; like the other
+    /// gated built-ins the tools stay registered but are stripped from the
+    /// model's schema unless enabled AND at least one collection is granted.
+    public var knowledgeEnabled: Bool
+    /// Knowledge collections this agent may search/read (per-agent
+    /// allow-list of `KnowledgeCollection` ids). Scope is enforced at tool
+    /// execution time, so the grant list — not the schema — is the
+    /// security boundary. Empty → the knowledge tools stay hidden.
+    public var knowledgeCollectionIds: [UUID]
+    /// Curator role opt-in: exposes `propose_knowledge_update` (`.ask`
+    /// policy) so this agent can draft document replacements as pending
+    /// proposals. A child of `knowledgeEnabled`; proposals never touch
+    /// the corpus until the user approves them in the Knowledge tab.
+    public var knowledgeCuratorEnabled: Bool
 
     public init(
         dbEnabled: Bool,
@@ -871,6 +925,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         computerUseEnabled: Bool = false,
         computerUseCeiling: AutonomyCeiling? = nil,
         screenContextEnabled: Bool = true,
+        browserUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
         appleScriptEnabled: Bool = false,
@@ -884,6 +939,9 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         subagentPermissions: SubagentPermissionDefaults = SubagentPermissionDefaults(),
         subagentBudgets: SubagentBudgets = SubagentBudgets(),
         subagentModelOverrides: [String: String] = [:],
+        knowledgeEnabled: Bool = false,
+        knowledgeCollectionIds: [UUID] = [],
+        knowledgeCuratorEnabled: Bool = false,
         spawnToolAccess: SpawnToolAccess = .none
     ) {
         self.dbEnabled = dbEnabled
@@ -899,6 +957,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.computerUseEnabled = computerUseEnabled
         self.computerUseCeiling = computerUseCeiling
         self.screenContextEnabled = screenContextEnabled
+        self.browserUseEnabled = browserUseEnabled
         self.spawnDelegationEnabled = spawnDelegationEnabled
         self.imageEnabled = imageEnabled
         self.appleScriptEnabled = appleScriptEnabled
@@ -912,6 +971,9 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.subagentPermissions = subagentPermissions
         self.subagentBudgets = subagentBudgets
         self.subagentModelOverrides = subagentModelOverrides
+        self.knowledgeEnabled = knowledgeEnabled
+        self.knowledgeCollectionIds = knowledgeCollectionIds
+        self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
         self.spawnToolAccess = spawnToolAccess
     }
 
@@ -956,6 +1018,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         // context unless explicitly turned off. Older agent JSON predates the
         // flag (the feature was global), so missing decodes to on.
         screenContextEnabled = try c.decodeIfPresent(Bool.self, forKey: .screenContextEnabled) ?? true
+        // Default off; back-compat for agents that predate native Browser Use.
+        browserUseEnabled = try c.decodeIfPresent(Bool.self, forKey: .browserUseEnabled) ?? false
         spawnDelegationEnabled =
             try c.decodeIfPresent(Bool.self, forKey: .spawnDelegationEnabled) ?? false
         // Default off; spawn/image delegation is pre-release so there is no
@@ -1003,6 +1067,13 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         subagentModelOverrides = Self.normalizedModelOverrides(
             (try? c.decodeIfPresent([String: String].self, forKey: .subagentModelOverrides)) ?? [:]
         )
+        // Knowledge opt-in + grants. Default off; lenient (`try?`) so a
+        // malformed grant list never discards the rest of the settings.
+        knowledgeEnabled = try c.decodeIfPresent(Bool.self, forKey: .knowledgeEnabled) ?? false
+        knowledgeCollectionIds =
+            (try? c.decodeIfPresent([UUID].self, forKey: .knowledgeCollectionIds)) ?? []
+        knowledgeCuratorEnabled =
+            try c.decodeIfPresent(Bool.self, forKey: .knowledgeCuratorEnabled) ?? false
         // Lenient enum decode: an invalid/renamed raw value falls back to the
         // safe text-only default instead of failing the whole agent decode.
         spawnToolAccess =
@@ -1036,6 +1107,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case computerUseEnabled
         case computerUseCeiling
         case screenContextEnabled
+        case browserUseEnabled
         case spawnDelegationEnabled
         case imageEnabled
         case appleScriptEnabled
@@ -1049,6 +1121,9 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case subagentPermissions
         case subagentBudgets
         case subagentModelOverrides
+        case knowledgeEnabled
+        case knowledgeCollectionIds
+        case knowledgeCuratorEnabled
         case spawnToolAccess
         // Read-only legacy key — never encoded after migration.
         case generativeGreetings
@@ -1069,6 +1144,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(computerUseEnabled, forKey: .computerUseEnabled)
         try c.encodeIfPresent(computerUseCeiling, forKey: .computerUseCeiling)
         try c.encode(screenContextEnabled, forKey: .screenContextEnabled)
+        try c.encode(browserUseEnabled, forKey: .browserUseEnabled)
         try c.encode(spawnDelegationEnabled, forKey: .spawnDelegationEnabled)
         try c.encode(imageEnabled, forKey: .imageEnabled)
         try c.encode(appleScriptEnabled, forKey: .appleScriptEnabled)
@@ -1082,6 +1158,9 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(subagentPermissions, forKey: .subagentPermissions)
         try c.encode(subagentBudgets, forKey: .subagentBudgets)
         try c.encode(subagentModelOverrides, forKey: .subagentModelOverrides)
+        try c.encode(knowledgeEnabled, forKey: .knowledgeEnabled)
+        try c.encode(knowledgeCollectionIds, forKey: .knowledgeCollectionIds)
+        try c.encode(knowledgeCuratorEnabled, forKey: .knowledgeCuratorEnabled)
         try c.encode(spawnToolAccess, forKey: .spawnToolAccess)
     }
 

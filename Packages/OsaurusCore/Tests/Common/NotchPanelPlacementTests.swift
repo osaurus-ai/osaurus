@@ -6,12 +6,64 @@
 //  background tasks render here; the panel must stay below the macOS menu bar.
 //
 
+import AppKit
 import CoreGraphics
 import Testing
 
 @testable import OsaurusCore
 
 struct NotchPanelPlacementTests {
+    @Test @MainActor func notchPanelCanBecomeKeyForInlineTextInput() {
+        let panel = NotchPanel(
+            contentRect: CGRect(x: 0, y: 0, width: 600, height: 500),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        let field = NSTextField(frame: CGRect(x: 20, y: 20, width: 200, height: 28))
+        panel.contentView = NSView(frame: panel.contentRect(forFrameRect: panel.frame))
+        panel.contentView?.addSubview(field)
+
+        #expect(panel.canBecomeKey)
+        #expect(panel.styleMask.contains(.nonactivatingPanel))
+        panel.makeKeyAndOrderFront(nil)
+        #expect(panel.makeFirstResponder(field))
+        #expect(panel.firstResponder === field.currentEditor())
+        panel.close()
+    }
+
+    @Test func notchSessionKeyboardNavigationRequiresExactCommandArrow() {
+        #expect(
+            NotchWindowController.sessionNavigationDirection(
+                keyCode: 123,
+                modifierFlags: .command
+            ) == .previous
+        )
+        #expect(
+            NotchWindowController.sessionNavigationDirection(
+                keyCode: 124,
+                modifierFlags: .command
+            ) == .next
+        )
+        #expect(
+            NotchWindowController.sessionNavigationDirection(
+                keyCode: 123,
+                modifierFlags: [.command, .shift]
+            ) == nil
+        )
+        #expect(
+            NotchWindowController.sessionNavigationDirection(
+                keyCode: 124,
+                modifierFlags: []
+            ) == nil
+        )
+    }
+
+    @Test func placementDefaultAttachesOnlyToHardwareNotches() {
+        #expect(NotchOverlayPlacement.defaultPlacement(hasHardwareNotch: true) == .onMenuBar)
+        #expect(NotchOverlayPlacement.defaultPlacement(hasHardwareNotch: false) == .belowMenuBar)
+    }
+
     @Test func panelAnchorsToVisibleFrameBelowMenuBar() {
         let screenFrame = CGRect(x: 0, y: 0, width: 1440, height: 900)
         let visibleFrame = CGRect(x: 0, y: 0, width: 1440, height: 868)
@@ -137,6 +189,16 @@ struct NotchPanelPlacementTests {
         )
 
         #expect(padding == 32)
+    }
+
+    @Test func alertKeepsOnMenuBarNotchAttachedToScreenTop() {
+        let padding = NotchPanelPlacement.alertContentTopPadding(
+            screenFrame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+            visibleFrame: CGRect(x: 0, y: 0, width: 1440, height: 868),
+            overMenuBar: true
+        )
+
+        #expect(padding == 0)
     }
 
     @Test func alertContentTopPaddingFallsBackToZeroForEmptyVisibleFrame() {

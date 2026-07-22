@@ -70,6 +70,16 @@ public enum ChatExecutionContext {
     /// `BackgroundTaskManager.dispatchChat` alongside `currentRunId`.
     @TaskLocal public static var currentBackgroundId: UUID?
 
+    /// Root of the working folder owned by the chat session driving the
+    /// current execution. Bound by every send/run surface (chat run task,
+    /// HTTP `/agents/{id}/run`, plugin tool loop, eval harness) from that
+    /// surface's OWN folder state, so folder tools, undo, combined-mode
+    /// policy, and change checkpoints all resolve against the executing
+    /// chat's folder — never a process-wide one. `nil` means the execution
+    /// has no working folder; folder tools return a typed `unavailable`
+    /// envelope in that case.
+    @TaskLocal public static var currentFolderRoot: URL?
+
     /// Root of the read-only host workspace when the current execution
     /// is in combined sandbox + host-read mode
     /// (`ExecutionMode.sandbox(hostRead: ctx)`). Bound by the send paths
@@ -120,6 +130,15 @@ public enum ChatExecutionContext {
     /// when `hostReadOnlyScope` is non-nil.
     @TaskLocal public static var allowHostSecretReads: Bool = false
 
+    /// Combined-mode write grant: `true` when the active agent's
+    /// `allowHostFolderWrites` opt-in is on for the current execution.
+    /// Bound by `ToolRegistry.execute` alongside `hostReadOnlyScope` so
+    /// tool BODIES that route by path (`file_copy`) can gate host-bound
+    /// destinations at execute time — schema visibility alone can't,
+    /// because the same tool serves both directions. `false` in every
+    /// other mode (and in read-only combined mode).
+    @TaskLocal public static var allowHostFolderWrites: Bool = false
+
     /// Sandbox identity for combined mode, letting the unified host
     /// `file_*` tools serve an absolute `/workspace/...` path from the
     /// Linux sandbox (path-routed file access). Bound by
@@ -163,4 +182,36 @@ public enum ChatExecutionContext {
     /// relaxation can't be reached from an untrusted surface. Module-internal
     /// so out-of-module callers cannot bind it.
     @TaskLocal static var authenticatedHostFolderRoot: URL?
+
+    /// True when the current execution is an UNATTENDED, app-authored
+    /// background dispatch — a recurring schedule, a self-scheduled
+    /// wake-up, or a file-system watcher trigger — fired with no
+    /// interactive user present to answer an approval card. Bound `true`
+    /// by `BackgroundTaskManager.dispatchChat` for those sources only, and
+    /// only when the run is NOT an external surface (loopback/HTTP/MCP/
+    /// plugin dispatches never set it). `ToolRegistry.runPermissionGate`
+    /// consults it to auto-approve the narrow set of `.ask` tools in
+    /// `ToolRegistry.unattendedAutoApprovableToolNames` — today only the
+    /// curator's `propose_knowledge_update`, whose output is an inert
+    /// draft that still requires a separate human diff-approval in the
+    /// Knowledge tab before anything is written. Every other `.ask` tool
+    /// is unaffected. Module-internal so out-of-module callers cannot bind
+    /// it.
+    @TaskLocal static var isUnattendedDispatch: Bool = false
+
+    /// Identity a spawned subagent's KNOWLEDGE tools resolve grants and the
+    /// curator role against. A spawned worker keeps `currentAgentId` inherited
+    /// from its launcher (so budget/limiter/sandbox routing bill the launcher),
+    /// but knowledge is an access-control boundary that must follow the agent
+    /// actually running — otherwise a spawned helper would silently inherit its
+    /// launcher's collection grants and curator role. `TextSubagentKind` binds
+    /// this to the target agent's id for the duration of the child run; knowledge
+    /// tools read `knowledgeAgentId` (this when set, else `currentAgentId`).
+    /// Module-internal so out-of-module callers cannot rebind the boundary.
+    @TaskLocal static var knowledgeGrantAgentIdOverride: UUID? = nil
+
+    /// The agent identity knowledge tools use for grant / curator-role
+    /// resolution: the subagent override when a spawned worker is running, else
+    /// the normal `currentAgentId`.
+    static var knowledgeAgentId: UUID? { knowledgeGrantAgentIdOverride ?? currentAgentId }
 }

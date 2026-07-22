@@ -30,6 +30,7 @@ public struct BatchDiagnosticsSnapshot: Equatable, Sendable {
     public let pagedIncompatibleModelCount: Int
     public let prefixHits: Int
     public let prefixMisses: Int
+    public let pagedEvictions: Int
     public let diskL2Hits: Int
     public let diskL2Misses: Int
     public let diskL2Stores: Int
@@ -52,6 +53,7 @@ public struct BatchDiagnosticsSnapshot: Equatable, Sendable {
         pagedIncompatibleModelCount: Int = 0,
         prefixHits: Int = 0,
         prefixMisses: Int = 0,
+        pagedEvictions: Int = 0,
         diskL2Hits: Int = 0,
         diskL2Misses: Int = 0,
         diskL2Stores: Int = 0,
@@ -73,6 +75,7 @@ public struct BatchDiagnosticsSnapshot: Equatable, Sendable {
         self.pagedIncompatibleModelCount = pagedIncompatibleModelCount
         self.prefixHits = prefixHits
         self.prefixMisses = prefixMisses
+        self.pagedEvictions = pagedEvictions
         self.diskL2Hits = diskL2Hits
         self.diskL2Misses = diskL2Misses
         self.diskL2Stores = diskL2Stores

@@ -71,9 +71,9 @@ struct SystemPromptComposerToolResolutionTests {
             gitStatus: nil,
             isGitRepo: false
         )
-        FolderToolManager.shared.registerFolderTools(for: folder)
+        FolderToolManager.shared.ensureFolderToolsRegistered()
         body(folder)
-        FolderToolManager.shared.unregisterFolderTools()
+        FolderToolManager.shared._unregisterAllForTesting()
     }
 
     /// Minimal snapshot for the gate tests that exercise `resolveTools`
@@ -84,6 +84,7 @@ struct SystemPromptComposerToolResolutionTests {
         toolMode: ToolSelectionMode = .auto,
         manualToolNames: [String]? = nil,
         computerUseEnabled: Bool = false,
+        browserUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
         spawnableAgentNames: [String] = [],
@@ -100,6 +101,7 @@ struct SystemPromptComposerToolResolutionTests {
             systemPrompt: "",
             dbEnabled: false,
             computerUseEnabled: computerUseEnabled,
+            browserUseEnabled: browserUseEnabled,
             spawnDelegationEnabled: spawnDelegationEnabled,
             imageEnabled: imageEnabled,
             spawnableAgentNames: spawnableAgentNames,
@@ -354,6 +356,78 @@ struct SystemPromptComposerToolResolutionTests {
         #expect(!dynamicNames.contains(ComputerUseTool.toolName))
     }
 
+    // MARK: - Browser Use gate (authoritative; auto-injected, never discovered)
+
+    @Test
+    func autoMode_injectsBrowserUseWhenEnabled() {
+        // Opting in must auto-inject `browser_use` into the baseline schema —
+        // the user should never have to discover/load it via capabilities.
+        let tools = SystemPromptComposer.resolveTools(
+            snapshot: makeSnapshot(browserUseEnabled: true),
+            executionMode: .none
+        )
+        let names = Set(tools.map { $0.function.name })
+        #expect(names.contains(BrowserUseTool.toolName))
+    }
+
+    @Test
+    func autoMode_stripsBrowserUseWhenDisabled() {
+        let tools = SystemPromptComposer.resolveTools(
+            snapshot: makeSnapshot(browserUseEnabled: false),
+            executionMode: .none
+        )
+        let names = Set(tools.map { $0.function.name })
+        #expect(!names.contains(BrowserUseTool.toolName))
+    }
+
+    @Test
+    func browserUseHasNoCapabilitiesLoadCarveOut() {
+        // Like `computer_use`, `browser_use` is stripped even when a stray
+        // `capabilities_load` names it — the per-agent gate is authoritative.
+        let tools = SystemPromptComposer.resolveTools(
+            snapshot: makeSnapshot(browserUseEnabled: false),
+            executionMode: .none,
+            additionalToolNames: [BrowserUseTool.toolName]
+        )
+        let names = Set(tools.map { $0.function.name })
+        #expect(!names.contains(BrowserUseTool.toolName))
+    }
+
+    @Test
+    func browserUseIsBuiltInButExcludedFromDiscovery() {
+        #expect(ToolRegistry.shared.builtInToolNames.contains(BrowserUseTool.toolName))
+        #expect(ToolRegistry.nonDiscoverableBuiltInToolNames.contains(BrowserUseTool.toolName))
+        let dynamicNames = Set(ToolRegistry.shared.listDynamicTools().map(\.name))
+        #expect(!dynamicNames.contains(BrowserUseTool.toolName))
+    }
+
+    /// Like `computer_use`, Browser Use is a custom-agent capability: the
+    /// Default agent must NEVER see `browser_use` — even if a stray snapshot
+    /// carries the flag, the configure-surface allowlist strips it.
+    @Test
+    func defaultAgent_neverGetsBrowserUse() {
+        for strayFlag in [true, false] {
+            let snapshot = AgentConfigSnapshot(
+                agentId: Agent.defaultId,
+                toolsDisabled: false,
+                memoryDisabled: true,
+                autonomousConfig: nil,
+                toolMode: .auto,
+                model: nil,
+                manualToolNames: nil,
+                systemPrompt: "",
+                dbEnabled: false,
+                browserUseEnabled: strayFlag
+            )
+            let tools = SystemPromptComposer.resolveTools(snapshot: snapshot, executionMode: .none)
+            let names = Set(tools.map { $0.function.name })
+            #expect(
+                !names.contains(BrowserUseTool.toolName),
+                "the Default agent must never get browser_use (flag=\(strayFlag))"
+            )
+        }
+    }
+
     @Test
     func hostFolderMode_includesFolderMutationAndArtifactTools() async {
         await withSandboxAgent(autonomous: false) { agentId in
@@ -405,8 +479,95 @@ struct SystemPromptComposerToolResolutionTests {
                     #expect(names.contains("sandbox_write_file"))
                     // `sandbox_edit_file` folded into `sandbox_write_file`.
                     #expect(!names.contains("sandbox_edit_file"))
+                    // The workspace<->sandbox byte bridge is visible even
+                    // in read-only combined mode (host-bound destinations
+                    // are gated at execute time).
+                    #expect(names.contains("file_copy"))
                     // Global egress + loop tools remain.
                     #expect(names.contains("share_artifact"))
+                }
+            }
+        }
+    }
+
+    @Test
+    func writableCombinedMode_showsUnifiedWritersHidesSandboxWriterAndShell() async {
+        // Writable combined mode (`allowHostFolderWrites`): `file_write` /
+        // `file_edit` join the schema as the single, path-routed write
+        // family; the redundant `sandbox_write_file` hides (like the
+        // sandbox read tools), and shell / git / `file_undo` stay hidden —
+        // exec is sandbox-only, undo lives in the Changes sheet.
+        await withSandboxAgent(autonomous: true) { agentId in
+            withRegisteredSandboxBuiltins {
+                withRegisteredFolderTools { folder in
+                    let tools = SystemPromptComposer.resolveTools(
+                        agentId: agentId,
+                        executionMode: .sandbox(hostRead: folder, hostWrite: true)
+                    )
+                    let names = Set(tools.map { $0.function.name })
+                    // The unified read family stays.
+                    #expect(names.contains("file_read"))
+                    #expect(names.contains("file_search"))
+                    // The unified write family joins.
+                    #expect(names.contains("file_write"))
+                    #expect(names.contains("file_edit"))
+                    // Exactly one write family: the sandbox writer hides.
+                    #expect(!names.contains("sandbox_write_file"))
+                    // Exec stays sandbox-only; undo stays in the sheet.
+                    #expect(names.contains("sandbox_exec"))
+                    #expect(!names.contains("shell_run"))
+                    #expect(!names.contains("git_commit"))
+                    #expect(!names.contains("file_undo"))
+                    // The byte bridge stays visible in the writable variant.
+                    #expect(names.contains("file_copy"))
+
+                    // Hidden ≠ unregistered: the sandbox writer must stay
+                    // callable (the bridge routes `/workspace/...` writes
+                    // through it).
+                    let callable = ToolRegistry.shared.specs(forTools: ["sandbox_write_file"])
+                    #expect(callable.count == 1)
+                }
+            }
+        }
+    }
+
+    @Test
+    func writableCombinedMode_writeSpecsAdvertisePathRouting() async {
+        // The write tools' rendered specs must carry the path-routing
+        // contract, and `sandbox_exec` must stop pointing at the hidden
+        // `sandbox_write_file`.
+        await withSandboxAgent(autonomous: true) { _ in
+            withRegisteredSandboxBuiltins {
+                withRegisteredFolderTools { folder in
+                    let specs = ToolRegistry.shared.alwaysLoadedSpecs(
+                        mode: .sandbox(hostRead: folder, hostWrite: true)
+                    )
+                    let byName = Dictionary(
+                        uniqueKeysWithValues: specs.map { ($0.function.name, $0) }
+                    )
+                    for writeTool in ["file_write", "file_edit"] {
+                        let desc = byName[writeTool]?.function.description ?? ""
+                        #expect(
+                            desc.contains("/workspace/"),
+                            "\(writeTool) should advertise the sandbox route in writable combined mode"
+                        )
+                    }
+                    let execDesc = byName["sandbox_exec"]?.function.description ?? ""
+                    #expect(
+                        !execDesc.contains("sandbox_write_file"),
+                        "sandbox_exec must not advertise the hidden sandbox_write_file"
+                    )
+
+                    // Read-only combined mode keeps today's surface: no
+                    // write routing note because the writers are hidden,
+                    // and `sandbox_write_file` visible with its references
+                    // intact.
+                    let readOnly = ToolRegistry.shared.alwaysLoadedSpecs(
+                        mode: .sandbox(hostRead: folder)
+                    )
+                    let readOnlyNames = Set(readOnly.map { $0.function.name })
+                    #expect(!readOnlyNames.contains("file_write"))
+                    #expect(readOnlyNames.contains("sandbox_write_file"))
                 }
             }
         }
@@ -472,6 +633,43 @@ struct SystemPromptComposerToolResolutionTests {
                 }
                 // `file_tree` no longer exists as a separate tool.
                 #expect(byName["file_tree"] == nil)
+                // `file_copy` is combined-mode-only: plain folder mode has
+                // no sandbox to bridge to (`shell_run` `cp` covers copies).
+                #expect(byName["file_copy"] == nil)
+            }
+        }
+    }
+
+    @Test
+    func fileCopy_hiddenOutsideCombinedMode_andExecAdvertisesStagingInCombined() async {
+        await withSandboxAgent(autonomous: true) { agentId in
+            withRegisteredSandboxBuiltins {
+                withRegisteredFolderTools { folder in
+                    // Plain sandbox mode (no host folder): every folder tool
+                    // is hidden, including the bridge.
+                    let plainSandbox = Set(
+                        SystemPromptComposer.resolveTools(
+                            agentId: agentId,
+                            executionMode: .sandbox(hostRead: nil)
+                        ).map { $0.function.name }
+                    )
+                    #expect(!plainSandbox.contains("file_copy"))
+
+                    // Combined mode: `sandbox_exec`'s rendered spec must
+                    // point at `file_copy` for staging workspace files —
+                    // commands can't see the workspace, and this is where
+                    // small models look first.
+                    let specs = ToolRegistry.shared.alwaysLoadedSpecs(
+                        mode: .sandbox(hostRead: folder)
+                    )
+                    let execDesc =
+                        specs.first { $0.function.name == "sandbox_exec" }?
+                        .function.description ?? ""
+                    #expect(
+                        execDesc.contains("file_copy"),
+                        "sandbox_exec must advertise the file_copy staging path in combined mode"
+                    )
+                }
             }
         }
     }

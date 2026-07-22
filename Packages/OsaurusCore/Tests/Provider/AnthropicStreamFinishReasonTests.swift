@@ -131,4 +131,127 @@ struct AnthropicStreamFinishReasonTests {
         continuation.finish()
         _ = stream
     }
+
+    @Test(arguments: [7_996, 9_000, 16_000])
+    func largeInputJSONDelta_preservesAllToolArguments(contentBytes: Int) throws {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        var yielded: [String] = []
+        let arguments = #"{"path":"probe.txt","content":""#
+            + String(repeating: "x", count: contentBytes)
+            + #""}"#
+
+        let start =
+            #"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_large","name":"file_write","input":{}}}"#
+        _ = RemoteProviderService.handleStreamEvent(
+            jsonData: Data(start.utf8),
+            providerType: .anthropic,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+
+        let deltaObject: [String: Any] = [
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": [
+                "type": "input_json_delta",
+                "partial_json": arguments,
+            ],
+        ]
+        let deltaData = try JSONSerialization.data(withJSONObject: deltaObject)
+        let delta = RemoteProviderService.handleStreamEvent(
+            jsonData: deltaData,
+            providerType: .anthropic,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+        guard case .continue = delta else {
+            Issue.record("Expected large Anthropic delta to continue, got \(delta)")
+            return
+        }
+
+        let finishReason =
+            #"{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":100}}"#
+        _ = RemoteProviderService.handleStreamEvent(
+            jsonData: Data(finishReason.utf8),
+            providerType: .anthropic,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+        let stop = RemoteProviderService.handleStreamEvent(
+            jsonData: Data(#"{"type":"message_stop"}"#.utf8),
+            providerType: .anthropic,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+
+        guard case .finishWithToolCall(let invocations) = stop,
+            let invocation = invocations.first
+        else {
+            Issue.record("Expected complete Anthropic tool call, got \(stop)")
+            return
+        }
+        #expect(invocation.jsonArguments == arguments)
+        #expect(yielded.compactMap { StreamingToolHint.decodeArgs($0) }.joined() == arguments)
+    }
+
+    @Test func maxTokensWithPendingToolCallIsTruncationError() {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        let start =
+            #"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"file_write","input":{}}}"#
+        _ = RemoteProviderService.handleStreamEvent(
+            jsonData: Data(start.utf8),
+            providerType: .anthropic,
+            state: &state,
+            yield: { _ in }
+        )
+        let limit =
+            #"{"type":"message_delta","delta":{"stop_reason":"max_tokens","stop_sequence":null},"usage":{"output_tokens":4096}}"#
+        _ = RemoteProviderService.handleStreamEvent(
+            jsonData: Data(limit.utf8),
+            providerType: .anthropic,
+            state: &state,
+            yield: { _ in }
+        )
+
+        let stop = RemoteProviderService.handleStreamEvent(
+            jsonData: Data(#"{"type":"message_stop"}"#.utf8),
+            providerType: .anthropic,
+            state: &state,
+            yield: { _ in }
+        )
+
+        guard case .finishWithError(let error) = stop else {
+            Issue.record("Expected max_tokens tool call to fail, got \(stop)")
+            return
+        }
+        #expect(error.localizedDescription.contains("output token limit"))
+        #expect(error.localizedDescription.contains("received 0 bytes"))
+    }
+
+    @Test func malformedInputJSONDeltaIsNotSilentlyDropped() {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        let start =
+            #"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"file_write","input":{}}}"#
+        _ = RemoteProviderService.handleStreamEvent(
+            jsonData: Data(start.utf8),
+            providerType: .anthropic,
+            state: &state,
+            yield: { _ in }
+        )
+        let malformed =
+            #"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":123}}"#
+        let outcome = RemoteProviderService.handleStreamEvent(
+            jsonData: Data(malformed.utf8),
+            providerType: .anthropic,
+            state: &state,
+            yield: { _ in }
+        )
+
+        guard case .finishWithError(let error) = outcome else {
+            Issue.record("Expected malformed tool delta to fail, got \(outcome)")
+            return
+        }
+        #expect(error.localizedDescription.contains("invalid streaming event"))
+        #expect(error.localizedDescription.contains("while receiving tool arguments"))
+    }
 }
