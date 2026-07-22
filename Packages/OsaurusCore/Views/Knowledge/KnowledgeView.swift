@@ -121,10 +121,10 @@ struct KnowledgeView: View {
                                                     let sample = failing.prefix(3).joined(separator: ", ")
                                                     let summary =
                                                         failing.count == 1
-                                                        ? "1 document needs a category"
-                                                        : "\(failing.count) documents need a category"
+                                                        ? "1 document is uncategorized (optional)"
+                                                        : "\(failing.count) documents are uncategorized (optional)"
                                                     showSuccess(
-                                                        "\(summary) — add a `type:` line to: \(sample)\(failing.count > 3 ? "…" : "")"
+                                                        "\(summary) — agents can still search them. Add a `type:` line to filter by category: \(sample)\(failing.count > 3 ? "…" : "")"
                                                     )
                                                 }
                                             }
@@ -527,7 +527,7 @@ private struct KnowledgeCollectionCard: View {
     private var okfIcon: String {
         switch okfStatus {
         case .conformant: return "checkmark.seal.fill"
-        case .nonconforming: return "exclamationmark.triangle.fill"
+        case .nonconforming: return "tag.slash"
         case .unknown: return "checkmark.seal"
         }
     }
@@ -536,7 +536,7 @@ private struct KnowledgeCollectionCard: View {
         switch okfStatus {
         case .conformant: return "All categorized"
         case .nonconforming(let count):
-            return count == 1 ? "1 doc needs a category" : "\(count) docs need a category"
+            return count == 1 ? "1 doc uncategorized" : "\(count) docs uncategorized"
         case .unknown: return "Checking categories…"
         }
     }
@@ -544,7 +544,7 @@ private struct KnowledgeCollectionCard: View {
     private var okfColor: Color {
         switch okfStatus {
         case .conformant: return .green
-        case .nonconforming: return .orange
+        case .nonconforming: return theme.secondaryText
         case .unknown: return theme.secondaryText
         }
     }
@@ -610,8 +610,8 @@ private struct KnowledgeCollectionCard: View {
                 "Every document has a category, so agents can filter the library by it. Following the Open Knowledge Format (OKF)."
         case .nonconforming(let count):
             return count == 1
-                ? "1 document has no category. Add a `type:` line (e.g. `type: policy`) to the top of the file so agents can filter by it. Click for the list."
-                : "\(count) documents have no category. Add a `type:` line (e.g. `type: policy`) to the top of each file so agents can filter by it. Click for the list."
+                ? "1 document has no category — this is optional, agents can still search and read it. To let agents filter by category, add a `type:` line (e.g. `type: policy`) to the top of the file. Click for the list."
+                : "\(count) documents have no category — this is optional, agents can still search and read them. To let agents filter by category, add a `type:` line (e.g. `type: policy`) to the top of each file. Click for the list."
         case .unknown:
             return "Checking that every document declares a category (its `type`)…"
         }
@@ -1541,11 +1541,11 @@ private struct KnowledgeCollectionDetailSheet: View {
                 if docsLoaded && !documents.isEmpty {
                     let categorized = documents.count - nonconformingCount
                     statPill(
-                        icon: nonconformingCount == 0 ? "checkmark.seal.fill" : "exclamationmark.triangle.fill",
+                        icon: nonconformingCount == 0 ? "checkmark.seal.fill" : "tag.slash",
                         text: nonconformingCount == 0
                             ? L("All categorized")
                             : String(format: L("%lld of %lld categorized"), categorized, documents.count),
-                        color: nonconformingCount == 0 ? .green : .orange
+                        color: nonconformingCount == 0 ? .green : theme.secondaryText
                     )
                 }
                 if isIndexing {
@@ -1662,10 +1662,11 @@ private struct KnowledgeCollectionDetailSheet: View {
                 .padding(.vertical, 1)
                 .background(
                     Capsule().fill(
-                        doc.docType.isEmpty ? Color.orange.opacity(0.15) : theme.accentColor.opacity(0.15)
+                        doc.docType.isEmpty
+                            ? theme.secondaryText.opacity(0.12) : theme.accentColor.opacity(0.15)
                     )
                 )
-                .foregroundColor(doc.docType.isEmpty ? .orange : theme.accentColor)
+                .foregroundColor(doc.docType.isEmpty ? theme.secondaryText : theme.accentColor)
         }
         .padding(10)
     }
