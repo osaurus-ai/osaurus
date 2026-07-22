@@ -189,15 +189,79 @@ enum AppleScriptToolDispatch {
         guard let latestUserTask else { return parentTask }
         let userTask = latestUserTask.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !userTask.isEmpty,
-            let parentValues = exactReplacementLiterals(from: parentTask),
-            let userValues = exactReplacementLiterals(from: userTask),
-            replacementValues(parentValues) == replacementValues(userValues)
+            let userValues = exactReplacementLiterals(from: userTask)
         else { return parentTask }
+        let sameExactReplacement: Bool
+        if let parentValues = exactReplacementLiterals(from: parentTask) {
+            sameExactReplacement = replacementValues(parentValues) == replacementValues(userValues)
+        } else {
+            // The live Ornith parent changed "text in the open document"
+            // into "document named <old text>", while still repeating both
+            // exact values and asking to replace content. The narrower parser
+            // correctly rejects that as a replacement grammar, but falling
+            // back to the parent rewrite then makes the AppleScript helper
+            // create or address the wrong document. Reconcile only when the
+            // parent still contains BOTH exact user values byte-for-byte and
+            // explicitly asks for a mutation. A compare/read task, a partial
+            // value match, or different replacement remains untouched.
+            let values = userValues.names.compactMap { userValues.value(for: $0) }
+            let containsEveryValue = !values.isEmpty && values.allSatisfy {
+                parentTask.range(of: $0, options: .literal) != nil
+            }
+            let requestsMutation = parentTask.range(
+                of: #"\b(?:replace|change|edit|set|update)\b"#,
+                options: [.regularExpression, .caseInsensitive]
+            ) != nil
+            let userNamesTextEdit = userTask.range(
+                of: #"\bTextEdit\b"#,
+                options: [.regularExpression, .caseInsensitive]
+            ) != nil
+            let parentNamesTextEdit = parentTask.range(
+                of: #"\bTextEdit\b"#,
+                options: [.regularExpression, .caseInsensitive]
+            ) != nil
+            let newText = userValues.value(for: "newText")
+            let parentKeepsExactNewText = newText.map {
+                parentTask.range(of: $0, options: .literal) != nil
+            } ?? false
+            let parentQuotedValues = quotedValues(in: parentTask)
+            let parentAddsNoQuotedValue = parentQuotedValues.map { quoted in
+                quoted.allSatisfy { values.contains($0) }
+            } ?? false
+
+            // A second live Ornith rewrite retained TextEdit, the exact new
+            // text, and `set` intent, but dropped the old text completely:
+            // `Find the frontmost TextEdit document and set its contents to
+            // "Hello again"`. The visible user request already supplies the
+            // unambiguous open-document from/to contract, so requiring the
+            // lossy parent to repeat the old value defeats the authority we
+            // are trying to preserve. Accept that one narrower subset only:
+            // both sides name TextEdit, the parent keeps the exact new bytes,
+            // requests a mutation, and introduces no other quoted value.
+            let safeTextEditNewValueSubset =
+                userNamesTextEdit && parentNamesTextEdit
+                && parentKeepsExactNewText && parentAddsNoQuotedValue
+                && requestsMutation
+            sameExactReplacement =
+                (containsEveryValue && requestsMutation) || safeTextEditNewValueSubset
+        }
+        guard sameExactReplacement else { return parentTask }
         debugLog("[AppleScript] kept matching latest user replacement task authoritative")
         return userTask
     }
 
     static func latestUserTaskFromCurrentSession() -> String? {
+        // The exact visible UI request is published as a TaskLocal for the
+        // whole logical turn. Prefer it over SQLite: ChatHistory persistence
+        // can lag the tool call, which live-reproduced as `nil` here and let a
+        // parent rewrite turn the old text into a document name. API/plugin
+        // calls without a UI TaskLocal retain the existing session fallback.
+        if let currentUserRequest = ChatExecutionContext.currentUserRequest?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !currentUserRequest.isEmpty
+        {
+            return currentUserRequest
+        }
         guard let rawSessionId = ChatExecutionContext.currentSessionId,
             let sessionId = UUID(uuidString: rawSessionId),
             let session = ChatHistoryDatabase.shared.loadSession(id: sessionId)
@@ -246,6 +310,34 @@ enum AppleScriptToolDispatch {
         Set(literals.names.compactMap { literals.value(for: $0) })
     }
 
+    /// Extract complete straight/curly quoted values without interpreting
+    /// their meaning. `nil` means malformed or unmatched quoting. This is used
+    /// only as a fail-closed guard when reconciling a lossy parent task with an
+    /// exact visible TextEdit replacement.
+    private static func quotedValues(in text: String) -> [String]? {
+        var values: [String] = []
+        var cursor = text.startIndex
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            let closingQuote: Character?
+            switch character {
+            case "\"": closingQuote = "\""
+            case "“": closingQuote = "”"
+            default: closingQuote = nil
+            }
+            guard let closingQuote else {
+                cursor = text.index(after: cursor)
+                continue
+            }
+
+            let valueStart = text.index(after: cursor)
+            guard let close = text[valueStart...].firstIndex(of: closingQuote) else { return nil }
+            values.append(String(text[valueStart..<close]))
+            cursor = text.index(after: close)
+        }
+        return values
+    }
+
     /// Recover the confirmed parent-model failure where a complete generated
     /// AppleScript program is placed in an otherwise unreferenced literal
     /// field while `task` already contains the whole requested outcome. The
@@ -287,6 +379,28 @@ enum AppleScriptToolDispatch {
                 debugLog(
                     "[AppleScript] discarded generated-script literals and preserved exact "
                         + "replacement values as oldText,newText"
+                )
+                return inferred
+            }
+
+            // The current Ornith parent also reproduced the same channel
+            // confusion without emitting source code: it put a generated
+            // replacement instruction in the single `content` field while
+            // `task` independently carried the complete old/new contract.
+            // Recover only that exact redundant shape. A genuine literal
+            // value, a partial/different pair, a mixed map, or a task that
+            // explicitly references provided content remains strict.
+            if names == ["content"],
+                let content = literals.value(for: "content"),
+                isRedundantReplacementInstruction(
+                    content,
+                    task: task,
+                    inferred: inferred
+                )
+            {
+                debugLog(
+                    "[AppleScript] discarded redundant generated replacement instruction "
+                        + "and preserved exact replacement values as oldText,newText"
                 )
                 return inferred
             }
@@ -397,6 +511,10 @@ enum AppleScriptToolDispatch {
             trimmedSeparator == "to"
             && trimmedBeforeOld.range(of: #"\bchange\b"#, options: .regularExpression) != nil
             && trimmedBeforeOld.range(of: #"\bfrom$"#, options: .regularExpression) != nil
+        let replaceFromToForm =
+            trimmedSeparator == "to"
+            && trimmedBeforeOld.range(of: #"\breplace\b"#, options: .regularExpression) != nil
+            && trimmedBeforeOld.range(of: #"\bfrom$"#, options: .regularExpression) != nil
         let changeOccurrenceForm =
             trimmedSeparator == "to"
             && trimmedBeforeOld.range(of: #"\bchange\b"#, options: .regularExpression) != nil
@@ -413,7 +531,9 @@ enum AppleScriptToolDispatch {
                 of: #"^(?:and\s+)?replace\s+(?:that|the|this)\s+(?:text|content|string|value)\s+with$"#,
                 options: .regularExpression
             ) != nil
-        guard replaceForm || changeForm || changeOccurrenceForm || containingThenReplaceForm else {
+        guard replaceForm || replaceFromToForm || changeForm || changeOccurrenceForm
+            || containingThenReplaceForm
+        else {
             return nil
         }
 
@@ -439,6 +559,33 @@ enum AppleScriptToolDispatch {
             guard let value = supplied.value(for: name) else { return false }
             return replacementValues.contains(value)
         }
+    }
+
+    private static func isRedundantReplacementInstruction(
+        _ content: String,
+        task: String,
+        inferred: AppleScriptLiterals
+    ) -> Bool {
+        let normalizedTask = task.lowercased()
+        let taskReferencesProvidedContent =
+            normalizedTask.contains("provided")
+            || normalizedTask.contains("content")
+            || normalizedTask.contains("literal")
+            || normalizedTask.contains("{{content}}")
+        guard !taskReferencesProvidedContent else { return false }
+
+        guard let oldText = inferred.value(for: "oldText"),
+            let newText = inferred.value(for: "newText"),
+            content != oldText,
+            content != newText,
+            content.range(of: oldText, options: .literal) != nil,
+            content.range(of: newText, options: .literal) != nil,
+            content.range(
+                of: #"\b(?:replace|change|edit|set|update)\b"#,
+                options: [.regularExpression, .caseInsensitive]
+            ) != nil
+        else { return false }
+        return true
     }
 
     /// Literal fields are an out-of-band DATA channel, not a second instruction

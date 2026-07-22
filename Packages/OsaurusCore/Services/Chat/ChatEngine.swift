@@ -225,6 +225,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 modelOptions["reasoningEffort"] = .string(requestReasoningEffort)
             }
         }
+        ComputerUseTraceLog.recordEffectiveDispatch(
+            request: request,
+            modelOptions: modelOptions
+        )
+        AppleScriptTraceLog.recordEffectiveDispatch(
+            request: request,
+            modelOptions: modelOptions
+        )
 
         let params = GenerationParameters(
             temperature: temperature,
@@ -641,6 +649,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             uniqueKeysWithValues: (tools ?? []).map { ($0.function.name, $0.function.parameters) }
         )
         let toolCalls: [ToolCall] = invocations.map { inv in
+            ComputerUseTraceLog.recordRawInvocation(
+                toolName: inv.toolName,
+                arguments: inv.jsonArguments
+            )
             let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
             let callId = inv.toolCallId ?? "call_" + String(raw.prefix(24))
             return ToolCall(

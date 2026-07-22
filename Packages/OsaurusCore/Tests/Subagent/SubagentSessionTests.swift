@@ -96,6 +96,19 @@ private func decode(_ envelope: String) -> [String: Any] {
 @Suite("SubagentSession host")
 struct SubagentSessionTests {
 
+    @Test("subagent scope carries explicit Thinking on, off, and unset")
+    func subagentScopeCarriesParentThinkingChoice() async {
+        await ChatExecutionContext.$currentEnableThinking.withValue(true) {
+            #expect(SubagentScope.current().enableThinking == true)
+        }
+        await ChatExecutionContext.$currentEnableThinking.withValue(false) {
+            #expect(SubagentScope.current().enableThinking == false)
+        }
+        await ChatExecutionContext.$currentEnableThinking.withValue(nil) {
+            #expect(SubagentScope.current().enableThinking == nil)
+        }
+    }
+
     @Test("happy path returns a success envelope carrying the kind payload")
     func happyPath() async {
         let kind = ScriptedKind()

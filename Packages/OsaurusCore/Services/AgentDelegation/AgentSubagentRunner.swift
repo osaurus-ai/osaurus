@@ -107,6 +107,7 @@ enum AgentSubagentRunner {
         deadline: Date,
         sessionId: String,
         temperature: Float? = nil,
+        enableThinking: Bool? = nil,
         isAgentRequest: Bool = true,
         stopOnToolRejection: Bool = false,
         treatEmptyChoicesAsFinal: Bool = false,
@@ -187,6 +188,7 @@ enum AgentSubagentRunner {
                 // the model bundle's own generation defaults.
                 request.samplingParametersAreImplicit = true
                 request.isAgentRequest = isAgentRequest
+                request.enable_thinking = enableThinking
 
                 let stepStarted = Date()
                 let stream = try await engine.streamChat(request: request)

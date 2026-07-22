@@ -4,7 +4,7 @@
 //
 //  Native macOS driver, brought in-core from osaurus-ai/osaurus-macos-use.
 //  Per-pid input layer that defaults to backgrounded routing (no cursor warp)
-//  and walks the SkyLight → CGEvent.postToPid → HID-tap fallback chain.
+//  and selects exactly one transport for each target app class.
 //
 
 import AppKit
@@ -37,9 +37,9 @@ enum InputDebug {
 // MARK: - Routing Telemetry
 
 /// Tells the caller (and tests) which transport the driver actually used.
-/// The fallback chain — SkyLight → CGEvent.postToPid → HID tap — degrades
-/// from "fully backgrounded" to "warps the user's cursor" so it's important
-/// for the agent to know when the cursor moved.
+/// The selected transport. A synthesized event must never be submitted to a
+/// second transport after the first call: SkyLight's return value is not a
+/// reliable delivery acknowledgement, and retrying can deliver the event twice.
 public enum InputRoute: String, Codable, Sendable {
     /// `SLEventPostToPid`. No cursor warp; trusted by Chromium renderers.
     case skyLight
@@ -147,13 +147,14 @@ private enum BundleClass {
 
 /// Per-pid input layer that defaults to backgrounded routing.
 ///
-/// Routing chain for every action:
-///   1. `SLEventPostToPid` (SkyLight private framework). Cursor never moves;
-///      Chromium renderers accept it.
-///   2. `CGEvent.postToPid` (CoreGraphics public API). Cursor never moves
-///      but Chromium web content silently drops the event.
-///   3. `CGEvent.post(tap: .cghidEventTap)` (HID stream). Warps the cursor;
-///      visible to the user; only used for canvas/games.
+/// Routing is mutually exclusive by target app class:
+///   - Cocoa/unknown GUI apps use public `CGEvent.postToPid` only.
+///   - Chromium apps use SkyLight when its symbol is available, otherwise HID.
+///   - Explicit HID callers (for example a drag already begun on HID) stay HID.
+///
+/// Never call SkyLight and then fall through to another transport based on its
+/// ambiguous status code. A completed call can deliver even when it returns 0;
+/// retrying that event through CoreGraphics caused doubled TextEdit input.
 final class BackgroundDriver: @unchecked Sendable {
     static let shared = BackgroundDriver()
 
@@ -209,7 +210,7 @@ final class BackgroundDriver: @unchecked Sendable {
 
     // MARK: - Routing primitive
 
-    /// Post a fully-built `CGEvent` to `pid`, walking the fallback chain.
+    /// Post a fully-built `CGEvent` to `pid` through one selected transport.
     ///
     /// `forceHID` is the single escape hatch for callers who *must* hit the
     /// HID tap (e.g. drag, where each step must continue from the previous
@@ -233,40 +234,28 @@ final class BackgroundDriver: @unchecked Sendable {
             return .perPid
         }
 
-        // SkyLight is the primary transport for every window-server-visible GUI
-        // app: it delivers without warping the cursor and Chromium renderers
-        // accept it. It is also TERMINAL — once SkyLight has the event we must
-        // NOT also postToPid, or the event lands twice. (postEvent now reports
-        // success on a completed call; it used to mis-detect SkyLight's
-        // non-zero success code as failure, which is what produced the
-        // double-delivery doubling.)
-        if transports.skyLightAvailable() && transports.skyLightPost(event, pid) {
-            record(route: .skyLight)
-            return .skyLight
-        }
-
-        // Reached only when the SkyLight symbol is unavailable (older/newer
-        // macOS, sandboxed host).
-        //
-        // For Chromium/Electron web content, per-pid delivery is BOTH
-        // unconfirmable (postToPid is fire-and-forget) AND silently dropped by
-        // the renderer's trusted-gesture filter — the signature Slack/Electron
-        // miss. So rather than post a per-pid event that never lands and only
-        // logging telemetry, escalate straight to the HID tap. The cursor warp
-        // is the lesser evil vs. a keystroke/click that silently misses, and
-        // using a SINGLE transport (HID, not postToPid+HID) avoids the
-        // double-delivery class of bug.
+        // Chromium/Electron web content silently drops public per-pid events.
+        // SkyLight is therefore its preferred background route. Its status is
+        // deliberately ignored after the call: live macOS builds have returned
+        // zero while still delivering, so a same-event fallback is unsafe.
         if transports.isChromium(pid) {
+            if transports.skyLightAvailable() {
+                _ = transports.skyLightPost(event, pid)
+                InputDebug.log("route pid=\(pid) -> skyLight (Chromium; terminal call)")
+                record(route: .skyLight)
+                return .skyLight
+            }
             transports.hidPost(event)
-            InputDebug.log("route pid=\(pid) -> hidFallback (Chromium; per-pid not deliverable)")
+            InputDebug.log("route pid=\(pid) -> hidFallback (Chromium; SkyLight unavailable)")
             record(route: .hidFallback)
             return .hidFallback
         }
 
-        // CGEvent.postToPid is public CoreGraphics API and works for almost all
-        // Cocoa apps; the cursor never moves.
+        // Cocoa and unknown GUI apps take the public CoreGraphics path without
+        // first attempting SkyLight. This is the crucial no-double-delivery
+        // invariant: exactly one transport receives each event.
         transports.postToPid(event, pid)
-        InputDebug.log("route pid=\(pid) -> perPid (SkyLight unavailable)")
+        InputDebug.log("route pid=\(pid) -> perPid (Cocoa/unknown; exclusive)")
         record(route: .perPid)
         return .perPid
     }

@@ -82,7 +82,7 @@ let package = Package(
         // seeds, growing partial-leaf reuse, and complete TQ window restore.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "a3b047e05871e1271fc86d2ef0ab2f8270aa832f"
+            revision: "bbbf49e090449bb42f6cde8f50b6f230e3578aec"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

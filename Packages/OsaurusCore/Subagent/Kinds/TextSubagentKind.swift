@@ -357,6 +357,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
                 deadline: deadline,
                 sessionId: sessionId,
                 temperature: temperature,
+                enableThinking: scope.enableThinking,
                 isInterrupted: { interrupt.isInterrupted },
                 toolset: toolset,
                 onProgress: { [feed] tokens, tokensPerSecond in

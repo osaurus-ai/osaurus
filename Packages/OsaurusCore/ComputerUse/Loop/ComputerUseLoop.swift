@@ -206,6 +206,7 @@ public enum ComputerUseLoop {
         policySummary: String = "",
         vision: VisionContext = .none,
         sessionId: String,
+        enableThinking: Bool? = nil,
         nextAction: AgentStepProvider? = nil
     ) async -> ComputerUseRunResult {
         let deadline = Date().addingTimeInterval(limits.wallClockSeconds)
@@ -364,7 +365,8 @@ public enum ComputerUseLoop {
                         engine: engine!,
                         modelId: modelId,
                         sessionId: sessionId,
-                        messages: stepMessages
+                        messages: stepMessages,
+                        enableThinking: enableThinking
                     )
                 }
             }
@@ -578,6 +580,8 @@ public enum ComputerUseLoop {
                 if await applyGate(
                     openDecision,
                     action: action,
+                    effect: openEffect,
+                    appName: action.app,
                     confirm: confirm,
                     toolResult: &toolResult,
                     advancedStep: &advancedStep,
@@ -723,6 +727,8 @@ public enum ComputerUseLoop {
                 if await applyGate(
                     decision,
                     action: action,
+                    effect: effect,
+                    appName: currentApp,
                     confirm: confirm,
                     toolResult: &toolResult,
                     advancedStep: &advancedStep,
@@ -787,6 +793,8 @@ public enum ComputerUseLoop {
     private static func applyGate(
         _ decision: GateDecision,
         action: AgentAction,
+        effect: EffectClass,
+        appName: String?,
         confirm: (ActionPreview) async -> Bool,
         toolResult: inout String,
         advancedStep: inout Bool,
@@ -796,6 +804,13 @@ public enum ComputerUseLoop {
     ) async -> Bool {
         switch decision {
         case .reject(let reason):
+            ComputerUseTraceLog.recordGate(
+                step: step,
+                action: action.feedLabel,
+                effect: effect,
+                appName: appName,
+                decision: "reject"
+            )
             metrics.blocked += 1
             feed.emit(
                 SubagentActivityEvent(step: step, kind: .blocked, title: "Blocked: \(action.feedLabel)", detail: reason)
@@ -804,6 +819,13 @@ public enum ComputerUseLoop {
             advancedStep = false
             return false
         case .confirm(let preview):
+            ComputerUseTraceLog.recordGate(
+                step: step,
+                action: action.feedLabel,
+                effect: effect,
+                appName: appName,
+                decision: "confirm"
+            )
             metrics.confirmsRequested += 1
             feed.emit(
                 SubagentActivityEvent(
@@ -814,16 +836,33 @@ public enum ComputerUseLoop {
                 )
             )
             if await confirm(preview) {
+                ComputerUseTraceLog.recordGateResolution(
+                    step: step,
+                    action: action.feedLabel,
+                    approved: true
+                )
                 metrics.confirmsApproved += 1
                 feed.emit(SubagentActivityEvent(step: step, kind: .confirmed, title: "Approved: \(action.feedLabel)"))
                 return true
             }
+            ComputerUseTraceLog.recordGateResolution(
+                step: step,
+                action: action.feedLabel,
+                approved: false
+            )
             metrics.confirmsDeclined += 1
             feed.emit(SubagentActivityEvent(step: step, kind: .denied, title: "Declined: \(action.feedLabel)"))
             toolResult = "The user declined that action. Try a different approach or ask to stop."
             advancedStep = false
             return false
         case .run:
+            ComputerUseTraceLog.recordGate(
+                step: step,
+                action: action.feedLabel,
+                effect: effect,
+                appName: appName,
+                decision: "run"
+            )
             return true
         }
     }
@@ -1210,7 +1249,14 @@ public enum ComputerUseLoop {
             metrics.raiseTier(to: currentTier)
             verifyTier = currentTier
         }
-        let snapshot = await driver.capture(pid: pid, tier: verifyTier)
+        let snapshot = await settledVerificationSnapshot(
+            action: action,
+            element: element,
+            result: result,
+            pid: pid,
+            tier: verifyTier,
+            driver: driver
+        )
         let view = AgentView.build(from: snapshot, previous: lastView)
         lastView = view
         lastSnapshot = snapshot
@@ -1245,6 +1291,103 @@ public enum ComputerUseLoop {
         return out
     }
 
+    /// A posted keyboard event is not the same thing as a target app having
+    /// processed that event. Cocoa and Chromium can acknowledge the final
+    /// key-up while their AX value still trails by one or more characters. A
+    /// single immediate capture therefore feeds a transient value back to the
+    /// planner, which can turn a completed edit into a destructive retry.
+    ///
+    /// Only successful text mutations use the bounded settle loop. Navigation
+    /// and pointer actions keep the existing one-capture behavior. Wholesale
+    /// replacements have an exact expected value and may finish as soon as it
+    /// appears; append-style edits require the target value to repeat across
+    /// two captures. The latest real AX snapshot always wins at the deadline —
+    /// no synthetic success or model-facing value is invented.
+    private static func settledVerificationSnapshot(
+        action: AgentAction,
+        element: CUElement?,
+        result: CUActionResult,
+        pid: Int32,
+        tier: CaptureTier,
+        driver: MacDriver
+    ) async -> CUSnapshot {
+        var snapshot = await driver.capture(pid: pid, tier: tier)
+        guard result.success, isTextMutation(action) else { return snapshot }
+
+        let expectedValue = expectedWholesaleTextValue(action)
+        var previousValue = verificationValue(in: snapshot, matching: element)
+
+        if expectedValue.map({ previousValue == $0 }) == true { return snapshot }
+
+        // Five follow-up reads at 50 ms intervals bound verification latency at
+        // 250 ms while still covering the live TextEdit trace where the first
+        // AX read ended at `Hello agai` and the next stable read was complete.
+        for _ in 0 ..< 5 {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            let next = await driver.capture(pid: pid, tier: tier)
+            let nextValue = verificationValue(in: next, matching: element)
+
+            if expectedValue.map({ nextValue == $0 }) == true { return next }
+            if expectedValue == nil, let nextValue, nextValue == previousValue { return next }
+
+            snapshot = next
+            previousValue = nextValue
+        }
+        return snapshot
+    }
+
+    /// Match the same logical text control across snapshot generations. AX ids
+    /// are generation-scoped, so identity comes from the owning window plus
+    /// path/role/label, with the focused control as the final pid-context
+    /// typing fallback.
+    private static func verificationValue(
+        in snapshot: CUSnapshot,
+        matching element: CUElement?
+    ) -> String? {
+        guard let element else {
+            return snapshot.elements.first(where: {
+                $0.focused && isTextBearing(role: $0.role)
+            })?.value
+        }
+
+        let sameWindowAndRole = snapshot.elements.filter {
+            $0.windowId == element.windowId && $0.role == element.role
+        }
+        if let path = element.path,
+            let exactPath = sameWindowAndRole.first(where: { $0.path == path })
+        {
+            return exactPath.value
+        }
+        if let label = element.label,
+            let exactLabel = sameWindowAndRole.first(where: { $0.label == label })
+        {
+            return exactLabel.value
+        }
+        return sameWindowAndRole.first(where: { $0.focused })?.value
+            ?? sameWindowAndRole.first?.value
+    }
+
+    private static func isTextMutation(_ action: AgentAction) -> Bool {
+        switch action.verb {
+        case .type, .setValue, .clear: return true
+        default: return false
+        }
+    }
+
+    private static func expectedWholesaleTextValue(_ action: AgentAction) -> String? {
+        switch action.verb {
+        case .setValue: return action.text ?? ""
+        case .clear: return ""
+        case .type where action.replace ?? true: return action.text ?? ""
+        default: return nil
+        }
+    }
+
+    private static func isTextBearing(role: String) -> Bool {
+        let role = role.lowercased()
+        return role.contains("text") || role == "combobox" || role == "searchfield"
+    }
+
     // MARK: - Model step
 
     /// One model step's result: the proposed call (nil when the model emitted
@@ -1269,7 +1412,8 @@ public enum ComputerUseLoop {
         engine: ChatEngine,
         modelId: String,
         sessionId: String,
-        messages: [ChatMessage]
+        messages: [ChatMessage],
+        enableThinking: Bool?
     ) async throws -> ModelStepResult {
         var req = ChatCompletionRequest(
             model: modelId,
@@ -1288,7 +1432,14 @@ public enum ComputerUseLoop {
         )
         req.samplingParametersAreImplicit = true
         req.isAgentRequest = true
+        req.enable_thinking = enableThinking
+        let generateStarted = Date()
         let response = try await engine.completeChat(request: req)
+        ComputerUseTraceLog.record(
+            request: req,
+            response: response,
+            elapsedSeconds: Date().timeIntervalSince(generateStarted)
+        )
         let tokens = response.usage.total_tokens
         let tps = response.usage.tokens_per_second
         guard let message = response.choices.first?.message else {

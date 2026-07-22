@@ -44,6 +44,8 @@ public enum AppleScriptRecipeCatalog {
                 "Read or change an open document INSIDE `tell application \"TextEdit\"`: "
                     + "`get text of front document` or `set text of front document to \"…\"`. "
                     + "Never write `... of TextEdit` as though TextEdit were a variable.",
+                "The unsaved/edited-state property is `modified of front document` (boolean). "
+                    + "Do not invent `changed of front document`.",
                 "When the whole document is the old text, replace it directly: "
                     + "`tell application \"TextEdit\" to set text of front document to \"new text\"`. "
                     + "Do not add a handler, UI keystrokes, formatting, files, or shell commands.",

@@ -289,7 +289,8 @@ final class AppleScriptKind: SubagentKind, @unchecked Sendable {
             environmentContext: desktop.contextText,
             dictionaryContext: knowledge.dictionary,
             recipeContext: knowledge.recipes,
-            literals: literals
+            literals: literals,
+            enableThinking: scope.enableThinking
         )
         return try Self.mapOutcome(result, model: resolved.name, mode: mode)
     }

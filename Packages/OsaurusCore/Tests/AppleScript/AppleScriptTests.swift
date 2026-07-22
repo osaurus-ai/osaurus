@@ -183,6 +183,19 @@ struct AppleScriptExecutorMappingTests {
         #expect(result.output == "name: Front Door, locked: true, battery: 87")
     }
 
+    @Test("TextEdit record fields surface semantic text and modified keys")
+    func textEditRecordOutput() async {
+        // `text` and `modified` are reserved labels in TextEdit's dictionary,
+        // so NSAppleScript encodes them as `ctxt` / `imod` keyword fields
+        // instead of putting their source labels in the `usrf` block.
+        let result = await AppleScriptExecutor.run(
+            source: "return {text:\"Final normalized new\", modified:false}",
+            timeout: 15
+        )
+        #expect(result.status == .success)
+        #expect(result.output == "text: Final normalized new, modified: false")
+    }
+
     @Test("a nested user record renders recursively with its keys")
     func nestedRecordOutput() async {
         let result = await AppleScriptExecutor.run(
@@ -582,6 +595,51 @@ struct AppleScriptToolDispatchLiteralsTests {
         #expect(violation?.message.contains("generated AppleScript source") == true)
     }
 
+    @Test("redundant generated replacement instruction is not treated as user content")
+    func redundantReplacementInstructionIsDiscardedNarrowly() {
+        let task =
+            "Replace all occurrences of \"Routing direct old\" with \"Routing direct new\" "
+            + "in the frontmost TextEdit document, then do not save"
+        let observed = AppleScriptLiterals([
+            "content":
+                "Replace all occurrences of \"Routing direct old\" with "
+                + "\"Routing direct new\" in the frontmost TextEdit document"
+        ])
+
+        let recovered = AppleScriptToolDispatch.literalsForDispatch(
+            task: task,
+            literals: observed
+        )
+        #expect(recovered.names == ["newText", "oldText"])
+        #expect(recovered.value(for: "oldText") == "Routing direct old")
+        #expect(recovered.value(for: "newText") == "Routing direct new")
+
+        let partial = AppleScriptLiterals([
+            "content": "Replace Routing direct old in the frontmost document"
+        ])
+        #expect(
+            AppleScriptToolDispatch.literalsForDispatch(task: task, literals: partial) == partial
+        )
+
+        let mixed = AppleScriptLiterals([
+            "content": observed.value(for: "content")!,
+            "extra": "unrelated user bytes",
+        ])
+        #expect(
+            AppleScriptToolDispatch.literalsForDispatch(task: task, literals: mixed) == mixed
+        )
+
+        let referencedTask =
+            "Replace \"Routing direct old\" with \"Routing direct new\" and append the provided "
+            + "content."
+        #expect(
+            AppleScriptToolDispatch.literalsForDispatch(
+                task: referencedTask,
+                literals: observed
+            ) == observed
+        )
+    }
+
     @Test("unreferenced generated script is discarded before helper dispatch")
     func unreferencedGeneratedScriptFallsBackToTask() {
         let generated = """
@@ -730,6 +788,97 @@ struct AppleScriptToolDispatchLiteralsTests {
         #expect(inferred.value(for: "newText") == "Hello again")
     }
 
+    @Test("active UI replacement overrides the observed document-name parent rewrite")
+    func activeUIReplacementOverridesObservedParentRewrite() async {
+        let userTask =
+            "Use the AppleScript helper—not Computer Use—to change the text in the open "
+            + "TextEdit document from “Hello from OracHQ” to “Hello again”. Do not save "
+            + "the document."
+        let parentTask =
+            "In TextEdit, find the document named \"Hello from OracHQ\" and replace its "
+            + "entire contents with \"Hello again\". Do not save."
+
+        #expect(
+            AppleScriptToolDispatch.authoritativeReplacementTask(
+                parentTask: parentTask,
+                latestUserTask: userTask
+            ) == userTask
+        )
+
+        await ChatExecutionContext.$currentUserRequest.withValue(userTask) {
+            #expect(AppleScriptToolDispatch.latestUserTaskFromCurrentSession() == userTask)
+        }
+
+        let inferred = AppleScriptToolDispatch.literalsForDispatch(
+            task: userTask,
+            literals: AppleScriptLiterals([
+                "content": "Hello from OracHQ"
+            ])
+        )
+        #expect(inferred.names == ["newText", "oldText"])
+        #expect(inferred.value(for: "oldText") == "Hello from OracHQ")
+        #expect(inferred.value(for: "newText") == "Hello again")
+    }
+
+    @Test("active UI replacement recovers the observed parent rewrite that drops old text")
+    func activeUIReplacementRecoversDroppedOldText() {
+        let userTask =
+            "Use the AppleScript helper—not Computer Use—to change the text in the open "
+            + "TextEdit document from “Hello from OracHQ” to “Hello again”. Do not save "
+            + "the document."
+        let observedParentTask =
+            "Find the frontmost TextEdit document and set its contents to \"Hello again\""
+
+        #expect(
+            AppleScriptToolDispatch.authoritativeReplacementTask(
+                parentTask: observedParentTask,
+                latestUserTask: userTask
+            ) == userTask
+        )
+
+        let inferred = AppleScriptToolDispatch.literalsForDispatch(
+            task: userTask,
+            literals: AppleScriptLiterals()
+        )
+        #expect(inferred.names == ["newText", "oldText"])
+        #expect(inferred.value(for: "oldText") == "Hello from OracHQ")
+        #expect(inferred.value(for: "newText") == "Hello again")
+
+        let wrongApp = "Set the Notes body to \"Hello again\"."
+        #expect(
+            AppleScriptToolDispatch.authoritativeReplacementTask(
+                parentTask: wrongApp,
+                latestUserTask: userTask
+            ) == wrongApp
+        )
+
+        let conflictingValue =
+            "In TextEdit set the document to \"Hello again\" and name it \"Other\"."
+        #expect(
+            AppleScriptToolDispatch.authoritativeReplacementTask(
+                parentTask: conflictingValue,
+                latestUserTask: userTask
+            ) == conflictingValue
+        )
+    }
+
+    @Test("authoritative UI reconciliation rejects read-only and partial-value parent tasks")
+    func authoritativeUIReconciliationRemainsNarrow() {
+        let userTask = "Change the text in TextEdit from “one” to “two”."
+        #expect(
+            AppleScriptToolDispatch.authoritativeReplacementTask(
+                parentTask: "Compare \"one\" with \"two\" in TextEdit.",
+                latestUserTask: userTask
+            ) == "Compare \"one\" with \"two\" in TextEdit."
+        )
+        #expect(
+            AppleScriptToolDispatch.authoritativeReplacementTask(
+                parentTask: "Replace \"one\" with \"three\" in TextEdit.",
+                latestUserTask: userTask
+            ) == "Replace \"one\" with \"three\" in TextEdit."
+        )
+    }
+
     @Test("authoritative replacement reconciliation is exact and preserves explicit user save")
     func authoritativeReplacementDoesNotBroaden() {
         let parentTask =
@@ -784,6 +933,22 @@ struct AppleScriptToolDispatchLiteralsTests {
                 mode: .query
             ) == nil
         )
+
+        let replaceFromTo =
+            "Replace the entire text in the open TextEdit document from “Save control old” "
+            + "to “Save control new”, and save this existing document."
+        #expect(
+            AppleScriptToolDispatch.readOnlyConflictMessage(
+                latestUserTask: replaceFromTo,
+                mode: .query
+            )?.contains("`mac_query` is read-only") == true
+        )
+        let inferred = AppleScriptToolDispatch.literalsForDispatch(
+            task: replaceFromTo,
+            literals: AppleScriptLiterals()
+        )
+        #expect(inferred.value(for: "oldText") == "Save control old")
+        #expect(inferred.value(for: "newText") == "Save control new")
     }
 
     @Test("exact replacement data is app-independent but ambiguous grammar remains task-only")
@@ -1292,6 +1457,136 @@ struct AppleScriptLoopTests {
         #expect(await confirm.count == 1)
     }
 
+    @Test("exact TextEdit replacement uses live pre/post read-back and stops after one write")
+    func exactTextEditReplacementUsesRuntimeReadBack() async {
+        let feed = SubagentFeed(
+            toolCallId: "t-textedit-runtime-readback",
+            kindId: "applescript",
+            title: "task"
+        )
+        let exec = ScriptedExec(results: [
+            successResult("Hello from OracHQ"),
+            successResult(nil),
+            successResult("Hello again"),
+        ])
+        let executedScripts = MutableTexts()
+        let confirm = ConfirmCounter(approve: true)
+        let write = call(
+            #"tell application "TextEdit" to set text of front document to {{newText}}"#,
+            id: "write"
+        )
+        // A repeating provider proves the exact live state contract completes
+        // before the small model is asked to synthesize any mutation.
+        let seq = ScriptSequencer(repeating: write)
+
+        let result = await AppleScriptLoop.run(
+            task:
+                "Change the text in the open TextEdit document from the provided old text "
+                + "to the provided new text. Do not save the document.",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in await confirm.confirm() },
+            limits: RunLimits(maxSteps: 8),
+            sessionId: "s",
+            mode: .automate,
+            literals: AppleScriptLiterals([
+                "oldText": "Hello from OracHQ",
+                "newText": "Hello again",
+            ]),
+            execute: { script, _ in
+                executedScripts.append(script)
+                return await exec.run(script)
+            },
+            nextScript: { _ in await seq.next() }
+        )
+
+        guard case .done(let summary) = result.outcome else {
+            Issue.record("expected .done, got \(result.outcome)")
+            return
+        }
+        #expect(summary == "Done. Result: Hello again")
+        #expect(result.scriptsExecuted == 1)
+        #expect(result.succeeded == 1)
+        #expect(result.failed == 0)
+        #expect(result.modelTokens == 0)
+        #expect(result.lastOutput == "Hello again")
+        #expect(await exec.count == 3)
+        #expect(await confirm.count == 1)
+        #expect(
+            executedScripts.all() == [
+                #"tell application "TextEdit" to get text of front document"#,
+                #"tell application "TextEdit" to set text of front document to "Hello again""#,
+                #"tell application "TextEdit" to get text of front document"#,
+            ]
+        )
+        #expect(
+            feed.currentEvents().contains {
+                $0.title == "Verified TextEdit replacement" && $0.success == true
+            }
+        )
+    }
+
+    @Test("exact TextEdit replacement saves only when the user explicitly requests it")
+    func exactTextEditReplacementHonorsExplicitSave() async {
+        let feed = SubagentFeed(
+            toolCallId: "t-textedit-explicit-save",
+            kindId: "applescript",
+            title: "task"
+        )
+        let exec = ScriptedExec(results: [
+            successResult("Save control old"),
+            successResult(nil),
+            successResult("Save control new"),
+        ])
+        let executedScripts = MutableTexts()
+        let confirm = ConfirmCounter(approve: true)
+
+        let result = await AppleScriptLoop.run(
+            task:
+                "Replace the entire text in the open TextEdit document from the provided old text "
+                + "to the provided new text, and save this existing document.",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in await confirm.confirm() },
+            limits: RunLimits(maxSteps: 8),
+            sessionId: "s",
+            mode: .automate,
+            literals: AppleScriptLiterals([
+                "oldText": "Save control old",
+                "newText": "Save control new",
+            ]),
+            execute: { script, _ in
+                executedScripts.append(script)
+                return await exec.run(script)
+            },
+            nextScript: { _ in
+                Issue.record("the deterministic TextEdit path must not call the model")
+                return nil
+            }
+        )
+
+        #expect(result.outcome.isSuccess)
+        #expect(result.scriptsExecuted == 1)
+        #expect(result.modelTokens == 0)
+        #expect(await confirm.count == 1)
+        #expect(
+            executedScripts.all() == [
+                #"tell application "TextEdit" to get text of front document"#,
+                """
+                tell application "TextEdit"
+                    set text of front document to "Save control new"
+                    save front document
+                end tell
+                """,
+                #"tell application "TextEdit" to get text of front document"#,
+            ]
+        )
+    }
+
     @Test("TextEdit replacement enters read-only verification before another mutation")
     func textEditReplacementRequiresReadBack() async {
         let feed = SubagentFeed(
@@ -1401,6 +1696,61 @@ struct AppleScriptLoopTests {
                 $0.title == "Execution failed; requesting one corrected tool call"
             }
         )
+    }
+
+    @Test("a failed query recovery remains read-only and can return the requested value")
+    func failedQueryRecoveryStaysReadOnly() async {
+        let feed = SubagentFeed(
+            toolCallId: "t-query-correct",
+            kindId: "applescript",
+            title: "task"
+        )
+        let exec = ScriptedExec(results: [
+            AppleScriptExecutionResult(
+                status: .runtimeError,
+                output: nil,
+                errorNumber: -1700,
+                errorMessage: "Can’t make changed of document 1 into type reference."
+            ),
+            successResult("text: Final normalized new, modified: true"),
+        ])
+        let failedRead = call(
+            #"tell application "TextEdit" to get changed of front document"#,
+            id: "failed-read"
+        )
+        let correctedRead = call(
+            #"tell application "TextEdit" to return {text of front document, modified of front document}"#,
+            id: "corrected-read"
+        )
+        let seq = ScriptSequencer([failedRead, nil, correctedRead, nil])
+        let prompts = MutableTexts()
+
+        let result = await AppleScriptLoop.run(
+            task: "Report the exact text and edited status of the front TextEdit document.",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in false },
+            sessionId: "s",
+            mode: .query,
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { input in
+                prompts.append(input.lastToolResult ?? "")
+                return await seq.next()
+            }
+        )
+
+        #expect(result.outcome.isSuccess)
+        #expect(result.scriptsExecuted == 2)
+        #expect(result.succeeded == 1)
+        #expect(result.failed == 1)
+        #expect(result.lastOutput == "text: Final normalized new, modified: true")
+        #expect(await exec.count == 2)
+        let recovery = prompts.all().first { $0.contains("prior read-only script") }
+        #expect(recovery?.contains("corrected READ-ONLY script") == true)
+        #expect(recovery?.contains("Do not change, type, open, close, or save anything") == true)
+        #expect(recovery?.contains("applies only the missing requested change") == false)
     }
 
     private static let uiScriptingScript =
@@ -1647,6 +1997,57 @@ struct AppleScriptLoopTests {
             feed.currentEvents().contains {
                 $0.kind == .retry && $0.title.contains("did not compile")
             }
+        )
+    }
+
+    @Test("reasoning-only compile repair gets one bounded tool-envelope retry")
+    func reasoningOnlyCompileRepairRetriesEnvelopeOnce() async {
+        let feed = SubagentFeed(
+            toolCallId: "t-dryc-reasoning-envelope",
+            kindId: "applescript",
+            title: "task"
+        )
+        let exec = ExecRecorder(result: successResult("fixed"))
+        let confirm = ConfirmCounter(approve: true)
+        let badCall = ModelActionCall(
+            id: "c1",
+            arguments: #"{"script":"set volume output volume"}"#
+        )
+        // `nil` immediately after the compile error reproduces the live
+        // reasoning-only turn: the model emitted no assistant content and no
+        // required tool call. The next call is the one bounded correction.
+        let seq = ScriptSequencer([badCall, nil, validCall("c2"), nil])
+        let compileFailure = AppleScriptExecutionResult(
+            status: .compileError,
+            output: nil,
+            errorNumber: -2741,
+            errorMessage: "Expected expression but found end of script."
+        )
+
+        let result = await AppleScriptLoop.run(
+            task: "set the volume",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in await confirm.confirm() },
+            sessionId: "s",
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { _ in await seq.next() },
+            compileCheck: { script, _ in
+                script.hasSuffix("volume") ? compileFailure : nil
+            }
+        )
+
+        #expect(result.outcome.isSuccess)
+        #expect(result.scriptsExecuted == 1)
+        #expect(await exec.count == 1)
+        #expect(await confirm.count == 1)
+        #expect(result.steps.filter { $0.status == "compile_error" }.count == 1)
+        #expect(
+            feed.currentEvents().filter {
+                $0.kind == .retry && $0.title.contains("omitted the tool call")
+            }.count == 1
         )
     }
 
@@ -2502,6 +2903,9 @@ struct AppleScriptToolSelectionGuidanceTests {
     func macQueryDescriptionRejectsInventedConversationQueries() throws {
         #expect(MacQueryTool.toolDescription.contains("current user request"))
         #expect(MacQueryTool.toolDescription.contains("Never invent a state question"))
+        #expect(MacQueryTool.toolDescription.contains("Do not preflight an exact change"))
+        #expect(MacQueryTool.toolDescription.contains("requested outcome is read-only"))
+        #expect(MacQueryTool.toolDescription.contains("NEVER call `mac_query` first as a preflight"))
 
         let parametersValue = try #require(MacQueryTool().parameters)
         guard case .object(let parameters) = parametersValue,
@@ -2512,16 +2916,20 @@ struct AppleScriptToolSelectionGuidanceTests {
             Issue.record("mac_query.question must keep a string description in its object schema")
             return
         }
-        #expect(description.contains("current user's request"))
-        #expect(description.contains("do not invent a question"))
+        #expect(description.contains("requested outcome must itself be read-only"))
+        #expect(description.contains("do not call this tool even as a preflight"))
+        #expect(description.contains("Do not invent a question"))
     }
 
     @Test("full and compact parent prompts preserve the same selection boundary")
     func parentPromptsRejectInventedConversationQueries() {
-        #expect(SystemPromptTemplates.appleScriptGuidance.contains("current user request"))
+        #expect(SystemPromptTemplates.appleScriptGuidance.contains("current user's requested outcome"))
         #expect(SystemPromptTemplates.appleScriptGuidance.contains("Do not invent a Mac-state question"))
-        #expect(SystemPromptTemplates.appleScriptGuidanceCompact.contains("current user request"))
-        #expect(SystemPromptTemplates.appleScriptGuidanceCompact.contains("Never invent a state question"))
+        #expect(SystemPromptTemplates.appleScriptGuidance.contains("requested outcome is read-only"))
+        #expect(SystemPromptTemplates.appleScriptGuidance.contains("NEVER call `mac_query` first as a preflight"))
+        #expect(SystemPromptTemplates.appleScriptGuidanceCompact.contains("current user's requested outcome"))
+        #expect(SystemPromptTemplates.appleScriptGuidanceCompact.contains("requested outcome is read-only"))
+        #expect(SystemPromptTemplates.appleScriptGuidanceCompact.contains("NEVER call it first as a preflight"))
     }
 
     @Test("compact exact-text guidance keeps task required alongside content")
@@ -3194,6 +3602,8 @@ struct AppleScriptAppKnowledgeTests {
         #expect(recipes.contains("replace it directly"))
         #expect(recipes.contains("Do not use `save`"))
         #expect(recipes.contains("text item delimiters"))
+        #expect(recipes.contains("modified of front document"))
+        #expect(recipes.contains("Do not invent `changed of front document`"))
     }
 
     @Test("a task phrased 'run my … shortcut' surfaces the Shortcuts recipe")

@@ -30,6 +30,9 @@ final class AppRecipeTests: XCTestCase {
 
         let chrome = AppRecipes.matching(app: "Google Chrome").map(\.id)
         XCTAssertEqual(Set(chrome), ["dialog", "chromium"])
+
+        let textEdit = AppRecipes.matching(app: "TextEdit").map(\.id)
+        XCTAssertEqual(Set(textEdit), ["dialog", "textedit"])
     }
 
     func testSignalsMergeUniversalAndNamed() {
@@ -59,6 +62,15 @@ final class AppRecipeTests: XCTestCase {
         XCTAssertTrue(safari.lowercased().contains("address bar"))
         // Steps are joined into an ordered hint with arrows.
         XCTAssertTrue(safari.contains("->"))
+    }
+
+    func testTextEditGuidanceStopsAfterOneReplacementWithoutImplicitSave() {
+        guard let text = AppRecipes.guidanceText(for: "TextEdit") else {
+            return XCTFail("expected TextEdit guidance")
+        }
+        XCTAssertTrue(text.contains("Use set_value once"))
+        XCTAssertTrue(text.contains("finish with done"))
+        XCTAssertTrue(text.contains("Do not save"))
     }
 
     func testGuidanceTextFallsBackToUniversalDialog() {

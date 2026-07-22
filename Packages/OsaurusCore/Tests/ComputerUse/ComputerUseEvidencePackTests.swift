@@ -17,6 +17,36 @@ import XCTest
 
 final class ComputerUseEvidencePackTests: XCTestCase {
 
+    func testComputerUseGoalContractDoesNotExpandUserScope() {
+        let tool = ComputerUseTool()
+        XCTAssertTrue(tool.description.contains("preserve the user's requested scope exactly"))
+        XCTAssertTrue(tool.description.contains("do not add saving"))
+        XCTAssertEqual(
+            ComputerUseTool.authoritativeGoal(
+                modelGoal: "In TextEdit, replace “old” with “new” and save the file",
+                userRequest: "In TextEdit, replace “old” with “new”. Do not save."
+            ),
+            "In TextEdit, replace “old” with “new”. Do not save.",
+            "The exact user replacement, not the parent's expanded delegation, owns side-effect scope."
+        )
+        XCTAssertEqual(
+            ComputerUseTool.authoritativeGoal(
+                modelGoal: "Open the previously discussed report in TextEdit",
+                userRequest: "Yes, do it"
+            ),
+            "Open the previously discussed report in TextEdit",
+            "Non-replacement turns keep the parent model's resolved context."
+        )
+        XCTAssertEqual(
+            ComputerUseTool.authoritativeGoal(
+                modelGoal: "Open Calculator",
+                userRequest: nil
+            ),
+            "Open Calculator",
+            "Programmatic callers without a published user turn keep the explicit tool argument."
+        )
+    }
+
     private func makeSnapshot(
         agentId: UUID = UUID(),
         toolMode: ToolSelectionMode = .auto,

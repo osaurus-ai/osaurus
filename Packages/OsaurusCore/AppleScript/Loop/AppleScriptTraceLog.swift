@@ -65,6 +65,30 @@ enum AppleScriptTraceLog {
         )
     }
 
+    /// Record the post-policy model options that actually reach the template.
+    /// The loop's raw request may legitimately carry `enable_thinking=nil`
+    /// while ChatEngine applies the direct-agent default. Keeping this next to
+    /// the raw step trace prevents an omitted wire value from being mistaken
+    /// for reasoning-on execution during live UI proof.
+    static func recordEffectiveDispatch(
+        request: ChatCompletionRequest,
+        modelOptions: [String: ModelOptionValue]
+    ) {
+        guard isEnabled,
+            request.tools?.contains(where: {
+                $0.function.name == AppleScriptAction.toolName
+            }) == true
+        else { return }
+        let options = modelOptions.keys.sorted().map { key in
+            "\(key)=\(String(describing: modelOptions[key]!))"
+        }.joined(separator: ",")
+        write(
+            "effective_dispatch model=\(request.model) is_agent=\(request.isAgentRequest) "
+                + "requested_enable_thinking=\(String(reflecting: request.enable_thinking)) "
+                + "effective_options={\(options)}"
+        )
+    }
+
     /// Record one model step: request message shapes + the full raw response
     /// surface (content, tool-call arguments, finish reason, usage).
     static func record(
@@ -81,7 +105,9 @@ enum AppleScriptTraceLog {
             ? ""
             : (request.temperature.map { String(format: " temp=%.2f(explicit)", $0) } ?? "")
         lines.append(
-            "==== applescript model step \(stamp) model=\(request.model)\(sampling)\(elapsed) ===="
+            "==== applescript model step \(stamp) model=\(request.model) "
+                + "requested_enable_thinking=\(String(reflecting: request.enable_thinking))"
+                + "\(sampling)\(elapsed) ===="
         )
         // Request shape: role + size per message (content stays out of the
         // trace by default to keep the file readable; the last tool result is
@@ -110,6 +136,7 @@ enum AppleScriptTraceLog {
             // `String(reflecting:)` escapes control characters so pads /
             // markers / empty output are unambiguous in the trace.
             lines.append("content: \(String(reflecting: message.content ?? ""))")
+            lines.append("reasoning_chars: \(message.reasoning_content?.count ?? 0)")
             for (index, call) in (message.tool_calls ?? []).enumerated() {
                 lines.append(
                     "tool_call[\(index)]: name=\(call.function.name) "

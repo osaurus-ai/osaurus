@@ -25,6 +25,21 @@ public enum ChatExecutionContext {
     /// The agent ID whose context is active for the current execution.
     @TaskLocal public static var currentAgentId: UUID?
 
+    /// Explicit Thinking choice frozen for the logical parent turn. Nested
+    /// Computer Use, AppleScript, Browser Use, and spawn loops reconstruct their
+    /// own requests, so they read this value through `SubagentScope` instead of
+    /// falling back to a different bundle default midway through one user turn.
+    /// `nil` means the user made no explicit choice and the target bundle keeps
+    /// ownership of its own template/config default.
+    @TaskLocal public static var currentEnableThinking: Bool?
+
+    /// Exact user text that owns the scope of the current logical turn. A
+    /// parent model may choose and parameterize a tool, but it may not silently
+    /// broaden that request with new side effects. Desktop subagents use this
+    /// frozen value as their task when it is available; non-chat/programmatic
+    /// calls that do not publish a request retain their explicit tool argument.
+    @TaskLocal public static var currentUserRequest: String?
+
     /// Assistant turn dispatching the current tool call. Used by `speak`
     /// to bind TTS playback to the right message bubble
     @TaskLocal public static var currentAssistantTurnId: UUID?

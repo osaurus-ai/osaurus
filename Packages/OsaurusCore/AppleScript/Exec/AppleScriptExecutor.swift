@@ -478,6 +478,13 @@ enum AppleScriptExecutor {
     /// as written. Codes outside the map fall back to their raw four-char tag.
     private static let aeReservedRecordKeys: [AEKeyword: String] = [
         fourCharCode("pnam"): "name",
+        // TextEdit's scripting dictionary returns these application-defined
+        // properties as reserved AE fields when they appear in a record. Keep
+        // the model-facing result semantic instead of leaking the raw four-char
+        // codes (`ctxt` / `imod`), which are easy for a parent model to
+        // misread or partially copy after a successful `mac_query`.
+        fourCharCode("ctxt"): "text",
+        fourCharCode("imod"): "modified",
         fourCharCode("ID  "): "id",
         fourCharCode("pidx"): "index",
         fourCharCode("pcls"): "class",

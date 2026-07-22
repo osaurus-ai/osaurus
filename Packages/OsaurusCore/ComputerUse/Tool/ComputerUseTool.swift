@@ -29,6 +29,8 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
         "Operate a macOS app on the user's behalf to accomplish a goal, working primarily from the "
         + "on-screen accessibility tree and falling back to a screenshot only when an element can't be "
         + "resolved. Describe the WHOLE task in `goal` as one instruction — "
+        + "preserve the user's requested scope exactly: do not add saving, closing, sending, formatting, "
+        + "or any other follow-up action the user did not request. "
         + "this runs a self-contained subagent that perceives the screen, clicks, types, and "
         + "verifies each step on its own, then returns a summary. Reads and navigation happen "
         + "automatically; edits and anything consequential pause for the user to approve. Use this "
@@ -43,6 +45,7 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
                 "type": .string("string"),
                 "description": .string(
                     "The complete task to accomplish, in plain language, naming the app when it matters. "
+                        + "Do not expand the task with unrequested side effects such as saving or closing. "
                         + "Example: \"In System Settings, turn on Night Shift from sunset to sunrise.\""
                 ),
             ]),
@@ -131,7 +134,10 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
             tool: name
         )
         guard case .value(let rawGoal) = goalReq else { return goalReq.failureEnvelope ?? "" }
-        let goal = rawGoal.trimmingCharacters(in: .whitespacesAndNewlines)
+        let goal = Self.authoritativeGoal(
+            modelGoal: rawGoal,
+            userRequest: ChatExecutionContext.currentUserRequest
+        )
         guard !goal.isEmpty else {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
@@ -164,6 +170,21 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
         return await SubagentSession.run(
             ComputerUseKind(goal: goal, limits: limits),
             tool: name
+        )
+    }
+
+    /// Preserve the exact user wording only for the narrowly parsed old/new
+    /// replacement contract. That prevents a parent from adding an unrequested
+    /// save to the reproduced TextEdit task without discarding useful context
+    /// resolution for ordinary/anaphoric turns such as “yes, do it”.
+    /// Programmatic callers without a published turn keep the explicit `goal`.
+    static func authoritativeGoal(modelGoal: String, userRequest: String?) -> String {
+        let goal = modelGoal.trimmingCharacters(in: .whitespacesAndNewlines)
+        let request = userRequest?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !request.isEmpty else { return goal }
+        return AppleScriptToolDispatch.authoritativeReplacementTask(
+            parentTask: goal,
+            latestUserTask: request
         )
     }
 }
