@@ -3108,7 +3108,11 @@ final class ChatSession: ObservableObject {
                 }
             }()
             AutoTitleDebugLog.log(
-                "decision session=\(sid.uuidString.prefix(8)) -> \(decisionLabel) title=\"\(title)\""
+                "decision session=\(sid.uuidString.prefix(8)) -> \(decisionLabel) "
+                    + "[latched=\(autoTitleGenerationStarted) "
+                    + "setting=\(AppConfiguration.shared.chatConfig.autoGenerateChatTitles) "
+                    + "clean=\(!stopRequested && lastStreamError == nil) "
+                    + "source=\(source)] title=\"\(title)\""
             )
         #endif
         switch decision {
