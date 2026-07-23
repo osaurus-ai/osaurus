@@ -95,13 +95,6 @@ public actor ChatTitleService {
             modelOptions[stored.id] = stored.value
         }
 
-        #if DEBUG
-            AutoTitleDebugLog.log(
-                "service start user=\(user.count)ch assistant=\(assistant.count)ch "
-                    + "fallback=\(fallbackModel ?? "nil") options=\(modelOptions)"
-            )
-            let startedAt = Date()
-        #endif
         do {
             let raw = try await CoreModelService.shared.generate(
                 prompt: prompt,
@@ -116,21 +109,8 @@ public actor ChatTitleService {
                 intent: .background,
                 modelOptions: modelOptions
             )
-            let sanitized = Self.sanitize(raw)
-            #if DEBUG
-                let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-                AutoTitleDebugLog.log(
-                    "service done in \(elapsedMs)ms raw=\"\(raw.prefix(120))\" sanitized=\(sanitized.map { "\"\($0)\"" } ?? "REJECTED")"
-                )
-            #endif
-            return sanitized
+            return Self.sanitize(raw)
         } catch {
-            #if DEBUG
-                let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-                AutoTitleDebugLog.log(
-                    "service ERROR in \(elapsedMs)ms: \(error.localizedDescription)"
-                )
-            #endif
             logger.info("auto title: generation failed silently: \(error.localizedDescription)")
             return nil
         }

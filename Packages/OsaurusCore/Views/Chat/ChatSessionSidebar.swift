@@ -597,16 +597,7 @@ struct ChatSessionSidebar: View {
     // MARK: - Session List
 
     private var sessionList: some View {
-        #if DEBUG
-            // One line per list rebuild, before the row logs, so full render
-            // passes can be attributed to a specific sidebar instance (main
-            // window vs overlay) and to the exact array it was handed.
-            let _ = AutoTitleDebugLog.log(
-                "sidebar LIST agent=\(agentId.uuidString.prefix(8)) incoming=\(sessions.count) "
-                    + "filtered=\(filteredSessions.count) filter=\(sourceFilter.label)"
-            )
-        #endif
-        return ScrollView {
+        ScrollView {
             LazyVStack(spacing: 2) {
                 ForEach(filteredSessions) { session in
                     SessionRow(
@@ -715,15 +706,6 @@ private struct SessionRow: View {
     }
 
     var body: some View {
-        #if DEBUG
-            // Fires on every body evaluation of this row. After an auto-title
-            // lands, the log should show ONLY the retitled session's row here
-            // (plus rows whose hover state changed); a flood of every visible
-            // session id would mean the whole list re-rendered.
-            let _ = AutoTitleDebugLog.log(
-                "sidebar row RENDER id=\(session.id.uuidString.prefix(8)) title=\"\(session.title)\""
-            )
-        #endif
         if isEditing {
             editingView
                 .padding(.horizontal, 10)

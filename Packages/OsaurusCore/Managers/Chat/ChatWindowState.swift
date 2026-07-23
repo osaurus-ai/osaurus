@@ -449,18 +449,6 @@ final class ChatWindowState: ObservableObject {
 
     func refreshSessions() {
         filteredSessions = ChatSessionsManager.shared.sessions(for: agentId)
-        #if DEBUG
-            let sid = session.sessionId.map { String($0.uuidString.prefix(8)) } ?? "nil"
-            let containsCurrent = session.sessionId.map { id in
-                String(filteredSessions.contains { $0.id == id })
-            }
-            AutoTitleDebugLog.log(
-                "windowState refreshSessions instance=\(UInt(bitPattern: ObjectIdentifier(self).hashValue) % 100_000) "
-                    + "agent=\(agentId.uuidString.prefix(8)) manager=\(ChatSessionsManager.shared.sessions.count) "
-                    + "filtered=\(filteredSessions.count) currentSession=\(sid) "
-                    + "containsCurrent=\(containsCurrent ?? "n/a")"
-            )
-        #endif
     }
 
     /// Coalesces rapid `refreshSessions()` calls (e.g. during streaming saves).

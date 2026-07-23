@@ -477,12 +477,6 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     ) {
         queue.async { [weak self] in
             guard let self, self.db != nil else {
-                #if DEBUG
-                    AutoTitleDebugLog.log(
-                        "db saveSessionAsync DROPPED session=\(session.id.uuidString.prefix(8)) — db closed at dequeue"
-                            + (onDropped != nil ? " (requeuing as deferred save)" : "")
-                    )
-                #endif
                 onDropped?(session)
                 return
             }
@@ -502,18 +496,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
                     Self.bindText(stmt, index: 3, value: prepared.id.uuidString)
                 }
                 try self.executeRaw("COMMIT")
-                #if DEBUG
-                    AutoTitleDebugLog.log(
-                        "db saveSessionAsync committed session=\(prepared.id.uuidString.prefix(8)) turns=\(prepared.turns.count)"
-                    )
-                #endif
             } catch {
                 try? self.executeRaw("ROLLBACK")
-                #if DEBUG
-                    AutoTitleDebugLog.log(
-                        "db saveSessionAsync FAILED session=\(prepared.id.uuidString.prefix(8)): \(error)"
-                    )
-                #endif
                 print("[ChatHistoryDatabase] async saveSession failed for \(prepared.id): \(error)")
             }
         }
@@ -528,14 +512,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// rename never reorders the recency list.
     public func updateSessionTitleAsync(id: UUID, title: String) {
         queue.async { [weak self] in
-            guard let self, self.db != nil else {
-                #if DEBUG
-                    AutoTitleDebugLog.log(
-                        "db title update DROPPED session=\(id.uuidString.prefix(8)) — db closed at dequeue"
-                    )
-                #endif
-                return
-            }
+            guard let self, self.db != nil else { return }
             do {
                 try self.executeRaw("BEGIN TRANSACTION")
                 try self.transactionalStep(
@@ -544,14 +521,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
                     Self.bindText(stmt, index: 1, value: title)
                     Self.bindText(stmt, index: 2, value: id.uuidString)
                 }
-                let changed = sqlite3_changes(self.db)
                 try self.executeRaw("COMMIT")
-                #if DEBUG
-                    AutoTitleDebugLog.log(
-                        "db title update session=\(id.uuidString.prefix(8)) rowsChanged=\(changed)"
-                            + (changed == 0 ? " — SESSION ROW MISSING ON DISK" : "")
-                    )
-                #endif
             } catch {
                 try? self.executeRaw("ROLLBACK")
                 print("[ChatHistoryDatabase] async title update failed for \(id): \(error)")
