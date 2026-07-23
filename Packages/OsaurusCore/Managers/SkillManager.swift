@@ -772,7 +772,7 @@ public final class SkillManager {
     /// cannot appear in a tool name, so `use runalyze_mcp_get_activities.`
     /// matches but a substring like `activities` inside a longer name never
     /// does. Sorted output keeps downstream schema composition deterministic.
-    public static func toolNames(
+    public nonisolated static func toolNames(
         referencedIn text: String,
         from candidates: Set<String>
     ) -> [String] {
