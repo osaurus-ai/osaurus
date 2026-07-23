@@ -26,6 +26,7 @@ final class NativeActivityGroupView: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     /// Shown in place of `titleLabel` while any child is still streaming.
     private let shimmerLabel = ShimmerLabel()
+    private let stepCountLabel = NSTextField(labelWithString: "")
     private let chevronView = NSImageView()
     private let separatorView = NSView()
     private let contentContainer = NSView()
@@ -120,14 +121,20 @@ final class NativeActivityGroupView: NSView {
             shimmerLabel.stop()
             shimmerLabel.isHidden = true
             let total = Self.totalDuration(of: children)
-            let base = total > 0 ? "\(L("Worked for")) \(Self.formatDuration(total))" : L("Worked")
-            let steps = ContentBlock.activityStepCount(of: children)
-            let stepsText = steps == 1 ? L("1 step") : "\(steps) \(L("steps"))"
-            titleLabel.stringValue = steps > 0 ? "\(base) · \(stepsText)" : base
+            titleLabel.stringValue =
+                total > 0
+                ? "\(L("Worked for")) \(Self.formatDuration(total))"
+                : L("Worked")
             titleLabel.isHidden = false
         }
 
         let expanded = expandedIds.contains(blockId)
+
+        let steps = ContentBlock.activityStepCount(of: children)
+        stepCountLabel.isHidden = expanded || steps == 0
+        stepCountLabel.stringValue = steps == 1 ? L("1 step") : "\(steps) \(L("steps"))"
+        stepCountLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 2, weight: .medium)
+        stepCountLabel.textColor = NSColor(theme.tertiaryText)
 
         let isSameBlock = configuredBlockId == blockId
         updateChevron(
@@ -302,6 +309,11 @@ final class NativeActivityGroupView: NSView {
         shimmerLabel.isHidden = true
         addSubview(shimmerLabel)
 
+        stepCountLabel.translatesAutoresizingMaskIntoConstraints = false
+        stepCountLabel.isEditable = false; stepCountLabel.isBordered = false
+        stepCountLabel.drawsBackground = false
+        addSubview(stepCountLabel)
+
         chevronView.translatesAutoresizingMaskIntoConstraints = false
         chevronView.wantsLayer = true
         chevronView.image = SymbolImageCache.image(
@@ -360,6 +372,9 @@ final class NativeActivityGroupView: NSView {
             chevronView.widthAnchor.constraint(equalToConstant: 12),
             chevronView.heightAnchor.constraint(equalToConstant: 12),
 
+            stepCountLabel.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -8),
+            stepCountLabel.centerYAnchor.constraint(equalTo: chevronView.centerYAnchor),
+
             separatorView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             separatorView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             separatorView.topAnchor.constraint(equalTo: topAnchor, constant: headerH),
@@ -379,7 +394,7 @@ final class NativeActivityGroupView: NSView {
         ])
 
         // Front of Z-order like the tool rows' header overlay, so clicks on
-        // the title text toggle the same as the empty header
+        // the title / step-count text toggle the same as the empty header
         // area. Transparent, and only 44pt tall, so it never paints over or
         // intercepts the expanded children below.
         addSubview(headerButton, positioned: .above, relativeTo: nil)
