@@ -75533,6 +75533,9 @@
         }
       }
     },
+    "Group Thinking & Tool Activity" : {
+
+    },
     "Guides & Policies" : {
       "localizations" : {
         "de" : {
@@ -143298,9 +143301,6 @@
     },
     "Role description" : {
       "shouldTranslate" : false
-    },
-    "Roll Up Thinking & Tool Activity" : {
-
     },
     "Rollback" : {
       "comment" : "Button label for rolling back to the default theme.",

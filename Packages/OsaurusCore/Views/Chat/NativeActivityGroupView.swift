@@ -282,6 +282,8 @@ final class NativeActivityGroupView: NSView {
 
         headerButton.translatesAutoresizingMaskIntoConstraints = false
         headerButton.title = ""; headerButton.isBordered = false; headerButton.bezelStyle = .inline
+        headerButton.isTransparent = true
+        headerButton.focusRingType = .none
         headerButton.target = self; headerButton.action = #selector(headerTapped)
         addSubview(headerButton)
 
@@ -385,9 +387,17 @@ final class NativeActivityGroupView: NSView {
             childStack.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             childStack.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             childStack.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            // Bottom pin sizes the container to its children — without it the
+            // container's frame resolves to zero height and hit testing culls
+            // clicks on the (still-drawn) child rows.
+            childStack.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
 
-        addSubview(headerButton, positioned: .below, relativeTo: nil)
+        // Front of Z-order like the tool rows' header overlay, so clicks on
+        // the title / step-count text toggle the same as the empty header
+        // area. Transparent, and only 44pt tall, so it never paints over or
+        // intercepts the expanded children below.
+        addSubview(headerButton, positioned: .above, relativeTo: nil)
     }
 
     private func updateChevron(expanded: Bool, animated: Bool) {
