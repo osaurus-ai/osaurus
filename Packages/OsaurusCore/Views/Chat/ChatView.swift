@@ -4401,6 +4401,37 @@ final class ChatSession: ObservableObject {
                         guard isRunActive(runId) else { return }
                     }
 
+                    // Resolve the pending one-off skill BEFORE composing.
+                    // Skill instructions routinely name the exact tools they
+                    // expect the model to call (MCP / plugin tools), but those
+                    // tools only enter the schema via `capabilities_load` —
+                    // injecting the instructions after the tool schema and
+                    // execution scope were frozen left every such call refused
+                    // as tool_not_found (#2145). Scan the instructions for
+                    // agent-granted dynamic tools and ride them in through
+                    // `additionalToolNames`, the same channel a prior-turn
+                    // `capabilities_load` would use. Consume the pending id
+                    // either way, but never inject in Mode 2 (the request
+                    // must stay bare).
+                    var oneOffSkillSection: (name: String, body: String)?
+                    var skillReferencedTools: LoadedTools = []
+                    if let skillId = pendingOneOffSkillId {
+                        pendingOneOffSkillId = nil
+                        if !isRemoteAgentTarget, let skill = SkillManager.shared.skill(for: skillId) {
+                            let body = await SkillManager.shared.buildFullInstructions(for: skill)
+                            oneOffSkillSection = (skill.name, body)
+                            let granted = AgentManager.shared
+                                .effectiveEnabledToolNames(for: effectiveAgentId)
+                                .map(Set.init)
+                            let dynamicNames = Set(
+                                ToolRegistry.shared.listDynamicTools().map(\.name)
+                            ).filter { granted?.contains($0) ?? true }
+                            skillReferencedTools = LoadedTools(
+                                SkillManager.toolNames(referencedIn: body, from: dynamicNames)
+                            )
+                        }
+                    }
+
                     let context = await SystemPromptComposer.composeChatContext(
                         agentId: effectiveAgentId,
                         executionMode: executionMode,
@@ -4408,7 +4439,8 @@ final class ChatSession: ObservableObject {
                         query: trimmed,
                         messages: priorUserMessages,
                         toolsDisabled: chatCfg.disableTools,
-                        additionalToolNames: cachedSession?.loadedToolNames ?? [],
+                        additionalToolNames: (cachedSession?.loadedToolNames ?? [])
+                            .union(skillReferencedTools),
                         frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
                         frozenManifest: cachedSession?.frozenManifest,
                         frozenSoul: cachedSession?.frozenSoul,
@@ -4443,15 +4475,11 @@ final class ChatSession: ObservableObject {
                         sys = sys.isEmpty ? pluginInstructions : sys + "\n\n" + pluginInstructions
                     }
 
-                    // Inject one-off skill if the user selected one via slash command.
-                    // Consume the pending id either way, but never append in Mode 2
-                    // (the request must stay bare).
-                    if let skillId = pendingOneOffSkillId {
-                        pendingOneOffSkillId = nil
-                        if !isRemoteAgentTarget, let skill = SkillManager.shared.skill(for: skillId) {
-                            let section = await SkillManager.shared.buildFullInstructions(for: skill)
-                            sys += "\n\n## Active Skill: \(skill.name)\n\n\(section)"
-                        }
+                    // Inject the one-off skill the user selected via slash
+                    // command (resolved above, before compose, so the tools it
+                    // references made it into the schema).
+                    if let oneOff = oneOffSkillSection {
+                        sys += "\n\n## Active Skill: \(oneOff.name)\n\n\(oneOff.body)"
                     }
 
                     // FROZEN for the whole run (deferred-schema / KV-prefix
@@ -4487,6 +4515,18 @@ final class ChatSession: ObservableObject {
                             fingerprint: liveFingerprint,
                             manifest: context.enabledManifest,
                             soul: context.soul
+                        )
+                    }
+
+                    // Skill-referenced tools joined this turn's schema above;
+                    // persist them into the session's loaded-tool union (auto
+                    // mode only, mirroring the capabilities_load drain path)
+                    // so the next turn's frozen schema still contains them.
+                    if !skillReferencedTools.isEmpty, !isManualTools, let sid = sessionId {
+                        await SessionToolStateStore.shared.appendLoadedTools(
+                            sessionStateKey(sid),
+                            names: Array(skillReferencedTools),
+                            fallbackAlwaysLoadedNames: context.alwaysLoadedNames
                         )
                     }
 
