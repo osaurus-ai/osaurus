@@ -128,24 +128,26 @@ final class NativeActivityGroupView: NSView {
             titleLabel.isHidden = false
         }
 
+        let expanded = expandedIds.contains(blockId)
+
         let steps = Self.stepCount(of: children)
-        stepCountLabel.isHidden = isExpanded || steps == 0
+        stepCountLabel.isHidden = expanded || steps == 0
         stepCountLabel.stringValue = steps == 1 ? L("1 step") : "\(steps) \(L("steps"))"
         stepCountLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 2, weight: .medium)
         stepCountLabel.textColor = NSColor(theme.tertiaryText)
 
         let isSameBlock = configuredBlockId == blockId
         updateChevron(
-            expanded: isExpanded,
-            animated: isSameBlock && isExpanded != self.isExpanded
+            expanded: expanded,
+            animated: isSameBlock && expanded != self.isExpanded
         )
-        self.isExpanded = isExpanded
+        self.isExpanded = expanded
         configuredBlockId = blockId
 
-        contentContainer.isHidden = !isExpanded
-        separatorView.isHidden = !isExpanded
+        contentContainer.isHidden = !expanded
+        separatorView.isHidden = !expanded
 
-        if isExpanded {
+        if expanded {
             configureChildren(
                 children,
                 expandedIds: expandedIds,
