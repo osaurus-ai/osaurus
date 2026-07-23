@@ -460,6 +460,17 @@ public enum AppleScriptLoop {
         // case one bounded protocol retry; never execute reasoning text or
         // retry a real plain-text explanation.
         var compileEnvelopeRecoveryAttempted = false
+        let requiresBlankTextEditDocument =
+            mode == .automate && blankTextEditDocumentTask(task: task, literals: literals)
+        let blankTextEditDocumentCountBefore: Int?
+        if requiresBlankTextEditDocument {
+            let observation = await runExecutor(textEditDocumentCountScript, .appleScript)
+            blankTextEditDocumentCountBefore = observation.isSuccess
+                ? Int(observation.output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+                : nil
+        } else {
+            blankTextEditDocumentCountBefore = nil
+        }
 
         func record(
             intent: EffectClass,
@@ -905,6 +916,15 @@ public enum AppleScriptLoop {
                     step += 1
                     continue
                 }
+                if requiresBlankTextEditDocument {
+                    return terminate(
+                        .failed(
+                            reason:
+                                "TextEdit did not reach a verified blank editable document. "
+                                + "The Open window must be closed and a new document must be frontmost."
+                        )
+                    )
+                }
                 if harness.verifyReadBack, !verifyAttempted, !haveValue, succeeded > 0,
                     shouldVerify(mode: mode, task: task)
                 {
@@ -1109,6 +1129,59 @@ public enum AppleScriptLoop {
                 if consecutiveInvalid >= limits.maxConsecutiveInvalid {
                     return terminate(
                         .failed(reason: "The model kept adding an unrequested TextEdit save operation.")
+                    )
+                }
+                messages.append(
+                    ChatMessage(
+                        role: "tool",
+                        content: reason,
+                        tool_calls: nil,
+                        tool_call_id: call.id
+                    )
+                )
+                lastToolResult = reason
+                step += 1
+                continue
+            }
+
+            // A request for a BLANK TextEdit document authorizes creating the
+            // document, not inventing its contents. Reject model-authored
+            // example/placeholder text before it reaches the confirmation UI.
+            // This is the same user-data boundary as the literal placeholder
+            // contract above, scoped only to the confirmed blank-document task.
+            if !verifying, proposedEffect != .read,
+                let contentOperation = unrequestedBlankTextEditContentOperation(
+                    in: proposedScript,
+                    task: task,
+                    language: language,
+                    literals: literals
+                )
+            {
+                consecutiveInvalid += 1
+                let reason =
+                    "The task requested a blank TextEdit document, but the script added "
+                    + "unrequested content (\(contentOperation)). Create the document without "
+                    + "typing, setting, or inventing any text."
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .retry,
+                        title: "Unrequested TextEdit content rejected",
+                        detail: reason
+                    )
+                )
+                steps.append(
+                    AppleScriptStepRecord(
+                        n: steps.count + 1,
+                        intent: "unknown",
+                        status: "invalid",
+                        error: reason,
+                        scriptPreview: scriptPreview(proposedScript)
+                    )
+                )
+                if consecutiveInvalid >= limits.maxConsecutiveInvalid {
+                    return terminate(
+                        .failed(reason: "The model kept adding text to a requested blank document.")
                     )
                 }
                 messages.append(
@@ -1557,6 +1630,95 @@ public enum AppleScriptLoop {
                 }
             }
 
+            // `NSAppleScript` success only proves that the script returned; it
+            // does not prove TextEdit left its startup Open window. The live
+            // regression returned success for `make new document` while the
+            // Open panel remained frontmost. For the narrow blank-document
+            // contract, require BOTH a document-count increase and live AX
+            // evidence of an editable front window with the Open panel gone.
+            if execution.isSuccess, requiresBlankTextEditDocument {
+                let uiObservation = await runExecutor(
+                    textEditBlankDocumentUIStateScript,
+                    .appleScript
+                )
+                let countObservation = await runExecutor(
+                    textEditDocumentCountScript,
+                    .appleScript
+                )
+                let uiState = uiObservation.output?.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                )
+                let afterCount = Int(
+                    countObservation.output?.trimmingCharacters(
+                        in: .whitespacesAndNewlines
+                    ) ?? ""
+                )
+                let matched =
+                    uiObservation.isSuccess
+                    && countObservation.isSuccess
+                    && uiState == "editable"
+                    && blankTextEditDocumentCountBefore != nil
+                    && afterCount != nil
+                    && afterCount! > blankTextEditDocumentCountBefore!
+                let mismatch =
+                    "TextEdit postcondition was not met "
+                    + "(ui=\(uiState ?? "unavailable"), "
+                    + "documents=\(afterCount.map(String.init) ?? "unavailable"), "
+                    + "before=\(blankTextEditDocumentCountBefore.map(String.init) ?? "unavailable"))."
+                steps.append(
+                    AppleScriptStepRecord(
+                        n: steps.count + 1,
+                        intent: "read",
+                        status: matched ? "success" : "verification_mismatch",
+                        output: uiState,
+                        error: matched ? nil : mismatch,
+                        scriptPreview: scriptPreview(textEditBlankDocumentUIStateScript)
+                    )
+                )
+                if matched {
+                    lastOutput = "blank editable document"
+                    lastReadOutput = "blank editable document"
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step,
+                            kind: .verify,
+                            title: "Verified blank TextEdit document",
+                            detail: "Open window closed; editable document is frontmost.",
+                            success: true
+                        )
+                    )
+                    return terminate(
+                        .done(summary: "Created a blank editable document in TextEdit.")
+                    )
+                }
+
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .retry,
+                        title: "TextEdit is not ready for editing",
+                        detail: mismatch,
+                        success: false
+                    )
+                )
+                let postconditionResult =
+                    toolResult + "\n" + mismatch
+                    + " Do not type any text. If the standard Open window is still frontmost, "
+                    + "click its New Document button first; otherwise create one new document. "
+                    + "Call run_applescript with only the missing state transition."
+                messages.append(
+                    ChatMessage(
+                        role: "tool",
+                        content: postconditionResult,
+                        tool_calls: nil,
+                        tool_call_id: call.id
+                    )
+                )
+                lastToolResult = postconditionResult
+                step += 1
+                continue
+            }
+
             // Do not ask the helper for a free-form terminal turn between an
             // already-successful mutation and the required OS read-back. Gemma
             // 4 AppleScript bundles can answer that `tool_choice:auto` turn
@@ -1776,6 +1938,38 @@ public enum AppleScriptLoop {
 
     private static let textEditFrontDocumentReadScript =
         #"tell application "TextEdit" to get text of front document"#
+    private static let textEditDocumentCountScript =
+        #"tell application "TextEdit" to count documents"#
+    private static let textEditBlankDocumentUIStateScript = """
+        tell application "System Events"
+            tell process "TextEdit"
+                if exists window "Open" then return "open_panel"
+                if (count of windows) is 0 then return "no_window"
+                if exists text area 1 of scroll area 1 of window 1 then return "editable"
+                return "no_editable_document"
+            end tell
+        end tell
+        """
+
+    static func blankTextEditDocumentTask(
+        task: String,
+        literals: AppleScriptLiterals
+    ) -> Bool {
+        guard literals.isEmpty else { return false }
+        let normalized = task.lowercased()
+        guard normalized.contains("textedit") else { return false }
+        let creationIntent =
+            normalized.range(
+                of: #"\b(?:create|make|open)\s+(?:a\s+)?(?:new|blank)\s+(?:plain\s+text\s+)?document\b"#,
+                options: .regularExpression
+            ) != nil
+        guard creationIntent else { return false }
+        let contentIntent: [String] = [
+            "contain", " with ", "that says", "and type", "and write", "and enter",
+            "and put", "insert ", "add the text", "content:",
+        ]
+        return !contentIntent.contains { normalized.contains($0) }
+    }
 
     private static func exactTextEditReplacementContract(
         task: String,
@@ -2051,13 +2245,48 @@ public enum AppleScriptLoop {
         else { return nil }
 
         let checks: [(pattern: String, label: String)] = [
-            (#"(?im)^\s*save(?:\s|$)"#, "save command"),
+            (#"(?i)\bsave\s+(?:(?:front|current)\s+)?document\b"#, "save command"),
             (#"(?i)\bkeystroke\s+[\"“]s[\"”]\s+using\s+\{[^}]*command\s+down"#, "Command-S"),
             (#"(?i)\bclick\s+(?:menu\s+item|button)\s+[\"“]save[\"”]"#, "Save UI action"),
             (#"(?im)^\s*close\b[^\n]*\bsaving\s+(?:yes|true)\b"#, "close-with-save"),
             (
                 #"(?im)^\s*set\s+[^\n]*\b(?:changed|modified)\b[^\n]*\bto\s+false\b"#,
                 "dirty-state reset"
+            ),
+        ]
+        for check in checks
+        where script.range(of: check.pattern, options: .regularExpression) != nil {
+            return check.label
+        }
+        return nil
+    }
+
+    /// Return the unauthorized content primitive a model added to a request
+    /// that only asked for a blank TextEdit document. Navigation keystrokes
+    /// such as Command-N remain allowed; literal typing and document-text
+    /// assignments do not.
+    static func unrequestedBlankTextEditContentOperation(
+        in script: String,
+        task: String,
+        language: AppleScriptLanguage,
+        literals: AppleScriptLiterals
+    ) -> String? {
+        guard language == .appleScript,
+            blankTextEditDocumentTask(task: task, literals: literals)
+        else { return nil }
+
+        let checks: [(pattern: String, label: String)] = [
+            (
+                #"(?i)\bset\s+(?:the\s+)?(?:text|content|contents|body|thetext|value)\s+of\b[^\n]*\bto\b"#,
+                "document text assignment"
+            ),
+            (
+                #"(?is)\bmake\s+new\s+document\s+with\s+properties\s+\{[^}]*(?:text|content|contents|body|thetext|value)\s*:"#,
+                "document content property"
+            ),
+            (
+                #"(?i)\bkeystroke\s+[\"“](?!n[\"”]\s+using\s+(?:\{[^}]*\bcommand\s+down\b[^}]*\}|\bcommand\s+down\b))[^\"”]+[\"”]"#,
+                "typed text"
             ),
         ]
         for check in checks

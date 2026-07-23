@@ -105,6 +105,11 @@ public enum AppleScriptAppKnowledge {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !app.isEmpty, wordRange(of: app, in: task) == nil else { return task }
         let grounding = "\nWorking app resolved from the live desktop: \(app). "
+        if mentionsNewDocumentCreation(task) {
+            return task + grounding
+                + "Create one new blank document in that app and leave it editable. "
+                + "Do not type example text, and do not save unless the task explicitly asks."
+        }
         if mentionsWorkingDocument(task) {
             return task + grounding
                 + "Interpret the file/document as that app's front open document. "
@@ -130,6 +135,13 @@ public enum AppleScriptAppKnowledge {
             || mentionsWorkingDocument(task)
     }
 
+    private static func mentionsNewDocumentCreation(_ task: String) -> Bool {
+        task.range(
+            of: #"\b(?:create|make|open)\s+(?:a\s+)?(?:new|blank)\s+(?:plain\s+text\s+)?document\b"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+    }
+
     private static func mentionsWorkingDocument(_ task: String) -> Bool {
         let lower = task.lowercased()
         return lower.contains("the file") || lower.contains("this file")
@@ -137,6 +149,7 @@ public enum AppleScriptAppKnowledge {
             || lower.contains("current file") || lower.contains("open file")
             || lower.contains("the document") || lower.contains("this document")
             || lower.contains("current document") || lower.contains("open document")
+            || mentionsNewDocumentCreation(task)
     }
 
     // MARK: - Composition

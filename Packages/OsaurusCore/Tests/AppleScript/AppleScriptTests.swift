@@ -1310,6 +1310,17 @@ struct AppleScriptLoopTests {
         )
         #expect(
             AppleScriptLoop.unrequestedTextEditPersistenceOperation(
+                in: """
+                    tell application "TextEdit"
+                        if modified of front document then save front document
+                    end tell
+                    """,
+                task: "Create a new blank document in TextEdit.",
+                language: .appleScript
+            ) == "save command"
+        )
+        #expect(
+            AppleScriptLoop.unrequestedTextEditPersistenceOperation(
                 in: #"tell application "TextEdit" to set text of front document to {{content}}"#,
                 task: "Replace the TextEdit contents and do not save it.",
                 language: .appleScript
@@ -1325,6 +1336,92 @@ struct AppleScriptLoopTests {
                     """,
                 task: "Replace the TextEdit contents and save the document.",
                 language: .appleScript
+            ) == nil
+        )
+    }
+
+    @Test("blank TextEdit document tasks reject invented content but allow the Open-window transition")
+    func blankTextEditDocumentContentContract() {
+        let task = "Create a new document in TextEdit."
+        let noLiterals = AppleScriptLiterals()
+        #expect(AppleScriptLoop.blankTextEditDocumentTask(task: task, literals: noLiterals))
+        #expect(
+            AppleScriptLoop.unrequestedBlankTextEditContentOperation(
+                in: """
+                    tell application "System Events"
+                        tell process "TextEdit"
+                            keystroke "Hello world"
+                        end tell
+                    end tell
+                    """,
+                task: task,
+                language: .appleScript,
+                literals: noLiterals
+            ) == "typed text"
+        )
+        #expect(
+            AppleScriptLoop.unrequestedBlankTextEditContentOperation(
+                in: #"tell application "TextEdit" to set text of front document to "Hello world""#,
+                task: task,
+                language: .appleScript,
+                literals: noLiterals
+            ) == "document text assignment"
+        )
+        #expect(
+            AppleScriptLoop.unrequestedBlankTextEditContentOperation(
+                in: """
+                    tell application "TextEdit"
+                        make new document
+                        set body of front document to {"This is placeholder text."}
+                    end tell
+                    """,
+                task: task,
+                language: .appleScript,
+                literals: noLiterals
+            ) == "document text assignment"
+        )
+        #expect(
+            AppleScriptLoop.unrequestedBlankTextEditContentOperation(
+                in: """
+                    tell application "System Events"
+                        tell process "TextEdit"
+                            click button "New Document" of splitter group 1 of window "Open"
+                        end tell
+                    end tell
+                    """,
+                task: task,
+                language: .appleScript,
+                literals: noLiterals
+            ) == nil
+        )
+        #expect(
+            AppleScriptLoop.blankTextEditDocumentTask(
+                task: "Create a new TextEdit document with Hello world.",
+                literals: noLiterals
+            ) == false
+        )
+        #expect(
+            AppleScriptLoop.unrequestedBlankTextEditContentOperation(
+                in: """
+                    tell application "System Events"
+                        keystroke "n" using {command down}
+                    end tell
+                    """,
+                task: task,
+                language: .appleScript,
+                literals: noLiterals
+            ) == nil
+        )
+        #expect(
+            AppleScriptLoop.unrequestedBlankTextEditContentOperation(
+                in: """
+                    tell application "System Events"
+                        keystroke "n" using command down
+                    end tell
+                    """,
+                task: task,
+                language: .appleScript,
+                literals: noLiterals
             ) == nil
         )
     }
@@ -1482,6 +1579,137 @@ struct AppleScriptLoopTests {
         #expect(result.failed == 0)
         #expect(await exec.count == 1)
         #expect(await confirm.count == 1)
+    }
+
+    @Test("blank TextEdit creation requires a new editable front document")
+    func blankTextEditCreationRequiresLivePostcondition() async {
+        let feed = SubagentFeed(
+            toolCallId: "t-blank-textedit-postcondition",
+            kindId: "applescript",
+            title: "Create a new document in TextEdit."
+        )
+        let exec = ScriptedExec(results: [
+            successResult("0"),
+            successResult(nil),
+            successResult("open_panel"),
+            successResult("1"),
+            successResult(nil),
+            successResult("editable"),
+            successResult("1"),
+        ])
+        let confirm = ConfirmCounter(approve: true)
+        let seq = ScriptSequencer([
+            call(#"tell application "TextEdit" to make new document"#, id: "dictionary-create"),
+            call(
+                """
+                tell application "System Events"
+                    tell process "TextEdit"
+                        click button "New Document" of splitter group 1 of window "Open"
+                    end tell
+                end tell
+                """,
+                id: "open-window-transition"
+            ),
+        ])
+
+        let result = await AppleScriptLoop.run(
+            task: "Create a new document in TextEdit.",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in await confirm.confirm() },
+            limits: RunLimits(maxSteps: 6),
+            sessionId: "s",
+            mode: .automate,
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { _ in await seq.next() }
+        )
+
+        guard case .done(let summary) = result.outcome else {
+            Issue.record("expected .done, got \(result.outcome)")
+            return
+        }
+        #expect(summary == "Created a blank editable document in TextEdit.")
+        #expect(result.scriptsExecuted == 2)
+        #expect(result.succeeded == 2)
+        #expect(result.failed == 0)
+        #expect(result.lastOutput == "blank editable document")
+        #expect(await confirm.count == 2)
+        #expect(
+            result.steps.contains {
+                $0.status == "verification_mismatch"
+                    && $0.output == "open_panel"
+            }
+        )
+        #expect(
+            feed.currentEvents().contains {
+                $0.title == "Verified blank TextEdit document" && $0.success == true
+            }
+        )
+    }
+
+    @Test("invented blank-document text never reaches approval or execution")
+    func blankTextEditInventedTextIsRejectedBeforeApproval() async {
+        let feed = SubagentFeed(
+            toolCallId: "t-blank-textedit-content",
+            kindId: "applescript",
+            title: "Create a blank document in TextEdit."
+        )
+        let exec = ScriptedExec(results: [
+            successResult("0"),
+            successResult(nil),
+            successResult("editable"),
+            successResult("1"),
+        ])
+        let confirm = ConfirmCounter(approve: true)
+        let seq = ScriptSequencer([
+            call(
+                """
+                tell application "System Events"
+                    tell process "TextEdit"
+                        keystroke "Hello world"
+                    end tell
+                end tell
+                """,
+                id: "invented-content"
+            ),
+            call(
+                """
+                tell application "System Events"
+                    tell process "TextEdit"
+                        click button "New Document" of splitter group 1 of window "Open"
+                    end tell
+                end tell
+                """,
+                id: "blank-document"
+            ),
+        ])
+
+        let result = await AppleScriptLoop.run(
+            task: "Create a blank document in TextEdit.",
+            modelId: "applescript-test",
+            feed: feed,
+            interrupt: InterruptToken(),
+            executionMode: .confirmEach,
+            confirm: { _ in await confirm.confirm() },
+            limits: RunLimits(maxSteps: 6),
+            sessionId: "s",
+            mode: .automate,
+            execute: { script, _ in await exec.run(script) },
+            nextScript: { _ in await seq.next() }
+        )
+
+        #expect(result.outcome.isSuccess)
+        #expect(result.scriptsExecuted == 1)
+        #expect(result.succeeded == 1)
+        #expect(await confirm.count == 1)
+        #expect(
+            result.steps.contains {
+                $0.status == "invalid"
+                    && ($0.error?.contains("unrequested content") ?? false)
+            }
+        )
     }
 
     @Test("a mutating script return is not accepted as exact-content verification")
@@ -3728,6 +3956,13 @@ struct AppleScriptAppKnowledgeTests {
         )
         #expect(documentTask == ["TextEdit"])
 
+        let newDocumentTask = AppleScriptAppKnowledge.detectTargetApps(
+            task: "Create a new document",
+            frontmost: "TextEdit",
+            runningAppNames: ["TextEdit"]
+        )
+        #expect(newDocumentTask == ["TextEdit"])
+
         let unrelatedTask = AppleScriptAppKnowledge.detectTargetApps(
             task: "What is the battery percentage?",
             frontmost: "TextEdit",
@@ -3767,6 +4002,14 @@ struct AppleScriptAppKnowledgeTests {
         #expect(appQuery.contains("Use that app as the frontmost/current/active app"))
         #expect(!appQuery.contains("file/document"))
         #expect(!appQuery.contains("do not save"))
+
+        let newDocument = AppleScriptAppKnowledge.groundingWorkingAppReference(
+            task: "Create a new document",
+            resolvedApp: "TextEdit"
+        )
+        #expect(newDocument.contains("Create one new blank document in that app"))
+        #expect(newDocument.contains("Do not type example text"))
+        #expect(!newDocument.contains("front open document"))
     }
 
     @Test("recipe catalog matches by app name, case-insensitively")

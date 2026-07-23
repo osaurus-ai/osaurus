@@ -162,6 +162,15 @@ public enum AppRecipes {
         matchers: ["textedit"],
         flows: [
             RecipeFlow(
+                name: "Create a blank document",
+                steps: [
+                    "If the standard Open window is visible, click New Document before doing anything else.",
+                    "Verify the Open window closed and an editable text area is visible.",
+                    "Finish with done without typing example or placeholder text.",
+                    "Do not save unless the goal explicitly requests it.",
+                ]
+            ),
+            RecipeFlow(
                 name: "Replace text in an open document",
                 steps: [
                     "Choose the textarea whose visible value contains the old text, using its window label when several documents are open.",
