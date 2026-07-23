@@ -74,6 +74,41 @@ struct ChatTurnGenerationControlsTests {
         )
     }
 
+    @Test("model picker semantic Thinking toggle maps to request enable_thinking")
+    func modelPickerSemanticToggleMapsToRequestFlag() throws {
+        let modelIds = [
+            "JANGQ-AI/Laguna-S2.1-JANG_2L",
+            "OsaurusAI/Qwen3.6-35B-A3B-MXFP8",
+            "OsaurusAI/Gemma-4-12B-JANG_4M",
+        ]
+
+        for modelId in modelIds {
+            let onOption = try #require(
+                ModelProfileRegistry.thinkingStoredOption(for: modelId, enabled: true)
+            )
+            let offOption = try #require(
+                ModelProfileRegistry.thinkingStoredOption(for: modelId, enabled: false)
+            )
+
+            let onControls = ChatTurnGenerationControls.capture(
+                activeModelOptions: [onOption.id: onOption.value]
+            )
+            let offControls = ChatTurnGenerationControls.capture(
+                activeModelOptions: [offOption.id: offOption.value]
+            )
+
+            var onRequest = request()
+            var offRequest = request()
+            onControls.apply(to: &onRequest)
+            offControls.apply(to: &offRequest)
+
+            #expect(onRequest.enable_thinking == true)
+            #expect(offRequest.enable_thinking == false)
+            #expect(onRequest.modelOptions?[onOption.id] == onOption.value)
+            #expect(offRequest.modelOptions?[offOption.id] == offOption.value)
+        }
+    }
+
     @Test("unset Thinking preserves the bundle default")
     func unsetPreservesBundleDefault() {
         let controls = ChatTurnGenerationControls.capture(
