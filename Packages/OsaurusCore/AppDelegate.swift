@@ -1720,11 +1720,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // ensure popover window can join all spaces and appear over full screen apps
         if let popoverWindow = popover.contentViewController?.view.window {
             popoverWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            // Key the popover's own window instead of activating the app:
-            // `NSApp.activate` while another app owns a full-screen space
-            // deactivates that app, the auto-revealed menu bar retracts, and
-            // the transient popover closes with it.
-            popoverWindow.makeKey()
+            if #available(macOS 26.0, *) {
+                // Key the popover's own window instead of activating the app:
+                // `NSApp.activate` while another app owns a full-screen space
+                // deactivates that app, the auto-revealed menu bar retracts, and
+                // the transient popover closes with it.
+                popoverWindow.makeKey()
+            }
         }
 
         // Close the popover when the user clicks in another app or on the
@@ -1735,6 +1737,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         ) { [weak self] _ in
             self?.popover?.performClose(nil)
+        }
+
+        if #available(macOS 26.0, *) {
+            // Tahoe: keying the popover window above is enough, and activating
+            // here would close the popover over full-screen apps (see comment
+            // above).
+        } else {
+            // Sequoia and earlier: restore the pre-full-screen-fix activation.
+            // Without it the app is never active, later cooperative
+            // `NSApp.activate()` calls are no-ops under Sequoia's stricter
+            // rules, and windows opened from the popover (settings, chat)
+            // never come to the front.
+            NSApp.activate(ignoringOtherApps: true)
         }
     }
 
