@@ -1136,14 +1136,14 @@ extension ContentBlock {
         }
     }
 
-    /// Chat-settings toggle gating `rollupActivityBlocks`. Default on — the
-    /// rollup is the fix for thinking/tool rows dominating agentic chats.
-    /// Read per display rebuild (cheap UserDefaults hit) so flipping the
-    /// toggle applies to open chats without relaunch.
+    /// Chat-settings toggle gating `rollupActivityBlocks`. Default off —
+    /// opt-in like "Expand Thinking While Streaming". Read per display
+    /// rebuild (cheap UserDefaults hit) so flipping the toggle applies to
+    /// open chats without relaunch.
     enum ActivityRollupSetting {
         static let defaultsKey = "chatActivityRollupEnabled"
         static var isEnabled: Bool {
-            (UserDefaults.standard.object(forKey: defaultsKey) as? Bool) ?? true
+            UserDefaults.standard.bool(forKey: defaultsKey)
         }
     }
 

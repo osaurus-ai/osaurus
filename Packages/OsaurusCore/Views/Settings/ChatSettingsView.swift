@@ -53,13 +53,13 @@ struct ChatSettingsView: View {
     private var expandThinkingWhileStreamingEnabled: Bool = false
     /// Roll up runs of consecutive thinking / tool-call rows into a single
     /// expandable "Worked for …" row so agent loops don't push the
-    /// conversation out of view. Default on. Bound to `UserDefaults` key
+    /// conversation out of view. Default off. Bound to `UserDefaults` key
     /// `ContentBlock.ActivityRollupSetting.defaultsKey`, read by
     /// `BlockMemoizer` on every display rebuild. Applied immediately (a
     /// notification rebuilds open chats), so it's excluded from the
     /// debounced save baseline.
     @AppStorage(ContentBlock.ActivityRollupSetting.defaultsKey)
-    private var activityRollupEnabled: Bool = true
+    private var activityRollupEnabled: Bool = false
     /// Free-text "voice" instruction for AI-generated empty-state
     /// greetings — the global default voice. The on/off is per-agent
     /// (`AgentSettings.generativeGreetingsEnabled`). Empty = use the
