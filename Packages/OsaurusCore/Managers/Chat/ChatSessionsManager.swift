@@ -70,7 +70,19 @@ final class ChatSessionsManager: ObservableObject {
 
     /// Full reload from disk — prefer `save()`/`delete()` for single-session mutations.
     func refresh() {
+        #if DEBUG
+            let before = sessions
+        #endif
         sessions = ChatSessionStore.loadAll()
+        #if DEBUG
+            let lostIds = Set(before.map(\.id)).subtracting(sessions.map(\.id))
+            if !lostIds.isEmpty {
+                let lost = lostIds.map { $0.uuidString.prefix(8) }.joined(separator: ",")
+                AutoTitleDebugLog.log(
+                    "manager refresh DROPPED sessions [\(lost)] (before=\(before.count) after=\(sessions.count))"
+                )
+            }
+        #endif
     }
 
     /// Create a new session and return its ID

@@ -466,9 +466,26 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// preserved because the queue is FIFO, so a later read/save still observes
     /// this write. Errors are logged rather than thrown since there is no
     /// caller left to handle them.
-    public func saveSessionAsync(_ session: ChatSessionData) {
+    /// `onDropped` fires (on the database queue) when the write found the
+    /// database closed at dequeue time — the enqueue-time `ensureOpen` check
+    /// races key rotation, and silently losing the write here is how a
+    /// freshly created session could vanish from the sidebar for good.
+    /// Callers use it to requeue the snapshot as a deferred save.
+    public func saveSessionAsync(
+        _ session: ChatSessionData,
+        onDropped: (@Sendable (ChatSessionData) -> Void)? = nil
+    ) {
         queue.async { [weak self] in
-            guard let self, self.db != nil else { return }
+            guard let self, self.db != nil else {
+                #if DEBUG
+                    AutoTitleDebugLog.log(
+                        "db saveSessionAsync DROPPED session=\(session.id.uuidString.prefix(8)) — db closed at dequeue"
+                            + (onDropped != nil ? " (requeuing as deferred save)" : "")
+                    )
+                #endif
+                onDropped?(session)
+                return
+            }
             let prepared = self.sessionWithSpilledAttachments(session)
             do {
                 try self.executeRaw("BEGIN TRANSACTION")
@@ -485,8 +502,18 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
                     Self.bindText(stmt, index: 3, value: prepared.id.uuidString)
                 }
                 try self.executeRaw("COMMIT")
+                #if DEBUG
+                    AutoTitleDebugLog.log(
+                        "db saveSessionAsync committed session=\(prepared.id.uuidString.prefix(8)) turns=\(prepared.turns.count)"
+                    )
+                #endif
             } catch {
                 try? self.executeRaw("ROLLBACK")
+                #if DEBUG
+                    AutoTitleDebugLog.log(
+                        "db saveSessionAsync FAILED session=\(prepared.id.uuidString.prefix(8)): \(error)"
+                    )
+                #endif
                 print("[ChatHistoryDatabase] async saveSession failed for \(prepared.id): \(error)")
             }
         }
@@ -501,7 +528,14 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// rename never reorders the recency list.
     public func updateSessionTitleAsync(id: UUID, title: String) {
         queue.async { [weak self] in
-            guard let self, self.db != nil else { return }
+            guard let self, self.db != nil else {
+                #if DEBUG
+                    AutoTitleDebugLog.log(
+                        "db title update DROPPED session=\(id.uuidString.prefix(8)) — db closed at dequeue"
+                    )
+                #endif
+                return
+            }
             do {
                 try self.executeRaw("BEGIN TRANSACTION")
                 try self.transactionalStep(
@@ -510,7 +544,14 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
                     Self.bindText(stmt, index: 1, value: title)
                     Self.bindText(stmt, index: 2, value: id.uuidString)
                 }
+                let changed = sqlite3_changes(self.db)
                 try self.executeRaw("COMMIT")
+                #if DEBUG
+                    AutoTitleDebugLog.log(
+                        "db title update session=\(id.uuidString.prefix(8)) rowsChanged=\(changed)"
+                            + (changed == 0 ? " — SESSION ROW MISSING ON DISK" : "")
+                    )
+                #endif
             } catch {
                 try? self.executeRaw("ROLLBACK")
                 print("[ChatHistoryDatabase] async title update failed for \(id): \(error)")

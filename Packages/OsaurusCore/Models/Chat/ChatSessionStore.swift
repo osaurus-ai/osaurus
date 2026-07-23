@@ -98,7 +98,26 @@ enum ChatSessionStore {
             pendingSaves[session.id] = session
             return
         }
-        ChatHistoryDatabase.shared.saveSessionAsync(session)
+        // The enqueue-time open check above races key rotation: the DB can
+        // close before the queued write runs. Requeue such drops as deferred
+        // saves so the write survives to the next readiness flush (and the
+        // `loadAll` pending overlay keeps the row visible meanwhile).
+        ChatHistoryDatabase.shared.saveSessionAsync(session) { dropped in
+            Task { @MainActor in
+                requeueDroppedAsyncSave(dropped)
+            }
+        }
+    }
+
+    /// Re-queue an async save whose write found the DB closed at dequeue
+    /// time. Skips ids deleted meanwhile and never clobbers a newer pending
+    /// snapshot of the same session.
+    private static func requeueDroppedAsyncSave(_ session: ChatSessionData) {
+        guard !pendingDeletes.contains(session.id) else { return }
+        if let existing = pendingSaves[session.id], existing.updatedAt > session.updatedAt {
+            return
+        }
+        pendingSaves[session.id] = session
     }
 
     /// Title-only async update for the auto-title path. Never routes through
