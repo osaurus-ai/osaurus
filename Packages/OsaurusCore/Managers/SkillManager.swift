@@ -756,6 +756,37 @@ public final class SkillManager {
         return sections.joined(separator: "\n")
     }
 
+    /// Tool names out of `candidates` that `text` mentions as a whole
+    /// identifier token.
+    ///
+    /// A skill's instructions routinely name the exact tools they expect the
+    /// model to call (`runalyze_mcp_get_activities`, …), but the `/skill-name`
+    /// slash path injects those instructions AFTER the turn's tool schema and
+    /// execution scope are frozen — so the model calls a tool it was told
+    /// about and the registry refuses it as not exposed (issue #2145). The
+    /// send path uses this scan to pre-load the mentioned tools into the same
+    /// turn's schema, mirroring what `capabilities_load skill/<name>` already
+    /// does for plugin tool groups.
+    ///
+    /// Matching is token-exact: the text is split on every character that
+    /// cannot appear in a tool name, so `use runalyze_mcp_get_activities.`
+    /// matches but a substring like `activities` inside a longer name never
+    /// does. Sorted output keeps downstream schema composition deterministic.
+    public static func toolNames(
+        referencedIn text: String,
+        from candidates: Set<String>
+    ) -> [String] {
+        guard !candidates.isEmpty, !text.isEmpty else { return [] }
+        // Function-name charset (`[A-Za-z0-9_-]`): everything outside it is a
+        // separator, so surrounding prose, backticks and punctuation fall away.
+        let toolNameCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-"))
+        let tokens = Set(
+            text.components(separatedBy: toolNameCharacters.inverted)
+                .filter { !$0.isEmpty }
+        )
+        return candidates.intersection(tokens).sorted()
+    }
+
     private func loadReferenceContents(for skill: Skill, budget: Int = .max) async -> String {
         let textExtensions: Set<String> = [
             "md", "txt", "json", "yaml", "yml", "xml", "html", "css", "js", "ts",
