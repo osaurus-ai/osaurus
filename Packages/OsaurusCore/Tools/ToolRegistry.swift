@@ -728,6 +728,41 @@ public final class ToolRegistry: ObservableObject {
         if let scope = ChatExecutionContext.toolExecutionScope, !scope.permits(name) {
             ToolRegistryLogger.registry.error(
                 "refusing '\(name, privacy: .public)': not exposed to this request")
+            // Distinguish "real tool, just never loaded into this
+            // conversation" from "withheld". A skill's instructions or the
+            // user can name a dynamic tool that was never exposed to the
+            // turn; the old unconditional dead end ("not available in this
+            // conversation", retryable: false) taught small models to
+            // apologize and give up when one `capabilities_load` away from
+            // succeeding (#2145). Only tools `capabilities_load` would
+            // actually grant get the hint — anything unregistered, globally
+            // disabled, or outside this agent's grant keeps the opaque
+            // refusal, so the gate still reveals nothing about tools that
+            // were deliberately withheld.
+            let agentAllowed: Set<String>? = ChatExecutionContext.currentAgentId.flatMap {
+                AgentManager.shared.effectiveEnabledToolNames(for: $0).map(Set.init)
+            }
+            let loadableCodes: Set<ToolAvailabilityReasonCode> = [
+                .available, .alreadyLoaded, .loadableViaCapabilitiesLoad,
+            ]
+            let availability = availability(forTool: name, agentAllowedNames: agentAllowed)
+            // The default agent's capabilities_load is gated to the configure
+            // write tools, so the hint would only steer it into a rejected
+            // load for anything else.
+            let loadGateAllows =
+                ChatExecutionContext.currentAgentId != Agent.defaultId
+                || Self.configureWriteToolNames.contains(name)
+            if loadGateAllows, loadableCodes.isSuperset(of: availability.reasonCodes) {
+                return ToolErrorEnvelope(
+                    kind: .toolNotFound,
+                    reason:
+                        "\(name) exists but is not loaded in this conversation. "
+                        + "Call capabilities_load with ids: [\"tool/\(name)\"] to load it, "
+                        + "then retry this call.",
+                    toolName: name,
+                    retryable: true
+                ).toJSONString()
+            }
             return ToolErrorEnvelope(
                 kind: .toolNotFound,
                 reason: "\(name) is not available in this conversation.",
