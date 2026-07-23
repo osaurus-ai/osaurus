@@ -86,6 +86,14 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// user sends, so the first response pays less time-to-first-token cost.
     public var warmModelsOnLoad: Bool
 
+    // MARK: - Auto-Generated Chat Titles
+    /// When true, the first completed exchange of a new chat triggers a
+    /// background Core Model call that replaces the first-message preview
+    /// title with a short generated summary (see `ChatTitleService`).
+    /// Ships default-off while the feature bakes across releases; flip the
+    /// default here once it has proven regression-free.
+    public var autoGenerateChatTitles: Bool
+
     // MARK: - Generative Greetings
     /// Free-text "voice" instruction that shapes the AI-generated empty-state
     /// greetings and quick actions. Empty string means "use the built-in
@@ -109,6 +117,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         disableTools: Bool = false,
         enableClipboardMonitoring: Bool = true,
         warmModelsOnLoad: Bool = true,
+        autoGenerateChatTitles: Bool = false,
         greetingPersona: String = ""
     ) {
         self.hotkey = hotkey
@@ -124,6 +133,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.disableTools = disableTools
         self.enableClipboardMonitoring = enableClipboardMonitoring
         self.warmModelsOnLoad = warmModelsOnLoad
+        self.autoGenerateChatTitles = autoGenerateChatTitles
         self.greetingPersona = greetingPersona
     }
 
@@ -142,6 +152,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         disableTools = try container.decodeIfPresent(Bool.self, forKey: .disableTools) ?? false
         enableClipboardMonitoring = try container.decodeIfPresent(Bool.self, forKey: .enableClipboardMonitoring) ?? true
         warmModelsOnLoad = try container.decodeIfPresent(Bool.self, forKey: .warmModelsOnLoad) ?? true
+        autoGenerateChatTitles =
+            try container.decodeIfPresent(Bool.self, forKey: .autoGenerateChatTitles) ?? false
         // The on/off for AI greetings is now per-agent
         // (`AgentSettings.generativeGreetingsEnabled`). Any legacy
         // `generativeGreetingsEnabled` boolean persisted here is ignored
@@ -173,6 +185,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             coreModelName: defaultCoreModelNameIfAvailable,
             enableClipboardMonitoring: true,
             warmModelsOnLoad: true,
+            autoGenerateChatTitles: false,
             // Empty persona = "use built-in playful default". This is the
             // global default voice; the on/off is per-agent. Users opt
             // into a custom voice from Settings → Chat (or a per-agent
