@@ -22,9 +22,13 @@ public actor ChatTitleService {
     /// protects tiny Core Models' context windows and keeps the timeout real.
     private static let maxUserChars = 600
     private static let maxAssistantChars = 800
-    /// A title is a handful of words; anything past this budget is the model
-    /// rambling, and `sanitize` would clamp it away regardless.
-    private static let maxTokens = 24
+    /// A title is a handful of words, but the budget must survive a thinking
+    /// model that reasons before answering: reasoning deltas are sentinel-
+    /// stripped by `generateOneShot`, so every reasoning token spends budget
+    /// while producing no visible text (observed: 24 tokens → empty response
+    /// from a 9B thinking model). Thinking is explicitly disabled below, and
+    /// this headroom covers models whose profile has no thinking toggle.
+    private static let maxTokens = 96
     private static let timeout: TimeInterval = 8
     /// Low temperature: we want the obvious topic, not a creative one.
     private static let temperature: Double = 0.2
@@ -69,9 +73,32 @@ public actor ChatTitleService {
             Title:
             """
 
+        // Disable thinking for the model that will actually serve the call
+        // (the configured core model, else the chat-model fallback — same
+        // resolution order as `CoreModelService.generate`). A reasoning
+        // preamble is pure waste here: it burns the token budget on
+        // sentinel-stripped output and can leave the visible response empty.
+        // `thinkingStoredOption` is the canonical semantic→stored conversion,
+        // so inverted options like `disableThinking` can't flip the wrong
+        // way. Models without a thinking toggle just send no option.
+        let coreModelIdentifier = await MainActor.run {
+            AppConfiguration.shared.chatConfig.coreModelIdentifier
+        }
+        let servingModelId = coreModelIdentifier ?? fallbackModel
+        var modelOptions: [String: ModelOptionValue] = [:]
+        if let servingModelId,
+            let stored = ModelProfileRegistry.thinkingStoredOption(
+                for: servingModelId,
+                enabled: false
+            )
+        {
+            modelOptions[stored.id] = stored.value
+        }
+
         #if DEBUG
             AutoTitleDebugLog.log(
-                "service start user=\(user.count)ch assistant=\(assistant.count)ch fallback=\(fallbackModel ?? "nil")"
+                "service start user=\(user.count)ch assistant=\(assistant.count)ch "
+                    + "fallback=\(fallbackModel ?? "nil") options=\(modelOptions)"
             )
             let startedAt = Date()
         #endif
@@ -86,7 +113,8 @@ public actor ChatTitleService {
                 // A title is a nicety: never load/evict a model for it. When
                 // no model is resident the call fails fast and the preview
                 // title stands.
-                intent: .background
+                intent: .background,
+                modelOptions: modelOptions
             )
             let sanitized = Self.sanitize(raw)
             #if DEBUG
