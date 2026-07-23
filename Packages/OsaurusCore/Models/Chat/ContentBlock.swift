@@ -34,6 +34,14 @@ enum ContentBlockKind: Equatable {
     case paragraph(index: Int, text: String, isStreaming: Bool, role: MessageRole)
     case toolCallGroup(calls: [ToolCallItem])
     case thinking(index: Int, text: String, isStreaming: Bool, duration: TimeInterval?)
+    /// Display-time rollup of a run of consecutive `.thinking` /
+    /// `.toolCallGroup` blocks (possibly spanning consecutive assistant
+    /// turns in an agent loop). Collapsed it renders as a single summary
+    /// row; expanded it renders its children, whose own block ids keep
+    /// per-item expansion working through the shared expandedIds set.
+    /// Built only in `rollupActivityBlocks` — never stored in the block
+    /// cache, mirroring `coalesceToolGroups`.
+    case activityGroup(children: [ContentBlock])
     /// `responseTurnId` is the assistant turn that answered this message (the
     /// first assistant turn that follows it), used by the overflow menu's
     /// "Inspect response" to open that reply's request/response log. Nil when the
@@ -87,6 +95,9 @@ enum ContentBlockKind: Equatable {
 
         case let (.toolCallGroup(lCalls), .toolCallGroup(rCalls)):
             return lCalls == rCalls
+
+        case let (.activityGroup(lChildren), .activityGroup(rChildren)):
+            return lChildren == rChildren
 
         case let (.thinking(lIdx, lText, lStream, lDur), .thinking(rIdx, rText, rStream, rDur)):
             // Same optimization as paragraph
@@ -159,7 +170,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         switch kind {
         case let .header(role, _, _): return role
         case let .paragraph(_, _, _, role): return role
-        case .toolCallGroup, .thinking, .sharedArtifact, .pendingToolCall,
+        case .toolCallGroup, .thinking, .activityGroup, .sharedArtifact, .pendingToolCall,
             .generationStats, .typingIndicator, .groupSpacer, .chart, .assistantActions,
             .emptyResponseNotice, .fileDiff:
             return .assistant
@@ -195,6 +206,22 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
             return text
         default:
             return nil
+        }
+    }
+
+    /// True when a disclosure toggle with this id is rendered by this block:
+    /// the block itself, a tool call id inside its group, or either nested in
+    /// an activity rollup. Used by the table coordinator to map a toggled id
+    /// back to the row that must re-measure.
+    func rendersToggleId(_ toggleId: String) -> Bool {
+        if id == toggleId { return true }
+        switch kind {
+        case let .toolCallGroup(calls):
+            return calls.contains { $0.call.id == toggleId }
+        case let .activityGroup(children):
+            return children.contains { $0.rendersToggleId(toggleId) }
+        default:
+            return false
         }
     }
 
@@ -253,6 +280,23 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
             turnId: turnId,
             kind: .toolCallGroup(calls: calls),
             position: position
+        )
+    }
+
+    /// Stable id for an activity rollup, derived from its first child so the
+    /// id survives streaming appends to the end of the run. Shared by the
+    /// rollup pass and ChatView's streaming-expansion logic.
+    static func activityGroupId(firstChildId: String) -> String {
+        "activity-\(firstChildId)"
+    }
+
+    /// Wraps a non-empty run of consecutive thinking / tool-call blocks.
+    static func activityGroup(children: [ContentBlock]) -> ContentBlock {
+        ContentBlock(
+            id: activityGroupId(firstChildId: children[0].id),
+            turnId: children[0].turnId,
+            kind: .activityGroup(children: children),
+            position: children[0].position
         )
     }
 
@@ -819,6 +863,76 @@ extension ContentBlock {
         return result
     }
 
+    /// Steps a run of thinking / tool-call blocks represents: each thinking
+    /// segment and each individual tool call counts as one. Drives both the
+    /// rollup threshold and the group header's "N steps" badge.
+    static func activityStepCount(of children: [ContentBlock]) -> Int {
+        children.reduce(0) { acc, child in
+            switch child.kind {
+            case .thinking: return acc + 1
+            case let .toolCallGroup(calls): return acc + calls.count
+            default: return acc
+            }
+        }
+    }
+
+    /// Rolls up every run of consecutive `.thinking` / `.toolCallGroup`
+    /// blocks totalling ≥2 steps into a single `.activityGroup`, so agent
+    /// loops (thought → tool → thought → tool …) collapse to one summary row
+    /// instead of stacking N disclosure rows. The threshold counts steps, not
+    /// blocks: `coalesceToolGroups` has already merged an entire tool run
+    /// into one block, so a lone group carrying many calls (the shape loaded
+    /// chats take) must still roll up. Anything else (a paragraph, chart,
+    /// pending chip, the final answer) breaks the run, so live progress chips
+    /// and content stay outside the rollup. A single thinking segment or a
+    /// lone one-call group is left bare — hiding one row behind a group adds
+    /// a click for no space savings.
+    ///
+    /// Applied at the display chokepoint (`BlockMemoizer.limited`), after
+    /// `coalesceToolGroups`, and never stored in the cache — same contract as
+    /// coalescing, so incremental regeneration keeps stable per-turn ids.
+    static func rollupActivityBlocks(_ blocks: [ContentBlock]) -> [ContentBlock] {
+        var result: [ContentBlock] = []
+        result.reserveCapacity(blocks.count)
+        var run: [ContentBlock] = []
+
+        func flushRun() {
+            if activityStepCount(of: run) >= 2 {
+                result.append(.activityGroup(children: run))
+            } else {
+                result.append(contentsOf: run)
+            }
+            run = []
+        }
+
+        for block in blocks {
+            switch block.kind {
+            case .thinking, .toolCallGroup:
+                run.append(block)
+            default:
+                flushRun()
+                result.append(block)
+            }
+        }
+        flushRun()
+        return result
+    }
+
+    /// Id of the activity group containing the given child block id in the
+    /// displayed block array, or nil when the child renders bare. Used by
+    /// ChatView's streaming expansion to open the enclosing rollup alongside
+    /// the live thinking block.
+    static func enclosingActivityGroupId(forChildId childId: String, in blocks: [ContentBlock]) -> String? {
+        for block in blocks {
+            if case let .activityGroup(children) = block.kind,
+                children.contains(where: { $0.id == childId })
+            {
+                return block.id
+            }
+        }
+        return nil
+    }
+
     /// Reconstructs a SharedArtifact from an enriched share_artifact tool result.
     private static func parseSharedArtifactFromResult(_ result: String) -> SharedArtifact? {
         SharedArtifact.fromEnrichedToolResult(result)
@@ -1021,6 +1135,21 @@ extension ContentBlock {
             return regex.firstMatch(in: line, range: range) != nil
         }
     }
+
+    /// Chat-settings toggle gating `rollupActivityBlocks`. Default off —
+    /// opt-in like "Expand Thinking While Streaming". Read per display
+    /// rebuild (cheap UserDefaults hit) so flipping the toggle applies to
+    /// open chats without relaunch.
+    enum ActivityRollupSetting {
+        static let defaultsKey = "chatActivityRollupEnabled"
+        static var isEnabled: Bool {
+            UserDefaults.standard.bool(forKey: defaultsKey)
+        }
+    }
+
+    /// Posted by Chat settings when the rollup toggle flips, so open chat
+    /// sessions rebuild their visible blocks with the new grouping.
+    static let activityRollupSettingChanged = Notification.Name("activityRollupSettingChanged")
 
     private static func assignPositions(to blocks: [ContentBlock]) -> [ContentBlock] {
         guard !blocks.isEmpty else { return blocks }

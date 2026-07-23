@@ -55,6 +55,15 @@ struct ChatSettingsView: View {
     /// immediately, so it's excluded from the debounced save baseline.
     @AppStorage("chatExpandThinkingWhileStreamingEnabled")
     private var expandThinkingWhileStreamingEnabled: Bool = false
+    /// Roll up runs of consecutive thinking / tool-call rows into a single
+    /// expandable "Worked for …" row so agent loops don't push the
+    /// conversation out of view. Default off. Bound to `UserDefaults` key
+    /// `ContentBlock.ActivityRollupSetting.defaultsKey`, read by
+    /// `BlockMemoizer` on every display rebuild. Applied immediately (a
+    /// notification rebuilds open chats), so it's excluded from the
+    /// debounced save baseline.
+    @AppStorage(ContentBlock.ActivityRollupSetting.defaultsKey)
+    private var activityRollupEnabled: Bool = false
     /// Free-text "voice" instruction for AI-generated empty-state
     /// greetings — the global default voice. The on/off is per-agent
     /// (`AgentSettings.generativeGreetingsEnabled`). Empty = use the
@@ -276,6 +285,17 @@ struct ChatSettingsView: View {
                         "Keep the model's reasoning expanded while it is actively thinking, then collapse it automatically once the response begins. Useful for monitoring long-running agent tasks in real time.",
                     isOn: $expandThinkingWhileStreamingEnabled
                 )
+
+                SettingsToggle(
+                    title: L("Group Thinking & Tool Activity"),
+                    description:
+                        "Group consecutive thinking and tool-call rows into a single expandable summary row, so long agent runs don't push the conversation out of view. Turn off to always show every step as its own row.",
+                    isOn: $activityRollupEnabled
+                )
+                .onChange(of: activityRollupEnabled) { _, _ in
+                    NotificationCenter.default.post(
+                        name: ContentBlock.activityRollupSettingChanged, object: nil)
+                }
 
                 SettingsToggle(
                     title: L("Clipboard Monitoring"),

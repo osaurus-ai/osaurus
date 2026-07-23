@@ -1613,6 +1613,7 @@ final class NativeMessageCellView: NSTableCellView {
     private var nativeMarkdownView: NativeMarkdownView?
     private var nativeThinkingView: NativeThinkingView?
     private var nativeToolCallGroupView: NativeToolCallGroupView?
+    private var nativeActivityGroupView: NativeActivityGroupView?
     private var userMessageContainer: NSView?
     private var userTextView: NativeMarkdownView?
     private var userInlineEditView: UserMessageInlineEditView?
@@ -1782,6 +1783,9 @@ final class NativeMessageCellView: NSTableCellView {
 
         case let .toolCallGroup(calls):
             configureAsToolCallGroup(block: block, calls: calls, context: context, sameKind: sameKind)
+
+        case let .activityGroup(children):
+            configureAsActivityGroup(block: block, children: children, context: context, sameKind: sameKind)
 
         case let .userMessage(text, attachments, timestamp, responseTurnId):
             configureAsUserMessage(
@@ -2126,6 +2130,49 @@ final class NativeMessageCellView: NSTableCellView {
             onHeightChanged: { [weak self] in
                 guard let self, let gv = self.nativeToolCallGroupView, let id = self.currentBlockId else { return }
                 let h = gv.measuredHeight() + 8
+                context.onHeightMeasured?(h, id)
+            }
+        )
+    }
+
+    // MARK: - Activity Group (NativeActivityGroupView)
+
+    private func configureAsActivityGroup(
+        block: ContentBlock,
+        children: [ContentBlock],
+        context: CellRenderingContext,
+        sameKind: Bool
+    ) {
+        if !sameKind || nativeActivityGroupView == nil {
+            removeAllContentViews()
+            let av = NativeActivityGroupView()
+            av.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(av)
+            NSLayoutConstraint.activate([
+                av.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+                av.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+                av.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            ])
+            nativeActivityGroupView = av
+        }
+        let av = nativeActivityGroupView!
+        av.configure(
+            children: children,
+            expandedIds: context.expandedIds,
+            width: context.width - 32,
+            theme: context.theme,
+            isStreaming: context.isStreaming,
+            blockId: block.id,
+            sessionRedactions: context.sessionRedactions,
+            onToggleChild: { id in context.onToggleExpand(id) },
+            onToggle: { [weak self] in
+                guard let self else { return }
+                context.onToggleExpand(block.id)
+                self.nativeActivityGroupView?.onHeightChanged?()
+            },
+            onHeightChanged: { [weak self] in
+                guard let self, let av = self.nativeActivityGroupView, let id = self.currentBlockId else { return }
+                let h = av.measuredHeight() + 8
                 context.onHeightMeasured?(h, id)
             }
         )
@@ -2816,6 +2863,7 @@ final class NativeMessageCellView: NSTableCellView {
         // would yank the view out of its new home and the row-now-owning
         // cell would render empty until the next reconfigure.
         detachIfStillParented(nativeToolCallGroupView); nativeToolCallGroupView = nil
+        nativeActivityGroupView?.removeFromSuperview(); nativeActivityGroupView = nil
         nativePendingView?.removeFromSuperview(); nativePendingView = nil
         nativeTypingView?.removeFromSuperview(); nativeTypingView = nil
         nativeArtifactView?.removeFromSuperview(); nativeArtifactView = nil
@@ -3072,7 +3120,7 @@ private func cgColorsEqual(_ lhs: CGColor?, _ rhs: CGColor?) -> Bool {
 
 /// Lightweight discriminator used to detect kind changes without comparing full associated values.
 enum ContentBlockKindTag: Equatable {
-    case header, paragraph, toolCallGroup, thinking, userMessage, pendingToolCall
+    case header, paragraph, toolCallGroup, thinking, activityGroup, userMessage, pendingToolCall
     case generationStats, typingIndicator, groupSpacer, sharedArtifact, chart
     case assistantActions, emptyResponseNotice, fileDiff, other
 }
@@ -3084,6 +3132,7 @@ extension ContentBlockKind {
         case .paragraph: return .paragraph
         case .toolCallGroup: return .toolCallGroup
         case .thinking: return .thinking
+        case .activityGroup: return .activityGroup
         case .userMessage: return .userMessage
         case .pendingToolCall: return .pendingToolCall
         case .generationStats: return .generationStats
@@ -3215,6 +3264,16 @@ enum NativeCellHeightEstimator {
         case let .toolCallGroup(calls):
             // each row self-sizes at the node header height + 1pt reserved gap
             return CGFloat(calls.count) * (NativeToolCallRowView.rowHeaderHeight + 1) + 8
+
+        case let .activityGroup(children):
+            // collapsed: 44pt header + 4pt inset + 8pt cell gap (matches thinking)
+            if !isExpanded { return 56 }
+            // expanded: header + separator/gaps + children estimated collapsed;
+            // per-child expansion is corrected by the measured-height report
+            let childrenH = children.reduce(CGFloat(0)) { acc, child in
+                acc + estimatedHeight(for: child, width: width - 28, theme: theme, isExpanded: false)
+            }
+            return 44 + 1 + 8 + childrenH + 10 + 8
 
         case let .sharedArtifact(artifact):
             // matches NativeArtifactCardView: inner top 12 + bottom 8 (footerVerticalGap), symmetric gap above/below footer row

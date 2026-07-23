@@ -3450,9 +3450,17 @@ extension FloatingInputCard {
                         "Working folder is read-only in sandbox mode — code runs in the sandbox. Right-click to allow writes."
                 )
         }
-        return hasFolder
-            ? Text(localized: "Change working folder")
-            : Text(localized: "Select a working folder")
+        // Lead with the full path when a folder is active — the chip label
+        // middle-truncates long names, so the tooltip is where the complete
+        // name stays readable.
+        if hasFolder {
+            if let rootPath = folderState.rootPath {
+                return Text(verbatim: rootPath.path) + Text(verbatim: "\n")
+                    + Text(localized: "Change working folder")
+            }
+            return Text(localized: "Change working folder")
+        }
+        return Text(localized: "Select a working folder")
     }
 
     /// Flip the agent's `allowHostFolderWrites` opt-in from the chip's
@@ -4266,6 +4274,13 @@ extension FloatingInputCard {
                     .foregroundColor(canEdit ? theme.secondaryText : theme.tertiaryText)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    // Cap the name so a long folder can't stretch the chip and
+                    // shove the chips after it out of the row. The cluster is
+                    // sized at its ideal width inside the horizontal
+                    // ScrollView, so shorter names still hug — the cap only
+                    // bites (middle-truncating) past this width. The full name
+                    // stays available via the chip's help tooltip.
+                    .frame(maxWidth: 150)
 
                 // Visible read-only state for combined mode — the tooltip
                 // alone wasn't discoverable. No badge when writes are
