@@ -5942,7 +5942,7 @@ private struct ContextBreakdownPopover: View {
     private var statusLabel: String {
         if isHardOverflow { return L("Over limit") }
         if isNearLimit { return L("Near limit") }
-        if let percent = utilization.percent { return "\(percent)% used" }
+        if let percent = utilization.percent { return L("\(percent)% used") }
         return isStreaming ? L("Live") : L("Estimated")
     }
 
