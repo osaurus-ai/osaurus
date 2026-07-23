@@ -1094,8 +1094,17 @@ struct DeltaContent: Codable, Sendable {
 /// Streaming choice
 struct StreamChoice: Codable, Sendable {
     let index: Int
-    let delta: DeltaContent
+    /// Optional on decode: OpenAI-compatible providers (DeepSeek among them)
+    /// omit `delta` on the final finish/usage chunk. Osaurus's own stream
+    /// writers always populate it.
+    let delta: DeltaContent?
     let finish_reason: String?
+
+    init(index: Int, delta: DeltaContent, finish_reason: String?) {
+        self.index = index
+        self.delta = delta
+        self.finish_reason = finish_reason
+    }
 }
 
 /// Chat completion chunk for streaming

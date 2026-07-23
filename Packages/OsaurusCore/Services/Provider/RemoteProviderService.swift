@@ -1690,16 +1690,27 @@ public actor RemoteProviderService: ToolCapableService {
                 )
             }
         } catch {
-            let phase =
-                state.accumulatedToolCalls.isEmpty
-                ? "" : " while receiving tool arguments"
+            // Fatal only while tool arguments are accumulating: an undecodable
+            // event there can hide truncated arguments, and dispatching a
+            // partial call is worse than failing the turn. Outside that window
+            // an unrecognized chunk shape (e.g. a delta-less finish or
+            // keep-alive frame from an OpenAI-compatible provider) is skipped,
+            // matching pre-0.22.8 behavior; the finish boundary still closes
+            // the stream normally.
+            guard !state.accumulatedToolCalls.isEmpty else {
+                print(
+                    "[Osaurus] Warning: Skipping unparseable provider SSE event: "
+                        + "\(error.localizedDescription) (\(jsonData.count) bytes)"
+                )
+                return .continue
+            }
             print(
-                "[Osaurus] Failed to parse provider SSE event\(phase): "
+                "[Osaurus] Failed to parse provider SSE event while receiving tool arguments: "
                     + "\(error.localizedDescription) (\(jsonData.count) bytes)"
             )
             return .finishWithError(
                 RemoteProviderServiceError.streamingError(
-                    "Provider emitted an invalid streaming event\(phase) "
+                    "Provider emitted an invalid streaming event while receiving tool arguments "
                         + "(\(jsonData.count) bytes). The response may have been truncated in transit."
                 )
             )
