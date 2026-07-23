@@ -122,11 +122,6 @@ struct ModelPickerView: View {
     @Binding var selectedModel: String?
     let agentId: UUID?
     var optionsControl: ModelPickerOptionsControl? = nil
-    /// Whether the header offers the "Add Model" shortcut into the Models
-    /// tab. Embedders that are themselves inside the management window
-    /// (e.g. the Core Model setting) hide it — jumping tabs from there is
-    /// disorienting rather than helpful.
-    var showsAddModelButton: Bool = true
     let onDismiss: () -> Void
 
     @State private var searchText = ""
@@ -472,31 +467,29 @@ struct ModelPickerView: View {
                 sortButton
             }
 
-            if showsAddModelButton {
-                Button(action: {
-                    onDismiss()
-                    Task { @MainActor in
-                        try? await Task.sleepForPopoverDismiss()
-                        AppDelegate.shared?.showManagementWindow(initialTab: .models)
-                    }
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 10, weight: .bold))
-                        Text("Add Model", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(theme.accentColor)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 1)
-                            .background(Capsule().fill(theme.accentColor.opacity(0.08)))
-                    )
+            Button(action: {
+                onDismiss()
+                Task { @MainActor in
+                    try? await Task.sleepForPopoverDismiss()
+                    AppDelegate.shared?.showManagementWindow(initialTab: .models)
                 }
-                .buttonStyle(.plain)
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .bold))
+                    Text("Add Model", bundle: .module)
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundColor(theme.accentColor)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 1)
+                        .background(Capsule().fill(theme.accentColor.opacity(0.08)))
+                )
             }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)

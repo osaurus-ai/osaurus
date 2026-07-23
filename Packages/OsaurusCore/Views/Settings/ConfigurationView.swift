@@ -847,9 +847,8 @@ struct ConfigurationView: View {
 
     /// Trigger button + rich `ModelPickerView` popover. Replaced the native
     /// `Picker`, which dumped every provider's models into one flat context
-    /// menu; the rich picker brings provider tabs and unified search. The
-    /// Add Model shortcut is hidden — we're already inside the management
-    /// window, so jumping tabs mid-selection would be disorienting.
+    /// menu; the rich picker brings provider tabs, unified search, and the
+    /// Add Model shortcut into the Models tab.
     private var coreModelPicker: some View {
         let currentId = coreModelIdentifierBinding.wrappedValue
         let currentItem = coreModelPickerItems.first { $0.id == currentId }
@@ -902,7 +901,6 @@ struct ConfigurationView: View {
                     options: coreModelPickerItems,
                     selectedModel: coreModelSelectionBinding,
                     agentId: nil,
-                    showsAddModelButton: false,
                     onDismiss: { showCoreModelPicker = false }
                 )
             }
