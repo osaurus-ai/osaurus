@@ -706,6 +706,15 @@ private struct SessionRow: View {
     }
 
     var body: some View {
+        #if DEBUG
+            // Fires on every body evaluation of this row. After an auto-title
+            // lands, the log should show ONLY the retitled session's row here
+            // (plus rows whose hover state changed); a flood of every visible
+            // session id would mean the whole list re-rendered.
+            let _ = AutoTitleDebugLog.log(
+                "sidebar row RENDER id=\(session.id.uuidString.prefix(8)) title=\"\(session.title)\""
+            )
+        #endif
         if isEditing {
             editingView
                 .padding(.horizontal, 10)

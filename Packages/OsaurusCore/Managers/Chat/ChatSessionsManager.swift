@@ -161,6 +161,11 @@ final class ChatSessionsManager: ObservableObject {
         else { return }
         guard session.title != title else { return }
         session.title = title
+        #if DEBUG
+            AutoTitleDebugLog.log(
+                "renameQuietly session=\(id.uuidString.prefix(8)) -> \"\(title)\" (updatedAt untouched)"
+            )
+        #endif
         ChatSessionStore.saveAsync(session)
         upsertInMemory(session)
     }

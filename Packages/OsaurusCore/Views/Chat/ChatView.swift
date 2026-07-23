@@ -3099,6 +3099,18 @@ final class ChatSession: ObservableObject {
             currentTitle: title,
             turns: turns.map { ChatTurnData(from: $0) }
         )
+        #if DEBUG
+            let decisionLabel: String = {
+                switch decision {
+                case .skip: return "skip"
+                case .latchAndSkip: return "latchAndSkip"
+                case .generate(_, _, let preview): return "generate(preview=\"\(preview)\")"
+                }
+            }()
+            AutoTitleDebugLog.log(
+                "decision session=\(sid.uuidString.prefix(8)) -> \(decisionLabel) title=\"\(title)\""
+            )
+        #endif
         switch decision {
         case .skip:
             return
@@ -3115,6 +3127,11 @@ final class ChatSession: ObservableObject {
                         fallbackModel: fallbackModel
                     )
                 else {
+                    #if DEBUG
+                        AutoTitleDebugLog.log(
+                            "generation FAILED session=\(sid.uuidString.prefix(8)) — re-arming latch"
+                        )
+                    #endif
                     // Transient failure — re-arm for the next clean run
                     // completion, but only while this ChatSession still
                     // shows the same session; after a switch the flag
@@ -3134,8 +3151,27 @@ final class ChatSession: ObservableObject {
     /// and a manual title always wins. `renameQuietly` persists off the main
     /// thread and leaves `updatedAt` alone so the sidebar doesn't reorder.
     private func applyGeneratedTitle(_ newTitle: String, to sid: UUID, ifStillTitled expected: String) {
-        guard let stored = ChatSessionsManager.shared.session(for: sid) else { return }
-        guard stored.title == expected || stored.title == "New Chat" else { return }
+        guard let stored = ChatSessionsManager.shared.session(for: sid) else {
+            #if DEBUG
+                AutoTitleDebugLog.log(
+                    "apply REFUSED session=\(sid.uuidString.prefix(8)) — session gone from manager"
+                )
+            #endif
+            return
+        }
+        guard stored.title == expected || stored.title == "New Chat" else {
+            #if DEBUG
+                AutoTitleDebugLog.log(
+                    "apply REFUSED session=\(sid.uuidString.prefix(8)) — user renamed to \"\(stored.title)\" mid-generation"
+                )
+            #endif
+            return
+        }
+        #if DEBUG
+            AutoTitleDebugLog.log(
+                "apply session=\(sid.uuidString.prefix(8)) \"\(expected)\" -> \"\(newTitle)\""
+            )
+        #endif
         ChatSessionsManager.shared.renameQuietly(id: sid, title: newTitle)
         // Update the open chat's header only if it still shows this session.
         if sessionId == sid { title = newTitle }
