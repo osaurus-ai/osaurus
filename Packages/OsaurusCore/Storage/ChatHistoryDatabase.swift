@@ -492,6 +492,32 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         }
     }
 
+    /// Update ONLY a session's title, off the caller's thread. Exists for the
+    /// auto-title path, whose in-memory `ChatSessionData` may be a
+    /// metadata-only copy (empty `turns`) from `loadAllMetadata` — routing it
+    /// through `saveSessionAsync` would let `upsertTurnsIncrementally` treat
+    /// the empty array as truth and delete every turn row. A targeted UPDATE
+    /// cannot touch turns, and deliberately leaves `updated_at` alone so the
+    /// rename never reorders the recency list.
+    public func updateSessionTitleAsync(id: UUID, title: String) {
+        queue.async { [weak self] in
+            guard let self, self.db != nil else { return }
+            do {
+                try self.executeRaw("BEGIN TRANSACTION")
+                try self.transactionalStep(
+                    "UPDATE sessions SET title = ?1 WHERE id = ?2"
+                ) { stmt in
+                    Self.bindText(stmt, index: 1, value: title)
+                    Self.bindText(stmt, index: 2, value: id.uuidString)
+                }
+                try self.executeRaw("COMMIT")
+            } catch {
+                try? self.executeRaw("ROLLBACK")
+                print("[ChatHistoryDatabase] async title update failed for \(id): \(error)")
+            }
+        }
+    }
+
     /// Returns a copy of `session` with every turn's attachment array
     /// passed through `AttachmentBlobStore.spillIfNeeded`.
     private func sessionWithSpilledAttachments(_ session: ChatSessionData) -> ChatSessionData {

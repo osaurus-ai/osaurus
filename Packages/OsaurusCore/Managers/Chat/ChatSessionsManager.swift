@@ -166,7 +166,10 @@ final class ChatSessionsManager: ObservableObject {
                 "renameQuietly session=\(id.uuidString.prefix(8)) -> \"\(title)\" (updatedAt untouched)"
             )
         #endif
-        ChatSessionStore.saveAsync(session)
+        // Title-only DB update: the in-memory copy may be metadata-only
+        // (empty turns), and a full save would delete the conversation's
+        // turn rows. See `ChatSessionStore.renameTitleAsync`.
+        ChatSessionStore.renameTitleAsync(id: id, title: title)
         upsertInMemory(session)
     }
 

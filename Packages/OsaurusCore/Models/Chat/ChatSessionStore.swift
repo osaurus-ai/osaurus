@@ -16,7 +16,21 @@ enum ChatSessionStore {
     /// Only metadata is loaded (turns are empty). Use `load(id:)` for full session data.
     static func loadAll() -> [ChatSessionData] {
         ensureOpen()
-        return ChatHistoryDatabase.shared.loadAllMetadata()
+        var sessions = ChatHistoryDatabase.shared.loadAllMetadata()
+        // Overlay writes still deferred behind a closed/rotating DB so a
+        // notification-driven refresh can't drop a chat the user just
+        // created: the disk snapshot doesn't have the row yet, but the
+        // pending queue does. Sessions already on disk keep their pending
+        // (newer) snapshot; brand-new ones are inserted in recency order.
+        guard !pendingSaves.isEmpty else { return sessions }
+        for (id, pending) in pendingSaves {
+            if let index = sessions.firstIndex(where: { $0.id == id }) {
+                sessions[index] = pending
+            } else {
+                sessions.append(pending)
+            }
+        }
+        return sessions.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     /// Load a specific session by ID
@@ -85,6 +99,22 @@ enum ChatSessionStore {
             return
         }
         ChatHistoryDatabase.shared.saveSessionAsync(session)
+    }
+
+    /// Title-only async update for the auto-title path. Never routes through
+    /// `saveSession`, whose incremental turn upsert would interpret a
+    /// metadata-only session copy (empty `turns`) as "delete every turn".
+    /// While the DB is deferred, retitles the pending snapshot if one is
+    /// queued; otherwise the rename is dropped, matching `saveAsync`'s
+    /// best-effort contract (the preview title simply stands).
+    static func renameTitleAsync(id: UUID, title: String) {
+        guard !pendingDeletes.contains(id) else { return }
+        ensureOpen()
+        guard didOpen else {
+            pendingSaves[id]?.title = title
+            return
+        }
+        ChatHistoryDatabase.shared.updateSessionTitleAsync(id: id, title: title)
     }
 
     /// Sessions whose writes were deferred because the chat-history DB wasn't

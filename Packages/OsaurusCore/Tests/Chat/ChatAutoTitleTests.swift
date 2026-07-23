@@ -150,6 +150,37 @@ struct RenameQuietlyTests {
         }
     }
 
+    @Test("renameQuietly on a metadata-only copy never deletes turn rows")
+    func preservesTurnsFromMetadataOnlyCopy() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSessionData(
+                id: UUID(),
+                title: "How do I fix a SwiftUI layout bug?",
+                turns: [
+                    ChatTurnData(role: .user, content: "How do I fix a SwiftUI layout bug?"),
+                    ChatTurnData(role: .assistant, content: "Check the frame modifiers…"),
+                ]
+            )
+            ChatSessionsManager.shared.save(session)
+
+            // Reload from disk so the manager holds the metadata-only shape
+            // (`loadAllMetadata` returns sessions with empty turns) — the
+            // exact state that would wipe the conversation if the rename
+            // went through the full incremental turn save.
+            ChatSessionsManager.shared.refresh()
+            let inMemory = try #require(ChatSessionsManager.shared.session(for: session.id))
+            #expect(inMemory.turns.isEmpty)
+
+            ChatSessionsManager.shared.renameQuietly(id: session.id, title: "SwiftUI Layout Bug")
+
+            try await waitUntil(timeout: .seconds(2)) {
+                ChatSessionStore.load(id: session.id)?.title == "SwiftUI Layout Bug"
+            }
+            let persisted = try #require(ChatSessionStore.load(id: session.id))
+            #expect(persisted.turns.count == 2)
+        }
+    }
+
     @Test("renameQuietly with an unknown id is a no-op")
     func unknownIdNoOp() async throws {
         try await ChatHistoryTestStorage.run {
