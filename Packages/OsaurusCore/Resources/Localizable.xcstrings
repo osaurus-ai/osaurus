@@ -318,6 +318,7 @@
       "shouldTranslate" : false
     },
     "…and %lld more" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -7935,6 +7936,7 @@
       }
     },
     "%lld% used" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -7996,6 +7998,9 @@
         }
       },
       "shouldTranslate" : false
+    },
+    "%lld%% used" : {
+
     },
     "%lld²" : {
       "comment" : "A segmented control in the image generation panel that lets the user choose the size of the generated image. The argument is the size of the first option.",
@@ -24656,6 +24661,9 @@
           }
         }
       }
+    },
+    "Automatically Name Chats" : {
+
     },
     "Automatically sends message after a brief pause" : {
       "localizations" : {
@@ -175534,6 +175542,7 @@
       }
     },
     "Thinking is off. Click to turn it on." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -175568,6 +175577,7 @@
       }
     },
     "Thinking is on. Click to turn it off." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {

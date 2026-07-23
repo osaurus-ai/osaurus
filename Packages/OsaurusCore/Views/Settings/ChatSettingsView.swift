@@ -291,13 +291,7 @@ struct ChatSettingsView: View {
                     isOn: $tempWarmModelsOnLoad
                 )
 
-                SettingsToggle(
-                    title: L("Automatically Name Chats"),
-                    description:
-                        "Use the core model to generate a short descriptive title after a chat's first response, replacing the first-message preview. Runs in the background and never interrupts your conversation; manual renames always win.",
-                    isOn: $tempAutoGenerateChatTitles
-                )
-                .settingsLandingAnchor("settings.chat.autoGenerateTitles")
+                autoTitleToggleRow
 
                 SettingsToggle(
                     title: L("Show Notch Overlay on Menu Bar"),
@@ -381,6 +375,69 @@ struct ChatSettingsView: View {
                 )
             }
         }
+    }
+
+    /// Hand-built `SettingsToggle` twin: the stock control only takes a plain
+    /// string description, and this one styles "core model" as an underlined
+    /// accent-colored deep link into the General tab's Core Model picker —
+    /// same pattern as the transcription cleanup toggle.
+    private var autoTitleToggleRow: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Automatically Name Chats", bundle: .module)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(theme.primaryText)
+                Text(autoTitleDescription)
+                    .font(.system(size: 11))
+                    .tint(theme.accentColor)
+                    .environment(
+                        \.openURL,
+                        OpenURLAction { _ in
+                            navigateToCoreModelSetting()
+                            return .handled
+                        }
+                    )
+            }
+
+            Spacer()
+
+            Toggle("", isOn: $tempAutoGenerateChatTitles)
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .labelsHidden()
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.inputBorder, lineWidth: 1)
+                )
+        )
+        .settingsLandingAnchor("settings.chat.autoGenerateTitles")
+    }
+
+    /// Description for the auto-title toggle, with "core model" rendered as
+    /// an underlined link in the theme's accent color.
+    private var autoTitleDescription: AttributedString {
+        var text = AttributedString(
+            L(
+                "Use the core model to generate a short descriptive title after a chat's first response, replacing the first-message preview. Runs in the background and never interrupts your conversation; manual renames always win."
+            )
+        )
+        text.foregroundColor = theme.tertiaryText
+        if let range = text.range(of: L("core model")) {
+            text[range].foregroundColor = theme.accentColor
+            text[range].underlineStyle = .single
+            text[range].link = URL(string: "osaurus-settings://core-model")
+        }
+        return text
+    }
+
+    /// Deep-links to the Core Model picker in the General settings tab.
+    private func navigateToCoreModelSetting() {
+        SettingsHighlightCoordinator.shared.request("settings.general.coreModel")
+        ManagementStateManager.shared.selectedTab = .settings
     }
 
     private var personalityEditorBlock: some View {
