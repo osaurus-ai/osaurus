@@ -3296,17 +3296,14 @@ public actor ModelRuntime {
         )
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
-            // Chat UI streaming should execute a parsed tool call as soon as
-            // the model finishes the step. We surface the tool hints
-            // immediately, then keep draining ONLY to forward the step's
-            // end-of-generation `.completionInfo` (decode/prefill tok/s + token
-            // count) before finishing-by-throw — otherwise a step that ends in
-            // a tool call (the common agentic case) drops its decode stats,
-            // which is why tool-call turns historically reported 0 completion
-            // tokens / no tok/s in both the OpenAI `usage` and the eval
-            // telemetry. Post-tool model text is still suppressed (never
-            // yielded once a tool is pending), preserving the no-leak intent.
-            var pendingTool: ServiceToolInvocation?
+            // Chat UI streaming must dispatch a parsed local tool call as soon
+            // as vmlx emits `.toolInvocation`. A trailing `.completionInfo`
+            // is useful telemetry, but it is not part of the executable tool
+            // contract: the parser has already closed the envelope and built
+            // canonical JSON. Waiting for stats lets a model/runtime stream
+            // that never reaches EOS leave the UI stuck with a complete-looking
+            // tool row and no actual dispatch. Finish-by-throw immediately and
+            // let `onTermination` cancel the now-unneeded decode tail.
             do {
                 for try await ev in events {
                     if case .completionInfo(
@@ -3325,14 +3322,6 @@ public actor ModelRuntime {
                                 prefillTokensPerSecond: promptTokensPerSecond
                             )
                         )
-                        // End-of-generation stats are the terminal event. If a
-                        // tool call is pending, the stats have now been
-                        // forwarded — finish-by-throw so the consumer dispatches
-                        // the tool, with the decode telemetry already delivered.
-                        if let tool = pendingTool {
-                            continuation.finish(throwing: tool)
-                            return
-                        }
                         continue
                     }
 
@@ -3342,56 +3331,46 @@ public actor ModelRuntime {
                     }
                     switch ev {
                     case .tokens(let s):
-                        // Suppress model text once a tool call is pending so the
-                        // pseudo-tool prose never leaks to the UI/consumer.
-                        if pendingTool == nil, !s.isEmpty { continuation.yield(s) }
+                        if !s.isEmpty { continuation.yield(s) }
                     case .reasoning(let s):
-                        if pendingTool == nil, !s.isEmpty {
+                        if !s.isEmpty {
                             continuation.yield(StreamingReasoningHint.encode(s))
                         }
                     case .prefillProgress(let progress):
-                        if pendingTool == nil {
-                            continuation.yield(StreamingPrefillProgressHint.encode(progress))
-                        }
+                        continuation.yield(StreamingPrefillProgressHint.encode(progress))
                     case .toolCallProgress(let envelopeDelta):
                         // Live preview of the tool-call envelope as it is
                         // written. Emitted before the committed
-                        // `.toolInvocation`, so `pendingTool` is still nil here.
+                        // `.toolInvocation`.
                         // Encoded behind the `\u{FFFE}` sentinel so it never
                         // reaches the visible token stream or the OpenAI wire —
                         // only the native ChatView decodes it, to keep the
                         // tool-call card alive instead of showing a frozen
                         // spinner during a long file-write call.
-                        if pendingTool == nil, !envelopeDelta.isEmpty {
+                        if !envelopeDelta.isEmpty {
                             continuation.yield(
                                 StreamingToolCallProgressHint.encode(envelopeDelta)
                             )
                         }
                     case .toolInvocation(let name, let argsJSON):
-                        // Surface the first tool call's hints immediately, then
-                        // keep draining for its trailing `.completionInfo`
-                        // before throwing (see comment above). Arity is
-                        // unchanged: only the first tool is dispatched per step.
-                        if pendingTool == nil {
-                            continuation.yield(StreamingToolHint.encode(name))
-                            continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
-                            pendingTool = ServiceToolInvocation(
-                                toolName: name,
-                                jsonArguments: argsJSON
-                            )
-                        }
+                        // Surface the first parsed tool call and terminate this
+                        // generation step immediately. The stream termination
+                        // cancels any remaining decode tail, so post-tool prose
+                        // cannot leak and the chat loop can execute the tool
+                        // without waiting for an optional stats/EOS event.
+                        continuation.yield(StreamingToolHint.encode(name))
+                        continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
+                        let tool = ServiceToolInvocation(
+                            toolName: name,
+                            jsonArguments: argsJSON
+                        )
+                        continuation.finish(throwing: tool)
+                        return
                     case .completionInfo:
                         continue
                     }
                 }
-                // Stream ended (natural EOS). If the generator never emitted a
-                // trailing `.completionInfo` after the tool call, throw now so
-                // the tool is still dispatched (just without decode stats).
-                if let tool = pendingTool {
-                    continuation.finish(throwing: tool)
-                } else {
-                    continuation.finish()
-                }
+                continuation.finish()
             } catch {
                 if Task.isCancelled {
                     continuation.finish()

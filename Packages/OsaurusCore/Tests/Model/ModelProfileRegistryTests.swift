@@ -206,11 +206,11 @@ struct ModelProfileRegistryTests {
     }
 
     /// Laguna bundles (`model_type=laguna`) must match
-    /// `LagunaThinkingProfile` so the chat-input area's reasoning toggle
+    /// `LagunaThinkingProfile` so the model-options reasoning toggle
     /// drives the `enable_thinking` Jinja kwarg honoured by the shipped
     /// `laguna_glm_thinking_v5/chat_template.jinja`. Osaurus exposes the
-    /// control but leaves absent values absent so the shipped template/runtime
-    /// defaults remain authoritative.
+    /// control without forcing parser-side behavior; the displayed default
+    /// mirrors the bundle/runtime default.
     @Test("Laguna bundles match LagunaThinkingProfile (all quant tiers)")
     func laguna_matchesLagunaProfile() {
         for id in [
@@ -227,6 +227,10 @@ struct ModelProfileRegistryTests {
             )
             let normalized = ModelProfileRegistry.normalizedOptions(for: id, persisted: nil)
             #expect(normalized["disableThinking"] == nil)
+            #expect(
+                ModelProfileRegistry.defaults(for: id)["disableThinking"]?.boolValue == false,
+                "Laguna display default must be thinking-on (stored as disableThinking=false)"
+            )
         }
     }
 

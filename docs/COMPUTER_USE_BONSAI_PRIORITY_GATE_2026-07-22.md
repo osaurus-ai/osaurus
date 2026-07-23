@@ -1,6 +1,6 @@
 # Computer Use / Bonsai priority gate — 2026-07-22
 
-Status: **PARTIAL — the vMLX numeric parser and exclusive input route have
+Status: **PARTIAL / REOPENED — the vMLX numeric parser and exclusive input route have
 isolated Release UI evidence on Bonsai. The current AppleScript 16B route has
 isolated Release UI evidence for exact whole-document and substring edits,
 Thinking Off/On propagation, positive Save and negative no-Save controls,
@@ -10,13 +10,141 @@ cache off. A stronger current-outcome contract removed the blocked redundant
 `mac_query` in the latest Release replay, but Ornith then put a generated
 replacement instruction in `content`; the narrow redundant-instruction
 normalizer has focused-test but not rebuilt live evidence. Compile-envelope
-recovery also has focused-test but not branch-specific live evidence. The broader cross-model, restart,
-TurboQuant, and cache-eviction matrix remains open.**
+recovery also has focused-test but not branch-specific live evidence. The
+2026-07-22 mid-toolcall/failing-tool report now has scoped v3 Release live proof
+showing Bonsai failed built-in tool turns terminate, immediate same-chat and
+new-chat follow-ups continue with SSD hit/store telemetry, and Laguna Thinking
+On displays a separate reasoning row when the model emits non-empty reasoning
+content. This does not close AppleScript duplicate-edit/no-save, generic
+Computer Use duplicate-edit behavior, TurboQuant, or cache-eviction rows.**
 
 This is the current checkpoint for the two priority user reports received on
 2026-07-21/22. It does not replace the longer family/cache ledgers. A row may
 move to verified only after both its owning source path and an isolated
 Release Osaurus UI run are recorded here.
+
+## New report: mid-toolcall hang plus cache reset after tool failure
+
+User report received 2026-07-22 21:49:
+
+- run hung again while stuck in a mid-toolcall;
+- failed tool calls appear to reset KV/cache state back toward cold prefill.
+
+This row is now scoped-partial: a Gemma 4 MXFP8 Release UI run captured the
+exact failing built-in tool result and cache transition, but the report remains
+open globally until the same behavior is re-proven for the named AppleScript /
+Computer Use / Bonsai or Ornith paths and the app-restart path.
+
+Required Computer Use closure evidence:
+
+1. Reproduce or disprove with the exact active local model named in the report,
+   then repeat with one stronger control model if the first row looks model-led.
+2. Preserve the raw tool invocation, canonicalized tool arguments, tool result
+   or validation error, finish reason, and visible UI state at the hang.
+3. Confirm whether the parent stream has ended, whether the tool row is pending,
+   and whether the chat input is re-enabled.
+4. Record cache telemetry before and after the failed tool result: restored
+   boundary, suffix size, disk hit/miss/store deltas, SSM/re-derive counters,
+   and paged-cache state.
+5. After the failed tool result, run same-chat, new-chat, and app-restart
+   follow-ups that should reuse the same system/tool prefix. A row passes only
+   if the live UI returns a coherent answer with TTFT/token/s and telemetry
+   shows SSD partial restore when paged RAM cache is Off.
+
+Additional regression questions for AppleScript / Computer Use / spawned agents:
+
+- Does the parent preserve the user's requested scope, or does it add save,
+  close, formatting, navigation, or follow-up work that was not requested?
+- Does every child model step receive the parent turn's explicit Thinking
+  choice, and does a nil choice follow the intended agent/tool default instead
+  of silently reasoning through tool loops?
+- Does each child run start from a fresh bounded task seed and then discard its
+  transcript, or can context rot from prior child attempts influence the next
+  AppleScript/Computer Use job?
+- Does a failed child tool row return a terminal envelope and stop pending UI,
+  or can the parent wait forever for a missing final answer after the model has
+  already finished?
+- Does a failed child row leave SSD cache blocks usable for the next same-chat,
+  new-chat, and restart prompt with paged RAM cache Off?
+- Does a successful TextEdit mutation terminate after one verified edit, without
+  duplicate typing and without save workflow unless the prompt explicitly asks
+  to save?
+
+### Current live finding: failed built-in tool terminates and cache continues
+
+The patched isolated Release app
+`/private/tmp/OsaurusToolHangProof-20260722-2303.app`
+(`com.dinoki.osaurus.toolhangproof20260722`,
+SHA-256 `ddb7a9f8083a682bc8be30f27a58bc5f768bbfc66acff884801ba2d57c634541`)
+was operated through Computer Use with `Gemma 4 12B it MXFP8`, Thinking Off,
+runtime root `/private/tmp/osaurus-toolhangproof-root-20260722-2259`, and trace
+log `/tmp/osaurus-toolhangproof-live-20260722-2303.log`.
+
+Live UI evidence:
+
+- `file_read` was made available by selecting a throwaway read-only working
+  folder via the app folder picker:
+  `/private/tmp/osaurus-toolproof-workspace-20260722`.
+- Prompt:
+  `Use the file_read tool to read definitely-missing-tool-error-2308.txt from the current folder.`
+- Visible result: `Failed: File read · 582ms`, answer
+  `File not found: definitely-missing-tool-error-2308.txt.`, TTFT 4.00s,
+  30.2 tok/s, 23 tokens, input unlocked.
+- Runtime trace for the same row:
+  `[Osaurus][Stream] Tool invocation: file_read`,
+  `[Osaurus][Tool] Executing: file_read ...`, and an `ok:false`,
+  `kind:not_found`, `retryable:false` tool envelope.
+- Immediate same-chat follow-up:
+  `FAILED-TOOL-CACHE-RECOVERY`, TTFT 0.73s, 30.6 tok/s, 12 tokens. Cache trace
+  continued to hit/store disk:
+  `HIT disk boundary=2924 remaining=183 ... tokens=3107`,
+  `cache/disk-store count=3119`,
+  `HIT disk boundary=7369 remaining=40 ... tokens=7409`.
+- New-chat follow-up:
+  `NEW-CHAT-AFTER-FAILED-TOOL`, TTFT 0.64s, 30.5 tok/s, 13 tokens. The new
+  no-folder warm-up cold-stored `1729/1725` because the prompt shape changed,
+  then the actual send hit `boundary=1729 remaining=20` and stored
+  `1749/1762/1763`.
+- Second same-instance failed-tool replay:
+  after reselecting the same throwaway folder in the UI, a missing
+  `file_read` row visibly terminated as `Failed: File read · 711ms`, rendered
+  the missing-file answer at TTFT 1.06s / 30.3 tok/s / 31 tokens, and the
+  immediate follow-up rendered `SECOND-PASS-FAILED-TOOL-RECOVERY` at TTFT
+  0.88s / 30.8 tok/s / 14 tokens with input unlocked. Runtime cache trace
+  continued to show partial disk restore/store after the failed tool, including
+  `HIT disk boundary=3161 remaining=331 ... tokens=3492`,
+  `cache/disk-store count=3492`, `HIT disk boundary=3492 remaining=15 ...
+  tokens=3507`, and `cache/disk-store count=3507`.
+- Caveat: the second recovery row also displayed an unnecessary `status.txt`
+  artifact card, so this remains an open tool-selection/behavior issue and is
+  not counted as a clean AppleScript/Computer Use behavior pass.
+
+This proves the patched local tool-dispatch lifecycle and built-in failed-tool
+cache continuation for this Gemma row only. It does **not** prove the
+AppleScript 16B duplicate-edit/no-save report, Bonsai/Ornith hybrid tool
+behavior, or app-restart persistence.
+
+### Current live finding: pending row before tool execution
+
+The 2026-07-22 isolated Release replay did not reach AppleScript approval. With
+the Configuration assistant selected, the model streamed a completed-looking
+`osaurus_agent` create call and then the UI stayed active with Stop visible.
+The trace contained no `[Osaurus][Tool] Executing: osaurus_agent ...` line, so
+the tool body and permission prompt had not begun. The root was upstream of
+Computer Use/AppleScript execution:
+
+- `ModelRuntime.streamWithTools` waited for trailing `.completionInfo` after
+  `.toolInvocation`;
+- the live stream had already yielded the callable name/args but did not
+  finish, so `ChatView.processStreamDeltas` never received the thrown
+  `ServiceToolInvocation`;
+- source has been patched to dispatch immediately on `.toolInvocation`.
+
+This evidence does **not** close the AppleScript 16B duplicate-edit/no-save
+report. It only closes the source-owner question for this specific
+complete-tool-row hang once rebuilt live proof passes. AppleScript proof still
+requires a real AppleScript agent/model row with one mutation, no duplicate
+typing, no save unless requested, terminal success/failure, and cache recovery.
 
 ## Exact source baseline
 
@@ -781,6 +909,116 @@ runtime trace, TTFT/token/s, and physical footprint.
    the effective load trace.
 
 No row is release-ready from this document yet.
+
+## 2026-07-23 final-current emergency addendum
+
+This addendum covers the emergency follow-up after the stream-finalization PR
+landed on `osaurus/main` and the branch was repinned to vMLX
+`3d5aa12be1ad4a7e1492e062e6d136a4f31c7dfb`.
+
+Release app under live test:
+
+- `/private/tmp/osaurus-emergency-finalize-release-derived-20260723/Build/Products/Release/osaurus.app`
+- bundle id `com.dinoki.osaurus.emergencyproof20260723`
+- executable SHA-256
+  `51d8452082893fc1baf675950991394aeb4494bc185a91588310bf2018ac8028`
+- proof root
+  `/private/tmp/osaurus-emergency-finalize-proof-root-20260723-0120`
+- runtime trace `/tmp/osaurus-prefill-debug.log`
+- prompt-tail dumps
+  `/tmp/osaurus-reasoning-prompt-dumps-20260723-0120/`
+
+Source seams pinned by this branch:
+
+- `ModelRuntime.streamWithTools` dispatches a parsed local `.toolInvocation`
+  immediately instead of holding it while waiting for optional completion stats.
+  This is the owner for the "model finished output / UI never stopped" class
+  when the tool envelope is already complete.
+- `ChatView.completeRunCleanup` receives a real error marker for
+  `runResult.exit == .toolRejected`, preventing the failed tool turn from
+  launching a hidden completed-transcript warm-up over the failed intermediate
+  state.
+- `LocalReasoningCapability` reads
+  `generation_config.default_chat_template_kwargs.enable_thinking` and
+  `jang_config.chat.reasoning.default_enabled/default_mode`, so model-picker
+  defaults reflect bundle metadata rather than only the Jinja fallback.
+
+Live Computer Use findings:
+
+| Scenario | Current result |
+| --- | --- |
+| Bonsai failed built-in file tool | With Bonsai 27B Ternary JANG CRACK selected and a throwaway folder attached, the prompt to read `definitely-missing-bonsai-final-proof-20260723.txt` showed a terminal failed `file_read` row, then continued through a `file_search` recovery and returned a final answer. Trace recorded `TOOL-EXEC-BEGIN name=file_read`, `TOOL-EXEC-END name=file_read`, `TOOL-EXEC-BEGIN name=file_search`, stream-drain and lease-release after each generation step. |
+| Bonsai cache after failed tool | The same failed-tool run restored partial SSD prefixes at `4185/4242`, `4235/4399`, and `4235/4421`; the immediate follow-up restored `4497/4534` and displayed exact `BONSAI-AFTER-FAILED-TOOL-OK` at TTFT 0.87s / 31.6 tok/s; a new chat restored `3005/3035` and displayed exact `BONSAI-CROSSCHAT-SSD-OK` at TTFT 0.81s / 31.5 tok/s. |
+| Ornith reasoning/cache control | Ornith 1.0 9B JANG_4M was selected through the visible model picker with Thinking Off. It displayed exact `ORNITH-JANG4M-SSD-OK` at TTFT 0.37s / 69.2 tok/s. vMLX trace restored `2040/2071` with `ssm=48`, then the completed-transcript warm row restored `2064/2087`. |
+| Laguna reasoning toggle | Laguna S 2.1 JANG_2L was selected with Thinking On in the picker. The prompt dump ended with `<assistant><think>`, proving the UI/request path did pass thinking-on into the template. The model then emitted `<think></think>internal-check...` on the parser stress prompt, so no reasoning box appeared because the model closed the reasoning span immediately and placed `internal-check` in visible content. |
+
+Interpretation:
+
+- The local stream/tool hang and failed-tool cleanup classes are fixed for the
+  source seams above and live-proven for the Bonsai built-in file-tool path in
+  this Release app.
+- This addendum does not close the AppleScript 16B duplicate-edit/no-save
+  report on the final branch. The unverified AppleScript follow-up source
+  changes were kept out of this emergency merge and preserved separately for a
+  later current-Release replay.
+- Laguna reasoning-on not producing a reasoning box is not fixed here because
+  current proof points to model/bundle output behavior, not a missing
+  `enable_thinking` kwarg or UI toggle propagation failure.
+- Spawn/delegation, AppleScript child isolation, paged-cache-on fallback, and
+  TurboQuant-KV opt-in remain open rows.
+
+## 2026-07-23 v3 scoped Release addendum — no-hang and reasoning evidence
+
+This is the current final proof addendum for the emergency cache/finalization
+branch. It supersedes the older `3d5aa12...` emergency addendum above.
+
+Build and isolation:
+
+- app:
+  `/private/tmp/osaurus-emergency-scoped-release-derived-v3b-20260723/Build/Products/Release/osaurus.app`
+- bundle id: `com.dinoki.osaurus.emergencyscopedproofv320260723`
+- executable SHA-256:
+  `858cadab0912084e66314fc5ba6097e5c235753b9dc90642fb1ea7ef3a99c446`
+- proof root:
+  `/private/tmp/osaurus-emergency-scoped-proof-root-v3-20260723-0310`
+- model root:
+  `/Users/eric/models`
+- pinned vMLX:
+  `7d6235316226ba9fe608018f86c463784e48b3d5`
+- trace files:
+  `/tmp/osaurus-prefill-debug.log`,
+  `/tmp/osaurus-emergency-scoped-live-v3-20260723-0310.log`, and
+  `/tmp/osaurus-reasoning-prompt-dumps-scoped-v3-20260723-0310/`
+
+Current-turn Computer Use read of the still-running app:
+
+- bundle id: `com.dinoki.osaurus.emergencyscopedproofv320260723`, pid `6222`;
+- visible row: `Laguna S 2.1 JANG_4M`, model picker Thinking value On;
+- visible reasoning row: `Thought for 2.9s 182 chars`;
+- visible final answer includes `FINAL: 964`;
+- visible metrics: `TTFT 0.86s • 38.7 tok/s • 136 tokens`;
+- input field focused/enabled after completion.
+
+Rows credited by this addendum:
+
+| Row | Source-trace evidence | Live UI evidence |
+| --- | --- | --- |
+| Parsed local tool call does not wait forever for optional stats | `ModelRuntime.streamWithTools` now finishes by throwing `ServiceToolInvocation` immediately in the `.toolInvocation` case and returns; source test `localStreamWithToolsDispatchesParsedToolInvocationWithoutWaitingForOptionalStats` exited 0 in the focused test command. | Bonsai failed-tool run executed tool rows, produced final `BONSAI-V3-TOOL-FAIL-FINALIZED`, and the UI input unlocked instead of leaving a complete-looking tool row pending. |
+| Failed/rejected tool run does not launch hidden completed-transcript warm-up | `ChatView` sets `lastStreamError = "Tool call failed."` for `.toolRejected`; `ChatWarmupController` suppresses completed-transcript warm-up when `hadToolActivity` is true; focused `ChatWarmupControllerCompletedRunTests` exited 0. | After the Bonsai failed-tool final answer, immediate follow-up returned `BONSAI-V3-AFTER-TOOL-FAIL-NOT-QUEUED`; trace shows no intervening hidden `lastMsgRole=assistant` cold warm-up, unlike the preserved bad 02:39 trace. |
+| SSD-only partial restore remains usable across failed tools/new chat/restart | vMLX pin `7d623531...`; Osaurus trace logs the restored/completed boundaries listed in the SSD-L2 gate. | Bonsai same-chat, Bonsai new-chat, Bonsai process-restart, Gemma new-chat, and Laguna reasoning-chat rows all produced visible final answers with TTFT/token/s and enabled input. |
+| Laguna Thinking On reaches UI/parser when model emits non-empty reasoning | `LocalReasoningCapability` reads bundle metadata defaults; prompt dump for Laguna JANG_4M ends with `<assistant><think>` and completed dump contains non-empty reasoning before `</think>`. | The current app state shows the separate `Thought for 2.9s` row and final answer under the model picker Thinking On state. |
+
+Rows intentionally not closed here:
+
+- AppleScript 16B duplicate-edit/no-save and native AppleScript child-loop
+  behavior on this final branch. The unverified AppleScript follow-up source
+  remains stashed separately and is not included in this emergency proof.
+- Generic Computer Use retrying successful edits. The current proof covers
+  stream/tool finalization and cache cleanup; it does not claim the full
+  TextEdit duplicate-edit behavior matrix.
+- Spawn/delegation reasoning propagation beyond the already tested source seams.
+- TurboQuant-KV explicit On, paged RAM On, quota/eviction, media/VL/audio, and
+  all-family cache matrices.
 
 ## 2026-07-22 final-candidate live findings (Computer Use driven)
 

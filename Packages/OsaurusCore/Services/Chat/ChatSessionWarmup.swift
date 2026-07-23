@@ -201,10 +201,17 @@ extension ChatSession: ChatWarmupSessionContext {
     }
 
     func handleWarmupAfterRunCompleted(wasCancelled: Bool, hadError: Bool) {
+        let hadToolActivity = turns.contains { turn in
+            turn.role == .tool
+                || !(turn.toolCalls?.isEmpty ?? true)
+                || !turn.toolResults.isEmpty
+                || turn.hasRemoteToolActivity
+        }
         warmupController.handleRunCompleted(
             session: self,
             wasCancelled: wasCancelled,
-            hadError: hadError
+            hadError: hadError,
+            hadToolActivity: hadToolActivity
         )
     }
 

@@ -5399,6 +5399,19 @@ final class ChatSession: ObservableObject {
                         hooks: loopHooks
                     )
 
+                    if runResult.exit == .toolRejected {
+                        // A rejected/failed tool row is already recorded in
+                        // history for the user and for the model-visible
+                        // transcript. Classify the run as errored for
+                        // lifecycle cleanup so `completeRunCleanup` does not
+                        // schedule a hidden completed-transcript warm-up over
+                        // the failed intermediate state. That warm-up can own
+                        // the solo lease and rebuild a different cache
+                        // fingerprint immediately after a tool failure,
+                        // making the next send look like a cold prefill.
+                        lastStreamError = "Tool call failed."
+                    }
+
                     if runResult.exit == .overBudget {
                         // Even fully-compacted history can't fit the model
                         // window — the driver ended the run before sending a

@@ -668,7 +668,9 @@ struct NemotronThinkingProfile: ModelProfile {
 /// whose chat template (`laguna_glm_thinking_v5/chat_template.jinja`)
 /// reads an `enable_thinking` Jinja kwarg. Osaurus exposes the native switch
 /// while leaving absent values absent so the shipped template/runtime defaults
-/// remain authoritative.
+/// remain authoritative. Laguna S 2.1 serving defaults thinking ON through
+/// `default_chat_template_kwargs.enable_thinking=true`, so the display default
+/// is the inverted stored form `disableThinking=false`.
 ///
 /// Match is `laguna` substring lower-cased; covers any future Laguna
 /// variant (e.g. Laguna-S, Laguna-M) without a registry edit. There is
@@ -686,12 +688,12 @@ struct LagunaThinkingProfile: ModelProfile {
             id: "disableThinking",
             label: L("Disable Thinking"),
             icon: "brain.head.profile",
-            kind: .toggle(default: true)
+            kind: .toggle(default: false)
         )
     ]
 
     static let defaults: [String: ModelOptionValue] = [
-        "disableThinking": .bool(true)
+        "disableThinking": .bool(false)
     ]
 
     static let thinkingOption: (id: String, inverted: Bool)? = ("disableThinking", true)

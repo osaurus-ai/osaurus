@@ -1298,6 +1298,23 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("chat classifies tool rejection as errored cleanup")
+    func chatClassifiesToolRejectionAsErroredCleanup() throws {
+        let chat = try Self.source("Views/Chat/ChatView.swift")
+        let marker = try #require(chat.range(of: "if runResult.exit == .toolRejected"))
+        let cleanup = try #require(chat.range(of: "completeRunCleanup()"))
+        #expect(marker.lowerBound < cleanup.lowerBound || chat[marker.lowerBound...].contains("lastStreamError"))
+
+        let end =
+            chat.range(
+                of: "if runResult.exit == .overBudget",
+                range: marker.upperBound ..< chat.endIndex
+            )?.lowerBound ?? chat.endIndex
+        let block = String(chat[marker.lowerBound ..< end])
+        #expect(block.contains("lastStreamError = \"Tool call failed.\""))
+        #expect(block.contains("hidden completed-transcript warm-up"))
+    }
+
     /// The terminal `.info` event carries stopReason, token counts, and
     /// `unclosedReasoning`. Dropping it is exactly how a reasoning-only MiniMax
     /// run can finish with a visible Thinking pane but no "thinking did not
@@ -2966,8 +2983,8 @@ struct RuntimePolicySourceTests {
         )
     }
 
-    @Test("local streamWithTools terminates on parsed tool invocation before leaking post-tool prose")
-    func localStreamWithToolsTerminatesOnParsedToolInvocationBeforePostToolProseLeak() throws {
+    @Test("local streamWithTools dispatches parsed tool invocation without waiting for optional stats")
+    func localStreamWithToolsDispatchesParsedToolInvocationWithoutWaitingForOptionalStats() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
         let streamStart = try #require(
             runtime.range(of: "func streamWithTools("),
@@ -2985,25 +3002,21 @@ struct RuntimePolicySourceTests {
         let afterToolCase = streamWithTools[toolCase.lowerBound...]
 
         #expect(
-            afterToolCase.contains("ServiceToolInvocation(")
+            streamWithTools.contains("A trailing `.completionInfo`")
+                && streamWithTools.contains("complete-looking")
+                && afterToolCase.contains("ServiceToolInvocation(")
                 && afterToolCase.contains("toolName: name")
                 && afterToolCase.contains("jsonArguments: argsJSON")
                 && afterToolCase.contains("continuation.finish(throwing: tool)"),
-            "streamWithTools must capture the parsed vMLX tool call (name + args) into the pending ServiceToolInvocation and finish the stream by throwing it so the Chat UI dispatches the tool."
+            "streamWithTools must treat parsed vMLX toolInvocation as terminal for dispatch; waiting for optional completion stats can leave the UI stuck after a complete tool call."
         )
         #expect(
             afterToolCase.contains("return"),
             "After surfacing the parsed tool invocation the producer task must return rather than run on."
         )
-        // The real no-leak invariant: once a tool call is pending, model text is
-        // gated on `pendingTool == nil` and never yielded, so DSV4 pseudo-tool
-        // prose emitted after the tool event cannot reach the UI/consumer. The
-        // producer keeps draining only to forward the terminal `.completionInfo`
-        // decode stats (tok/s + token count) before throwing — tool-call turns
-        // must not drop their telemetry.
         #expect(
-            streamWithTools.contains("if pendingTool == nil, !s.isEmpty { continuation.yield(s) }"),
-            "Post-tool model text must be gated on `pendingTool == nil` so pseudo-tool prose is suppressed once a tool call is parsed, even while draining for end-of-step stats."
+            !streamWithTools.contains("var pendingTool: ServiceToolInvocation?"),
+            "The local streaming path must not hold a parsed tool invocation in pending state while draining for a later completionInfo event."
         )
         #expect(
             !afterToolCase.contains("pendingTools.append"),

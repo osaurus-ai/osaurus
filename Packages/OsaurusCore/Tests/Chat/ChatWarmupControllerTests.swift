@@ -316,6 +316,114 @@ struct ChatWarmupControllerCompletedRunTests {
         #expect(controller.state == .cold)
     }
 
+    @Test("errored run does not launch a hidden transcript warm-up")
+    func erroredRunDoesNotWarm() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [
+                ChatMessage(role: "system", content: "sys"),
+                ChatMessage(role: "user", content: "needs a tool"),
+                ChatMessage(
+                    role: "assistant",
+                    content: "",
+                    tool_calls: [
+                        ToolCall(
+                            id: "call_failed",
+                            type: "function",
+                            function: ToolCallFunction(
+                                name: "unstable_tool",
+                                arguments: #"{"bad":true}"#
+                            )
+                        )
+                    ],
+                    tool_call_id: nil
+                ),
+                ChatMessage(
+                    role: "tool",
+                    content: ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "bad input",
+                        tool: "unstable_tool"
+                    ),
+                    tool_calls: nil,
+                    tool_call_id: "call_failed"
+                ),
+            ],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|errored-tool-run"
+        )
+
+        let controller = ChatWarmupController()
+        controller.handleRunCompleted(
+            session: session,
+            wasCancelled: false,
+            hadError: true
+        )
+
+        try? await Task.sleep(for: .milliseconds(650))
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.requestCount == 0)
+        #expect(controller.state == .cold)
+    }
+
+    @Test("successful tool run does not launch a hidden transcript warm-up")
+    func successfulToolRunDoesNotWarmCompletedTranscript() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [
+                ChatMessage(role: "system", content: "sys"),
+                ChatMessage(role: "user", content: "read a file"),
+                ChatMessage(
+                    role: "assistant",
+                    content: "",
+                    tool_calls: [
+                        ToolCall(
+                            id: "call_ok",
+                            type: "function",
+                            function: ToolCallFunction(
+                                name: "read_file",
+                                arguments: #"{"path":"README.md"}"#
+                            )
+                        )
+                    ],
+                    tool_call_id: nil
+                ),
+                ChatMessage(
+                    role: "tool",
+                    content: ToolEnvelope.success(tool: "read_file", text: "ok"),
+                    tool_calls: nil,
+                    tool_call_id: "call_ok"
+                ),
+                ChatMessage(role: "assistant", content: "Done."),
+            ],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|successful-tool-run"
+        )
+
+        let controller = ChatWarmupController()
+        controller.handleRunCompleted(
+            session: session,
+            wasCancelled: false,
+            hadError: false,
+            hadToolActivity: true
+        )
+
+        try? await Task.sleep(for: .milliseconds(650))
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.requestCount == 0)
+        #expect(controller.state == .cold)
+    }
+
     @Test("successful run still refreshes the completed transcript checkpoint")
     func successfulRunStillWarms() async {
         let engine = WarmupRecordingEngine()

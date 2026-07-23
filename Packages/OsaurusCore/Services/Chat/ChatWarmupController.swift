@@ -290,19 +290,24 @@ final class ChatWarmupController: ObservableObject {
         }
     }
 
-    /// Re-warm the completed transcript only after a natural, successful run.
-    /// A user Stop intentionally abandons the active prompt; warming that
-    /// abandoned (often very large) turn immediately starts a second hidden
-    /// prefill after the UI has returned to idle. Besides wasting work, that
-    /// hidden generation owns the solo-generation lease and makes the next
-    /// chat appear permanently queued. Errors are excluded for the same
-    /// reason: the failed prompt is not a stable checkpoint to precompute.
+    /// Re-warm the completed transcript only after a natural, successful
+    /// plain-chat run. A user Stop intentionally abandons the active prompt;
+    /// warming that abandoned (often very large) turn immediately starts a
+    /// second hidden prefill after the UI has returned to idle. Besides
+    /// wasting work, that hidden generation owns the solo-generation lease and
+    /// makes the next chat appear permanently queued. Errors are excluded for
+    /// the same reason: the failed prompt is not a stable checkpoint to
+    /// precompute. Tool transcripts are also excluded: the real tool-loop
+    /// turns already store SSD-L2 blocks, while the post-success hidden
+    /// completed-transcript warm-up can cold-prefill a large tool history and
+    /// block the next visible user turn.
     func handleRunCompleted(
         session: ChatWarmupSessionContext,
         wasCancelled: Bool,
-        hadError: Bool
+        hadError: Bool,
+        hadToolActivity: Bool = false
     ) {
-        guard !wasCancelled, !hadError else {
+        guard !wasCancelled, !hadError, !hadToolActivity else {
             cancelScheduledWarmup()
             return
         }

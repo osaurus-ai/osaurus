@@ -92,7 +92,16 @@ enum LocalReasoningCapability {
             return .none
         }
         if let template = readChatTemplate(at: dir) {
-            return analyze(template: template)
+            let analyzed = analyze(template: template)
+            if let metadataDefault = readTemplateDefaultThinkingOn(at: dir) {
+                return Capability(
+                    supportsThinking: analyzed.supportsThinking,
+                    hasEnableThinkingKwarg: analyzed.hasEnableThinkingKwarg,
+                    templateInjectsThinkTag: analyzed.templateInjectsThinkTag,
+                    defaultThinkingOn: metadataDefault
+                )
+            }
+            return analyzed
         }
         // Fallback for JANG bundles that ship no chat template (DSV4-Flash
         // ships `encoding/encoding_dsv4.py` instead; the JANG converter
@@ -261,8 +270,51 @@ enum LocalReasoningCapability {
             supportsThinking: true,
             hasEnableThinkingKwarg: false,
             templateInjectsThinkTag: false,
-            defaultThinkingOn: false
+            defaultThinkingOn: jangReasoningDefaultThinkingOn(reasoning) ?? false
         )
+    }
+
+    /// Bundle metadata can override the Jinja fallback for omitted kwargs. Laguna
+    /// S 2.1 is the concrete case: its sidecar template says
+    /// `enable_thinking | default(false)`, but generation_config and
+    /// jang_config both stamp the serving default as thinking-on. The UI should
+    /// present that effective default, and request construction should still
+    /// send nothing until the user/API makes an explicit choice.
+    private static func readTemplateDefaultThinkingOn(at dir: URL) -> Bool? {
+        if let data = readSmallConfigFile(dir.appendingPathComponent("generation_config.json")),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let defaults = root["default_chat_template_kwargs"] as? [String: Any],
+            let enableThinking = defaults["enable_thinking"] as? Bool
+        {
+            return enableThinking
+        }
+
+        let jangURL = dir.appendingPathComponent("jang_config.json")
+        guard let data = readSmallConfigFile(jangURL),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let chat = root["chat"] as? [String: Any],
+            let reasoning = chat["reasoning"] as? [String: Any]
+        else {
+            return nil
+        }
+        return jangReasoningDefaultThinkingOn(reasoning)
+    }
+
+    private static func jangReasoningDefaultThinkingOn(_ reasoning: [String: Any]) -> Bool? {
+        if let enabled = reasoning["default_enabled"] as? Bool {
+            return enabled
+        }
+        if let mode = reasoning["default_mode"] as? String {
+            switch mode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "think", "thinking", "reason", "reasoning", "high", "max":
+                return true
+            case "chat", "direct", "none", "no_think", "nothink", "off":
+                return false
+            default:
+                break
+            }
+        }
+        return nil
     }
 
     static func readChatTemplate(at dir: URL) -> String? {
