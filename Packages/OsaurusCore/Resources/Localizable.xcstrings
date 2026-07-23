@@ -77053,7 +77053,38 @@
       }
     },
     "Group Thinking & Tool Activity" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Denken & Tool-Aktivität gruppieren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "생각 및 도구 활동 그룹화"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Группировать размышления и действия инструментов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分组显示思考与工具活动"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分組顯示思考與工具活動"
+          }
+        }
+      }
     },
     "Guides & Policies" : {
       "localizations" : {
