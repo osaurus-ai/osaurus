@@ -559,7 +559,7 @@ struct OpenAICompatibleStreamParserTests {
     @Test func service_failsUnparseableChunkWhileReceivingToolArguments() {
         var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
         let toolStart =
-            #"{"id":"c1","created":1,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"file_write","arguments":"{\"pa"}}]}}]}"#
+            #"{"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"file_write","arguments":"{\"pa"}}]}}]}"#
         _ = RemoteProviderService.handleStreamEvent(
             jsonData: Data(toolStart.utf8),
             providerType: .openaiLegacy,
