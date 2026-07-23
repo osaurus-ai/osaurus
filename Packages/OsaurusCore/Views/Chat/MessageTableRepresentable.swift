@@ -619,14 +619,11 @@ extension MessageTableRepresentable {
             sessionStore.toggle(id)
             expandedIds = sessionStore.expandedIds
 
-            // find row: block id (thinking, etc.) or tool call id inside a toolCallGroup block
+            // find row: block id (thinking, etc.), tool call id inside a
+            // toolCallGroup block, or either nested in an activity rollup
             let row = blockIds.firstIndex(where: { bid in
                 guard let b = blockLookup[bid] else { return false }
-                if b.id == id { return true }
-                if case .toolCallGroup(let calls) = b.kind {
-                    return calls.contains { $0.call.id == id }
-                }
-                return false
+                return b.rendersToggleId(id)
             })
 
             if let row {
@@ -1622,6 +1619,12 @@ extension MessageTableRepresentable {
                 if case .paragraph(_, _, true, _) = $0.kind { return true }
                 if case .thinking(_, _, true, _) = $0.kind { return true }
                 if case .typingIndicator = $0.kind { return true }
+                if case let .activityGroup(children) = $0.kind {
+                    return children.contains {
+                        if case .thinking(_, _, true, _) = $0.kind { return true }
+                        return false
+                    }
+                }
                 return false
             })?.id
         }
