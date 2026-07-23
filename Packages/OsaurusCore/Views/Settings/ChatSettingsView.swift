@@ -38,6 +38,10 @@ struct ChatSettingsView: View {
     @State private var tempChatMaxToolAttempts: String = ""
     @State private var tempEnableClipboardMonitoring: Bool = false
     @State private var tempWarmModelsOnLoad: Bool = true
+    /// AI-generated chat titles from the first completed exchange. Default
+    /// off while the feature bakes across releases (see
+    /// `ChatConfiguration.autoGenerateChatTitles`).
+    @State private var tempAutoGenerateChatTitles: Bool = false
     /// Smooth streaming: pace the visible reveal at ~180 tok/s regardless
     /// of how fast / bursty the network delivers tokens. Default on.
     /// Bound to `UserDefaults` key `chatSmoothStreamingEnabled` which
@@ -288,6 +292,14 @@ struct ChatSettingsView: View {
                 )
 
                 SettingsToggle(
+                    title: L("Automatically Name Chats"),
+                    description:
+                        "Use the core model to generate a short descriptive title after a chat's first response, replacing the first-message preview. Runs in the background and never interrupts your conversation; manual renames always win.",
+                    isOn: $tempAutoGenerateChatTitles
+                )
+                .settingsLandingAnchor("settings.chat.autoGenerateTitles")
+
+                SettingsToggle(
                     title: L("Show Notch Overlay on Menu Bar"),
                     description:
                         "Place the task-progress notch overlay on the menu bar. When off, it sits just below the menu bar so it never covers the clock, battery, or other system status controls.",
@@ -466,6 +478,7 @@ struct ChatSettingsView: View {
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
         tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
         tempWarmModelsOnLoad = chat.warmModelsOnLoad
+        tempAutoGenerateChatTitles = chat.autoGenerateChatTitles
         // Storage convention: empty string = "use the built-in default."
         // The editor never displays an empty state — we hydrate it with the
         // built-in default so the text is editable in place. `saveConfiguration`
@@ -494,6 +507,7 @@ struct ChatSettingsView: View {
         tempChatMaxToolAttempts = ""
         tempEnableClipboardMonitoring = chatDefaults.enableClipboardMonitoring
         tempWarmModelsOnLoad = chatDefaults.warmModelsOnLoad
+        tempAutoGenerateChatTitles = chatDefaults.autoGenerateChatTitles
         tempGreetingPersona = GenerativeGreetingService.defaultPersonaInstruction
 
         showSuccess("Chat settings restored to defaults")
@@ -511,6 +525,7 @@ struct ChatSettingsView: View {
         var maxToolAttempts: String
         var enableClipboardMonitoring: Bool
         var warmModelsOnLoad: Bool
+        var autoGenerateChatTitles: Bool
         var greetingPersona: String
     }
 
@@ -524,6 +539,7 @@ struct ChatSettingsView: View {
             maxToolAttempts: tempChatMaxToolAttempts,
             enableClipboardMonitoring: tempEnableClipboardMonitoring,
             warmModelsOnLoad: tempWarmModelsOnLoad,
+            autoGenerateChatTitles: tempAutoGenerateChatTitles,
             greetingPersona: tempGreetingPersona
         )
     }
@@ -597,6 +613,7 @@ struct ChatSettingsView: View {
         chatCfg.maxToolAttempts = parsedMaxToolAttempts
         chatCfg.enableClipboardMonitoring = tempEnableClipboardMonitoring
         chatCfg.warmModelsOnLoad = tempWarmModelsOnLoad
+        chatCfg.autoGenerateChatTitles = tempAutoGenerateChatTitles
         chatCfg.greetingPersona = {
             // Collapse an unedited built-in default back to "" so storage stays
             // in "inherit the default" mode.

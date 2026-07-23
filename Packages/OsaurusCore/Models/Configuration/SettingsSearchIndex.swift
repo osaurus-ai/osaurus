@@ -145,6 +145,13 @@ public enum SettingsSearchIndex {
             keywords: ["persona", "instructions", "system prompt"]
         ),
         .init(
+            id: "settings.chat.autoGenerateTitles",
+            tab: .chat,
+            section: "Chat",
+            title: "Automatically Name Chats",
+            keywords: ["title", "auto title", "rename", "chat name", "summary"]
+        ),
+        .init(
             id: "settings.chat.temperature",
             tab: .chat,
             section: "Generation",
