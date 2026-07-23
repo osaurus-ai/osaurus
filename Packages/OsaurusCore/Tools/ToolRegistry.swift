@@ -745,14 +745,14 @@ public final class ToolRegistry: ObservableObject {
             let loadableCodes: Set<ToolAvailabilityReasonCode> = [
                 .available, .alreadyLoaded, .loadableViaCapabilitiesLoad,
             ]
-            let availability = availability(forTool: name, agentAllowedNames: agentAllowed)
+            let toolAvailability = availability(forTool: name, agentAllowedNames: agentAllowed)
             // The default agent's capabilities_load is gated to the configure
             // write tools, so the hint would only steer it into a rejected
             // load for anything else.
             let loadGateAllows =
                 ChatExecutionContext.currentAgentId != Agent.defaultId
                 || Self.configureWriteToolNames.contains(name)
-            if loadGateAllows, loadableCodes.isSuperset(of: availability.reasonCodes) {
+            if loadGateAllows, loadableCodes.isSuperset(of: toolAvailability.reasonCodes) {
                 return ToolErrorEnvelope(
                     kind: .toolNotFound,
                     reason:
