@@ -3030,48 +3030,102 @@ final class ChatSession: ObservableObject {
         )
     }
 
+    /// Outcome of the auto-title eligibility check for one clean run
+    /// completion. Split from the side effects so the guard logic is
+    /// testable without a live `ChatSession`.
+    enum AutoTitleDecision: Equatable {
+        /// Not eligible this time, but a later run completion may be
+        /// (setting off, dirty run, no completed exchange yet).
+        case skip
+        /// The user renamed the chat — latch so no future run re-titles it.
+        case latchAndSkip
+        /// Fire a generation from the first exchange. `previewTitle` is the
+        /// automatic title the generated one may replace, re-checked at
+        /// apply time in case the user renames mid-generation.
+        case generate(userText: String, assistantText: String, previewTitle: String)
+    }
+
+    /// Pure eligibility check for `maybeGenerateAutoTitle`. A title is only
+    /// ever generated for an interactive chat's clean run completion, while
+    /// the title is still automatic (the first-message preview or the
+    /// untouched default — matching those is how we know the user hasn't
+    /// renamed), and only once a non-empty assistant response exists.
+    nonisolated static func autoTitleDecision(
+        alreadyStarted: Bool,
+        settingEnabled: Bool,
+        runCompletedCleanly: Bool,
+        isChatSource: Bool,
+        currentTitle: String,
+        turns: [ChatTurnData]
+    ) -> AutoTitleDecision {
+        guard !alreadyStarted, settingEnabled, runCompletedCleanly, isChatSource else {
+            return .skip
+        }
+        let previewTitle = ChatSessionData.generateTitle(from: turns)
+        guard currentTitle == previewTitle || currentTitle == "New Chat" else {
+            return .latchAndSkip
+        }
+        guard
+            let userTurn = turns.first(where: { $0.role == .user }),
+            let assistantTurn = turns.first(where: {
+                $0.role == .assistant
+                    && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            })
+        else { return .skip }
+        return .generate(
+            userText: userTurn.content,
+            assistantText: assistantTurn.content,
+            previewTitle: previewTitle
+        )
+    }
+
     /// Kick off a background AI title generation after the chat's first
     /// completed exchange, when the setting is on and the user hasn't renamed
     /// the chat. Fire-and-forget: the awaits suspend rather than block the
     /// main actor, and every failure silently keeps the preview title that
-    /// `save()` already applied. Runs once per session (`autoTitleGenerationStarted`).
+    /// `save()` already applied. `autoTitleGenerationStarted` latches per
+    /// attempt — but a failed generation re-arms it, so a transient miss
+    /// (timeout, background-load refusal while another model is resident,
+    /// open breaker) gets one fresh attempt on each later clean completion.
     private func maybeGenerateAutoTitle() {
-        guard !autoTitleGenerationStarted else { return }
-        // A cancelled or errored run isn't a representative exchange; wait
-        // for the next clean completion.
-        guard !stopRequested, lastStreamError == nil else { return }
-        guard AppConfiguration.shared.chatConfig.autoGenerateChatTitles else { return }
-        guard let sid = sessionId, source == .chat else { return }
-
-        let turnData = turns.map { ChatTurnData(from: $0) }
-        // Only replace an automatic title. Matching the preview (or the
-        // untouched default) is how we know the user hasn't renamed.
-        let previewTitle = ChatSessionData.generateTitle(from: turnData)
-        guard title == previewTitle || title == "New Chat" else {
-            autoTitleGenerationStarted = true
+        guard let sid = sessionId else { return }
+        let decision = Self.autoTitleDecision(
+            alreadyStarted: autoTitleGenerationStarted,
+            settingEnabled: AppConfiguration.shared.chatConfig.autoGenerateChatTitles,
+            // A cancelled or errored run isn't a representative exchange;
+            // wait for the next clean completion.
+            runCompletedCleanly: !stopRequested && lastStreamError == nil,
+            isChatSource: source == .chat,
+            currentTitle: title,
+            turns: turns.map { ChatTurnData(from: $0) }
+        )
+        switch decision {
+        case .skip:
             return
-        }
-        guard
-            let userTurn = turnData.first(where: { $0.role == .user }),
-            let assistantTurn = turnData.first(where: {
-                $0.role == .assistant
-                    && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            })
-        else { return }
-
-        autoTitleGenerationStarted = true
-        let fallbackModel = selectedModel
-        let userText = userTurn.content
-        let assistantText = assistantTurn.content
-        Task { [weak self] in
-            guard
-                let generated = await ChatTitleService.shared.generateTitle(
-                    userMessage: userText,
-                    assistantResponse: assistantText,
-                    fallbackModel: fallbackModel
-                )
-            else { return }
-            self?.applyGeneratedTitle(generated, to: sid, ifStillTitled: previewTitle)
+        case .latchAndSkip:
+            autoTitleGenerationStarted = true
+        case .generate(let userText, let assistantText, let previewTitle):
+            autoTitleGenerationStarted = true
+            let fallbackModel = selectedModel
+            Task { [weak self] in
+                guard
+                    let generated = await ChatTitleService.shared.generateTitle(
+                        userMessage: userText,
+                        assistantResponse: assistantText,
+                        fallbackModel: fallbackModel
+                    )
+                else {
+                    // Transient failure — re-arm for the next clean run
+                    // completion, but only while this ChatSession still
+                    // shows the same session; after a switch the flag
+                    // belongs to the newly loaded session.
+                    if let self, self.sessionId == sid {
+                        self.autoTitleGenerationStarted = false
+                    }
+                    return
+                }
+                self?.applyGeneratedTitle(generated, to: sid, ifStillTitled: previewTitle)
+            }
         }
     }
 
