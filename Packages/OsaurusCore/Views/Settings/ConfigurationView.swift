@@ -25,6 +25,7 @@ struct ConfigurationView: View {
     @State private var tempCoreModelProvider: String = ""
     @State private var tempCoreModelName: String = ""
     @State private var coreModelPickerItems: [ModelPickerItem] = []
+    @State private var showCoreModelPicker = false
 
     // Server / Local Inference settings now live in the Server →
     // Settings tab. Their state was deleted with the inline UI.
@@ -832,27 +833,93 @@ struct ConfigurationView: View {
         )
     }
 
+    /// Bridges the ""-means-fallback identifier binding to the picker's
+    /// optional selection.
+    private var coreModelSelectionBinding: Binding<String?> {
+        Binding(
+            get: {
+                let id = coreModelIdentifierBinding.wrappedValue
+                return id.isEmpty ? nil : id
+            },
+            set: { coreModelIdentifierBinding.wrappedValue = $0 ?? "" }
+        )
+    }
+
+    /// Trigger button + rich `ModelPickerView` popover. Replaced the native
+    /// `Picker`, which dumped every provider's models into one flat context
+    /// menu; the rich picker brings provider tabs and unified search. The
+    /// Add Model shortcut is hidden — we're already inside the management
+    /// window, so jumping tabs mid-selection would be disorienting.
     private var coreModelPicker: some View {
-        Picker("", selection: coreModelIdentifierBinding) {
-            // Empty tag = "use chat model fallback". Renamed from the
-            // previous "None" footgun (GitHub issue #823).
-            Text("Use chat model (default)", bundle: .module).tag("")
-            // Surface persisted-but-uninstalled values (e.g. "foundation"
-            // on macOS < 26, a disconnected remote model) with an
-            // "(unavailable)" hint so the row isn't an unlabelled orphan.
-            if !coreModelIdentifierBinding.wrappedValue.isEmpty,
-                !coreModelPickerItems.contains(where: { $0.id == coreModelIdentifierBinding.wrappedValue })
-            {
-                Text("\(coreModelIdentifierBinding.wrappedValue) (unavailable)", bundle: .module)
-                    .tag(coreModelIdentifierBinding.wrappedValue)
+        let currentId = coreModelIdentifierBinding.wrappedValue
+        let currentItem = coreModelPickerItems.first { $0.id == currentId }
+        return HStack(spacing: 8) {
+            Button {
+                showCoreModelPicker.toggle()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "cube.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(currentId.isEmpty ? theme.tertiaryText : theme.accentColor)
+                    if currentId.isEmpty {
+                        // Empty = "use chat model fallback". Renamed from the
+                        // previous "None" footgun (GitHub issue #823).
+                        Text("Use chat model (default)", bundle: .module)
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.placeholderText)
+                    } else if let currentItem {
+                        Text(currentItem.displayName)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+                            .lineLimit(1)
+                    } else {
+                        // Persisted-but-uninstalled values (e.g. "foundation"
+                        // on macOS < 26, a disconnected remote model) keep an
+                        // "(unavailable)" hint so the row isn't an orphan.
+                        Text("\(currentId) (unavailable)", bundle: .module)
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.secondaryText)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
             }
-            ForEach(coreModelPickerItems) { option in
-                Text(option.displayName)
-                    .tag(option.id)
+            .buttonStyle(PlainButtonStyle())
+            .popover(isPresented: $showCoreModelPicker, arrowEdge: .bottom) {
+                ModelPickerView(
+                    options: coreModelPickerItems,
+                    selectedModel: coreModelSelectionBinding,
+                    agentId: nil,
+                    showsAddModelButton: false,
+                    onDismiss: { showCoreModelPicker = false }
+                )
+            }
+
+            if !currentId.isEmpty {
+                Button {
+                    coreModelIdentifierBinding.wrappedValue = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .buttonStyle(.plain)
+                .localizedHelp("Use chat model (default)")
             }
         }
-        .labelsHidden()
-        .frame(maxWidth: 280)
+        .frame(maxWidth: 320)
     }
 }
 

@@ -186799,6 +186799,9 @@
         }
       }
     },
+    "Use the core model to generate a short descriptive title after a chat's first response, replacing the first-message preview. Runs in the background and never interrupts your conversation; manual renames always win." : {
+
+    },
     "Use the inline Sign In or token prompt." : {
       "localizations" : {
         "de" : {
