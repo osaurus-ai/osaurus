@@ -185,11 +185,17 @@ final class StreamingDeltaProcessor {
 
         if smoothStreamingEnabled && pendingCount > 0 {
             startPacingTimerIfNeeded()
-            // Block here until `pacingTick` empties the buffer and
-            // resumes us. The processor stays alive for the duration
-            // because the surrounding `send(...)` is awaiting.
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                self.pacingDoneContinuation = continuation
+            // Drain one tick synchronously. Short final tails should not
+            // depend on any future run-loop timer delivery before ChatView can
+            // leave its streaming state.
+            pacingTick()
+            if pendingCount > 0 {
+                // Block here until `pacingTick` empties the buffer and
+                // resumes us. The processor stays alive for the duration
+                // because the surrounding `send(...)` is awaiting.
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    self.pacingDoneContinuation = continuation
+                }
             }
         } else if pendingCount > 0 {
             // Non-smooth path: drain immediately.
@@ -240,6 +246,12 @@ final class StreamingDeltaProcessor {
         pacingTimer = nil
     }
 
+    private func resumePacingDoneIfNeeded() {
+        guard let cont = pacingDoneContinuation else { return }
+        pacingDoneContinuation = nil
+        cont.resume()
+    }
+
     /// Drain a chunk from the head of `deltaBuffer` into the turn + push
     /// one sync. Chunk size adapts to the pending buffer so a giant
     /// response that arrived in one shot still finishes typing out within
@@ -251,10 +263,7 @@ final class StreamingDeltaProcessor {
         if pending == 0 {
             stopPacingTimer()
             // Wake up `finalize()` if it's waiting for the tail to drain.
-            if let cont = pacingDoneContinuation {
-                pacingDoneContinuation = nil
-                cont.resume()
-            }
+            resumePacingDoneIfNeeded()
             return
         }
         let scaled = pending / Self.pacingDrainTicks
@@ -265,6 +274,15 @@ final class StreamingDeltaProcessor {
         // UI re-apply follows the adaptive `syncIntervalMs` cadence. Any
         // residual pending content is synced by `finalize()`.
         syncIfNeeded(now: Date())
+        if pendingCount == 0 {
+            // The last visible chunk was just consumed. Do not require one
+            // more run-loop timer tick to finish the chat run: if that tick is
+            // coalesced or never delivered, ChatView keeps `isStreaming=true`
+            // after the answer is fully visible and the red Stop button never
+            // clears.
+            stopPacingTimer()
+            resumePacingDoneIfNeeded()
+        }
     }
 
     /// Pending (unrevealed) character count. O(1) — replaces the O(n)

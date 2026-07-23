@@ -1405,6 +1405,7 @@ struct RuntimePolicySourceTests {
     @Test("Thinking control persists semantic thinking state, not raw inverted booleans")
     func thinkingControlPersistsSemanticThinkingState() throws {
         let floatingInput = try Self.source("Views/Chat/FloatingInputCard.swift")
+        let modelPicker = try Self.source("Views/Model/ModelPickerView.swift")
 
         #expect(
             floatingInput.contains("ModelProfileRegistry.thinkingEnabled("),
@@ -1423,12 +1424,20 @@ struct RuntimePolicySourceTests {
             "The Thinking control must not toggle the raw stored bool directly; that reintroduces first-click explicit no-thinking for inverted profiles"
         )
         #expect(
-            floatingInput.contains("thinkingToggleChip(compact: compact)"),
-            "Toggle-only reasoning models must expose a standalone Thinking control in the ordinary chat footer, not only inside the model picker"
+            !floatingInput.contains("thinkingToggleChip"),
+            "The ordinary chat footer must not render a second Thinking toggle; the user-facing switch lives in the model picker's Model Options section"
         )
         #expect(
-            floatingInput.contains("persistThinkingOverride(!isEnabled, for: model)"),
-            "The footer Thinking control must use the same semantic persistence path as the picker"
+            modelPicker.contains("Text(\"Model Options\", bundle: .module)"),
+            "ModelPickerView must visibly label the per-model option section where Thinking is controlled"
+        )
+        #expect(
+            modelPicker.contains("thinkingOptionRow(thinking)"),
+            "The model picker must render the semantic Thinking row in Model Options"
+        )
+        #expect(
+            floatingInput.contains("persistThinkingOverride(enabled, for: model)"),
+            "The picker Thinking control must persist through the semantic registry path"
         )
     }
 

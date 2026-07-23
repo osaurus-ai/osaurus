@@ -36,6 +36,8 @@ public enum WhatsNewAction: Hashable, Sendable {
     case openSearchSettings
     /// Open Management → Knowledge (collections list + curation inbox).
     case openKnowledgeSettings
+    /// Open Settings → Browser (Browser Use sessions + guidance).
+    case openBrowserSettings
 }
 
 public struct WhatsNewPage: Identifiable, Hashable, Sendable {
@@ -99,155 +101,10 @@ public enum WhatsNewContent {
     /// here whose `version` matches `CFBundleShortVersionString` for each
     /// release that should announce changes on first launch after update.
     public static let releases: [WhatsNewRelease] = [
-        privacyFilter_0_19_0,
-        osaurusCloud_0_20_1,
-        computerUse_0_20_7,
-        imageAndSpawn_0_21_0,
         nativeSearch_0_21_11,
         knowledge_0_22_7,
+        browserUse_0_22_9,
     ]
-
-    /// First-launch announcement for the Privacy Filter feature.
-    /// Three pages: what it does, how the review flow keeps you in
-    /// control, and where to tune the regex catalog. The last page's
-    /// CTA deep-links to Settings → Privacy via `openPrivacySettings`.
-    private static let privacyFilter_0_19_0 = WhatsNewRelease(
-        version: "0.19.0",
-        pages: [
-            WhatsNewPage(
-                id: "privacy-filter-0.19.0:summary",
-                title: "Privacy Filter",
-                description:
-                    "Before anything leaves your Mac for a cloud model, Osaurus can scan for phone numbers, emails, names, addresses, and other sensitive data and swap them for placeholders. Responses are restored on the way back.",
-                systemImage: "hand.raised.fill"
-            ),
-            WhatsNewPage(
-                id: "privacy-filter-0.19.0:review",
-                title: "You stay in control",
-                description:
-                    "Every redaction is shown to you before the request leaves — approve, edit, or send anyway. Replacements are highlighted inline in chat so you always know what shipped.",
-                systemImage: "checkmark.shield.fill"
-            ),
-            WhatsNewPage(
-                id: "privacy-filter-0.19.0:customize",
-                title: "Tune what's scrubbed",
-                description:
-                    "Toggle built-in categories, add your own regex rules, and choose whether to auto-approve familiar redactions. Cloud-only — local models never round-trip through the filter.",
-                systemImage: "slider.horizontal.3",
-                actionLabel: "Open Privacy settings",
-                action: .openPrivacySettings
-            ),
-        ]
-    )
-
-    /// First-launch announcement for Osaurus Cloud.
-    /// The final CTA deep-links to Management → Credits so users can fund
-    /// Router usage and try hosted models immediately.
-    private static let osaurusCloud_0_20_1 = WhatsNewRelease(
-        version: "0.20.1",
-        pages: [
-            WhatsNewPage(
-                id: "osaurus-cloud-0.20.1:summary",
-                title: "Osaurus Cloud is here",
-                description:
-                    "Use hosted models from Osaurus without bringing your own API key. Add credits once, pick an Osaurus model, and keep your agents, tools, memory, and local workflow exactly where they are.",
-                systemImage: "cloud.fill"
-            ),
-            WhatsNewPage(
-                id: "osaurus-cloud-0.20.1:privacy",
-                title: "Private by design",
-                description:
-                    "Osaurus Cloud doesn't store the content of your prompts or responses — only the usage metadata needed to bill credits. Your chats stay on your Mac, and requests are served by the upstream provider for the model you pick, under its own policy.",
-                systemImage: "lock.shield.fill"
-            ),
-            WhatsNewPage(
-                id: "osaurus-cloud-0.20.1:feedback",
-                title: "We want your feedback",
-                description:
-                    "This is the first Osaurus Cloud launch. Please tell us what feels fast, what feels confusing, and which models or credit controls you want next.",
-                systemImage: "bubble.left.and.bubble.right.fill",
-                actionLabel: "Open Credits",
-                action: .openCredits
-            ),
-        ]
-    )
-
-    /// First-launch announcement for Computer Use (experimental).
-    /// Three pages: what it does, the safe-by-default autonomy gate, and the
-    /// local-first perception + opt-in screen context posture. The final CTA
-    /// deep-links to Settings → Computer Use so users can enable it per agent
-    /// and tune autonomy immediately.
-    private static let computerUse_0_20_7 = WhatsNewRelease(
-        version: "0.20.7",
-        pages: [
-            WhatsNewPage(
-                id: "computer-use-0.20.7:summary",
-                title: "Computer Use (experimental)",
-                description:
-                    "Let a custom agent operate a macOS app to reach a goal — fill a form, flip a setting, pull text off the screen. It works primarily from the accessibility tree and only falls back to a screenshot when an element can't be resolved. Off by default; enabled per agent.",
-                systemImage: "macwindow"
-            ),
-            WhatsNewPage(
-                id: "computer-use-0.20.7:safety",
-                title: "Safe by default",
-                description:
-                    "Every action is classified — read, navigate, edit, or consequential — and passes an autonomy gate first. The default balanced preset runs reads and navigation but pauses for your confirmation before edits or anything consequential (send, delete, purchase). Add a per-app or per-agent ceiling, or an allowlist of apps it may touch.",
-                systemImage: "checkmark.shield.fill"
-            ),
-            WhatsNewPage(
-                id: "computer-use-0.20.7:privacy",
-                title: "Local-first and private",
-                description:
-                    "Perception stays on your Mac unless you opt in to Cloud vision — and even then frames are OCR-scrubbed for PII first. You can also opt in to Screen context, which shares a frozen, text-only snapshot of what you're doing with chat and routes it through the Privacy Filter before any cloud send.",
-                systemImage: "lock.fill",
-                actionLabel: "Open Computer Use settings",
-                action: .openComputerUseSettings
-            ),
-        ]
-    )
-
-    /// First-launch announcement for 0.21.0's two headline features.
-    /// Two pages each: on-device Image Generation (lineup + the in-chat
-    /// `image` tool, CTA → Image Generation) and Spawn subagents (delegate
-    /// to a local/remote model or a saved agent + the RAM-safe handoff,
-    /// CTA → Settings where the Subagents card lives).
-    private static let imageAndSpawn_0_21_0 = WhatsNewRelease(
-        version: "0.21.0",
-        pages: [
-            WhatsNewPage(
-                id: "image-generation-0.21.0:summary",
-                title: "Generate images, locally",
-                description:
-                    "Osaurus can now create images entirely on your Mac. Install a local image model — z-image-turbo, FLUX, Qwen-Image, or Ideogram — and generate from a text prompt with control over size, seed, and negative prompts. Nothing leaves your machine.",
-                systemImage: "photo.artframe"
-            ),
-            WhatsNewPage(
-                id: "image-generation-0.21.0:chat",
-                title: "Right inside your chat",
-                description:
-                    "Just ask, and your chat model generates or edits a picture and renders it inline, without leaving the conversation. Hand it a source image to edit instead of starting from scratch.",
-                systemImage: "wand.and.stars",
-                actionLabel: "Open Image Generation",
-                action: .openImageGeneration
-            ),
-            WhatsNewPage(
-                id: "spawn-0.21.0:summary",
-                title: "Spawn a subagent",
-                description:
-                    "Your chat can hand a bounded task to another model — local or remote — or to one of your saved agents, and get a compact result back. Perfect for offloading research, coding, or analysis to a specialist without derailing the conversation.",
-                systemImage: "person.2.fill"
-            ),
-            WhatsNewPage(
-                id: "spawn-0.21.0:safety",
-                title: "Memory-safe and in your control",
-                description:
-                    "When a subagent runs on a local model, Osaurus unloads your chat model, runs the job, then reloads and continues — so two large models never fight for memory. Off by default: you approve the first spawn, and pick models and permissions per agent.",
-                systemImage: "memorychip",
-                actionLabel: "Open Subagent settings",
-                action: .openSubagentSettings
-            ),
-        ]
-    )
 
     /// First-launch announcement for native web search in 0.21.11.
     /// Two pages: search now works out of the box (superseding the
@@ -309,6 +166,44 @@ public enum WhatsNewContent {
                 systemImage: "checkmark.seal.fill",
                 actionLabel: "Open Knowledge",
                 action: .openKnowledgeSettings
+            ),
+        ]
+    )
+
+    /// First-launch announcement for native Browser Use in 0.22.9.
+    /// Three pages: what it does and the persistent per-agent sessions
+    /// (superseding the osaurus.browser plugin, whose profiles were
+    /// migrated automatically), the safe-by-default consent gate plus the
+    /// direct sign-in window, and how to turn it on per custom agent.
+    /// The final CTA deep-links to Settings → Browser.
+    private static let browserUse_0_22_9 = WhatsNewRelease(
+        version: "0.22.9",
+        pages: [
+            WhatsNewPage(
+                id: "browser-use-0.22.9:summary",
+                title: "Browser Use",
+                titlePrefix: "Introducing",
+                description:
+                    "Your agents can now browse the web for you — navigating pages, reading content, and filling forms, with every step shown in a live feed. Each agent gets its own persistent browser session, so cookies and sign-ins carry over between chats but are never shared with other agents or your regular browser. If you used the browser plugin before, your sessions were migrated automatically.",
+                systemImage: "globe"
+            ),
+            WhatsNewPage(
+                id: "browser-use-0.22.9:safety",
+                title: "Safe by default",
+                eyebrow: "Introducing Browser Use",
+                description:
+                    "Reading and ordinary navigation run automatically, following your Computer Use autonomy level — but typing pauses for your approval, and submitting, purchasing, sending, or clearing data always asks first. Sign-ins happen in a window you type into directly, so agents never see your passwords. And you can stop a run any time from the feed.",
+                systemImage: "checkmark.shield.fill"
+            ),
+            WhatsNewPage(
+                id: "browser-use-0.22.9:enable",
+                title: "Turn it on per agent",
+                eyebrow: "Introducing Browser Use",
+                description:
+                    "Browser Use is off by default and only custom agents can use it. Open a custom agent's Subagents tab and flip on Browser Use — optionally with a dedicated model for browsing. Review or reset each agent's session in the new Browser settings tab.",
+                systemImage: "person.2.fill",
+                actionLabel: "Open Browser settings",
+                action: .openBrowserSettings
             ),
         ]
     )
