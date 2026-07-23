@@ -222,12 +222,20 @@ final class ChatSessionsManager: ObservableObject {
     // MARK: - Private
 
     /// Insert or replace a session in the in-memory array, maintaining updatedAt descending order.
+    ///
+    /// Built as one assignment (not remove-then-insert) so `$sessions`
+    /// observers see a single emission per upsert and never a transient
+    /// state with the session absent — subscribers that race the mutation
+    /// (the willSet-timing hazard documented on
+    /// `ChatWindowState.observeSessionsManager`) otherwise capture the gap.
     private func upsertInMemory(_ session: ChatSessionData) {
-        if let index = sessions.firstIndex(where: { $0.id == session.id }) {
-            sessions.remove(at: index)
+        var updated = sessions
+        if let index = updated.firstIndex(where: { $0.id == session.id }) {
+            updated.remove(at: index)
         }
         // Insert at the correct position to maintain updatedAt descending order
-        let insertIndex = sessions.firstIndex(where: { $0.updatedAt < session.updatedAt }) ?? sessions.endIndex
-        sessions.insert(session, at: insertIndex)
+        let insertIndex = updated.firstIndex(where: { $0.updatedAt < session.updatedAt }) ?? updated.endIndex
+        updated.insert(session, at: insertIndex)
+        sessions = updated
     }
 }

@@ -584,7 +584,20 @@ final class ChatWindowState: ObservableObject {
         sessionsCancellable = ChatSessionsManager.shared.$sessions
             .dropFirst()
             .sink { [weak self] _ in
-                self?.refreshSessions()
+                // `@Published` emits in willSet (see the warning on
+                // `applyAgentsUpdate`): during this callback the manager's
+                // storage still holds the OLD array, and `refreshSessions()`
+                // re-reads that storage. Refreshing synchronously here
+                // captured mid-mutation state — after `upsertInMemory`'s
+                // remove+insert pair, the LAST emission observed the list
+                // with the session removed but not yet re-inserted, so the
+                // sidebar latched onto a snapshot missing a live chat until
+                // some later refresh happened to run (never, for the quiet
+                // auto-title rename). Hop one main-actor turn so the read
+                // sees the post-mutation array.
+                Task { @MainActor [weak self] in
+                    self?.refreshSessions()
+                }
             }
     }
 
