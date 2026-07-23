@@ -1130,6 +1130,10 @@ extension ContentBlock {
         }
     }
 
+    /// Posted by Chat settings when the rollup toggle flips, so open chat
+    /// sessions rebuild their visible blocks with the new grouping.
+    static let activityRollupSettingChanged = Notification.Name("activityRollupSettingChanged")
+
     private static func assignPositions(to blocks: [ContentBlock]) -> [ContentBlock] {
         guard !blocks.isEmpty else { return blocks }
         return blocks.enumerated().map { index, block in

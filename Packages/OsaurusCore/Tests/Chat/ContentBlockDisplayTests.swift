@@ -222,6 +222,55 @@ struct ContentBlockDisplayTests {
         #expect(artifact?.hostPath == "/tmp/green-apple.png")
     }
 
+    @Test
+    func rollupActivity_groupsConsecutiveThinkingAndToolRuns() {
+        let turn1 = UUID()
+        let turn2 = UUID()
+        let thinking = ContentBlock.thinking(
+            turnId: turn1, index: 0, text: "reasoning", isStreaming: false,
+            duration: 1.2, position: .middle
+        )
+        let tools = ContentBlock.toolCallGroup(turnId: turn2, calls: [], position: .middle)
+        let answer = ContentBlock.paragraph(
+            turnId: turn2, index: 0, text: "answer", isStreaming: false,
+            role: .assistant, position: .last
+        )
+
+        let rolled = ContentBlock.rollupActivityBlocks([thinking, tools, answer])
+
+        #expect(rolled.count == 2)
+        guard case let .activityGroup(children) = rolled[0].kind else {
+            Issue.record("expected leading activityGroup, got \(rolled[0].kind)")
+            return
+        }
+        #expect(children.map(\.id) == [thinking.id, tools.id])
+        #expect(rolled[0].id == ContentBlock.activityGroupId(firstChildId: thinking.id))
+        #expect(rolled[0].turnId == turn1)
+        #expect(rolled[1].id == answer.id)
+        #expect(
+            ContentBlock.enclosingActivityGroupId(forChildId: thinking.id, in: rolled)
+                == rolled[0].id
+        )
+    }
+
+    @Test
+    func rollupActivity_leavesSingleBlocksAndOtherKindsBare() {
+        let turnId = UUID()
+        let thinking = ContentBlock.thinking(
+            turnId: turnId, index: 0, text: "reasoning", isStreaming: true,
+            duration: nil, position: .middle
+        )
+        let answer = ContentBlock.paragraph(
+            turnId: turnId, index: 0, text: "answer", isStreaming: false,
+            role: .assistant, position: .last
+        )
+
+        let rolled = ContentBlock.rollupActivityBlocks([thinking, answer])
+
+        #expect(rolled.map(\.id) == [thinking.id, answer.id])
+        #expect(ContentBlock.enclosingActivityGroupId(forChildId: thinking.id, in: rolled) == nil)
+    }
+
     private static func enrichedArtifactMarker(
         filename: String,
         mimeType: String,

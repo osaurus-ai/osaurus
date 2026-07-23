@@ -512,6 +512,7 @@ final class ChatSession: ObservableObject {
     /// this session's `sessionId.uuidString` to avoid cross-window
     /// leakage when multiple chats are open.
     nonisolated(unsafe) private var privacyRedactionsObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var activityRollupObserver: NSObjectProtocol?
     /// Observer for `StorageMutationGate.didFinishMutating`. The preview
     /// composition reads the agent DB, which is deferred while a storage-key
     /// rotation is in flight (so the main thread never parks on the gate's
@@ -646,6 +647,17 @@ final class ChatSession: ObservableObject {
                     residentModelNames: residentModelNames
                 )
             }
+        }
+
+        // Re-derive visible blocks when the activity-rollup toggle flips in
+        // Chat settings; the memoizer's display pass re-reads the flag, so a
+        // plain rebuild is enough to group / ungroup open transcripts live.
+        activityRollupObserver = NotificationCenter.default.addObserver(
+            forName: ContentBlock.activityRollupSettingChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.rebuildVisibleBlocks() }
         }
 
         // Mirror AgentTodoStore -> currentTodo so the inline UI block
@@ -867,6 +879,9 @@ final class ChatSession: ObservableObject {
             NotificationCenter.default.removeObserver(observer)
         }
         if let observer = privacyRedactionsObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = activityRollupObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         if let observer = storageMutationObserver {
@@ -1374,7 +1389,6 @@ final class ChatSession: ObservableObject {
         }
 
         seedAutoExpandedReasoningBlocks(streamingTurnId: streamingTurnId)
-        updateStreamingThinkingExpansion(streamingTurnId: streamingTurnId)
 
         let newBlocks = blockMemoizer.blocks(
             from: effectiveTurns,
@@ -1382,6 +1396,11 @@ final class ChatSession: ObservableObject {
             agentName: displayName
         )
         let newHeaderMap = blockMemoizer.groupHeaderMap
+
+        // After block generation so the fresh array is scanned for the
+        // activity rollup enclosing the live thinking block (the rollup is
+        // display-time only — it never exists in the turn model).
+        updateStreamingThinkingExpansion(streamingTurnId: streamingTurnId, in: newBlocks)
 
         // use withAnimation(.none) to suppress the warning about publishing during view updates
         // this wraps the changes in a proper SwiftUI transaction
@@ -1418,7 +1437,7 @@ final class ChatSession: ObservableObject {
     /// every visible-blocks rebuild, which fires per streaming delta and
     /// once more from `completeRunCleanup`, so the collapse also lands when
     /// a run ends or is cancelled mid-thought.
-    private func updateStreamingThinkingExpansion(streamingTurnId: UUID?) {
+    private func updateStreamingThinkingExpansion(streamingTurnId: UUID?, in blocks: [ContentBlock]) {
         let activeThinkingBlockId: String? = {
             guard
                 UserDefaults.standard.bool(forKey: "chatExpandThinkingWhileStreamingEnabled"),
@@ -1432,9 +1451,23 @@ final class ChatSession: ObservableObject {
             return ContentBlock.thinkingBlockId(turnId: streamingTurnId)
         }()
 
+        // When the activity rollup has grouped the live thinking block with
+        // earlier tool activity (agent loops), open the enclosing group too —
+        // the reasoning streams inside the opened rollup, and both fold back
+        // when the phase ends, preserving this toggle's observable behavior.
+        var activeIds: Set<String> = []
+        if let activeThinkingBlockId {
+            activeIds.insert(activeThinkingBlockId)
+            if let groupId = ContentBlock.enclosingActivityGroupId(
+                forChildId: activeThinkingBlockId, in: blocks)
+            {
+                activeIds.insert(groupId)
+            }
+        }
+
         // Collapse blocks whose thinking phase has ended — unless the
         // completed-reasoning-only seeding above wants them expanded.
-        for blockId in streamingAutoExpandedThinkingBlockIds where blockId != activeThinkingBlockId {
+        for blockId in streamingAutoExpandedThinkingBlockIds where !activeIds.contains(blockId) {
             streamingAutoExpandedThinkingBlockIds.remove(blockId)
             if !autoExpandedReasoningBlockIds.contains(blockId) {
                 expandedBlocksStore.collapse(blockId)
@@ -1443,11 +1476,9 @@ final class ChatSession: ObservableObject {
 
         // Expand at most once per block so a manual collapse mid-stream
         // isn't fought on the next delta.
-        if let activeThinkingBlockId,
-            !streamingAutoExpandedThinkingBlockIds.contains(activeThinkingBlockId)
-        {
-            streamingAutoExpandedThinkingBlockIds.insert(activeThinkingBlockId)
-            expandedBlocksStore.expand(activeThinkingBlockId)
+        for blockId in activeIds where !streamingAutoExpandedThinkingBlockIds.contains(blockId) {
+            streamingAutoExpandedThinkingBlockIds.insert(blockId)
+            expandedBlocksStore.expand(blockId)
         }
     }
 
