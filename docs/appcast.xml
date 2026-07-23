@@ -3,6 +3,50 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.9</title>
+            <pubDate>Thu, 23 Jul 2026 04:34:25 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.9</sparkle:version>
+            <sparkle:shortVersionString>0.22.9</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.9/Osaurus-0.22.9.dmg" length="67057115" type="application/octet-stream" sparkle:edSignature="LEKp4vE3CamGW5VLKIttqZpjlEinnHAo0V5W9X3JZmZuWIMgY+YWL910R/HeL6gXbDLiZ1Hy+JWfPYbTB9gPCw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Update Simplified Chinese and Traditional Chinese translations (#2141) by @ftzahao
+- Fix stream finalization and model-picker thinking control (#2140) by @jjang-ai
+- Drain cancelled prefill before the next chat (#2136) by @jjang-ai
+- Pin LFM SSD prefix restore (#2134) by @jjang-ai
+- auto categorize knowledge documents and soften the uncategorized warning (#2132) by @RaajeevChandran
+- Fix Computer Use and AppleScript completion regressions (#2131) by @jjang-ai
+- Context-optimization harness: attribution, experiment profiles, staged optimizer, strict promotion gate (#2130) by @tpae
+- Wire Laguna S2.1 runtime and live cache controls (#2127) by @jjang-ai
+- seatbelt sandbox fallback for macos 15 and earlier (#2126) by @RaajeevChandran
+- Restore SSD warmup prefixes across new chats (#2124) by @jjang-ai
+- Fix launch-time SSD prefix cache misses (#2119) by @jjang-ai
+- Fix AppleScript completion and persistent SSD warmups (#2118) by @jjang-ai
+- knowledge base improvements (#2117) by @RaajeevChandran
+
+## 🚀 Features
+
+- Native Browser Use: replace the osaurus.browser plugin with a built-in browser feature (#2123) by @tpae
+
+## 🐛 Bug Fixes
+
+- fixed app hangs (#2128) by @RaajeevChandran
+- Attach SSD cache before publishing loaded models (#2122) by @jjang-ai
+- fix settings window not opening on sequoia (#2121) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- Add Browser Use What's New and prune older release notes (#2139) by @tpae
+- Expand BrowserUse eval suite to 10 cases (safety, tool coverage, error recovery) (#2125) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.8...0.22.9
+]]></description>
+        </item>
+        <item>
             <title>0.22.8</title>
             <pubDate>Tue, 21 Jul 2026 05:06:25 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
