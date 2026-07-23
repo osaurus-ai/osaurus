@@ -597,7 +597,16 @@ struct ChatSessionSidebar: View {
     // MARK: - Session List
 
     private var sessionList: some View {
-        ScrollView {
+        #if DEBUG
+            // One line per list rebuild, before the row logs, so full render
+            // passes can be attributed to a specific sidebar instance (main
+            // window vs overlay) and to the exact array it was handed.
+            let _ = AutoTitleDebugLog.log(
+                "sidebar LIST agent=\(agentId.uuidString.prefix(8)) incoming=\(sessions.count) "
+                    + "filtered=\(filteredSessions.count) filter=\(sourceFilter.label)"
+            )
+        #endif
+        return ScrollView {
             LazyVStack(spacing: 2) {
                 ForEach(filteredSessions) { session in
                     SessionRow(
