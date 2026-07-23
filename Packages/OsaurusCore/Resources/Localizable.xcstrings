@@ -24663,7 +24663,38 @@
       }
     },
     "Automatically Name Chats" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chats automatisch benennen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "채팅 이름 자동 생성"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автоматически называть чаты"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动命名聊天"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動命名聊天"
+          }
+        }
+      }
     },
     "Automatically sends message after a brief pause" : {
       "localizations" : {
@@ -186800,7 +186831,38 @@
       }
     },
     "Use the core model to generate a short descriptive title after a chat's first response, replacing the first-message preview. Runs in the background and never interrupts your conversation; manual renames always win." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nutzt das core model, um nach der ersten Antwort eines Chats einen kurzen, aussagekräftigen Titel zu erstellen, der die Vorschau der ersten Nachricht ersetzt. Läuft im Hintergrund und unterbricht nie die Unterhaltung; manuelle Umbenennungen haben immer Vorrang."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "채팅의 첫 응답 후 core model을 사용해 짧고 알기 쉬운 제목을 생성하여 첫 메시지 미리보기를 대체합니다. 백그라운드에서 실행되며 대화를 방해하지 않습니다. 직접 변경한 이름이 항상 우선합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использует core model, чтобы после первого ответа в чате создать короткий понятный заголовок вместо предпросмотра первого сообщения. Работает в фоне и не прерывает беседу; заголовок, заданный вручную, всегда имеет приоритет."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在聊天收到第一条回复后，使用核心模型生成简短的描述性标题，替换首条消息预览。在后台运行，绝不打断对话；手动重命名始终优先。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在聊天收到第一則回覆後，使用核心模型產生簡短的描述性標題，取代首則訊息預覽。在背景執行，絕不打斷對話；手動重新命名一律優先。"
+          }
+        }
+      }
     },
     "Use the inline Sign In or token prompt." : {
       "localizations" : {
