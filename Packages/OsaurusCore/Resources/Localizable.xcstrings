@@ -10351,6 +10351,9 @@
         }
       }
     },
+    "1 step" : {
+
+    },
     "1 store couldn't be converted because the encryption key is unavailable." : {
       "localizations" : {
         "de" : {
@@ -193511,6 +193514,12 @@
           }
         }
       }
+    },
+    "Worked" : {
+
+    },
+    "Worked for" : {
+
     },
     "Working" : {
       "localizations" : {
