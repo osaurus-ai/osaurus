@@ -89,32 +89,27 @@ struct WhatsNewGateFilterTests {
     }
 
     @Test
-    func osaurusCloudReleaseLinksToCredits() throws {
-        let release = try #require(WhatsNewContent.release(for: "0.20.1"))
+    func browserUseReleaseOpensSettings() throws {
+        let release = try #require(WhatsNewContent.release(for: "0.22.9"))
 
         #expect(
             release.pages.map(\.id) == [
-                "osaurus-cloud-0.20.1:summary",
-                "osaurus-cloud-0.20.1:privacy",
-                "osaurus-cloud-0.20.1:feedback",
+                "browser-use-0.22.9:summary",
+                "browser-use-0.22.9:safety",
+                "browser-use-0.22.9:enable",
             ]
         )
-        #expect(release.pages.last?.actionLabel == "Open Credits")
-        #expect(release.pages.last?.action == .openCredits)
+        #expect(release.pages.last?.actionLabel == "Open Browser settings")
+        #expect(release.pages.last?.action == .openBrowserSettings)
     }
 
+    /// Catalog keeps only the three most recent announcements, sorted
+    /// oldest → newest so `latest` (== `releases.last`) stays correct.
     @Test
-    func computerUseReleaseOpensSettings() throws {
-        let release = try #require(WhatsNewContent.release(for: "0.20.7"))
-
+    func catalogContainsOnlyRetainedReleasesInOrder() {
         #expect(
-            release.pages.map(\.id) == [
-                "computer-use-0.20.7:summary",
-                "computer-use-0.20.7:safety",
-                "computer-use-0.20.7:privacy",
-            ]
+            WhatsNewContent.releases.map(\.version) == ["0.21.11", "0.22.7", "0.22.9"]
         )
-        #expect(release.pages.last?.actionLabel == "Open Computer Use settings")
-        #expect(release.pages.last?.action == .openComputerUseSettings)
+        #expect(WhatsNewContent.latest?.version == "0.22.9")
     }
 }
