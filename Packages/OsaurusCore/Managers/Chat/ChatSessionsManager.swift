@@ -148,6 +148,23 @@ final class ChatSessionsManager: ObservableObject {
         upsertInMemory(session)
     }
 
+    /// Rename a session without bumping `updatedAt`, persisting off the
+    /// main thread. Used by the auto-title generator: a background rename
+    /// must not reorder the sidebar out from under the user, and it runs on
+    /// the main actor right after a completed turn — a synchronous DB
+    /// transaction here could trip the app-hang watchdog. Same
+    /// in-memory-first lookup as `rename`.
+    func renameQuietly(id: UUID, title: String) {
+        guard
+            var session = sessions.first(where: { $0.id == id })
+                ?? ChatSessionStore.load(id: id)
+        else { return }
+        guard session.title != title else { return }
+        session.title = title
+        ChatSessionStore.saveAsync(session)
+        upsertInMemory(session)
+    }
+
     /// Toggle a session's archive flag. Same in-memory-first lookup as
     /// `rename` because a freshly created chat may not be in the store yet.
     /// Does not touch `updatedAt` so an archive doesn't bubble the row to
