@@ -283,7 +283,7 @@ struct ChatSettingsView: View {
                 )
 
                 SettingsToggle(
-                    title: L("Roll Up Thinking & Tool Activity"),
+                    title: L("Group Thinking & Tool Activity"),
                     description:
                         "Group consecutive thinking and tool-call rows into a single expandable summary row, so long agent runs don't push the conversation out of view. Turn off to always show every step as its own row.",
                     isOn: $activityRollupEnabled

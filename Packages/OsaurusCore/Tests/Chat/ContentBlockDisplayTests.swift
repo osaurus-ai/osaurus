@@ -230,7 +230,9 @@ struct ContentBlockDisplayTests {
             turnId: turn1, index: 0, text: "reasoning", isStreaming: false,
             duration: 1.2, position: .middle
         )
-        let tools = ContentBlock.toolCallGroup(turnId: turn2, calls: [], position: .middle)
+        let tools = ContentBlock.toolCallGroup(
+            turnId: turn2, calls: [Self.toolCallItem(id: "call-1")], position: .middle
+        )
         let answer = ContentBlock.paragraph(
             turnId: turn2, index: 0, text: "answer", isStreaming: false,
             role: .assistant, position: .last
@@ -269,6 +271,47 @@ struct ContentBlockDisplayTests {
 
         #expect(rolled.map(\.id) == [thinking.id, answer.id])
         #expect(ContentBlock.enclosingActivityGroupId(forChildId: thinking.id, in: rolled) == nil)
+    }
+
+    @Test
+    func rollupActivity_groupsLoneToolGroupByStepCount() {
+        // Loaded chats coalesce a whole tool run into one block; the rollup
+        // threshold counts steps, so a lone multi-call group still rolls up
+        // while a lone single-call group stays bare.
+        let turnId = UUID()
+        let multi = ContentBlock.toolCallGroup(
+            turnId: turnId,
+            calls: [Self.toolCallItem(id: "call-1"), Self.toolCallItem(id: "call-2")],
+            position: .middle
+        )
+        let single = ContentBlock.toolCallGroup(
+            turnId: turnId, calls: [Self.toolCallItem(id: "call-3")], position: .middle
+        )
+        let answer = ContentBlock.paragraph(
+            turnId: turnId, index: 0, text: "answer", isStreaming: false,
+            role: .assistant, position: .last
+        )
+
+        let rolledMulti = ContentBlock.rollupActivityBlocks([multi, answer])
+        guard case .activityGroup = rolledMulti[0].kind else {
+            Issue.record("expected multi-call group to roll up, got \(rolledMulti[0].kind)")
+            return
+        }
+
+        let rolledSingle = ContentBlock.rollupActivityBlocks([single, answer])
+        #expect(rolledSingle.map(\.id) == [single.id, answer.id])
+    }
+
+    private static func toolCallItem(id: String) -> ToolCallItem {
+        ToolCallItem(
+            call: ToolCall(
+                id: id,
+                type: "function",
+                function: ToolCallFunction(name: "web_search", arguments: "{}")
+            ),
+            result: "{}",
+            duration: 0.2
+        )
     }
 
     private static func enrichedArtifactMarker(

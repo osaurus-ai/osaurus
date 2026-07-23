@@ -863,13 +863,30 @@ extension ContentBlock {
         return result
     }
 
-    /// Rolls up every run of ≥2 consecutive `.thinking` / `.toolCallGroup`
-    /// blocks into a single `.activityGroup`, so agent loops (thought → tool →
-    /// thought → tool …) collapse to one summary row instead of stacking N
-    /// disclosure rows. Anything else (a paragraph, chart, pending chip, the
-    /// final answer) breaks the run, so live progress chips and content stay
-    /// outside the rollup. Single thinking/tool blocks are left bare — hiding
-    /// one row behind a group adds a click for no space savings.
+    /// Steps a run of thinking / tool-call blocks represents: each thinking
+    /// segment and each individual tool call counts as one. Drives both the
+    /// rollup threshold and the group header's "N steps" badge.
+    static func activityStepCount(of children: [ContentBlock]) -> Int {
+        children.reduce(0) { acc, child in
+            switch child.kind {
+            case .thinking: return acc + 1
+            case let .toolCallGroup(calls): return acc + calls.count
+            default: return acc
+            }
+        }
+    }
+
+    /// Rolls up every run of consecutive `.thinking` / `.toolCallGroup`
+    /// blocks totalling ≥2 steps into a single `.activityGroup`, so agent
+    /// loops (thought → tool → thought → tool …) collapse to one summary row
+    /// instead of stacking N disclosure rows. The threshold counts steps, not
+    /// blocks: `coalesceToolGroups` has already merged an entire tool run
+    /// into one block, so a lone group carrying many calls (the shape loaded
+    /// chats take) must still roll up. Anything else (a paragraph, chart,
+    /// pending chip, the final answer) breaks the run, so live progress chips
+    /// and content stay outside the rollup. A single thinking segment or a
+    /// lone one-call group is left bare — hiding one row behind a group adds
+    /// a click for no space savings.
     ///
     /// Applied at the display chokepoint (`BlockMemoizer.limited`), after
     /// `coalesceToolGroups`, and never stored in the cache — same contract as
@@ -880,7 +897,7 @@ extension ContentBlock {
         var run: [ContentBlock] = []
 
         func flushRun() {
-            if run.count >= 2 {
+            if activityStepCount(of: run) >= 2 {
                 result.append(.activityGroup(children: run))
             } else {
                 result.append(contentsOf: run)

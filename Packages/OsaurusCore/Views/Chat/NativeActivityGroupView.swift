@@ -130,7 +130,7 @@ final class NativeActivityGroupView: NSView {
 
         let expanded = expandedIds.contains(blockId)
 
-        let steps = Self.stepCount(of: children)
+        let steps = ContentBlock.activityStepCount(of: children)
         stepCountLabel.isHidden = expanded || steps == 0
         stepCountLabel.stringValue = steps == 1 ? L("1 step") : "\(steps) \(L("steps"))"
         stepCountLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 2, weight: .medium)
@@ -401,17 +401,6 @@ final class NativeActivityGroupView: NSView {
     @objc private func headerTapped() { onToggle?() }
 
     // MARK: - Aggregates
-
-    /// Thinking segments + individual tool calls in the run.
-    static func stepCount(of children: [ContentBlock]) -> Int {
-        children.reduce(0) { acc, child in
-            switch child.kind {
-            case .thinking: return acc + 1
-            case let .toolCallGroup(calls): return acc + calls.count
-            default: return acc
-            }
-        }
-    }
 
     /// Sum of the known child durations (thinking + tool calls). Children
     /// without a recorded duration contribute nothing.
