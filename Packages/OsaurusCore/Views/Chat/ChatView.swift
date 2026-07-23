@@ -6993,6 +6993,10 @@ struct ChatView: View {
             VStack(spacing: AgentInlineBlockMetrics.stackSpacing) {
                 agentInlineBlocks
             }
+            // Match the thread's centered content width so the blocks align
+            // with the message column instead of stretching across the full
+            // chat area on wide windows.
+            .frame(maxWidth: CenteredMessageScrollView.defaultMaxContentWidth)
             .padding(.top, 4)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .allowsHitTesting(session.lastCompletionSummary != nil || session.currentTodo != nil)

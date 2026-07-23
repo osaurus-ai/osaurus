@@ -32,7 +32,10 @@ enum MessageSection: Hashable {
 /// NSScrollView subclass that centers message content at up to `maxContentWidth`
 /// while keeping the scrollbar pinned to the view's right edge.
 final class CenteredMessageScrollView: NSScrollView {
-    var maxContentWidth: CGFloat = 1100
+    /// Shared cap so overlays that should visually align with the thread
+    /// (e.g. the floating Todo block) can match the table's content width.
+    static let defaultMaxContentWidth: CGFloat = 1100
+    var maxContentWidth: CGFloat = CenteredMessageScrollView.defaultMaxContentWidth
 
     /// Content width the last `sizeLastColumnToFit()` ran at. `tile()` fires
     /// on every scroll/layout pass, and `sizeLastColumnToFit()` makes
