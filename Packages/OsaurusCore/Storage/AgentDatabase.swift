@@ -287,6 +287,13 @@ public struct AgentExecuteResult: Codable, Sendable, Equatable {
 // MARK: - AgentDatabase
 
 public final class AgentDatabase: @unchecked Sendable {
+    /// Column declarations accepted by the typed database surface. Constraints
+    /// are separate fields and must never be smuggled into the type string.
+    public static let supportedColumnTypes = [
+        "TEXT", "INTEGER", "REAL", "BLOB", "NUMERIC",
+        "BOOLEAN", "DATE", "DATETIME", "JSON",
+    ]
+
     public let agentId: UUID
 
     private static let schemaVersion = 1
@@ -661,6 +668,11 @@ public final class AgentDatabase: @unchecked Sendable {
             // budget ran out). Honoring the declared column preserves the
             // model's intent; SQLite still enforces single-PK rules.
             var columns = columns
+            guard columns.filter(\.primaryKey).count <= 1 else {
+                throw AgentDatabaseError.invalidArgument(
+                    "createTable: declare at most one `primary_key` column"
+                )
+            }
             let hasPK = columns.contains(where: { $0.primaryKey })
             if !hasPK,
                 let idIndex = columns.firstIndex(where: { $0.name.lowercased() == "id" })
@@ -684,10 +696,11 @@ public final class AgentDatabase: @unchecked Sendable {
             for col in columns {
                 try Self.validateIdentifier(col.name)
                 try Self.requireNotReservedColumn(col.name)
-                var def = "\(col.name) \(Self.normalizeType(col.type))"
+                let normalizedType = try Self.normalizeType(col.type)
+                var def = "\(col.name) \(normalizedType)"
                 if col.primaryKey {
                     def += " PRIMARY KEY"
-                    if col.type.uppercased() == "INTEGER" {
+                    if normalizedType == "INTEGER" {
                         // sqlite-only AUTOINCREMENT shorthand on integer PK.
                         def += " AUTOINCREMENT"
                     }
@@ -781,6 +794,7 @@ public final class AgentDatabase: @unchecked Sendable {
         for col in additions {
             try Self.validateIdentifier(col.name)
             try Self.requireNotReservedColumn(col.name)
+            _ = try Self.normalizeType(col.type)
         }
 
         return try inTransaction { _ in
@@ -789,14 +803,14 @@ public final class AgentDatabase: @unchecked Sendable {
             }
             var applied: [String] = []
             for col in additions {
-                var def = "\(col.name) \(Self.normalizeType(col.type))"
+                var def = "\(col.name) \(try Self.normalizeType(col.type))"
                 if !col.nullable {
                     // SQLite rejects NOT NULL ADD COLUMN without a DEFAULT
                     // on a non-empty table (spec §16 Q5). If the caller
                     // didn't supply one, fall back to a type-appropriate
                     // value so the migration always applies cleanly.
                     if col.defaultValue == nil {
-                        def += " NOT NULL DEFAULT \(Self.derivedDefault(forType: col.type))"
+                        def += " NOT NULL DEFAULT \(try Self.derivedDefault(forType: col.type))"
                     } else {
                         def += " NOT NULL"
                     }
@@ -2427,17 +2441,25 @@ public final class AgentDatabase: @unchecked Sendable {
         }
     }
 
-    private static func normalizeType(_ raw: String) -> String {
+    private static func normalizeType(_ raw: String) throws -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespaces)
-        if trimmed.isEmpty { return "TEXT" }
-        return trimmed.uppercased()
+        let normalized = trimmed.uppercased()
+        guard supportedColumnTypes.contains(normalized) else {
+            throw AgentDatabaseError.invalidArgument(
+                "unsupported column type `\(raw)`. Use one of: "
+                    + supportedColumnTypes.joined(separator: ", ")
+                    + ". Put PRIMARY KEY, AUTOINCREMENT, DEFAULT, and NOT NULL "
+                    + "in their dedicated column fields."
+            )
+        }
+        return normalized
     }
 
     /// Default value used to backfill a `NOT NULL ADD COLUMN` when the
     /// agent didn't supply one and the table has rows (spec §16 Q5).
     /// Picks a benign zero / empty value matching the column's affinity.
-    static func derivedDefault(forType raw: String) -> String {
-        switch normalizeType(raw) {
+    static func derivedDefault(forType raw: String) throws -> String {
+        switch try normalizeType(raw) {
         case "INTEGER", "REAL", "NUMERIC": return "0"
         case "BLOB": return "X''"
         default: return "''"

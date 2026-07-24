@@ -119,6 +119,41 @@ enum AgentLoopModelStep {
     /// `AgentLoopHooks.emitFallbackText` so the user never sees nothing and
     /// the loop can never spin on a deterministically-empty model.
     case emptyResponse
+    /// The runtime reached the configured output-token limit without a tool
+    /// call. Visible partial content or reasoning may be present, but the
+    /// authoritative terminal reason says generation was incomplete.
+    case lengthExhausted
+
+    /// Classify a naturally completed model step from its rendered channels
+    /// and authoritative terminal stop reason.
+    ///
+    /// A reasoning-only natural `stop` remains final for model families that
+    /// intentionally answer in their reasoning channel. A reasoning-only
+    /// `length` is different: the runtime says the model hit its configured
+    /// cap, so accepting it as success abandons the task.
+    static func classifyTerminal(
+        contentIsBlank: Bool,
+        thinkingIsBlank: Bool,
+        stopReason: String?
+    ) -> Self {
+        if stopReason == "length" {
+            return .lengthExhausted
+        }
+        if contentIsBlank, thinkingIsBlank {
+            return .emptyResponse
+        }
+        return .finalResponse
+    }
+
+    /// Preserve visible partial output, remove only terminal whitespace, and
+    /// append the truthful output-cap notice. A whitespace-only completion
+    /// becomes the notice itself instead of a giant blank bubble.
+    static func contentWithLengthFallback(_ content: String, fallback: String) -> String {
+        guard let lastVisible = content.lastIndex(where: { !$0.isWhitespace }) else {
+            return fallback
+        }
+        return String(content[...lastVisible]) + "\n\n" + fallback
+    }
 }
 
 /// Result of the surface executing a single tool call. The surface has
@@ -599,6 +634,9 @@ enum AgentToolLoop {
         /// Empty-turn recovery exhausted after at least one tool result had
         /// already landed, so the task may be truncated rather than merely blank.
         case emptyResponseExhausted
+        /// The model exhausted the configured output-token budget without an
+        /// executable tool call. Any visible partial text is preserved.
+        case lengthExhausted
     }
 
     struct RunResult: Equatable, Sendable {
@@ -633,6 +671,11 @@ enum AgentToolLoop {
 
     static let emptyToolTaskFallback =
         "The model returned empty output after tool execution. The agent task may be incomplete; retry with less context or continue from the latest tool result."
+
+    static let lengthExhaustedFallback =
+        "The model reached the configured output-token limit before naturally completing an answer or tool call. "
+        + "The agent task is incomplete; increase Max Tokens, disable Thinking for this task, "
+        + "or continue from the latest tool result."
 
     /// The iteration-budget warning staged when the remaining budget
     /// drops to the policy threshold.
@@ -1179,6 +1222,14 @@ enum AgentToolLoop {
                 // a silent dead-end, then end the run.
                 await hooks.emitFallbackText?(Self.emptyTurnFallback)
                 return RunResult(exit: .finalResponse, iterations: iteration)
+
+            case .lengthExhausted:
+                // `stop=length` is authoritative. Do not mislabel a
+                // reasoning-only capped turn as successful task completion,
+                // and do not auto-retry it with a synthetic prompt: a model
+                // already looping in reasoning can consume the cap repeatedly.
+                await hooks.emitFallbackText?(Self.lengthExhaustedFallback)
+                return RunResult(exit: .lengthExhausted, iterations: iteration)
 
             case .toolCalls(let invocations):
                 // A productive turn — reset the empty-turn recovery budget so

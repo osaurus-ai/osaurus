@@ -78,6 +78,7 @@ struct ChatHistoryMigrationRepairTests {
     private static let alterV6 = ["ALTER TABLE turns ADD COLUMN tool_call_durations TEXT"]
     private static let alterV7 = ["ALTER TABLE turns ADD COLUMN thinking_duration REAL"]
     private static let alterV8 = ["ALTER TABLE turns ADD COLUMN router_billing TEXT"]
+    private static let alterV12 = ["ALTER TABLE turns ADD COLUMN terminal_stop_reason TEXT"]
 
     // MARK: - Reporter-exact: v1 stuck, every column except v8 router_billing
 
@@ -141,10 +142,10 @@ struct ChatHistoryMigrationRepairTests {
         }
     }
 
-    // MARK: - v1 stuck, every v2-v8 column already present
+    // MARK: - v1 stuck, every turn-column migration already present
 
     /// A store whose `user_version` is stuck at 1 but already carries every
-    /// column (including v8). Every migration ALTER must be skipped, the
+    /// migrated turn column (including v12). Every migration ALTER must be skipped, the
     /// version reconciled to the latest, and data must still load + save.
     @Test
     func stuckV1WithAllColumnsPresentOpensCleanly() async throws {
@@ -154,7 +155,9 @@ struct ChatHistoryMigrationRepairTests {
             var statements = [Self.createSessionsV1]
             statements += Self.alterV3 + Self.alterV4
             statements.append(Self.createTurnsV1)
-            statements += Self.alterV2 + Self.alterV5 + Self.alterV6 + Self.alterV7 + Self.alterV8
+            statements +=
+                Self.alterV2 + Self.alterV5 + Self.alterV6 + Self.alterV7
+                + Self.alterV8 + Self.alterV12
             statements += [
                 """
                 INSERT INTO sessions (id, title, created_at, updated_at, source, turn_count, archived, capabilities)
@@ -240,7 +243,7 @@ struct ChatHistoryMigrationRepairTests {
     // MARK: - Fresh database
 
     /// Guard against migration regressions: a brand-new (empty) database
-    /// migrates 0 -> 8 cleanly and round-trips a session.
+    /// migrates 0 -> latest cleanly and round-trips a session.
     @Test
     func freshDatabaseMigratesToLatestAndRoundTrips() async throws {
         try await runWithPlaintextRoot {

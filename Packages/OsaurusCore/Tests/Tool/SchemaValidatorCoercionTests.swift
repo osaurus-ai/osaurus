@@ -155,10 +155,18 @@ struct SchemaValidatorCoercionTests {
     }
 
     @Test func booleanAcceptsStringVocabulary() {
-        for s in ["true", "false", "TRUE", "False", "1", "0", "yes", "no", "YES"] {
+        for s in ["true", "false", "TRUE", "False", "1", "0", "yes", "no", "YES", " false "] {
             let r = SchemaValidator.validate(arguments: ["b": s], against: boolSchema)
             #expect(r.isValid, "expected `\(s)` to coerce to bool; got: \(r.errorMessage ?? "?")")
         }
+    }
+
+    @Test func booleanWhitespaceStringCoercesToNativeBool() throws {
+        let coerced = try #require(
+            SchemaValidator.coerceArguments(["b": " false "], against: boolSchema) as? [String: Any]
+        )
+        #expect(coerced["b"] as? Bool == false)
+        #expect(SchemaValidator.validate(arguments: coerced, against: boolSchema).isValid)
     }
 
     @Test func booleanRejectsArbitraryString() {

@@ -3620,6 +3620,7 @@ final class ChatSession: ObservableObject {
                         engineTokensPerSecond = stats.tokensPerSecond
                     }
                     currentTurn.generationTokenCount = stats.tokenCount
+                    currentTurn.terminalStopReason = stats.stopReason
                     // Vmlx tells us the model never closed `</think>` before
                     // EOS / max_tokens. Persist on the turn so the bubble
                     // renderer can surface a one-line banner suggesting
@@ -5337,6 +5338,8 @@ final class ChatSession: ObservableObject {
                             // Mode 1 (plain remote inference via
                             // `/chat/completions`).
                             req.runAsRemoteAgent = self.isRemoteAgentTarget
+                            req.cacheStableSystemPrefix =
+                                self.isRemoteAgentTarget ? nil : context.staticPrefix
                             // Mode 2 routing: target the selected agent's
                             // provider directly (by id), so a stale
                             // `selectedModel` can never redirect the run to a
@@ -5420,19 +5423,11 @@ final class ChatSession: ObservableObject {
                                 // allowance.
                                 if invocations.isEmpty {
                                     transientRetries = 0
-                                    // An empty turn (0-token / EOS-first, no tool
-                                    // call) must not silently end the run as "No
-                                    // visible text was produced": let the driver
-                                    // nudge-and-retry, then fall back to a message.
-                                    // A reasoning-only turn (visible content blank
-                                    // but thinking present) is NOT empty — it's the
-                                    // model's intended answer in the reasoning
-                                    // channel — so require thinking blank too, matching
-                                    // the "No visible text was produced" condition.
-                                    return
-                                        (assistantTurn.contentIsBlank
-                                        && assistantTurn.thinkingIsBlank)
-                                        ? .emptyResponse : .finalResponse
+                                    return AgentLoopModelStep.classifyTerminal(
+                                        contentIsBlank: assistantTurn.contentIsBlank,
+                                        thinkingIsBlank: assistantTurn.thinkingIsBlank,
+                                        stopReason: assistantTurn.terminalStopReason
+                                    )
                                 }
                                 return .toolCalls(invocations)
                             } catch let error as RemoteProviderServiceError {
@@ -5575,7 +5570,15 @@ final class ChatSession: ObservableObject {
                             // malformed call cannot leave a tool card spinning.
                             assistantTurn.pendingToolName = nil
                             assistantTurn.clearPendingToolArgs()
-                            assistantTurn.appendContentAndNotify(text)
+                            if text == AgentToolLoop.lengthExhaustedFallback {
+                                assistantTurn.content =
+                                    AgentLoopModelStep.contentWithLengthFallback(
+                                        assistantTurn.content,
+                                        fallback: text
+                                    )
+                            } else {
+                                assistantTurn.appendContentAndNotify(text)
+                            }
                             self.rebuildVisibleBlocks()
                         }
                     )
@@ -5614,6 +5617,14 @@ final class ChatSession: ObservableObject {
                         rebuildVisibleBlocks()
                     }
 
+                    if runResult.exit == .lengthExhausted {
+                        // The driver already appended a visible, truthful
+                        // incomplete-state message. Mark lifecycle cleanup as
+                        // failed so this capped reasoning-only turn cannot be
+                        // announced or warmed as a completed agent task.
+                        lastStreamError = AgentToolLoop.lengthExhaustedFallback
+                    }
+
                     if runResult.exit == .iterationCapReached && isRunActive(runId) {
                         do {
                             var finalReq = ChatCompletionRequest(
@@ -5641,6 +5652,8 @@ final class ChatSession: ObservableObject {
                             )
                             finalReq.samplingParametersAreImplicit = true
                             finalReq.runAsRemoteAgent = isRemoteAgentTarget
+                            finalReq.cacheStableSystemPrefix =
+                                isRemoteAgentTarget ? nil : context.staticPrefix
                             // Carry the agent provider id on this path too so
                             // the route-by-provider invariant holds for *every*
                             // Mode 2 request — a `runAsRemoteAgent` send with no

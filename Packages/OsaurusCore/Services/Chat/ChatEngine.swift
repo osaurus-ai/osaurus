@@ -254,6 +254,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             runAsRemoteAgent: request.runAsRemoteAgent,
             suppressProgressUI: request.suppressProgressUI,
             warmupPrefill: request.warmupPrefill,
+            cacheStableSystemPrefix: request.cacheStableSystemPrefix,
             requestSource: inferenceSource,
             loadIntent: request.backgroundModelLoad ? .background : .interactive
         )

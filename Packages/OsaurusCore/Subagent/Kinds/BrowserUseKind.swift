@@ -261,6 +261,11 @@ final class BrowserUseKind: SubagentKind, @unchecked Sendable {
             throw SubagentError.emptyExhausted(
                 "Browser Use returned empty output after tool execution; the task may be incomplete."
             )
+        case .lengthExhausted:
+            throw SubagentError.executionFailed(
+                message: "Browser Use reached its output-token limit before producing a result.",
+                retryable: false
+            )
         }
     }
 

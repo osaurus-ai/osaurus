@@ -751,6 +751,13 @@ struct RuntimePolicySourceTests {
         // `1` into `true`) and keeps nested Qwen XML argument marks lossless.
         // vmlx-swift#177 adds the awaited direct-generation cancellation/drain
         // boundary required before Osaurus can admit the next solo request.
+        // vmlx-swift#179 adds schema-bound recovery for Qwen XML
+        // array<string> arguments emitted as plain bracket lists and routes
+        // Gemma's decoded thought-channel opener into the reasoning stream.
+        // The static-prefix cache-hint revision lets Osaurus seed an SSD
+        // boundary from the byte-stable leading system prompt even when a
+        // mutable DB/tool section later changes inside the same rendered
+        // system message.
         //
         // This assertion is a repin tripwire, and it earned its keep: PR #1986
         // shipped titled "(+ vmlx repin)" carrying no repin at all, and the live
@@ -759,7 +766,7 @@ struct RuntimePolicySourceTests {
         // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
         // xcworkspace Package.resolved files. Miss one and the app resolves a
         // revision nobody proved.
-        let expectedRuntimeHardenedRevision = "7d6235316226ba9fe608018f86c463784e48b3d5"
+        let expectedRuntimeHardenedRevision = "f50853514ee00365837be3301c91850ca7ed5877"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -769,7 +776,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the merged vmlx-swift revision with the awaited solo cancellation/drain boundary together with the existing runtime checkpoints. An internally-consistent older pin is still not wired"
+            "Osaurus must consume the proven vmlx-swift revision with schema-bound Qwen XML string-array recovery, Gemma reasoning routing, and static system-prefix SSD cache boundaries together with the existing runtime checkpoints. An internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
@@ -1139,6 +1146,27 @@ struct RuntimePolicySourceTests {
         #expect(cacheSection.contains("Works with paged RAM cache off"))
         #expect(cacheSection.contains("SSD cache can still restore prefixes"))
         #expect(!cacheSection.contains("Required for cross-request sharing"))
+    }
+
+    @Test("chat-composed static prompt prefix reaches local MLX as a runtime-only cache hint")
+    func chatComposedStaticPromptPrefixReachesLocalMLXCacheHint() throws {
+        let api = try Self.source("Models/API/OpenAIAPI.swift")
+        let chatEngine = try Self.source("Services/Chat/ChatEngine.swift")
+        let chatView = try Self.source("Views/Chat/ChatView.swift")
+        let httpHandler = try Self.source("Networking/HTTPHandler.swift")
+        let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
+
+        #expect(api.contains("var cacheStableSystemPrefix: String? = nil"))
+        #expect(api.contains("copy.cacheStableSystemPrefix = cacheStableSystemPrefix"))
+        #expect(!api.contains("case cacheStableSystemPrefix"))
+        #expect(chatEngine.contains("cacheStableSystemPrefix: request.cacheStableSystemPrefix"))
+        #expect(chatView.contains("req.cacheStableSystemPrefix ="))
+        #expect(chatView.contains("finalReq.cacheStableSystemPrefix ="))
+        #expect(chatView.contains("self.isRemoteAgentTarget ? nil : context.staticPrefix"))
+        #expect(httpHandler.contains("enriched.cacheStableSystemPrefix = composed.staticPrefix"))
+        #expect(adapter.contains("cacheStableSystemPrefix: buildRawPrompt == nil"))
+        #expect(adapter.contains("cacheStableSystemPrefix: cacheStableSystemPrefix"))
+        #expect(!adapter.contains(#""cacheStableSystemPrefix""#))
     }
 
     @Test("Server settings cache changes clear loaded model runtime")

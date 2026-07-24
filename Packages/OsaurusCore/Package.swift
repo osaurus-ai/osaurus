@@ -80,9 +80,15 @@ let package = Package(
         // companion state. The Laguna S 2.1 revision adds the released
         // full-KV + rotating-SWA runtime contract, safe fresh-session SSD
         // seeds, growing partial-leaf reuse, and complete TQ window restore.
+        // vmlx-swift#179 additionally recovers Qwen XML plain bracket lists
+        // only for schema-declared array<string> tool arguments and routes
+        // Gemma's decoded thought-channel opener into reasoning. The static
+        // prefix hint revision lets Osaurus's byte-stable system prefix seed
+        // SSD cache boundaries even when mutable DB/tool state changes later
+        // in the same rendered system message.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "7d6235316226ba9fe608018f86c463784e48b3d5"
+            revision: "f50853514ee00365837be3301c91850ca7ed5877"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

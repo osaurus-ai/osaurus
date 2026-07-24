@@ -366,7 +366,7 @@ public enum ArgumentCoercion {
     public static func bool(_ value: Any?) -> Bool? {
         if let b = value as? Bool { return b }
         if let s = value as? String {
-            switch s.lowercased() {
+            switch s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
             case "true", "1", "yes": return true
             case "false", "0", "no": return false
             default: return nil

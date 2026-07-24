@@ -291,6 +291,12 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// The chat UI uses this to surface a fallback banner suggesting the
     /// user toggle "Disable Thinking" for the next turn.
     var unclosedReasoning: Bool = false
+    /// Authoritative terminal reason supplied by the runtime (`stop`,
+    /// `length`, and provider equivalents). Unlike a token-count equality
+    /// guess, this distinguishes a natural ending from output-cap exhaustion.
+    /// The agent loop uses it to avoid treating a reasoning-only `length`
+    /// completion as a successful final response.
+    var terminalStopReason: String?
 
     /// Osaurus Router billing snapshot captured from the in-stream summary
     /// frame (cost, token counts, status). Persisted so a reloaded chat still

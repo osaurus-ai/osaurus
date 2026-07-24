@@ -791,6 +791,12 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// required for sliding-window models whose caches cannot be trimmed to
     /// a boundary at store time.
     var warmupPrefill: Bool = false
+    /// Local-only: byte-exact reusable leading system-prompt text from
+    /// `SystemPromptComposer.staticPrefix`. vmlx uses this only as a
+    /// tokenizer-validated SSD-prefix boundary hint after the full prompt has
+    /// already been rendered; it is not decoded from OpenAI JSON and is not
+    /// forwarded to remote providers.
+    var cacheStableSystemPrefix: String? = nil
     /// Local-only: when true, this request's model load must not disturb a model
     /// that is already resident or already loading — the runtime refuses the load
     /// instead of evicting. Set by housekeeping that nobody is waiting on
@@ -849,6 +855,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.remoteAgentProviderId = remoteAgentProviderId
         copy.suppressProgressUI = suppressProgressUI
         copy.warmupPrefill = warmupPrefill
+        copy.cacheStableSystemPrefix = cacheStableSystemPrefix
         // Must be copied with the other local-only flags. Dropping it silently
         // promotes a background request back to interactive — and an interactive
         // request is allowed to evict the model someone is using.
@@ -897,6 +904,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.remoteAgentProviderId = remoteAgentProviderId
         copy.suppressProgressUI = suppressProgressUI
         copy.warmupPrefill = warmupPrefill
+        copy.cacheStableSystemPrefix = cacheStableSystemPrefix
         // Must be copied with the other local-only flags. Dropping it silently
         // promotes a background request back to interactive — and an interactive
         // request is allowed to evict the model someone is using.
