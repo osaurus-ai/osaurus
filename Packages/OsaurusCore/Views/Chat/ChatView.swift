@@ -4927,10 +4927,16 @@ final class ChatSession: ObservableObject {
                         callId: String
                     ) async -> AgentLoopToolExecution {
                         do {
-                            // Log tool execution start
-                            let truncatedArgs = inv.jsonArguments.prefix(200)
+                            // Never print a direct secret-set value to the
+                            // process log. Execution below still receives the
+                            // original arguments.
+                            let recordedArgs = SecretArgumentScrubber.recordedArguments(
+                                toolName: inv.toolName,
+                                argumentsJSON: inv.jsonArguments
+                            )
+                            let truncatedArgs = recordedArgs.prefix(200)
                             print(
-                                "[Osaurus][Tool] Executing: \(inv.toolName) with args: \(truncatedArgs)\(inv.jsonArguments.count > 200 ? "..." : "")"
+                                "[Osaurus][Tool] Executing: \(inv.toolName) with args: \(truncatedArgs)\(recordedArgs.count > 200 ? "..." : "")"
                             )
 
                             if executionMode.usesSandboxTools {
@@ -5458,20 +5464,11 @@ final class ChatSession: ObservableObject {
                             }
                         },
                         willProcessCall: { inv, callId in
-                            // The RECORDED copy of the args is scrubbed
-                            // (sandbox_secret_set `value` → [REDACTED]);
-                            // execution still sees the original `inv`.
-                            let call = ToolCall(
+                            // Recorded history uses the secret-safe view;
+                            // execution still receives the original `inv`.
+                            let call = SecretArgumentScrubber.recordedToolCall(
                                 id: callId,
-                                type: "function",
-                                function: ToolCallFunction(
-                                    name: inv.toolName,
-                                    arguments: SecretArgumentScrubber.scrubForPersistence(
-                                        toolName: inv.toolName,
-                                        argumentsJSON: inv.jsonArguments
-                                    )
-                                ),
-                                geminiThoughtSignature: inv.geminiThoughtSignature
+                                invocation: inv
                             )
                             assistantTurn.pendingToolName = nil
                             assistantTurn.clearPendingToolArgs()

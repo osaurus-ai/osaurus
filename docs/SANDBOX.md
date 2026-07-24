@@ -519,7 +519,7 @@ The prompt path keeps secret values out of the conversation history and LLM cont
 Storing a secret is only half the problem — the other half is keeping its **value** out of the model context and the persisted transcript afterwards:
 
 - **Output scrubbing.** Agent secrets are injected into the exec environment, so `echo $KEY` would otherwise land the value in the model's context. `SecretScrubber` rewrites every known secret value in `sandbox_exec` stdout/stderr, background-job log tails, and sandbox-plugin tool output to `[REDACTED:<ENV_KEY>]` before the result is enveloped. Longer values scrub first (substring-safe); values under 6 characters are exempt to avoid false positives on ordinary output.
-- **Argument scrubbing.** When the agent uses the direct `value` path of `sandbox_secret_set`, the *recorded* copy of the tool-call arguments is rewritten (`value` → `[REDACTED]`) before it is persisted into chat history; execution still sees the original. The prompt path never carries the value through the model at all and remains the recommended flow — the tool description steers models toward it.
+- **Argument scrubbing.** When the agent uses the direct `value` path of `sandbox_secret_set`, the *recorded* copy of the tool-call arguments is rewritten (`value` → `[REDACTED]`) before it re-enters chat history, HTTP agent-run history, plugin complete/complete_stream history, or plugin streamed tool-call argument material; execution still sees the original. Malformed secret-set arguments fail closed rather than echoing the raw input. The prompt path never carries the value through the model at all and remains the recommended flow — the tool description steers models toward it.
 
 ---
 

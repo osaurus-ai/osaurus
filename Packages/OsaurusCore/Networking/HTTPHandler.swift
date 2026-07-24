@@ -5384,23 +5384,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 )
                             }
                         }
+                        // History + host logs use the recorded (secret-safe)
+                        // argument view; ToolRegistry.execute still saw the
+                        // original via the batch executor above.
                         assistantToolCalls.append(
-                            ToolCall(
+                            SecretArgumentScrubber.recordedToolCall(
                                 id: outcome.callId,
-                                type: "function",
-                                function: ToolCallFunction(
-                                    name: outcome.invocation.toolName,
-                                    arguments: outcome.invocation.jsonArguments
-                                )
+                                invocation: outcome.invocation
                             )
                         )
                         toolResultsByCallId.append((outcome.callId, outcome.result))
-                        // Host-only: full tool detail (args + result). The peer
-                        // still sees only the sanitized SSE trace emitted above.
+                        // Host-only tool detail (args + result). Args are the
+                        // recorded view so sandbox_secret_set values never
+                        // re-enter Insights / agent-run logs. The peer still
+                        // sees only the sanitized SSE trace emitted above.
                         loggedToolCalls.append(
                             ToolCallLog(
                                 name: outcome.invocation.toolName,
-                                arguments: outcome.invocation.jsonArguments,
+                                arguments: SecretArgumentScrubber.recordedArguments(
+                                    toolName: outcome.invocation.toolName,
+                                    argumentsJSON: outcome.invocation.jsonArguments
+                                ),
                                 result: outcome.result,
                                 isError: outcome.wasError
                             )

@@ -463,7 +463,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     static func serializeResponseForLog(_ response: ChatCompletionResponse) -> String? {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(response),
+        let recorded = SecretArgumentScrubber.recordedResponse(response)
+        guard let data = try? encoder.encode(recorded),
             let s = String(data: data, encoding: .utf8)
         else { return nil }
         return s
@@ -516,11 +517,15 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         toolInvocation: (name: String, args: String)?
     ) -> String? {
         if let (name, args) = toolInvocation {
+            let recordedArgs = SecretArgumentScrubber.recordedArguments(
+                toolName: name,
+                argumentsJSON: args
+            )
             // Try to embed `args` as a parsed JSON object so the UI can
             // pretty-print it; fall back to a string if it isn't valid JSON.
             let argsValue: Any =
-                (args.data(using: .utf8)
-                    .flatMap { try? JSONSerialization.jsonObject(with: $0) }) ?? args
+                (recordedArgs.data(using: .utf8)
+                    .flatMap { try? JSONSerialization.jsonObject(with: $0) }) ?? recordedArgs
             let envelope: [String: Any] = [
                 "tool_calls": [["name": name, "arguments": argsValue]]
             ]
@@ -534,6 +539,28 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             }
         }
         return accumulated.isEmpty ? nil : accumulated
+    }
+
+    /// Raw provider responses can contain model-emitted secret arguments.
+    /// Omit that diagnostic snapshot for secret-setting calls; the structured
+    /// response and tool-call log remain available in redacted form.
+    static func wireResponseBodyForLog(
+        _ body: Data?,
+        parsedToolNames: [String],
+        secretToolWasExposed: Bool
+    ) -> Data? {
+        guard let body, !body.isEmpty else { return nil }
+        // Fail closed when the request exposed the secret-setting capability:
+        // malformed provider output may defeat invocation parsing while still
+        // leaving raw secret material in the captured response. Also inspect
+        // every parsed invocation because a batch may place the secret call
+        // after an ordinary tool.
+        guard !secretToolWasExposed,
+            !parsedToolNames.contains(where: SecretArgumentScrubber.isSecretSetToolName(_:))
+        else {
+            return nil
+        }
+        return body
     }
 
     private static func canonicalToolArgumentsJSON(
@@ -713,7 +740,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 temperature: temperature,
                 maxTokens: maxTokens,
                 toolCalls: invocations.map {
-                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
+                    ToolCallLog(
+                        name: $0.toolName,
+                        arguments: SecretArgumentScrubber.recordedArguments(
+                            toolName: $0.toolName,
+                            argumentsJSON: $0.jsonArguments
+                        )
+                    )
                 },
                 finishReason: .toolCalls,
                 requestBody: requestBodyJSON,
@@ -811,6 +844,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             // Capture the request body up-front so the producer task does not
             // need to retain `request` (a non-Sendable in Swift 6 strict mode).
             let requestBodyJSON = source == .chatUI ? Self.serializeRequestForLog(request) : nil
+            let secretToolWasExposed =
+                request.tools?.contains {
+                    SecretArgumentScrubber.isSecretSetToolName($0.function.name)
+                } ?? false
             // `turnId` is a Sendable UUID, so capturing it (unlike `request`)
             // is safe for the detached producer — correlates the log back to
             // the chat assistant turn for the per-message Insights button.
@@ -829,7 +866,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 requestBodyJSON: requestBodyJSON,
                 connection: remoteConn?.info,
                 logPath: remoteConn?.path,
-                wireProbe: wireProbe
+                wireProbe: wireProbe,
+                secretToolWasExposed: secretToolWasExposed
             )
 
         case .none:
@@ -962,7 +1000,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         requestBodyJSON: String? = nil,
         connection: RequestConnectionInfo? = nil,
         logPath: String? = nil,
-        wireProbe: WireTransportProbe? = nil
+        wireProbe: WireTransportProbe? = nil,
+        secretToolWasExposed: Bool = false
     ) -> AsyncThrowingStream<String, Error> {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
@@ -1031,6 +1070,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             var finishReason: InferenceLog.FinishReason = .stop
             var errorMsg: String? = nil
             var toolInvocation: (name: String, args: String)? = nil
+            var parsedToolNames: [String] = []
             var lastDeltaTime = startTime
             // Accumulate the streamed assistant text so the Insights Response
             // tab can show what was produced. Only retained when logging is
@@ -1182,6 +1222,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 }
             } catch let invs as ServiceToolInvocations {
                 print("[Osaurus][Stream] Tool invocations (batch): count=\(invs.invocations.count)")
+                parsedToolNames = invs.invocations.map(\.toolName)
                 if let first = invs.invocations.first {
                     toolInvocation = (first.toolName, first.jsonArguments)
                 }
@@ -1189,6 +1230,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 continuation.finish(throwing: invs)
             } catch let inv as ServiceToolInvocation {
                 print("[Osaurus][Stream] Tool invocation: \(inv.toolName)")
+                parsedToolNames = [inv.toolName]
                 toolInvocation = (inv.toolName, inv.jsonArguments)
                 finishReason = .toolCalls
                 continuation.finish(throwing: inv)
@@ -1208,7 +1250,17 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             // Log the completed inference (only for Chat UI - HTTP requests are logged by HTTPHandler)
             if source == .chatUI {
                 let durationMs = Date().timeIntervalSince(startTime) * 1000
-                let toolCallsLog = toolInvocation.map { [ToolCallLog(name: $0.name, arguments: $0.args)] }
+                let toolCallsLog = toolInvocation.map {
+                    [
+                        ToolCallLog(
+                            name: $0.name,
+                            arguments: SecretArgumentScrubber.recordedArguments(
+                                toolName: $0.name,
+                                argumentsJSON: $0.args
+                            )
+                        )
+                    ]
+                }
 
                 // Snapshot the real wire bytes (post-scrub request + raw
                 // pre-unscrub response) so the Insights "Server" toggle shows
@@ -1236,7 +1288,11 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         toolInvocation: toolInvocation
                     ),
                     wireRequestBody: wireSnapshot?.request,
-                    wireResponseBody: (wireSnapshot?.response).flatMap { $0.isEmpty ? nil : $0 },
+                    wireResponseBody: Self.wireResponseBodyForLog(
+                        wireSnapshot?.response,
+                        parsedToolNames: parsedToolNames,
+                        secretToolWasExposed: secretToolWasExposed
+                    ),
                     connection: connection,
                     path: logPath ?? "/chat/completions"
                 )

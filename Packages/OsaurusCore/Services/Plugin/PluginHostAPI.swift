@@ -1527,11 +1527,17 @@ final class PluginHostContext: @unchecked Sendable {
                         // The non-streaming path appends the full assistant
                         // message (with all tool_calls) once; the per-call
                         // hooks then append only the tool-result messages.
+                        // Recorded history gets the secret-safe argument view
+                        // so sandbox_secret_set values never re-enter the
+                        // multi-turn context; execution still uses the raw
+                        // invocations built from the model's original args.
                         // The iteration cap is owned by the DRIVER (same
                         // taxonomy as the HTTP surface): the final
                         // iteration's calls still execute, then the loop
                         // exits `.iterationCapReached`.
-                        messages.append(choice.message)
+                        messages.append(
+                            SecretArgumentScrubber.recordedAssistantMessage(choice.message)
+                        )
                         return .toolCalls(
                             calls.map {
                                 ServiceToolInvocation(
@@ -1968,12 +1974,17 @@ final class PluginHostContext: @unchecked Sendable {
                 },
                 willProcessCall: { inv, callId in
                     // Surface the tool call to the plugin before the dedupe
-                    // check, exactly as the historical batch processor did.
+                    // check. Streamed argument material uses the recorded
+                    // (secret-safe) view; execution still sees raw args.
+                    let recordedArgs = SecretArgumentScrubber.recordedArguments(
+                        toolName: inv.toolName,
+                        argumentsJSON: inv.jsonArguments
+                    )
                     let tcDelta: [String: Any] = [
                         "tool_calls": [
                             [
                                 "id": callId,
-                                "function": ["name": inv.toolName, "arguments": inv.jsonArguments],
+                                "function": ["name": inv.toolName, "arguments": recordedArgs],
                             ]
                         ]
                     ]
@@ -1983,7 +1994,8 @@ final class PluginHostContext: @unchecked Sendable {
                     // Dedupe a still-fresh re-read: replay the exact held
                     // envelope instead of re-running the read. Still pair an
                     // assistant tool_call message with the tool result so
-                    // history stays valid.
+                    // history stays valid. Arguments on the recorded
+                    // assistant message are the secret-safe view.
                     emit(
                         Self.chunkPayload(
                             id: cid,
@@ -1995,13 +2007,9 @@ final class PluginHostContext: @unchecked Sendable {
                             role: "assistant",
                             content: lastContent.isEmpty ? nil : lastContent,
                             tool_calls: [
-                                ToolCall(
+                                SecretArgumentScrubber.recordedToolCall(
                                     id: callId,
-                                    type: "function",
-                                    function: ToolCallFunction(
-                                        name: inv.toolName,
-                                        arguments: inv.jsonArguments
-                                    )
+                                    invocation: inv
                                 )
                             ],
                             tool_call_id: nil
@@ -2174,6 +2182,11 @@ final class PluginHostContext: @unchecked Sendable {
 
     /// Execute one tool call, post-process the result, and produce the
     /// assistant + tool ChatMessages to append to the running history.
+    ///
+    /// Execution receives the original `argumentsJSON`. The assistant
+    /// tool-call message that re-enters multi-turn history uses the
+    /// recorded (secret-safe) argument view so `sandbox_secret_set`
+    /// values never ride the next model step or plugin-visible material.
     /// The tool schema is intentionally NOT mutated here — see the
     /// deferred-schema policy in `postProcessToolResult`.
     private static func processToolCall(
@@ -2183,6 +2196,7 @@ final class PluginHostContext: @unchecked Sendable {
         priorAssistantContent: String,
         prep: PreparedInference
     ) async -> ToolCallProcessing {
+        // Execution seam: original arguments, including any secret value.
         var result = await Self.executeToolCall(
             name: toolName,
             argumentsJSON: argumentsJSON,
@@ -2196,10 +2210,15 @@ final class PluginHostContext: @unchecked Sendable {
         )
         result = postProcessed.result
 
+        // Recording seam: secret-safe args for history / model re-feed.
+        let material = ToolCallArgumentMaterial.split(
+            toolName: toolName,
+            argumentsJSON: argumentsJSON
+        )
         let toolCall = ToolCall(
             id: callId,
             type: "function",
-            function: ToolCallFunction(name: toolName, arguments: argumentsJSON)
+            function: ToolCallFunction(name: toolName, arguments: material.forRecording)
         )
         let assistantMessage = ChatMessage(
             role: "assistant",

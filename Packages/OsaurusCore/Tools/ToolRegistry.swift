@@ -540,7 +540,8 @@ public final class ToolRegistry: ObservableObject {
     /// Used by parallel tool batches: approvals resolve serially in model
     /// order first, then the approved set executes concurrently with
     /// `execute(..., permissionGateResolved: true)`.
-    func resolvePermissionGate(name: String, argumentsJSON: String) async throws {
+    func resolvePermissionGate(name rawName: String, argumentsJSON: String) async throws {
+        let name = resolvedRegisteredName(for: rawName)
         // External-surface deny happens BEFORE the gate so a denied tool
         // can never pop an approval prompt from an external request.
         if Self.isDeniedForCurrentSurface(name) {
@@ -557,10 +558,35 @@ public final class ToolRegistry: ObservableObject {
         try await runPermissionGate(tool: tool, name: name, argumentsJSON: argumentsJSON)
     }
 
+    /// Parse the capability-manifest alias syntax shared by permission
+    /// resolution, execution, and secret-recording classification.
+    nonisolated static func deferredToolAliasTarget(_ rawName: String) -> String? {
+        guard rawName.hasPrefix("tool/") else { return nil }
+        let target = String(rawName.dropFirst("tool/".count))
+        return target.isEmpty ? nil : target
+    }
+
+    /// Resolve an alias only when the raw name is not itself registered and
+    /// the bare target is. This preserves the (unusual but valid) possibility
+    /// of a plugin whose literal registered name starts with `tool/`.
+    private func resolvedRegisteredName(for rawName: String) -> String {
+        guard toolsByName[rawName] == nil,
+            let target = Self.deferredToolAliasTarget(rawName),
+            toolsByName[target] != nil
+        else {
+            return rawName
+        }
+        return target
+    }
+
     /// The permission gate shared by `execute` and `resolvePermissionGate`:
     /// system-permission prompts, the per-tool ask/deny/auto policy
     /// (including the user approval prompt), and `.auto` grant backfill.
     private func runPermissionGate(tool: OsaurusTool, name: String, argumentsJSON: String) async throws {
+        let approvalArgumentsJSON = SecretArgumentScrubber.recordedArguments(
+            toolName: name,
+            argumentsJSON: argumentsJSON
+        )
         if let permissioned = tool as? PermissionedTool {
             let requirements = permissioned.requirements
 
@@ -617,7 +643,7 @@ public final class ToolRegistry: ObservableObject {
                     approved = await ToolPermissionPromptService.requestApproval(
                         toolName: name,
                         description: tool.description,
-                        argumentsJSON: argumentsJSON
+                        argumentsJSON: approvalArgumentsJSON
                     )
                 }
                 if !approved {
@@ -665,7 +691,7 @@ public final class ToolRegistry: ObservableObject {
                     approved = await ToolPermissionPromptService.requestApproval(
                         toolName: name,
                         description: tool.description,
-                        argumentsJSON: argumentsJSON
+                        argumentsJSON: approvalArgumentsJSON
                     )
                 }
                 if !approved {
@@ -703,11 +729,7 @@ public final class ToolRegistry: ObservableObject {
         // Resolve to the model's real intent by stripping a `tool/` prefix when
         // the bare name isn't registered but the stripped one is, mirroring the
         // `tool/` handling in CapabilityTools.resolve.
-        var name = rawName
-        if toolsByName[name] == nil, name.hasPrefix("tool/") {
-            let stripped = String(name.dropFirst("tool/".count))
-            if toolsByName[stripped] != nil { name = stripped }
-        }
+        let name = resolvedRegisteredName(for: rawName)
 
         // A tool this request never exposed must not run, however convincingly the model asks
         // for it.
@@ -838,7 +860,11 @@ public final class ToolRegistry: ObservableObject {
                 // the tool name alone can't. Single-lined and truncated to
                 // bound log size and avoid dumping large tool payloads (file
                 // contents, shell scripts) verbatim into /tmp.
-                let flat = effectiveArgumentsJSON.replacingOccurrences(of: "\n", with: " ")
+                let safeArguments = SecretArgumentScrubber.recordedArguments(
+                    toolName: name,
+                    argumentsJSON: effectiveArgumentsJSON
+                )
+                let flat = safeArguments.replacingOccurrences(of: "\n", with: " ")
                 let argsForLog = flat.count > 200 ? String(flat.prefix(200)) + "…" : flat
                 PrefillDebugLog.shared.log("       TOOL-EXEC-BEGIN name=\(name) args=\(argsForLog)")
             }
