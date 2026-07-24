@@ -10,10 +10,16 @@ definitions.
 - `list_spaces`
 - `list_rooms`
 - `read_messages`
+- `read_thread`
 - `search_messages`
 - `draft_message`
 - `send_message`
 - `reply_thread`
+- `edit_message`
+- `delete_message`
+- `add_reaction`
+- `remove_reaction`
+- `send_typing`
 
 The model-facing tools use these standard verbs through `agent_channel_*`
 tools. Provider-specific adapters translate the standard action into the
@@ -82,13 +88,11 @@ server, bot, or chat and prove:
    response that can be mapped to a confirmed delivery.
 6. External HTTP/MCP surfaces reject the same `agent_channel_*` tool names.
 
-The smoke boundary uses the visible Agent Channels settings surface and, for
-Telegram, the app-managed long-poll receive path. It does not require
-production webhook hosting. Slack Socket Mode background receive ships in the
-app: the transport supervisor starts the Socket Mode runtime at launch (and on
-settings changes) once a bot token, a Socket Mode app token, readable channels,
-and authorized sender IDs are configured. Its live health is shown in the
-Slack settings Receive section.
+The smoke boundary uses the visible Agent Channels settings surface and the
+app-managed receive transports: Slack Socket Mode, Telegram Bot API long polling,
+and cursor-based Discord REST polling. It does not require production webhook
+hosting. The transport supervisor starts each configured runtime at launch and
+after settings changes. Live health is shown in each provider's settings.
 
 Slack/Telegram release proof uses
 [`AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md`](AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md)
@@ -348,6 +352,15 @@ non-secret IDs and policy:
   `reply_thread` can target.
 - `writeEnabled` must be true, and send/reply actions still require
   `confirm_send: true`.
+- `senderAllowlist` and `inboundDispatch` gate Discord polling before any
+  message reaches an agent. The first poll establishes a cursor and does not
+  replay historical messages.
+
+The Discord settings sheet fetches the bot's servers and selectable channels.
+Read and Write remain independent explicit choices; discovery never grants
+access automatically. It also attempts to load human members for the authorized
+sender picker; servers that restrict member listing keep the manual sender-ID
+fallback.
 
 ## Slack Connection
 
@@ -383,6 +396,12 @@ grant read, write, or inbound-sender access. Channel rows expose independent
 Read and Write choices, unjoined channels are marked unavailable, and deleted,
 bot, and app users are omitted from sender choices. Manual IDs remain under
 Advanced for installations whose Slack scopes restrict directory discovery.
+
+Additional Slack workspaces can be connected from the same sheet. Each
+workspace keeps a separate bot token and optional Socket Mode app token in
+Keychain, a separate channel/sender policy in `workspaceAccounts`, and its own
+Socket Mode runtime. Channel actions route through the token belonging to the
+workspace that owns the selected channel.
 
 Slack thread ids use `channel_id:thread_ts` so the canonical
 `agent_channel_read_thread` and `agent_channel_reply_thread` tools can route
@@ -426,7 +445,8 @@ included in storage export/key rotation.
 The schema is intentionally provider-neutral:
 
 - `channel_messages` stores inbound and outbound message snapshots keyed by
-  `connection_id + room_id + provider_message_id`.
+  `connection_id + room_id + provider_message_id`, including normalized image,
+  audio, video, and file attachment metadata.
 - `channel_seen_events` stores receive-side event ids keyed by
   `connection_id + provider_event_id`.
 - `channel_receive_cursors` stores optional per-room cursors for polling or
@@ -441,6 +461,9 @@ message. Discord does this for `read_messages`, `search_messages`, and
 `send_message`, so repeated reads cannot duplicate the same provider message in
 the local store. The store keeps only the newest 1,000 message snapshots per
 connection/room pair so busy channels do not grow the database without bound.
+Slack file metadata, Telegram photo/document/audio/video metadata, and Discord
+attachments are preserved. Inbound agent turns receive this metadata inside the
+same untrusted-content envelope as message text; credentials are never included.
 Read and search results reflect messages that were authorized at ingest time.
 If an operator later tightens sender allowlists, previously stored snapshots may
 remain readable until they age out or are pruned.

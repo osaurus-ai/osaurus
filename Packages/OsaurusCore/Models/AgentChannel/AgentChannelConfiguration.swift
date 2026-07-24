@@ -19,10 +19,16 @@ enum AgentChannelAction: String, Codable, CaseIterable, Sendable {
     case listSpaces = "list_spaces"
     case listRooms = "list_rooms"
     case readMessages = "read_messages"
+    case readThread = "read_thread"
     case searchMessages = "search_messages"
     case draftMessage = "draft_message"
     case sendMessage = "send_message"
     case replyThread = "reply_thread"
+    case editMessage = "edit_message"
+    case deleteMessage = "delete_message"
+    case addReaction = "add_reaction"
+    case removeReaction = "remove_reaction"
+    case sendTyping = "send_typing"
 }
 
 enum AgentChannelActionEffect: String, Codable, CaseIterable, Sendable {
@@ -336,20 +342,20 @@ public struct AgentChannelInboundAuthorizationDecision: Equatable, Sendable {
 extension AgentChannelAction {
     var baseEffect: AgentChannelActionEffect {
         switch self {
-        case .diagnostics, .listSpaces, .listRooms, .readMessages, .searchMessages:
+        case .diagnostics, .listSpaces, .listRooms, .readMessages, .readThread, .searchMessages:
             return .readOnly
         case .draftMessage:
             return .draft
-        case .sendMessage, .replyThread:
+        case .sendMessage, .replyThread, .editMessage, .deleteMessage, .addReaction, .removeReaction, .sendTyping:
             return .confirmedWrite
         }
     }
 
     var requiresSendConfirmation: Bool {
         switch self {
-        case .sendMessage, .replyThread:
+        case .sendMessage, .replyThread, .editMessage, .deleteMessage, .addReaction, .removeReaction, .sendTyping:
             return true
-        case .diagnostics, .listSpaces, .listRooms, .readMessages, .searchMessages, .draftMessage:
+        case .diagnostics, .listSpaces, .listRooms, .readMessages, .readThread, .searchMessages, .draftMessage:
             return false
         }
     }
@@ -362,11 +368,11 @@ extension AgentChannelAction {
             return ["provider_credentials"]
         case .listRooms:
             return ["provider_credentials", "space_allowlist"]
-        case .readMessages, .searchMessages:
+        case .readMessages, .readThread, .searchMessages:
             return ["provider_credentials", "read_room_allowlist"]
         case .draftMessage:
             return ["write_room_allowlist", "no_provider_write"]
-        case .sendMessage, .replyThread:
+        case .sendMessage, .replyThread, .editMessage, .deleteMessage, .addReaction, .removeReaction, .sendTyping:
             return ["write_enabled", "write_room_allowlist", "confirm_send_true"]
         }
     }

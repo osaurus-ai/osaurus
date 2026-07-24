@@ -781,3 +781,220 @@ final class AgentChannelReplyThreadTool: OsaurusTool, PermissionedTool, AgentCha
         }
     }
 }
+
+final class AgentChannelEditMessageTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable {
+    let name = "agent_channel_edit_message"
+    let description = "Edit a message in a write-allowlisted room. Requires `confirm_send: true`."
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "connection_id": .object(["type": .string("string")]),
+            "room_id": .object(["type": .string("string")]),
+            "message_id": .object(["type": .string("string")]),
+            "content": .object(["type": .string("string")]),
+            "confirm_send": .object(["type": .string("boolean")]),
+        ]),
+        "required": .array([
+            .string("room_id"), .string("message_id"), .string("content"), .string("confirm_send"),
+        ]),
+    ])
+    let service: AgentChannelConnectionService
+    var requirements: [String] { AgentChannelToolPolicy.writeRequirements }
+    var defaultPermissionPolicy: ToolPermissionPolicy { AgentChannelToolPolicy.defaultPolicy }
+
+    init(service: AgentChannelConnectionService = .shared) { self.service = service }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let connectionReq = optionalString(args, "connection_id", expected: "channel connection id", tool: name)
+        guard case .value(let connectionId) = connectionReq else { return connectionReq.failureEnvelope ?? "" }
+        let roomReq = requireString(args, "room_id", expected: "channel room id", tool: name)
+        guard case .value(let roomId) = roomReq else { return roomReq.failureEnvelope ?? "" }
+        let messageReq = requireString(args, "message_id", expected: "provider message id", tool: name)
+        guard case .value(let messageId) = messageReq else { return messageReq.failureEnvelope ?? "" }
+        let contentReq = requireString(args, "content", expected: "replacement message body", tool: name)
+        guard case .value(let content) = contentReq else { return contentReq.failureEnvelope ?? "" }
+        do {
+            return ToolEnvelope.success(
+                tool: name,
+                result: try await service.editMessage(
+                    connectionId: connectionId,
+                    roomId: roomId,
+                    messageId: messageId,
+                    content: content,
+                    confirmSend: coerceBool(args["confirm_send"]) ?? false
+                )
+            )
+        } catch {
+            return agentChannelFailure(error, tool: name)
+        }
+    }
+}
+
+final class AgentChannelDeleteMessageTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable {
+    let name = "agent_channel_delete_message"
+    let description = "Delete a message in a write-allowlisted room. Requires `confirm_send: true`."
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "connection_id": .object(["type": .string("string")]),
+            "room_id": .object(["type": .string("string")]),
+            "message_id": .object(["type": .string("string")]),
+            "confirm_send": .object(["type": .string("boolean")]),
+        ]),
+        "required": .array([.string("room_id"), .string("message_id"), .string("confirm_send")]),
+    ])
+    let service: AgentChannelConnectionService
+    var requirements: [String] { AgentChannelToolPolicy.writeRequirements }
+    var defaultPermissionPolicy: ToolPermissionPolicy { AgentChannelToolPolicy.defaultPolicy }
+
+    init(service: AgentChannelConnectionService = .shared) { self.service = service }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let connectionReq = optionalString(args, "connection_id", expected: "channel connection id", tool: name)
+        guard case .value(let connectionId) = connectionReq else { return connectionReq.failureEnvelope ?? "" }
+        let roomReq = requireString(args, "room_id", expected: "channel room id", tool: name)
+        guard case .value(let roomId) = roomReq else { return roomReq.failureEnvelope ?? "" }
+        let messageReq = requireString(args, "message_id", expected: "provider message id", tool: name)
+        guard case .value(let messageId) = messageReq else { return messageReq.failureEnvelope ?? "" }
+        do {
+            return ToolEnvelope.success(
+                tool: name,
+                result: try await service.deleteMessage(
+                    connectionId: connectionId,
+                    roomId: roomId,
+                    messageId: messageId,
+                    confirmSend: coerceBool(args["confirm_send"]) ?? false
+                )
+            )
+        } catch {
+            return agentChannelFailure(error, tool: name)
+        }
+    }
+}
+
+class AgentChannelReactionTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable {
+    let name: String
+    let description: String
+    let adding: Bool
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "connection_id": .object(["type": .string("string")]),
+            "room_id": .object(["type": .string("string")]),
+            "message_id": .object(["type": .string("string")]),
+            "reaction": .object(["type": .string("string")]),
+            "confirm_send": .object(["type": .string("boolean")]),
+        ]),
+        "required": .array([
+            .string("room_id"), .string("message_id"), .string("reaction"), .string("confirm_send"),
+        ]),
+    ])
+    let service: AgentChannelConnectionService
+    var requirements: [String] { AgentChannelToolPolicy.writeRequirements }
+    var defaultPermissionPolicy: ToolPermissionPolicy { AgentChannelToolPolicy.defaultPolicy }
+
+    init(name: String, description: String, adding: Bool, service: AgentChannelConnectionService = .shared) {
+        self.name = name
+        self.description = description
+        self.adding = adding
+        self.service = service
+    }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let connectionReq = optionalString(args, "connection_id", expected: "channel connection id", tool: name)
+        guard case .value(let connectionId) = connectionReq else { return connectionReq.failureEnvelope ?? "" }
+        let roomReq = requireString(args, "room_id", expected: "channel room id", tool: name)
+        guard case .value(let roomId) = roomReq else { return roomReq.failureEnvelope ?? "" }
+        let messageReq = requireString(args, "message_id", expected: "provider message id", tool: name)
+        guard case .value(let messageId) = messageReq else { return messageReq.failureEnvelope ?? "" }
+        let reactionReq = requireString(args, "reaction", expected: "provider emoji or reaction name", tool: name)
+        guard case .value(let reaction) = reactionReq else { return reactionReq.failureEnvelope ?? "" }
+        do {
+            return ToolEnvelope.success(
+                tool: name,
+                result: try await service.setReaction(
+                    connectionId: connectionId,
+                    roomId: roomId,
+                    messageId: messageId,
+                    reaction: reaction,
+                    adding: adding,
+                    confirmSend: coerceBool(args["confirm_send"]) ?? false
+                )
+            )
+        } catch {
+            return agentChannelFailure(error, tool: name)
+        }
+    }
+}
+
+final class AgentChannelAddReactionTool: AgentChannelReactionTool, @unchecked Sendable {
+    init(service: AgentChannelConnectionService = .shared) {
+        super.init(
+            name: "agent_channel_add_reaction",
+            description: "Add a reaction to a message in a write-allowlisted room. Requires `confirm_send: true`.",
+            adding: true,
+            service: service
+        )
+    }
+}
+
+final class AgentChannelRemoveReactionTool: AgentChannelReactionTool, @unchecked Sendable {
+    init(service: AgentChannelConnectionService = .shared) {
+        super.init(
+            name: "agent_channel_remove_reaction",
+            description: "Remove the bot's reaction from a message. Requires `confirm_send: true`.",
+            adding: false,
+            service: service
+        )
+    }
+}
+
+final class AgentChannelSendTypingTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable {
+    let name = "agent_channel_send_typing"
+    let description = "Send a short typing/progress indicator to a write-allowlisted room."
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "connection_id": .object(["type": .string("string")]),
+            "room_id": .object(["type": .string("string")]),
+            "confirm_send": .object(["type": .string("boolean")]),
+        ]),
+        "required": .array([.string("room_id"), .string("confirm_send")]),
+    ])
+    let service: AgentChannelConnectionService
+    var requirements: [String] { AgentChannelToolPolicy.writeRequirements }
+    var defaultPermissionPolicy: ToolPermissionPolicy { AgentChannelToolPolicy.defaultPolicy }
+
+    init(service: AgentChannelConnectionService = .shared) { self.service = service }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let connectionReq = optionalString(args, "connection_id", expected: "channel connection id", tool: name)
+        guard case .value(let connectionId) = connectionReq else { return connectionReq.failureEnvelope ?? "" }
+        let roomReq = requireString(args, "room_id", expected: "channel room id", tool: name)
+        guard case .value(let roomId) = roomReq else { return roomReq.failureEnvelope ?? "" }
+        do {
+            return ToolEnvelope.success(
+                tool: name,
+                result: try await service.sendTyping(
+                    connectionId: connectionId,
+                    roomId: roomId,
+                    confirmSend: coerceBool(args["confirm_send"]) ?? false
+                )
+            )
+        } catch {
+            return agentChannelFailure(error, tool: name)
+        }
+    }
+}

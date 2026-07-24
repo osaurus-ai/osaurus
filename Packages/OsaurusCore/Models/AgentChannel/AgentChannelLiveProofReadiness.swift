@@ -136,6 +136,7 @@ enum AgentChannelLiveProofReadiness {
             notes.append("Broadcast mentions are enabled; release proof should confirm this is intentional.")
         }
         appendDiagnosticFailures(diagnostics.failures, to: &blockers)
+        notes.append(contentsOf: diagnostics.warnings)
 
         if diagnostics.writeEnabled {
             manualProof.append("Send one confirmed message to a write-allowlisted Slack channel.")

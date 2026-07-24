@@ -93,8 +93,10 @@ struct ChatSessionSidebar: View {
         .source(.chat),
         .source(.plugin),
         .source(.http),
+        .source(.channel),
         .source(.schedule),
         .source(.watcher),
+        .source(.selfSchedule),
         .archived,
     ]
 
@@ -999,6 +1001,7 @@ private struct SessionRow: View {
         case .chat: return theme.secondaryText
         case .plugin: return theme.accentColorLight
         case .http: return theme.accentColorLight.opacity(0.85)
+        case .channel: return theme.accentColor
         case .schedule: return theme.warningColor
         case .watcher: return theme.successColor
         case .selfSchedule: return theme.warningColor.opacity(0.9)
@@ -1016,6 +1019,8 @@ private struct SessionRow: View {
             return Text("Plugin", bundle: .module)
         case .http:
             return Text("HTTP API", bundle: .module)
+        case .channel:
+            return Text("Agent Channel", bundle: .module)
         case .schedule:
             return Text("Schedule", bundle: .module)
         case .watcher:

@@ -9,6 +9,7 @@ import SwiftUI
 
 struct TelegramSettingsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
     @Environment(\.dismiss) private var dismiss
 
     @State private var botToken: String = ""
@@ -23,6 +24,9 @@ struct TelegramSettingsView: View {
     @State private var longPollingEnabled: Bool = false
     @State private var longPollingLimit: String = "100"
     @State private var longPollingTimeoutSeconds: String = "20"
+    @State private var inboundDispatchEnabled = false
+    @State private var inboundAgentId: UUID?
+    @State private var inboundAutoReplyEnabled = false
     @State private var tokenSaved: Bool = false
     @State private var statusMessage: String?
     @State private var statusDetails: [String] = []
@@ -33,6 +37,8 @@ struct TelegramSettingsView: View {
     @State private var isCheckingWebhook = false
     @State private var isRemovingWebhook = false
     @State private var webhookRegistered = false
+    @State private var isDiscovering = false
+    @State private var discovery: TelegramConnectionDiscovery?
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -125,6 +131,32 @@ struct TelegramSettingsView: View {
     private var accessSection: some View {
         SettingsSubsection(label: L("Access")) {
             VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(discovery == nil ? L("Load recent Telegram choices") : L("Telegram choices loaded"))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+                        Text("Send the bot a message, then load pending chats and senders.", bundle: .module)
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    Spacer()
+                    AgentChannelSheetActionButton(
+                        title: discovery == nil ? L("Load from Telegram") : L("Refresh"),
+                        busyTitle: L("Loading..."),
+                        isBusy: isDiscovering,
+                        action: refreshDiscovery
+                    )
+                    .disabled(isDiscovering || longPollingEnabled || (!tokenSaved && !hasPendingToken))
+                }
+                if let discovery {
+                    telegramDiscoverySelector(discovery)
+                    ForEach(discovery.warnings, id: \.self) { warning in
+                        Label(warning, systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.warningColor)
+                    }
+                }
                 AgentChannelMultilineSettingsField(
                     title: L("Readable Chat IDs"),
                     text: $readableChatIdsText,
@@ -139,6 +171,80 @@ struct TelegramSettingsView: View {
                 )
             }
         }
+    }
+
+    private func telegramDiscoverySelector(_ discovery: TelegramConnectionDiscovery) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Recent Chats", bundle: .module)
+                .font(.system(size: 11, weight: .semibold))
+            ForEach(discovery.chats, id: \.stableId) { chat in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(chat.displayName)
+                            .font(.system(size: 11, weight: .medium))
+                        Text(chat.stableId)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    Spacer()
+                    telegramSelectionButton(
+                        L("Read"),
+                        selected: parseIds(readableChatIdsText).contains(chat.stableId)
+                    ) {
+                        readableChatIdsText = toggledIdText(readableChatIdsText, id: chat.stableId)
+                    }
+                    telegramSelectionButton(
+                        L("Write"),
+                        selected: parseIds(writableChatIdsText).contains(chat.stableId)
+                    ) {
+                        writableChatIdsText = toggledIdText(writableChatIdsText, id: chat.stableId)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            Text("Recent Senders", bundle: .module)
+                .font(.system(size: 11, weight: .semibold))
+            ForEach(discovery.users, id: \.id) { user in
+                let userId = "\(user.id)"
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(user.displayName)
+                            .font(.system(size: 11, weight: .medium))
+                        Text(userId)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    Spacer()
+                    telegramSelectionButton(
+                        L("Allow"),
+                        selected: parseIds(senderAllowlistText).contains(userId)
+                    ) {
+                        senderAllowlistText = toggledIdText(senderAllowlistText, id: userId)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.cardBackground)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.cardBorder, lineWidth: 1))
+        )
+    }
+
+    private func telegramSelectionButton(
+        _ title: String,
+        selected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: selected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(selected ? theme.accentColor : theme.secondaryText)
+        }
+        .buttonStyle(.plain)
     }
 
     private var sendingSection: some View {
@@ -197,6 +303,25 @@ struct TelegramSettingsView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
+                SettingsToggle(
+                    title: L("Dispatch Incoming Messages to an Agent"),
+                    description: L(
+                        "Run verified, allowlisted Telegram messages in a private channel session. External-surface tool restrictions still apply."
+                    ),
+                    isOn: $inboundDispatchEnabled.animation(.easeOut(duration: 0.2))
+                )
+
+                if inboundDispatchEnabled {
+                    inboundAgentPicker
+                    SettingsToggle(
+                        title: L("Reply Automatically"),
+                        description: L(
+                            "Reply to the incoming Telegram message with the selected agent's sanitized response. Telegram and global writes plus the write allowlist still apply."
+                        ),
+                        isOn: $inboundAutoReplyEnabled
+                    )
+                }
+
                 Text(
                     "Reads serve messages from the local inbox; a token alone does not fetch new activity until long polling, readable chats, and authorized senders are configured.",
                     bundle: .module
@@ -217,6 +342,21 @@ struct TelegramSettingsView: View {
 
                 webhookTools
             }
+        }
+    }
+
+    private var inboundAgentPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Agent", bundle: .module)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+            Picker("", selection: $inboundAgentId) {
+                Text("Select an agent", bundle: .module).tag(UUID?.none)
+                ForEach(agentManager.agents.filter { !$0.isBuiltIn }) { agent in
+                    Text(agent.name).tag(Optional(agent.id))
+                }
+            }
+            .labelsHidden()
         }
     }
 
@@ -291,6 +431,9 @@ struct TelegramSettingsView: View {
         longPollingEnabled = configuration.longPollingEnabled
         longPollingLimit = "\(configuration.longPollingLimit)"
         longPollingTimeoutSeconds = "\(configuration.longPollingTimeoutSeconds)"
+        inboundDispatchEnabled = configuration.inboundDispatch.enabled
+        inboundAgentId = configuration.inboundDispatch.targetAgentId
+        inboundAutoReplyEnabled = configuration.inboundDispatch.autoReplyEnabled
         tokenSaved = TelegramConnectionService.shared.hasBotToken()
     }
 
@@ -323,6 +466,25 @@ struct TelegramSettingsView: View {
 
     @discardableResult
     private func saveConfiguration() -> Bool {
+        if inboundDispatchEnabled, inboundAgentId == nil {
+            showStatus(L("Select an agent for incoming Telegram messages."), isError: true)
+            return false
+        }
+        if inboundDispatchEnabled, inboundAutoReplyEnabled {
+            guard writeEnabled else {
+                showStatus(L("Enable Telegram sending before automatic channel replies."), isError: true)
+                return false
+            }
+            let readable = Set(parseIds(readableChatIdsText))
+            let writable = Set(parseIds(writableChatIdsText))
+            guard readable.isSubset(of: writable) else {
+                showStatus(
+                    L("Every readable Telegram chat must also be writable when automatic replies are enabled."),
+                    isError: true
+                )
+                return false
+            }
+        }
         let configuration = TelegramConnectionConfiguration(
             readableChatIds: parseIds(readableChatIdsText),
             writableChatIds: parseIds(writableChatIdsText),
@@ -334,7 +496,14 @@ struct TelegramSettingsView: View {
             receiveStorageEnabled: receiveStorageEnabled,
             longPollingEnabled: longPollingEnabled,
             longPollingLimit: Int(longPollingLimit) ?? 100,
-            longPollingTimeoutSeconds: Int(longPollingTimeoutSeconds) ?? 20
+            longPollingTimeoutSeconds: Int(longPollingTimeoutSeconds) ?? 20,
+            inboundDispatch: AgentChannelInboundDispatchConfiguration(
+                enabled: inboundDispatchEnabled,
+                targetAgentId: inboundAgentId,
+                requireMention: false,
+                continueThreads: true,
+                autoReplyEnabled: inboundAutoReplyEnabled
+            )
         )
         do {
             try TelegramConnectionService.shared.saveConfiguration(configuration)
@@ -482,6 +651,30 @@ struct TelegramSettingsView: View {
         statusIsError = isError
     }
 
+    private func refreshDiscovery() {
+        guard persistPendingSecrets() else { return }
+        isDiscovering = true
+        Task {
+            do {
+                let loaded = try await TelegramConnectionService.shared.discoverConfigurationOptions()
+                await MainActor.run {
+                    discovery = loaded
+                    isDiscovering = false
+                    showStatus(
+                        L("Loaded recent Telegram chats and senders."),
+                        details: loaded.warnings,
+                        isError: false
+                    )
+                }
+            } catch {
+                await MainActor.run {
+                    isDiscovering = false
+                    showStatus(error.localizedDescription, isError: true)
+                }
+            }
+        }
+    }
+
     private func showDiagnostics(
         _ diagnostics: TelegramConnectionDiagnostics,
         presentation suppliedPresentation: AgentChannelStatusPresentation? = nil
@@ -505,5 +698,15 @@ struct TelegramSettingsView: View {
         return TelegramConnectionConfiguration.normalizedIds(
             text.components(separatedBy: separators)
         )
+    }
+
+    private func toggledIdText(_ text: String, id: String) -> String {
+        var ids = parseIds(text)
+        if let index = ids.firstIndex(of: id) {
+            ids.remove(at: index)
+        } else {
+            ids.append(id)
+        }
+        return ids.joined(separator: "\n")
     }
 }

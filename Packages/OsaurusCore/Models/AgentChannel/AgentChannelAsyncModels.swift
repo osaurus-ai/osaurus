@@ -310,6 +310,32 @@ struct AgentChannelProviderRoute: Codable, Equatable, Sendable {
     }
 }
 
+struct AgentChannelInboundDispatchConfiguration: Codable, Equatable, Sendable {
+    var enabled: Bool
+    var targetAgentId: UUID?
+    var requireMention: Bool
+    var continueThreads: Bool
+    var autoReplyEnabled: Bool
+
+    init(
+        enabled: Bool = false,
+        targetAgentId: UUID? = nil,
+        requireMention: Bool = true,
+        continueThreads: Bool = true,
+        autoReplyEnabled: Bool = false
+    ) {
+        self.enabled = enabled
+        self.targetAgentId = targetAgentId
+        self.requireMention = requireMention
+        self.continueThreads = continueThreads
+        self.autoReplyEnabled = autoReplyEnabled
+    }
+
+    var isConfigured: Bool {
+        enabled && targetAgentId != nil
+    }
+}
+
 struct AgentChannelReplyToken: RawRepresentable, Codable, Hashable, Sendable, CustomStringConvertible {
     var rawValue: String
 

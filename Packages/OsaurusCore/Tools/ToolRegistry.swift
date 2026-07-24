@@ -352,6 +352,11 @@ public final class ToolRegistry: ObservableObject {
         AgentChannelDraftMessageTool(),
         AgentChannelSendMessageTool(),
         AgentChannelReplyThreadTool(),
+        AgentChannelEditMessageTool(),
+        AgentChannelDeleteMessageTool(),
+        AgentChannelAddReactionTool(),
+        AgentChannelRemoveReactionTool(),
+        AgentChannelSendTypingTool(),
     ]
 
     nonisolated static let agentChannelToolNames: Set<String> = [
@@ -365,6 +370,11 @@ public final class ToolRegistry: ObservableObject {
         "agent_channel_draft_message",
         "agent_channel_send_message",
         "agent_channel_reply_thread",
+        "agent_channel_edit_message",
+        "agent_channel_delete_message",
+        "agent_channel_add_reaction",
+        "agent_channel_remove_reaction",
+        "agent_channel_send_typing",
     ]
 
     /// Register a plain (non-bucketed) tool. Used by built-in registration

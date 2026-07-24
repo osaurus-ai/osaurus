@@ -351,6 +351,8 @@ final class AgentChannelDeduplicationService: @unchecked Sendable {
 }
 
 actor AgentChannelAuditLog {
+    static let shared = AgentChannelAuditLog()
+
     private var events: [AgentChannelAuditEvent] = []
     private let maxEvents: Int
 

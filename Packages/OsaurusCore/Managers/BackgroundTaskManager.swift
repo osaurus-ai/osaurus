@@ -234,6 +234,28 @@ public final class BackgroundTaskManager: ObservableObject {
         backgroundTasks[id]
     }
 
+    /// Resolve a still-retained channel conversation so an inbound follow-up
+    /// can answer a clarification or continue the same task without creating
+    /// a second session.
+    public func replyableTaskId(
+        source: SessionSource,
+        externalSessionKey: String,
+        agentId: UUID
+    ) -> UUID? {
+        backgroundTasks.values.first { state in
+            guard state.source == source,
+                  state.externalSessionKey == externalSessionKey,
+                  state.agentId == agentId
+            else { return false }
+            switch state.status {
+            case .waitingForInput, .completed:
+                return true
+            case .queued, .running, .failed, .cancelled:
+                return false
+            }
+        }?.id
+    }
+
     /// Rename a notch session and its canonical persisted conversation.
     /// There is intentionally no notch-only alias: the same title appears in
     /// the notch, Chat window, and conversation sidebar.
@@ -1144,7 +1166,7 @@ public final class BackgroundTaskManager: ObservableObject {
     /// is the minimal mapping that's stable for Phase 1.
     private static func triggerKind(for source: SessionSource) -> AgentRunTriggerKind {
         switch source {
-        case .chat, .plugin, .http: return .user
+        case .chat, .plugin, .http, .channel: return .user
         case .schedule: return .recurringSchedule
         case .watcher: return .watcher
         case .selfSchedule: return .schedule

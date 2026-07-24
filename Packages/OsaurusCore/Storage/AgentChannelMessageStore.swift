@@ -39,6 +39,40 @@ public enum AgentChannelStoredMessageDirection: String, Codable, Sendable, Equat
     case outbound
 }
 
+public enum AgentChannelStoredAttachmentKind: String, Codable, Sendable, Equatable {
+    case file
+    case image
+    case audio
+    case video
+}
+
+public struct AgentChannelStoredAttachment: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { providerId }
+
+    public let providerId: String
+    public let kind: AgentChannelStoredAttachmentKind
+    public let filename: String?
+    public let contentType: String?
+    public let sizeBytes: Int?
+    public let remoteURL: String?
+
+    public init(
+        providerId: String,
+        kind: AgentChannelStoredAttachmentKind = .file,
+        filename: String? = nil,
+        contentType: String? = nil,
+        sizeBytes: Int? = nil,
+        remoteURL: String? = nil
+    ) {
+        self.providerId = providerId
+        self.kind = kind
+        self.filename = filename
+        self.contentType = contentType
+        self.sizeBytes = sizeBytes
+        self.remoteURL = remoteURL
+    }
+}
+
 public struct AgentChannelStoredMessage: Codable, Sendable, Equatable, Identifiable {
     public var id: String { "\(connectionId):\(roomId):\(providerMessageId)" }
 
@@ -50,6 +84,7 @@ public struct AgentChannelStoredMessage: Codable, Sendable, Equatable, Identifia
     public let authorId: String?
     public let authorName: String?
     public let content: String
+    public let attachments: [AgentChannelStoredAttachment]
     public let payloadJSON: String
     public let providerTimestamp: String?
     public let receivedAt: Date
@@ -63,6 +98,7 @@ public struct AgentChannelStoredMessage: Codable, Sendable, Equatable, Identifia
         authorId: String? = nil,
         authorName: String? = nil,
         content: String,
+        attachments: [AgentChannelStoredAttachment] = [],
         payloadJSON: String = "{}",
         providerTimestamp: String? = nil,
         receivedAt: Date = Date()
@@ -75,9 +111,46 @@ public struct AgentChannelStoredMessage: Codable, Sendable, Equatable, Identifia
         self.authorId = authorId
         self.authorName = authorName
         self.content = content
+        self.attachments = attachments
         self.payloadJSON = payloadJSON
         self.providerTimestamp = providerTimestamp
         self.receivedAt = receivedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case connectionId
+        case roomId
+        case providerMessageId
+        case direction
+        case threadId
+        case authorId
+        case authorName
+        case content
+        case attachments
+        case payloadJSON
+        case providerTimestamp
+        case receivedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            connectionId: try container.decode(String.self, forKey: .connectionId),
+            roomId: try container.decode(String.self, forKey: .roomId),
+            providerMessageId: try container.decode(String.self, forKey: .providerMessageId),
+            direction: try container.decode(AgentChannelStoredMessageDirection.self, forKey: .direction),
+            threadId: try container.decodeIfPresent(String.self, forKey: .threadId),
+            authorId: try container.decodeIfPresent(String.self, forKey: .authorId),
+            authorName: try container.decodeIfPresent(String.self, forKey: .authorName),
+            content: try container.decode(String.self, forKey: .content),
+            attachments: try container.decodeIfPresent(
+                [AgentChannelStoredAttachment].self,
+                forKey: .attachments
+            ) ?? [],
+            payloadJSON: try container.decodeIfPresent(String.self, forKey: .payloadJSON) ?? "{}",
+            providerTimestamp: try container.decodeIfPresent(String.self, forKey: .providerTimestamp),
+            receivedAt: try container.decodeIfPresent(Date.self, forKey: .receivedAt) ?? Date()
+        )
     }
 }
 
@@ -269,7 +342,7 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
     public static let maxMessagesPerRoom = 1_000
     public static let maxAuditEventsPerConnection = 10_000
 
-    private static let latestSchemaVersion = 2
+    private static let latestSchemaVersion = 3
 
     private var db: OpaquePointer?
     private var registeredMaintenanceHandle = false
@@ -360,6 +433,7 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
         do {
             if currentVersion < 1 { try migrateToV1() }
             if currentVersion < 2 { try migrateToV2() }
+            if currentVersion < 3 { try migrateToV3() }
         } catch {
             throw AgentChannelMessageStoreError.migrationFailed(error.localizedDescription)
         }
@@ -477,6 +551,13 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
             """
         )
         try setSchemaVersion(2)
+    }
+
+    private func migrateToV3() throws {
+        try executeRaw(
+            "ALTER TABLE channel_messages ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]'"
+        )
+        try setSchemaVersion(3)
     }
 
     @discardableResult
@@ -1040,7 +1121,7 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
     private static let messageColumns =
         """
         connection_id, room_id, provider_message_id, direction, thread_id,
-        author_id, author_name, content, payload_json, provider_timestamp, received_at
+        author_id, author_name, content, attachments_json, payload_json, provider_timestamp, received_at
         """
 
     private static let auditColumns =
@@ -1056,8 +1137,8 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
             """
             INSERT OR IGNORE INTO channel_messages (
                 connection_id, room_id, provider_message_id, direction, thread_id,
-                author_id, author_name, content, payload_json, provider_timestamp, received_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                author_id, author_name, content, attachments_json, payload_json, provider_timestamp, received_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
             """
         ) { stmt in
             Self.bindText(stmt, index: 1, value: Self.normalizedId(message.connectionId))
@@ -1068,9 +1149,10 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
             Self.bindText(stmt, index: 6, value: Self.normalizedOptionalId(message.authorId))
             Self.bindText(stmt, index: 7, value: Self.normalizedOptionalId(message.authorName))
             Self.bindText(stmt, index: 8, value: message.content)
-            Self.bindText(stmt, index: 9, value: message.payloadJSON)
-            Self.bindText(stmt, index: 10, value: Self.normalizedOptionalId(message.providerTimestamp))
-            sqlite3_bind_double(stmt, 11, message.receivedAt.timeIntervalSince1970)
+            Self.bindText(stmt, index: 9, value: Self.attachmentsJSON(message.attachments))
+            Self.bindText(stmt, index: 10, value: message.payloadJSON)
+            Self.bindText(stmt, index: 11, value: Self.normalizedOptionalId(message.providerTimestamp))
+            sqlite3_bind_double(stmt, 12, message.receivedAt.timeIntervalSince1970)
         }
     }
 
@@ -1240,9 +1322,10 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
             authorId: columnText(stmt, 5),
             authorName: columnText(stmt, 6),
             content: columnText(stmt, 7) ?? "",
-            payloadJSON: columnText(stmt, 8) ?? "{}",
-            providerTimestamp: columnText(stmt, 9),
-            receivedAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 10))
+            attachments: attachments(from: columnText(stmt, 8)),
+            payloadJSON: columnText(stmt, 9) ?? "{}",
+            providerTimestamp: columnText(stmt, 10),
+            receivedAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 11))
         )
     }
 
@@ -1376,6 +1459,28 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
         return value
     }
 
+    private static func attachmentsJSON(_ attachments: [AgentChannelStoredAttachment]) -> String {
+        guard !attachments.isEmpty,
+              let data = try? JSONEncoder().encode(attachments),
+              let string = String(data: data, encoding: .utf8)
+        else {
+            return "[]"
+        }
+        return string
+    }
+
+    private static func attachments(from json: String?) -> [AgentChannelStoredAttachment] {
+        guard let data = json?.data(using: .utf8),
+              let attachments = try? JSONDecoder().decode(
+                  [AgentChannelStoredAttachment].self,
+                  from: data
+              )
+        else {
+            return []
+        }
+        return attachments
+    }
+
     private static func normalizedReceiveSnapshot(
         connectionId: String,
         message: AgentChannelStoredMessage
@@ -1397,6 +1502,7 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
             authorId: normalizedOptionalId(message.authorId),
             authorName: normalizedOptionalId(message.authorName),
             content: message.content,
+            attachments: message.attachments,
             payloadJSON: message.payloadJSON,
             providerTimestamp: normalizedOptionalId(message.providerTimestamp),
             receivedAt: message.receivedAt

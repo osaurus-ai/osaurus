@@ -11,21 +11,27 @@ struct DiscordConnectionConfiguration: Codable, Equatable, Sendable {
     var configuredGuildIds: [String]
     var readableChannelIds: [String]
     var writableChannelIds: [String]
+    var senderAllowlist: [String]
     var writeEnabled: Bool
     var defaultReadLimit: Int
+    var inboundDispatch: AgentChannelInboundDispatchConfiguration
 
     init(
         configuredGuildIds: [String] = [],
         readableChannelIds: [String] = [],
         writableChannelIds: [String] = [],
+        senderAllowlist: [String] = [],
         writeEnabled: Bool = false,
-        defaultReadLimit: Int = 50
+        defaultReadLimit: Int = 50,
+        inboundDispatch: AgentChannelInboundDispatchConfiguration = AgentChannelInboundDispatchConfiguration()
     ) {
         self.configuredGuildIds = Self.normalizedIds(configuredGuildIds)
         self.readableChannelIds = Self.normalizedIds(readableChannelIds)
         self.writableChannelIds = Self.normalizedIds(writableChannelIds)
+        self.senderAllowlist = Self.normalizedIds(senderAllowlist)
         self.writeEnabled = writeEnabled
         self.defaultReadLimit = Self.clampReadLimit(defaultReadLimit)
+        self.inboundDispatch = inboundDispatch
     }
 
     var normalized: DiscordConnectionConfiguration {
@@ -33,8 +39,36 @@ struct DiscordConnectionConfiguration: Codable, Equatable, Sendable {
             configuredGuildIds: configuredGuildIds,
             readableChannelIds: readableChannelIds,
             writableChannelIds: writableChannelIds,
+            senderAllowlist: senderAllowlist,
             writeEnabled: writeEnabled,
-            defaultReadLimit: defaultReadLimit
+            defaultReadLimit: defaultReadLimit,
+            inboundDispatch: inboundDispatch
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case configuredGuildIds
+        case readableChannelIds
+        case writableChannelIds
+        case senderAllowlist
+        case writeEnabled
+        case defaultReadLimit
+        case inboundDispatch
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            configuredGuildIds: try container.decodeIfPresent([String].self, forKey: .configuredGuildIds) ?? [],
+            readableChannelIds: try container.decodeIfPresent([String].self, forKey: .readableChannelIds) ?? [],
+            writableChannelIds: try container.decodeIfPresent([String].self, forKey: .writableChannelIds) ?? [],
+            senderAllowlist: try container.decodeIfPresent([String].self, forKey: .senderAllowlist) ?? [],
+            writeEnabled: try container.decodeIfPresent(Bool.self, forKey: .writeEnabled) ?? false,
+            defaultReadLimit: try container.decodeIfPresent(Int.self, forKey: .defaultReadLimit) ?? 50,
+            inboundDispatch: try container.decodeIfPresent(
+                AgentChannelInboundDispatchConfiguration.self,
+                forKey: .inboundDispatch
+            ) ?? AgentChannelInboundDispatchConfiguration()
         )
     }
 

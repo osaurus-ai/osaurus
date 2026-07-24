@@ -17,6 +17,8 @@ public enum SessionSource: String, Codable, CaseIterable, Sendable {
     case plugin
     /// External HTTP caller (e.g. `/v1/chat/completions`, `/v1/messages`).
     case http
+    /// Verified inbound message from an Agent Channel provider.
+    case channel
     /// Recurring scheduled task created via `ScheduleManager`.
     case schedule
     /// File-system watcher trigger (`WatcherManager`).
@@ -54,6 +56,8 @@ extension SessionSource {
             return "via plugin"
         case .http:
             return "via API"
+        case .channel:
+            return "via channel"
         case .schedule:
             return "scheduled"
         case .watcher:
@@ -69,6 +73,7 @@ extension SessionSource {
         case .chat: return "bubble.left.fill"
         case .plugin: return "puzzlepiece.extension.fill"
         case .http: return "network"
+        case .channel: return "bubble.left.and.bubble.right.fill"
         case .schedule: return "clock.fill"
         case .watcher: return "eye.fill"
         case .selfSchedule: return "alarm.fill"
@@ -81,6 +86,7 @@ extension SessionSource {
         case .chat: return "Chat"
         case .plugin: return "Plugin"
         case .http: return "API"
+        case .channel: return "Channel"
         case .schedule: return "Schedule"
         case .watcher: return "Watcher"
         case .selfSchedule: return "Self-scheduled"
@@ -128,7 +134,7 @@ extension SessionSource {
         case .chat: return .chatUI
         case .http: return .httpAPI
         case .plugin: return .plugin
-        case .schedule, .watcher, .selfSchedule: return .scheduled
+        case .channel, .schedule, .watcher, .selfSchedule: return .scheduled
         }
     }
 }

@@ -525,10 +525,16 @@ extension AgentChannelAction {
         case .listSpaces: L("List spaces")
         case .listRooms: L("List rooms")
         case .readMessages: L("Read messages")
+        case .readThread: L("Read thread")
         case .searchMessages: L("Search messages")
         case .draftMessage: L("Draft message")
         case .sendMessage: L("Send message")
         case .replyThread: L("Reply thread")
+        case .editMessage: L("Edit message")
+        case .deleteMessage: L("Delete message")
+        case .addReaction: L("Add reaction")
+        case .removeReaction: L("Remove reaction")
+        case .sendTyping: L("Typing indicator")
         }
     }
 }

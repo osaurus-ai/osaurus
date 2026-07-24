@@ -320,6 +320,23 @@ struct TelegramConnectionTests {
         }
     }
 
+    @Test func discoveryLoadsPendingChatsAndHumanSendersWithoutAdvancingCursor() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let fake = FakeTelegramAPIClient()
+            await fake.setUpdates([
+                .fixture(updateId: 42, messageId: 10, chatId: -100111222333, text: "discover me"),
+            ])
+            let service = TelegramConnectionService(client: fake, credentialStore: credentials)
+            try service.saveBotToken("123456:telegram-bot-token-super-secret")
+
+            let discovery = try await service.discoverConfigurationOptions()
+
+            #expect(discovery.chats.map(\.stableId) == ["-100111222333"])
+            #expect(discovery.users.map(\.id) == [7])
+            #expect(await fake.lastUpdateOffset() == nil)
+        }
+    }
+
     @Test func transportRuntimeUsesStoredOffsetBoundedPollingAndHealth() async throws {
         try await withIsolatedTelegramStores { credentials in
             let store = AgentChannelMessageStore()

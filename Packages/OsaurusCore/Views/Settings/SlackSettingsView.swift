@@ -13,6 +13,7 @@ import SwiftUI
 
 struct SlackSettingsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
     @Environment(\.dismiss) private var dismiss
 
     @State private var botToken: String = ""
@@ -25,6 +26,11 @@ struct SlackSettingsView: View {
     @State private var writeEnabled: Bool = false
     @State private var allowBroadcastMentions: Bool = false
     @State private var defaultReadLimit: String = "50"
+    @State private var inboundDispatchEnabled = false
+    @State private var inboundAgentId: UUID?
+    @State private var inboundRequireMention = true
+    @State private var inboundContinueThreads = true
+    @State private var inboundAutoReplyEnabled = false
     @State private var botTokenSaved: Bool = false
     @State private var signingSecretSaved: Bool = false
     @State private var appTokenSaved: Bool = false
@@ -38,6 +44,12 @@ struct SlackSettingsView: View {
     @State private var channelSearch = ""
     @State private var userSearch = ""
     @State private var healthRefreshToken = 0
+    @State private var additionalBotToken = ""
+    @State private var additionalAppToken = ""
+    @State private var isAddingWorkspace = false
+    @State private var pendingWorkspaceDiscovery: SlackConnectionDiscovery?
+    @State private var isVerifying = false
+    @State private var activityRefreshToken = 0
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -50,20 +62,26 @@ struct SlackSettingsView: View {
         ) {
             VStack(alignment: .leading, spacing: 20) {
                 Text(
-                    "Connect a Slack bot so agents can inspect allowlisted channels and post only to write-allowlisted destinations.",
+                    "Osaurus connects out to Slack over Socket Mode — no webhook, public URL, or Request URL is needed. Follow the numbered steps; each shows a checkmark when it is complete.",
                     bundle: .module
                 )
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
 
-                credentialsSection
+                stepCreateAppSection
+                SettingsDivider()
+                stepBotTokenSection
+                SettingsDivider()
+                stepAppTokenSection
                 SettingsDivider()
                 accessSection
                 SettingsDivider()
+                stepDispatchSection
+                SettingsDivider()
                 sendingSection
                 SettingsDivider()
-                receiveSection
+                stepVerifySection
                 SettingsDivider()
                 advancedSection
             }
@@ -106,57 +124,197 @@ struct SlackSettingsView: View {
         }
     }
 
-    private var credentialsSection: some View {
-        SettingsSubsection(label: L("Credentials")) {
-            VStack(alignment: .leading, spacing: 12) {
-                AgentChannelSetupLink(
-                    title: L("Create a Slack app at api.slack.com/apps"),
-                    url: URL(string: "https://api.slack.com/apps")!
-                )
+    // MARK: - Guided setup steps
 
-                Button(action: copyRecommendedManifest) {
-                    Label(L("Copy recommended Slack app manifest"), systemImage: "doc.on.doc")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.accentColor)
+    private func stepHeader(_ number: Int, _ title: String, done: Bool) -> some View {
+        HStack(spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(done ? theme.successColor.opacity(0.14) : theme.tertiaryBackground)
+                    .frame(width: 22, height: 22)
+                if done {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(theme.successColor)
+                } else {
+                    Text("\(number)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
                 }
-                .buttonStyle(PlainButtonStyle())
+            }
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+            Spacer(minLength: 0)
+        }
+    }
 
-                AgentChannelSecretField(
-                    label: L("Bot Token"),
-                    requirementHint: L("Required"),
-                    placeholder: L("xoxb-..."),
-                    text: $botToken,
-                    saved: botTokenSaved,
-                    onRemove: removeBotToken
-                )
+    private var appConfigurationURL: URL {
+        let appId = SlackConnectionConfigurationStore.load().apiAppId?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let appId, !appId.isEmpty, appId.allSatisfy({ $0.isLetter || $0.isNumber }) {
+            return URL(string: "https://api.slack.com/apps/\(appId)")!
+        }
+        return URL(string: "https://api.slack.com/apps")!
+    }
 
-                AgentChannelSecretField(
-                    label: L("Signing Secret"),
-                    requirementHint: L("Optional — webhook receive"),
-                    placeholder: L("Paste your signing secret"),
-                    text: $signingSecret,
-                    saved: signingSecretSaved,
-                    onRemove: removeSigningSecret
-                )
+    private var stepCreateAppSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            stepHeader(1, L("Create the Slack app"), done: botTokenSaved || appTokenSaved)
 
-                AgentChannelSecretField(
-                    label: L("App Token"),
-                    requirementHint: L("Optional — enables Socket Mode receive"),
-                    placeholder: L("xapp-..."),
-                    text: $appToken,
-                    saved: appTokenSaved,
-                    onRemove: removeAppToken
-                )
+            AgentChannelSetupLink(
+                title: L("Open api.slack.com/apps and choose “Create New App” → “From a manifest”"),
+                url: URL(string: "https://api.slack.com/apps")!
+            )
 
-                Text("Saved to the macOS Keychain when you press Save.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+            Button(action: copyRecommendedManifest) {
+                Label(L("Copy the recommended app manifest"), systemImage: "doc.on.doc")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+            }
+            .buttonStyle(PlainButtonStyle())
+
+            Text(
+                "The manifest already enables Socket Mode and the message event subscriptions. You never enter a Request URL — Osaurus receives events over an outgoing connection.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var stepBotTokenSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            stepHeader(2, L("Install the app and paste the Bot Token"), done: botTokenSaved)
+
+            Text(
+                "In your Slack app, open “Install App”, install it to the workspace, then copy the Bot User OAuth Token.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
+            AgentChannelSecretField(
+                label: L("Bot Token"),
+                requirementHint: L("Required"),
+                placeholder: L("xoxb-..."),
+                text: $botToken,
+                saved: botTokenSaved,
+                onRemove: removeBotToken
+            )
+
+            additionalWorkspaces
+
+            Text("Tokens are saved to the macOS Keychain when you press Save.", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+        }
+    }
+
+    private var stepAppTokenSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            stepHeader(3, L("Generate the App-Level Token (receiving)"), done: appTokenSaved)
+
+            Text(
+                "Required to receive messages. In your Slack app, open “Basic Information” → “App-Level Tokens”, generate a token with the connections:write scope, and paste it here. This powers Socket Mode — no webhook is involved.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
+            AgentChannelSetupLink(
+                title: L("Open your Slack app settings"),
+                url: appConfigurationURL
+            )
+
+            AgentChannelSecretField(
+                label: L("App Token"),
+                requirementHint: L("Required to receive messages"),
+                placeholder: L("xapp-..."),
+                text: $appToken,
+                saved: appTokenSaved,
+                onRemove: removeAppToken
+            )
+        }
+    }
+
+    private var additionalWorkspaces: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            let accounts = SlackConnectionConfigurationStore.load().workspaceAccounts
+            if !accounts.isEmpty {
+                Text("Additional Workspaces", bundle: .module)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                ForEach(accounts) { account in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(account.teamName ?? account.teamId)
+                                .font(.system(size: 11, weight: .medium))
+                            Text(account.teamId)
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundColor(theme.tertiaryText)
+                        }
+                        Spacer()
+                        Button(L("Remove")) { removeWorkspace(account.teamId) }
+                            .buttonStyle(.plain)
+                            .foregroundColor(theme.errorColor)
+                    }
+                }
+            }
+
+            if isAddingWorkspace {
+                SecureField(L("Additional workspace bot token (xoxb-...)"), text: $additionalBotToken)
+                    .textFieldStyle(.roundedBorder)
+                SecureField(L("Additional workspace app token (optional xapp-...)"), text: $additionalAppToken)
+                    .textFieldStyle(.roundedBorder)
+                HStack {
+                    Button(L("Cancel")) {
+                        isAddingWorkspace = false
+                        additionalBotToken = ""
+                        additionalAppToken = ""
+                        pendingWorkspaceDiscovery = nil
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                    AgentChannelSheetActionButton(
+                        title: L("Load Workspace"),
+                        busyTitle: L("Loading..."),
+                        isBusy: isDiscovering,
+                        action: loadAdditionalWorkspace
+                    )
+                    .disabled(additionalBotToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                if let pendingWorkspaceDiscovery {
+                    Text(
+                        "Loaded \(pendingWorkspaceDiscovery.identity.team ?? pendingWorkspaceDiscovery.identity.teamId). Choose its channels and authorized senders below, then press Save.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.accentColor)
+                }
+            } else {
+                Button {
+                    isAddingWorkspace = true
+                } label: {
+                    Label(L("Add another Slack workspace"), systemImage: "plus.circle")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(theme.accentColor)
             }
         }
     }
 
     private var accessSection: some View {
-        SettingsSubsection(label: L("Access")) {
+        VStack(alignment: .leading, spacing: 12) {
+            stepHeader(
+                4,
+                L("Choose channels and people"),
+                done: !parseIds(readableChannelIdsText).isEmpty && !parseIds(senderAllowlistText).isEmpty
+            )
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -231,33 +389,165 @@ struct SlackSettingsView: View {
         }
     }
 
-    private var receiveSection: some View {
-        SettingsSubsection(label: L("Receive")) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(
-                    "Socket Mode receive starts automatically once a bot token, app token, readable channels, and authorized senders are configured.",
-                    bundle: .module
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .fixedSize(horizontal: false, vertical: true)
+    private var stepDispatchSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            stepHeader(
+                5,
+                L("Send incoming messages to an agent"),
+                done: inboundDispatchEnabled && inboundAgentId != nil
+            )
 
-                AgentChannelTransportHealthView(
-                    connectionId: AgentChannelConnection.nativeSlackConnectionId,
-                    transportId: SlackSocketModeTransportRuntime.transportId,
-                    title: L("Socket Mode receive"),
-                    notRunningHint: L(
-                        "Socket Mode is not running. Save a bot token, a Socket Mode app token, readable channels, and authorized sender IDs to start it."
+            SettingsToggle(
+                title: L("Dispatch Incoming Messages to an Agent"),
+                description: L(
+                    "Run verified, allowlisted Slack messages in a private channel session. External-surface tool restrictions still apply."
+                ),
+                isOn: $inboundDispatchEnabled.animation(.easeOut(duration: 0.2))
+            )
+
+            if inboundDispatchEnabled {
+                inboundAgentPicker
+                SettingsToggle(
+                    title: L("Require an @mention"),
+                    description: L("Start new Slack conversations only when the bot is mentioned."),
+                    isOn: $inboundRequireMention
+                )
+                SettingsToggle(
+                    title: L("Continue Participating Threads"),
+                    description: L(
+                        "Accept follow-ups without another mention only after Osaurus has replied in that Slack thread."
                     ),
-                    refreshToken: healthRefreshToken
+                    isOn: $inboundContinueThreads
+                )
+                SettingsToggle(
+                    title: L("Reply Automatically"),
+                    description: L(
+                        "Post the selected agent's sanitized response in the same thread. Slack and global writes plus the write allowlist still apply."
+                    ),
+                    isOn: $inboundAutoReplyEnabled
                 )
             }
+        }
+    }
+
+    private var stepVerifySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            stepHeader(6, L("Verify an incoming message"), done: false)
+
+            Text(
+                "Socket Mode receive starts automatically after Save once steps 2–4 are complete. Send the test message below in an allowlisted channel from an authorized sender, then watch each stage appear here.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
+            testPromptRow
+
+            AgentChannelTransportHealthView(
+                connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                transportId: SlackSocketModeTransportRuntime.transportId,
+                title: L("Socket Mode receive"),
+                notRunningHint: L(
+                    "Socket Mode is not running. Save a bot token, an app-level token, readable channels, and authorized sender IDs, then press Save to start it."
+                ),
+                refreshToken: healthRefreshToken
+            )
+
+            AgentChannelInboundActivityListView(
+                connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                emptyHint: L(
+                    "No incoming Slack events yet this session. Send the test message and press “Verify incoming message”."
+                ),
+                refreshToken: activityRefreshToken
+            )
+
+            AgentChannelSheetActionButton(
+                title: L("Verify incoming message"),
+                busyTitle: L("Waiting for a Slack message..."),
+                isBusy: isVerifying,
+                action: verifyIncomingMessage
+            )
+            .disabled(isVerifying || isSaving || isTesting)
+        }
+    }
+
+    /// Exact test message the user should send, mentioning the Slack bot user
+    /// (a frequent failure is mentioning the Osaurus agent name instead).
+    private var testPromptRow: some View {
+        let botName = discovery?.identity.user
+        let prompt = "@\(botName ?? "your-slack-bot") hello"
+        return HStack(spacing: 8) {
+            Text(prompt)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(theme.primaryText)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(theme.inputBackground)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.inputBorder, lineWidth: 1))
+                )
+            Button {
+                #if os(macOS)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(prompt, forType: .string)
+                #endif
+                showStatus(L("Test message copied"), isError: false)
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 10, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(theme.accentColor)
+            .help(Text("Copy the test message", bundle: .module))
+
+            Text(
+                botName == nil
+                    ? L("Mention the Slack bot user, not the Osaurus agent name. Load from Slack to fill in the bot name.")
+                    : L("Mention the Slack bot user, not the Osaurus agent name.")
+            )
+            .font(.system(size: 10))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var inboundAgentPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Agent", bundle: .module)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+            Picker("", selection: $inboundAgentId) {
+                Text("Select an agent", bundle: .module).tag(UUID?.none)
+                ForEach(agentManager.agents.filter { !$0.isBuiltIn }) { agent in
+                    Text(agent.name).tag(Optional(agent.id))
+                }
+            }
+            .labelsHidden()
         }
     }
 
     private var advancedSection: some View {
         AgentChannelAdvancedSection {
             VStack(alignment: .leading, spacing: 12) {
+                AgentChannelSecretField(
+                    label: L("Signing Secret"),
+                    requirementHint: L("Not used by Socket Mode receive"),
+                    placeholder: L("Paste your signing secret"),
+                    text: $signingSecret,
+                    saved: signingSecretSaved,
+                    onRemove: removeSigningSecret
+                )
+
+                Text(
+                    "The signing secret only verifies Slack HTTP (Events API) requests. Native Slack receive uses Socket Mode and never needs it; keep it only for future webhook compatibility.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
                 Text(
                     "Manual IDs are a fallback for restricted Slack scopes or entries not returned by discovery.",
                     bundle: .module
@@ -623,6 +913,11 @@ struct SlackSettingsView: View {
         writeEnabled = configuration.writeEnabled
         allowBroadcastMentions = configuration.allowBroadcastMentions
         defaultReadLimit = "\(configuration.defaultReadLimit)"
+        inboundDispatchEnabled = configuration.inboundDispatch.enabled
+        inboundAgentId = configuration.inboundDispatch.targetAgentId
+        inboundRequireMention = configuration.inboundDispatch.requireMention
+        inboundContinueThreads = configuration.inboundDispatch.continueThreads
+        inboundAutoReplyEnabled = configuration.inboundDispatch.autoReplyEnabled
         botTokenSaved = SlackConnectionService.shared.hasBotToken()
         signingSecretSaved = SlackConnectionService.shared.hasSigningSecret()
         appTokenSaved = SlackConnectionService.shared.hasAppToken()
@@ -700,6 +995,83 @@ struct SlackSettingsView: View {
         }
     }
 
+    private func loadAdditionalWorkspace() {
+        let token = additionalBotToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else { return }
+        isDiscovering = true
+        Task {
+            do {
+                let loaded = try await SlackConnectionService.shared
+                    .discoverConfigurationOptions(botToken: token)
+                await MainActor.run {
+                    isDiscovering = false
+                    pendingWorkspaceDiscovery = loaded
+                    discovery = loaded
+                    configuredTeamIdsText = updatedIdText(
+                        configuredTeamIdsText,
+                        id: loaded.identity.teamId,
+                        selected: true
+                    )
+                    showStatus(
+                        L("Workspace loaded. Choose channels and senders, then press Save."),
+                        details: loaded.warnings,
+                        isError: false
+                    )
+                }
+            } catch {
+                await MainActor.run {
+                    isDiscovering = false
+                    showStatus(error.localizedDescription, isError: true)
+                }
+            }
+        }
+    }
+
+    private func persistAdditionalWorkspace() -> Bool {
+        guard let pendingWorkspaceDiscovery else { return true }
+        let channelIds = Set(pendingWorkspaceDiscovery.conversations.map(\.id))
+        let userIds = Set(pendingWorkspaceDiscovery.users.map(\.id))
+        do {
+            try SlackConnectionService.shared.saveWorkspaceAccount(
+                discovery: pendingWorkspaceDiscovery,
+                botToken: additionalBotToken,
+                appToken: additionalAppToken,
+                readableChannelIds: parseIds(readableChannelIdsText).filter(channelIds.contains),
+                writableChannelIds: parseIds(writableChannelIdsText).filter(channelIds.contains),
+                senderAllowlist: parseIds(senderAllowlistText).filter(userIds.contains)
+            )
+            additionalBotToken = ""
+            additionalAppToken = ""
+            self.pendingWorkspaceDiscovery = nil
+            isAddingWorkspace = false
+            return true
+        } catch {
+            showStatus(error.localizedDescription, isError: true)
+            return false
+        }
+    }
+
+    private func removeWorkspace(_ teamId: String) {
+        let account = SlackConnectionConfigurationStore.load().workspaceAccounts.first { $0.teamId == teamId }
+        do {
+            try SlackConnectionService.shared.removeWorkspaceAccount(teamId: teamId)
+            if let account {
+                readableChannelIdsText = parseIds(readableChannelIdsText)
+                    .filter { !account.readableChannelIds.contains($0) }.joined(separator: "\n")
+                writableChannelIdsText = parseIds(writableChannelIdsText)
+                    .filter { !account.writableChannelIds.contains($0) }.joined(separator: "\n")
+                senderAllowlistText = parseIds(senderAllowlistText)
+                    .filter { !account.senderAllowlist.contains($0) }.joined(separator: "\n")
+            }
+            configuredTeamIdsText = parseIds(configuredTeamIdsText)
+                .filter { $0 != teamId }.joined(separator: "\n")
+            refreshReceiveRuntime()
+            showStatus(L("Slack workspace removed."), isError: false)
+        } catch {
+            showStatus(error.localizedDescription, isError: true)
+        }
+    }
+
     private func removeBotToken() {
         _ = SlackConnectionService.shared.deleteBotToken()
         botToken = ""
@@ -730,6 +1102,7 @@ struct SlackSettingsView: View {
             showStatus(validationFailure, isError: true)
             return false
         }
+        let previous = SlackConnectionConfigurationStore.load()
         let configuration = SlackConnectionConfiguration(
             configuredTeamIds: parseIds(configuredTeamIdsText),
             readableChannelIds: parseIds(readableChannelIdsText),
@@ -737,7 +1110,18 @@ struct SlackSettingsView: View {
             senderAllowlist: parseIds(senderAllowlistText),
             writeEnabled: writeEnabled,
             defaultReadLimit: Int(defaultReadLimit) ?? 50,
-            allowBroadcastMentions: allowBroadcastMentions
+            allowBroadcastMentions: allowBroadcastMentions,
+            botUserId: previous.botUserId,
+            botId: previous.botId,
+            apiAppId: previous.apiAppId,
+            inboundDispatch: AgentChannelInboundDispatchConfiguration(
+                enabled: inboundDispatchEnabled,
+                targetAgentId: inboundAgentId,
+                requireMention: inboundRequireMention,
+                continueThreads: inboundContinueThreads,
+                autoReplyEnabled: inboundAutoReplyEnabled
+            ),
+            workspaceAccounts: previous.workspaceAccounts
         )
         do {
             try SlackConnectionService.shared.saveConfiguration(configuration)
@@ -749,16 +1133,38 @@ struct SlackSettingsView: View {
     }
 
     /// Persist the configuration, hold the Save button busy until the receive
-    /// supervisor has re-evaluated the runtime, then close the sheet.
+    /// supervisor has re-evaluated the runtime, then close the sheet — unless
+    /// the user wants receive (dispatch is on) and receive cannot actually
+    /// run. In that case the sheet stays open with the exact blockers rather
+    /// than dismissing on a superficially successful save.
     private func saveAndDismiss() {
-        guard persistPendingSecrets(), saveConfiguration() else { return }
+        guard persistPendingSecrets(), saveConfiguration(), persistAdditionalWorkspace() else { return }
         isSaving = true
         Task {
             await AgentChannelTransportSupervisor.shared.refreshSlackRuntime()
+            guard inboundDispatchEnabled else {
+                await MainActor.run {
+                    isSaving = false
+                    _ = ToastManager.shared.success(L("Slack settings saved"))
+                    dismiss()
+                }
+                return
+            }
+            let diagnostics = await SlackConnectionService.shared.diagnostics()
+            let report = AgentChannelLiveProofReadiness.slack(diagnostics)
             await MainActor.run {
                 isSaving = false
-                _ = ToastManager.shared.success(L("Slack settings saved"))
-                dismiss()
+                healthRefreshToken += 1
+                if report.isReadyForLiveProof {
+                    _ = ToastManager.shared.success(L("Slack settings saved — receive is ready"))
+                    dismiss()
+                } else {
+                    showStatus(
+                        L("Saved, but Slack receive is not ready yet"),
+                        details: report.blockers + report.notes,
+                        isError: true
+                    )
+                }
             }
         }
     }
@@ -766,7 +1172,7 @@ struct SlackSettingsView: View {
     /// Persist the current draft first so diagnostics always test what the
     /// user sees in the form, not a stale save.
     private func testConnection() {
-        guard persistPendingSecrets(), saveConfiguration() else { return }
+        guard persistPendingSecrets(), saveConfiguration(), persistAdditionalWorkspace() else { return }
         isTesting = true
         Task {
             await AgentChannelTransportSupervisor.shared.refreshSlackRuntime()
@@ -779,13 +1185,17 @@ struct SlackSettingsView: View {
                 discoveryResult = .failure(error)
             }
             let diagnostics = await SlackConnectionService.shared.diagnostics()
+            let report = AgentChannelLiveProofReadiness.slack(diagnostics)
             await MainActor.run {
                 isTesting = false
                 healthRefreshToken += 1
                 let presentation = AgentChannelStatusPresentation.diagnostics(
                     status: diagnostics.status
                 )
-                var details = diagnostics.failures
+                // The readiness report is the single checklist source: it
+                // folds diagnostics failures, allowlist gaps, app-token
+                // validation, and environment warnings into ordered blockers.
+                var details = report.blockers + report.notes
                 switch discoveryResult {
                 case .success(let loaded):
                     applyDiscovery(loaded)
@@ -796,10 +1206,118 @@ struct SlackSettingsView: View {
                 showStatus(
                     presentation.label,
                     details: details,
-                    isError: !diagnostics.failures.isEmpty
+                    isError: !report.blockers.isEmpty
                 )
             }
         }
+    }
+
+    /// Wait for a fresh inbound Slack event and report the exact stage it
+    /// reached (received, stored, dispatched, replied) or the boundary that
+    /// stopped it, instead of a generic "connected" result.
+    private func verifyIncomingMessage() {
+        isVerifying = true
+        showStatus(
+            L("Waiting for a Slack message. Send the test message now from an authorized sender in a readable channel."),
+            isError: false
+        )
+        let start = Date()
+        Task {
+            let deadline = start.addingTimeInterval(90)
+            var observed: [AgentChannelInboundActivityEvent] = []
+            while Date() < deadline {
+                observed = await AgentChannelInboundActivityCenter.shared.events(
+                    connectionId: AgentChannelConnection.nativeSlackConnectionId,
+                    since: start
+                )
+                if !observed.isEmpty {
+                    await MainActor.run {
+                        activityRefreshToken += 1
+                        healthRefreshToken += 1
+                    }
+                    if let terminal = terminalVerifyEvent(in: observed) {
+                        await MainActor.run {
+                            isVerifying = false
+                            presentVerifyOutcome(terminal)
+                        }
+                        return
+                    }
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
+            await MainActor.run {
+                isVerifying = false
+                activityRefreshToken += 1
+                if let latest = observed.last {
+                    presentVerifyOutcome(latest, timedOutWaitingForMore: true)
+                } else {
+                    showStatus(
+                        L("No Slack event arrived within 90 seconds."),
+                        details: verifyNoEventGuidance(),
+                        isError: true
+                    )
+                }
+            }
+        }
+    }
+
+    /// Stages that end the verification wait. `dispatched` is terminal only
+    /// when auto-reply is off, since a reply confirmation will never come.
+    private func terminalVerifyEvent(
+        in events: [AgentChannelInboundActivityEvent]
+    ) -> AgentChannelInboundActivityEvent? {
+        events.last { event in
+            switch event.stage {
+            case .rejected, .dispatchSuppressed, .failed, .replySent, .agentReplied:
+                return true
+            case .dispatched:
+                return !inboundAutoReplyEnabled
+            case .received, .stored:
+                return false
+            }
+        }
+    }
+
+    private func presentVerifyOutcome(
+        _ event: AgentChannelInboundActivityEvent,
+        timedOutWaitingForMore: Bool = false
+    ) {
+        let label = AgentChannelInboundActivityPresentation.label(for: event.stage)
+        var details: [String] = []
+        if let guidance = AgentChannelInboundActivityPresentation.guidance(
+            stage: event.stage,
+            reason: event.reason
+        ) {
+            details.append(guidance)
+        }
+        let isError: Bool
+        switch event.stage {
+        case .rejected, .dispatchSuppressed, .failed:
+            isError = true
+        case .received, .stored, .dispatched, .agentReplied, .replySent:
+            isError = timedOutWaitingForMore
+        }
+        if timedOutWaitingForMore {
+            details.append(
+                L("The event stopped at this stage before the wait expired; check the recent events list above.")
+            )
+        }
+        showStatus(label, details: details, isError: isError)
+    }
+
+    private func verifyNoEventGuidance() -> [String] {
+        var guidance = [
+            L("Confirm the message was sent in a channel selected as readable, by a person in Authorized Senders."),
+            L("Confirm the Slack app has Socket Mode on and the app_mention/message event subscriptions (the recommended manifest includes them)."),
+            L("Confirm the bot has been invited to the channel (/invite @your-bot)."),
+            L("Mention the Slack bot user, not the Osaurus agent name."),
+        ]
+        if let warning = OsaurusRunningInstanceInspector.duplicateInstanceWarning(
+            instanceCount: OsaurusRunningInstanceInspector.runningInstanceCount()
+        ) {
+            guidance.append(warning)
+        }
+        return guidance
     }
 
     /// Restart the Socket Mode runtime after a config change, then refresh the
@@ -860,6 +1378,19 @@ struct SlackSettingsView: View {
         }
         guard Int(defaultReadLimit) != nil else {
             return L("Default Read Limit must be a number from 1 to 100.")
+        }
+        if inboundDispatchEnabled, inboundAgentId == nil {
+            return L("Select an agent for incoming Slack messages.")
+        }
+        if inboundDispatchEnabled, inboundAutoReplyEnabled {
+            guard writeEnabled else {
+                return L("Enable Slack sending before automatic channel replies.")
+            }
+            let readable = Set(parseIds(readableChannelIdsText))
+            let writable = Set(parseIds(writableChannelIdsText))
+            guard readable.isSubset(of: writable) else {
+                return L("Every readable Slack channel must also be writable when automatic replies are enabled.")
+            }
         }
         return nil
     }

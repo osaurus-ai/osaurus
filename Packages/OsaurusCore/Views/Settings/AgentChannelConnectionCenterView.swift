@@ -482,7 +482,10 @@ struct AgentChannelConnectionCenterView: View {
     private func refreshNativeBadges() {
         let discordConfigured = DiscordConnectionService.shared.hasBotToken()
         let slackConfigured = SlackConnectionService.shared.hasBotToken()
+        let slackReceiveExpected = SlackConnectionService.shared.hasAppToken()
         let telegramConfigured = TelegramConnectionService.shared.hasBotToken()
+        let telegramReceiveExpected = TelegramConnectionService.shared
+            .configuration().longPollingEnabled
         Task {
             let slackHealth = await AgentChannelTransportHealthCenter.shared.state(
                 connectionId: AgentChannelConnection.nativeSlackConnectionId,
@@ -493,25 +496,42 @@ struct AgentChannelConnectionCenterView: View {
                 transportId: TelegramLongPollTransportRuntime.transportId
             )
             await MainActor.run {
-                nativeBadges[.discord] = Self.nativeBadge(configured: discordConfigured, health: nil)
-                nativeBadges[.slack] = Self.nativeBadge(configured: slackConfigured, health: slackHealth)
+                nativeBadges[.discord] = Self.nativeBadge(
+                    configured: discordConfigured,
+                    receiveExpected: false,
+                    health: nil
+                )
+                nativeBadges[.slack] = Self.nativeBadge(
+                    configured: slackConfigured,
+                    receiveExpected: slackReceiveExpected,
+                    health: slackHealth
+                )
                 nativeBadges[.telegram] = Self.nativeBadge(
                     configured: telegramConfigured,
+                    receiveExpected: telegramReceiveExpected,
                     health: telegramHealth
                 )
             }
         }
     }
 
-    private static func nativeBadge(
+    /// A saved token must not read as "Configured" while a receive transport
+    /// the user expects is stopped or blocked: with a live health state the
+    /// badge always mirrors the transport, and a missing health state with
+    /// receive credentials shows "Not running" instead of a green badge.
+    static func nativeBadge(
         configured: Bool,
+        receiveExpected: Bool,
         health: AgentChannelTransportHealthState?
     ) -> AgentChannelStatusPresentation {
         guard configured else {
             return .diagnostics(status: "not_configured")
         }
-        if let health, health.status != .disabled {
+        if let health {
             return .transport(status: health.status)
+        }
+        if receiveExpected {
+            return .transportNotRunning
         }
         return .diagnostics(status: "configured")
     }

@@ -63,6 +63,67 @@ struct DiscordConnectionTests {
         }
     }
 
+    @Test func discoveryLoadsServersAndSelectableChannels() async throws {
+        try await withIsolatedDiscordStores { credentials in
+            let service = DiscordConnectionService(
+                client: FakeDiscordAPIClient(),
+                credentialStore: credentials
+            )
+            try service.saveBotToken("discord-bot-token-super-secret")
+
+            let discovery = try await service.discoverConfigurationOptions()
+
+            #expect(discovery.guilds.map(\.id) == ["111111111111111111"])
+            #expect(discovery.channelsByGuildId["111111111111111111"]?.count == 2)
+            #expect(discovery.warnings.isEmpty)
+        }
+    }
+
+    @Test func pollingBootstrapsCursorWithoutReplayingHistoryThenStoresNewMessages() async throws {
+        try await withIsolatedDiscordStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+            let fake = FakeDiscordAPIClient()
+            await fake.setMessages([
+                "222222222222222222": [
+                    .fixture(id: "90001", channelId: "222222222222222222", content: "existing"),
+                ],
+            ])
+            let service = DiscordConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store,
+                recordMessageSnapshotsInline: true
+            )
+            try service.saveBotToken("discord-bot-token-super-secret")
+            try service.saveConfiguration(
+                DiscordConnectionConfiguration(
+                    configuredGuildIds: ["111111111111111111"],
+                    readableChannelIds: ["222222222222222222"],
+                    senderAllowlist: ["555555555555555555"]
+                )
+            )
+
+            let bootstrap = try await service.pollInboundMessages()
+            #expect(bootstrap.received == 0)
+            #expect(try store.messageCount(connectionId: "discord", roomId: "222222222222222222") == 0)
+
+            await fake.setMessages([
+                "222222222222222222": [
+                    .fixture(id: "90002", channelId: "222222222222222222", content: "new"),
+                    .fixture(id: "90001", channelId: "222222222222222222", content: "existing"),
+                ],
+            ])
+            let next = try await service.pollInboundMessages()
+
+            #expect(next.received == 1)
+            #expect(next.stored == 1)
+            #expect(next.dispatchSuppressed == 1)
+            #expect(try store.cursor(connectionId: "discord", roomId: "222222222222222222") == "90002")
+        }
+    }
+
     @Test func apiClientRedactsTokenEchoedByDiscordErrorBody() async throws {
         let token = "discord-bot-token-super-secret"
         let session = DiscordHTTPStubProtocol.session(
@@ -165,6 +226,16 @@ struct DiscordConnectionTests {
             authorId: "555555555555555555",
             authorName: "Mike",
             content: "eval reports landed",
+            attachments: [
+                AgentChannelStoredAttachment(
+                    providerId: "attachment-1",
+                    kind: .image,
+                    filename: "report.png",
+                    contentType: "image/png",
+                    sizeBytes: 1234,
+                    remoteURL: "https://cdn.discord.test/report.png"
+                ),
+            ],
             payloadJSON: #"{"id":"9001"}"#,
             providerTimestamp: "2026-06-19T20:00:00.000000+00:00"
         )
@@ -181,6 +252,8 @@ struct DiscordConnectionTests {
         #expect(rows.count == 1)
         #expect(rows.first?.direction == .inbound)
         #expect(rows.first?.payloadJSON.contains("9001") == true)
+        #expect(rows.first?.attachments.first?.filename == "report.png")
+        #expect(rows.first?.attachments.first?.kind == .image)
     }
 
     @Test func agentChannelMessageStorePrunesOldMessagesPerRoom() throws {
@@ -2032,8 +2105,26 @@ private actor FakeDiscordAPIClient: DiscordAPIClientProtocol {
         )
     }
 
+    func guilds(token _: String) async throws -> [DiscordGuild] {
+        [DiscordGuild(id: "111111111111111111", name: "Test Guild")]
+    }
+
     func guild(id: String, token: String) async throws -> DiscordGuild {
         DiscordGuild(id: id, name: "Test Guild")
+    }
+
+    func members(guildId _: String, token _: String) async throws -> [DiscordGuildMember] {
+        [
+            DiscordGuildMember(
+                user: DiscordMessageAuthor(
+                    id: "555555555555555555",
+                    username: "mike",
+                    globalName: "Mike",
+                    bot: false
+                ),
+                nick: nil
+            ),
+        ]
     }
 
     func channels(guildId: String, token: String) async throws -> [DiscordChannel] {
@@ -2057,6 +2148,12 @@ private actor FakeDiscordAPIClient: DiscordAPIClientProtocol {
 
     func messages(channelId: String, token: String, limit: Int) async throws -> [DiscordMessage] {
         Array((messagesByChannel[channelId] ?? []).prefix(limit))
+    }
+
+    func messages(channelId: String, token _: String, limit: Int, after: String?) async throws -> [DiscordMessage] {
+        let messages = messagesByChannel[channelId] ?? []
+        let filtered = after.map { cursor in messages.filter { $0.id > cursor } } ?? messages
+        return Array(filtered.prefix(limit))
     }
 
     func sendMessage(channelId: String, content: String, token: String) async throws -> DiscordMessage {

@@ -51,6 +51,13 @@ struct TelegramChatDiagnostic: Equatable, Sendable {
     }
 }
 
+struct TelegramConnectionDiscovery: Equatable, Sendable {
+    let bot: TelegramUser
+    let chats: [TelegramChat]
+    let users: [TelegramUser]
+    let warnings: [String]
+}
+
 struct TelegramConnectionDiagnostics: Equatable, Sendable {
     let tokenSaved: Bool
     let bot: TelegramUser?
@@ -282,6 +289,7 @@ enum TelegramUpdateNormalizer {
                 roomId: roomId,
                 providerMessageId: providerMessageId,
                 content: content,
+                attachments: storedAttachments(message),
                 senderId: senderId,
                 authorName: message.from?.displayName ?? message.senderChat?.displayName,
                 isBotMessage: message.from?.isBot == true,
@@ -301,6 +309,7 @@ enum TelegramUpdateNormalizer {
             authorId: event.senderId,
             authorName: event.authorName,
             content: event.content,
+            attachments: event.attachments,
             payloadJSON: event.payloadJSON,
             providerTimestamp: event.providerTimestamp
         )
@@ -313,6 +322,39 @@ enum TelegramUpdateNormalizer {
             return "{}"
         }
         return string
+    }
+
+    static func storedAttachments(_ message: TelegramMessage) -> [AgentChannelStoredAttachment] {
+        var attachments: [AgentChannelStoredAttachment] = []
+        if let photo = message.photo.max(by: { ($0.fileSize ?? 0) < ($1.fileSize ?? 0) }) {
+            attachments.append(
+                AgentChannelStoredAttachment(
+                    providerId: photo.fileId,
+                    kind: .image,
+                    contentType: "image/jpeg",
+                    sizeBytes: photo.fileSize
+                )
+            )
+        }
+        let media: [(TelegramMediaFile?, AgentChannelStoredAttachmentKind)] = [
+            (message.document, .file),
+            (message.audio, .audio),
+            (message.video, .video),
+            (message.voice, .audio),
+            (message.animation, .video),
+        ]
+        attachments.append(contentsOf: media.compactMap { file, kind in
+            file.map {
+                AgentChannelStoredAttachment(
+                    providerId: $0.fileId,
+                    kind: kind,
+                    filename: $0.fileName,
+                    contentType: $0.mimeType,
+                    sizeBytes: $0.fileSize
+                )
+            }
+        })
+        return attachments
     }
 
     private static func iso8601Timestamp(fromTelegramDate date: Int) -> String {
@@ -408,6 +450,37 @@ final class TelegramConnectionService: @unchecked Sendable {
 
     func hasBotToken() -> Bool {
         credentialStore.hasBotToken()
+    }
+
+    func discoverConfigurationOptions() async throws -> TelegramConnectionDiscovery {
+        let token = try requireToken()
+        do {
+            let bot = try await client.getMe(token: token)
+            let updates = try await client.getUpdates(offset: nil, limit: 100, timeout: 1, token: token)
+            var chatsById: [String: TelegramChat] = [:]
+            var usersById: [Int64: TelegramUser] = [:]
+            for update in updates {
+                guard let message = update.primaryMessage else { continue }
+                chatsById[message.chat.stableId] = message.chat
+                if let user = message.from, !user.isBot {
+                    usersById[user.id] = user
+                }
+            }
+            return TelegramConnectionDiscovery(
+                bot: bot,
+                chats: chatsById.values.sorted {
+                    $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+                },
+                users: usersById.values.sorted {
+                    $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+                },
+                warnings: updates.isEmpty
+                    ? ["No pending Telegram messages were found. Send the bot a message, then refresh."]
+                    : []
+            )
+        } catch {
+            throw TelegramConnectionServiceError.api(redacted(error, token: token))
+        }
     }
 
     func diagnostics() async -> TelegramConnectionDiagnostics {
@@ -795,6 +868,92 @@ final class TelegramConnectionService: @unchecked Sendable {
         }
     }
 
+    func editMessage(
+        chatId: String,
+        messageId: String,
+        content: String,
+        confirmSend: Bool
+    ) async throws -> [String: Any] {
+        guard confirmSend else { throw TelegramConnectionServiceError.sendConfirmationRequired }
+        let token = try requireToken()
+        let chatId = try requireWritableChat(chatId, config: configuration())
+        let messageId = try requireMessageId(messageId)
+        let content = try validateMessageContent(content)
+        let message = try await client.editMessage(
+            chatId: chatId,
+            messageId: messageId,
+            text: content,
+            token: token
+        )
+        recordMessages([Self.storedMessage(message, roomId: chatId, direction: .outbound)])
+        return [
+            "kind": "telegram_message_edited",
+            "chat_id": chatId,
+            "message_id": "\(messageId)",
+            "message": Self.messageDictionary(message),
+        ]
+    }
+
+    func deleteMessage(
+        chatId: String,
+        messageId: String,
+        confirmSend: Bool
+    ) async throws -> [String: Any] {
+        guard confirmSend else { throw TelegramConnectionServiceError.sendConfirmationRequired }
+        let token = try requireToken()
+        let chatId = try requireWritableChat(chatId, config: configuration())
+        let messageId = try requireMessageId(messageId)
+        _ = try await client.deleteMessage(chatId: chatId, messageId: messageId, token: token)
+        return [
+            "kind": "telegram_message_deleted",
+            "chat_id": chatId,
+            "message_id": "\(messageId)",
+            "delivery_status": "deleted",
+        ]
+    }
+
+    func setReaction(
+        chatId: String,
+        messageId: String,
+        reaction: String,
+        adding: Bool,
+        confirmSend: Bool
+    ) async throws -> [String: Any] {
+        guard confirmSend else { throw TelegramConnectionServiceError.sendConfirmationRequired }
+        let token = try requireToken()
+        let chatId = try requireWritableChat(chatId, config: configuration())
+        let messageId = try requireMessageId(messageId)
+        let reaction = reaction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reaction.isEmpty, reaction.count <= 16 else {
+            throw TelegramConnectionServiceError.invalidChatId("reaction")
+        }
+        _ = try await client.setReaction(
+            chatId: chatId,
+            messageId: messageId,
+            reaction: adding ? reaction : nil,
+            token: token
+        )
+        return [
+            "kind": adding ? "telegram_reaction_added" : "telegram_reaction_removed",
+            "chat_id": chatId,
+            "message_id": "\(messageId)",
+            "reaction": reaction,
+            "delivery_status": adding ? "added" : "removed",
+        ]
+    }
+
+    func sendTyping(chatId: String, confirmSend: Bool) async throws -> [String: Any] {
+        guard confirmSend else { throw TelegramConnectionServiceError.sendConfirmationRequired }
+        let token = try requireToken()
+        let chatId = try requireWritableChat(chatId, config: configuration())
+        _ = try await client.sendChatAction(chatId: chatId, action: "typing", token: token)
+        return [
+            "kind": "telegram_typing_sent",
+            "chat_id": chatId,
+            "delivery_status": "sent",
+        ]
+    }
+
     func processWebhookPayload(
         _ data: Data,
         secretTokenHeader: String? = nil,
@@ -850,6 +1009,8 @@ final class TelegramConnectionService: @unchecked Sendable {
         }
 
         var inserted = 0
+        var dispatchAttempted = 0
+        var dispatchSuppressed = 0
         var results: [TelegramReceiveResult] = []
         let authorizationService = AgentChannelConnectionService(
             discordService: .shared,
@@ -880,6 +1041,11 @@ final class TelegramConnectionService: @unchecked Sendable {
                     message: TelegramUpdateNormalizer.storedMessage(event)
                 )
                 if receive.messageInserted { inserted += 1 }
+                if receive.disposition == .accepted {
+                    let submission = await relayInboundEvent(event, configuration: config)
+                    dispatchAttempted += submission.dispatchAttempted
+                    dispatchSuppressed += submission.dispatchSuppressed
+                }
                 results.append(
                     TelegramReceiveResult(
                         providerEventId: event.providerEventId,
@@ -903,7 +1069,72 @@ final class TelegramConnectionService: @unchecked Sendable {
             source: source,
             received: updates.count,
             stored: inserted,
+            dispatchAttempted: dispatchAttempted,
+            dispatchSuppressed: dispatchSuppressed,
             results: results
+        )
+    }
+
+    private func relayInboundEvent(
+        _ event: TelegramNormalizedInboundEvent,
+        configuration: TelegramConnectionConfiguration
+    ) async -> AgentChannelInboundRelaySubmission {
+        let settings = configuration.inboundDispatch
+        guard settings.isConfigured else {
+            return .suppressed("inbound_dispatch_not_configured")
+        }
+        guard !settings.requireMention else {
+            return .suppressed("telegram_mention_detection_unavailable")
+        }
+        guard let senderId = event.senderId else {
+            return .suppressed("inbound_sender_missing")
+        }
+        let identity = ChannelIdentity(
+            kind: .telegram,
+            installationId: Self.connectionId,
+            groupId: event.roomId,
+            sender: ChannelSenderMetadata(
+                senderId: senderId,
+                displayName: event.authorName
+            ),
+            trustLevel: .verified
+        )
+        let replyToMessageId = Int(event.providerMessageId)
+        let responder: AgentChannelInboundReplyHandler?
+        if settings.autoReplyEnabled {
+            responder = { [weak self] reply in
+                guard let self else {
+                    throw TelegramConnectionServiceError.api(
+                        "Telegram connection was released before replying."
+                    )
+                }
+                _ = try await self.sendMessage(
+                    TelegramWriteRequest(
+                        chatId: event.roomId,
+                        text: self.redactSecrets(in: reply),
+                        replyToMessageId: replyToMessageId,
+                        confirmSend: true
+                    )
+                )
+            }
+        } else {
+            responder = nil
+        }
+        return await AgentChannelInboundRelay.shared.submit(
+            AgentChannelInboundRelayRequest(
+                identity: identity,
+                connectionId: Self.connectionId,
+                providerEventId: event.providerEventId,
+                providerRoute: AgentChannelProviderRoute(
+                    conversationId: event.roomId,
+                    displayName: "Telegram \(event.roomId)"
+                ),
+                content: event.content,
+                attachments: event.attachments,
+                settings: settings,
+                sourceLabel: "Telegram chat \(event.roomId), sender \(senderId)",
+                reply: responder
+            )
         )
     }
 
@@ -938,6 +1169,14 @@ final class TelegramConnectionService: @unchecked Sendable {
             throw TelegramConnectionServiceError.invalidChatId(chatId)
         }
         return normalized
+    }
+
+    private func requireMessageId(_ messageId: String) throws -> Int {
+        let normalized = messageId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value = Int(normalized), value > 0 else {
+            throw TelegramConnectionServiceError.invalidChatId("message_id")
+        }
+        return value
     }
 
     private func requireReadableChat(
@@ -1064,6 +1303,7 @@ final class TelegramConnectionService: @unchecked Sendable {
                 "display_name": message.authorName ?? "",
             ],
             "direction": message.direction.rawValue,
+            "attachments": message.attachments.map(Self.attachmentDictionary),
             "raw": message.payloadJSON,
         ]
     }
@@ -1079,6 +1319,18 @@ final class TelegramConnectionService: @unchecked Sendable {
                 "display_name": message.from?.displayName ?? "",
                 "is_bot": message.from?.isBot ?? false,
             ],
+            "attachments": TelegramUpdateNormalizer.storedAttachments(message).map(Self.attachmentDictionary),
+        ]
+    }
+
+    private static func attachmentDictionary(_ attachment: AgentChannelStoredAttachment) -> [String: Any] {
+        [
+            "id": attachment.providerId,
+            "kind": attachment.kind.rawValue,
+            "filename": attachment.filename ?? "",
+            "content_type": attachment.contentType ?? "",
+            "size": attachment.sizeBytes ?? 0,
+            "url": attachment.remoteURL ?? "",
         ]
     }
 
@@ -1213,7 +1465,6 @@ actor TelegramLongPollTransportRuntime {
                 timeout: configuration.longPollingTimeoutSeconds
             )
             consecutiveFailures = 0
-            let dispatchSuppressed = batch.results.filter { $0.status == .accepted }.count
             let health = await publish(
                 AgentChannelTransportHealthState(
                     connectionId: TelegramConnectionService.nativeConnectionId,
@@ -1227,7 +1478,8 @@ actor TelegramLongPollTransportRuntime {
                     lastSuccessAt: now,
                     lastReceivedCount: batch.received,
                     lastStoredCount: batch.stored,
-                    dispatchSuppressedCount: dispatchSuppressed,
+                    dispatchAttemptedCount: batch.dispatchAttempted,
+                    dispatchSuppressedCount: batch.dispatchSuppressed,
                     updatedAt: now
                 )
             )
@@ -1236,8 +1488,8 @@ actor TelegramLongPollTransportRuntime {
                 health: health,
                 received: batch.received,
                 stored: batch.stored,
-                dispatchAttempted: 0,
-                dispatchSuppressed: dispatchSuppressed
+                dispatchAttempted: batch.dispatchAttempted,
+                dispatchSuppressed: batch.dispatchSuppressed
             )
         } catch TelegramAPIError.conflict(let message) {
             consecutiveFailures += 1

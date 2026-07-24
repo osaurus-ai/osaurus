@@ -173,6 +173,24 @@ struct SlackUser: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+struct SlackFile: Codable, Equatable, Sendable {
+    let id: String
+    let name: String?
+    let mimetype: String?
+    let size: Int?
+    let urlPrivate: String?
+    let urlPrivateDownload: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case mimetype
+        case size
+        case urlPrivate = "url_private"
+        case urlPrivateDownload = "url_private_download"
+    }
+}
+
 struct SlackMessage: Codable, Equatable, Sendable {
     let type: String?
     let user: String?
@@ -182,6 +200,7 @@ struct SlackMessage: Codable, Equatable, Sendable {
     let ts: String
     let threadTs: String?
     let replyCount: Int?
+    let files: [SlackFile]
 
     enum CodingKeys: String, CodingKey {
         case type
@@ -192,6 +211,44 @@ struct SlackMessage: Codable, Equatable, Sendable {
         case ts
         case threadTs = "thread_ts"
         case replyCount = "reply_count"
+        case files
+    }
+
+    init(
+        type: String?,
+        user: String?,
+        username: String?,
+        botId: String?,
+        text: String?,
+        ts: String,
+        threadTs: String?,
+        replyCount: Int?,
+        files: [SlackFile] = []
+    ) {
+        self.type = type
+        self.user = user
+        self.username = username
+        self.botId = botId
+        self.text = text
+        self.ts = ts
+        self.threadTs = threadTs
+        self.replyCount = replyCount
+        self.files = files
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            type: try container.decodeIfPresent(String.self, forKey: .type),
+            user: try container.decodeIfPresent(String.self, forKey: .user),
+            username: try container.decodeIfPresent(String.self, forKey: .username),
+            botId: try container.decodeIfPresent(String.self, forKey: .botId),
+            text: try container.decodeIfPresent(String.self, forKey: .text),
+            ts: try container.decode(String.self, forKey: .ts),
+            threadTs: try container.decodeIfPresent(String.self, forKey: .threadTs),
+            replyCount: try container.decodeIfPresent(Int.self, forKey: .replyCount),
+            files: try container.decodeIfPresent([SlackFile].self, forKey: .files) ?? []
+        )
     }
 }
 
@@ -326,6 +383,43 @@ protocol SlackAPIClientProtocol: Sendable {
         cursor: String?
     ) async throws -> SlackMessagePage
     func sendMessage(_ request: SlackOutboundMessageRequest, token: String) async throws -> SlackMessage
+    func updateMessage(channelId: String, messageId: String, content: String, token: String) async throws -> SlackMessage
+    func deleteMessage(channelId: String, messageId: String, token: String) async throws
+    func addReaction(channelId: String, messageId: String, reaction: String, token: String) async throws
+    func removeReaction(channelId: String, messageId: String, reaction: String, token: String) async throws
+}
+
+extension SlackAPIClientProtocol {
+    func updateMessage(
+        channelId _: String,
+        messageId _: String,
+        content _: String,
+        token _: String
+    ) async throws -> SlackMessage {
+        throw SlackAPIError.invalidResponse("Slack message editing is not implemented by this client.")
+    }
+
+    func deleteMessage(channelId _: String, messageId _: String, token _: String) async throws {
+        throw SlackAPIError.invalidResponse("Slack message deletion is not implemented by this client.")
+    }
+
+    func addReaction(
+        channelId _: String,
+        messageId _: String,
+        reaction _: String,
+        token _: String
+    ) async throws {
+        throw SlackAPIError.invalidResponse("Slack reactions are not implemented by this client.")
+    }
+
+    func removeReaction(
+        channelId _: String,
+        messageId _: String,
+        reaction _: String,
+        token _: String
+    ) async throws {
+        throw SlackAPIError.invalidResponse("Slack reactions are not implemented by this client.")
+    }
 }
 
 final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
@@ -388,6 +482,8 @@ final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
         let ts: String?
         let channel: String?
     }
+
+    private struct EmptyPayload: Decodable {}
 
     private let baseURL: URL
     private let sessionProvider: @Sendable () -> URLSession
@@ -532,6 +628,64 @@ final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
             )
         }
         throw SlackAPIError.invalidResponse("Slack postMessage response did not include a message timestamp.")
+    }
+
+    func updateMessage(
+        channelId: String,
+        messageId: String,
+        content: String,
+        token: String
+    ) async throws -> SlackMessage {
+        try validateSlackId(channelId, label: "channel_id")
+        let payload: PostMessagePayload = try await postJSON(
+            method: "chat.update",
+            token: token,
+            body: [
+                "channel": channelId,
+                "ts": messageId,
+                "text": content,
+                "parse": "none",
+                "link_names": false,
+            ]
+        )
+        if let message = payload.message { return message }
+        return SlackMessage(
+            type: "message",
+            user: nil,
+            username: nil,
+            botId: nil,
+            text: content,
+            ts: payload.ts ?? messageId,
+            threadTs: nil,
+            replyCount: nil
+        )
+    }
+
+    func deleteMessage(channelId: String, messageId: String, token: String) async throws {
+        try validateSlackId(channelId, label: "channel_id")
+        let _: EmptyPayload = try await postJSON(
+            method: "chat.delete",
+            token: token,
+            body: ["channel": channelId, "ts": messageId]
+        )
+    }
+
+    func addReaction(channelId: String, messageId: String, reaction: String, token: String) async throws {
+        try validateSlackId(channelId, label: "channel_id")
+        let _: EmptyPayload = try await postJSON(
+            method: "reactions.add",
+            token: token,
+            body: ["channel": channelId, "timestamp": messageId, "name": reaction]
+        )
+    }
+
+    func removeReaction(channelId: String, messageId: String, reaction: String, token: String) async throws {
+        try validateSlackId(channelId, label: "channel_id")
+        let _: EmptyPayload = try await postJSON(
+            method: "reactions.remove",
+            token: token,
+            body: ["channel": channelId, "timestamp": messageId, "name": reaction]
+        )
     }
 
     private func postForm<Payload: Decodable>(
