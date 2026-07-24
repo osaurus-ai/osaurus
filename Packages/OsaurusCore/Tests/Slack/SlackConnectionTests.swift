@@ -39,6 +39,14 @@ struct SlackConnectionTests {
             #expect(saved.senderAllowlist == ["U55555"])
             #expect(saved.defaultReadLimit == 100)
             #expect(!SlackConnectionConfiguration.isValidSlackId("T١٢٣"))
+            #expect(SlackConnectionConfiguration.isValidSlackId(
+                "T12345",
+                allowedPrefixes: ["T"]
+            ))
+            #expect(!SlackConnectionConfiguration.isValidSlackId(
+                "U12345",
+                allowedPrefixes: ["T"]
+            ))
 
             let disk = try String(
                 contentsOf: SlackConnectionConfigurationStore.configurationFileURL(),
@@ -264,6 +272,78 @@ struct SlackConnectionTests {
             .contains("types=public_channel%2Cprivate_channel%2Cmpim%2Cim"))
     }
 
+    @Test func apiClientParsesWorkspaceUsersAndCursor() async throws {
+        let token = "xoxb-slack-bot-token-super-secret"
+        let session = SlackHTTPStubProtocol.session(
+            statusCode: 200,
+            body: """
+            {
+              "ok": true,
+              "members": [
+                {
+                  "id": "U55555",
+                  "team_id": "T12345",
+                  "name": "mike",
+                  "real_name": "Mike Example",
+                  "deleted": false,
+                  "is_bot": false,
+                  "profile": {
+                    "display_name": "Mike",
+                    "real_name": "Mike Example"
+                  }
+                }
+              ],
+              "response_metadata": {"next_cursor": "next-users"}
+            }
+            """
+        )
+        let client = SlackAPIClient(
+            baseURL: URL(string: "https://slack.test/api")!,
+            sessionProvider: { session }
+        )
+
+        let page = try await client.users(token: token, limit: 150, cursor: "users-cursor")
+
+        #expect(page.users.count == 1)
+        #expect(page.users.first?.id == "U55555")
+        #expect(page.users.first?.displayName == "Mike")
+        #expect(page.nextCursor == "next-users")
+        let form = SlackHTTPStubProtocol.lastRequestFormBody()
+        #expect(form["limit"] == "150")
+        #expect(form["cursor"] == "users-cursor")
+    }
+
+    @Test func apiClientExplainsMissingSlackScope() async throws {
+        let token = "xoxb-slack-bot-token-super-secret"
+        let session = SlackHTTPStubProtocol.session(
+            statusCode: 200,
+            body: """
+            {
+              "ok": false,
+              "error": "missing_scope",
+              "needed": "users:read",
+              "provided": "chat:write,channels:read"
+            }
+            """
+        )
+        let client = SlackAPIClient(
+            baseURL: URL(string: "https://slack.test/api")!,
+            sessionProvider: { session }
+        )
+
+        do {
+            _ = try await client.users(token: token, limit: 100, cursor: nil)
+            Issue.record("Slack users request should have failed")
+        } catch let error as SlackAPIError {
+            guard case .missingPermissions(let message) = error else {
+                Issue.record("Expected a missing-permissions error")
+                return
+            }
+            #expect(message.contains("users:read"))
+            #expect(message.contains("chat:write,channels:read"))
+        }
+    }
+
     @Test func apiClientMapsSlackRateLimitWithRetryAfterHint() async throws {
         let token = "xoxb-slack-bot-token-super-secret"
         let session = SlackHTTPStubProtocol.session(
@@ -409,6 +489,34 @@ struct SlackConnectionTests {
             #expect(rows.count == 2)
             #expect(rows.compactMap { $0["id"] as? String } == ["C11111", "C22222"])
             #expect(await fake.conversationCursorsRequested() == [nil, "cursor-1"])
+        }
+    }
+
+    @Test func discoveryLoadsWorkspaceChannelsAndUsersBeforeAllowlistsExist() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let fake = FakeSlackAPIClient()
+            await fake.setConversationPages([
+                [SlackConversation(id: "C22222", name: "zeta", isChannel: true, isMember: true)],
+                [SlackConversation(id: "C11111", name: "alpha", isChannel: true, isMember: true)],
+            ])
+            await fake.setUserPages([
+                [SlackUser(id: "U22222", name: "zoe", realName: "Zoe")],
+                [SlackUser(id: "U11111", name: "alex", realName: "Alex")],
+            ])
+            let service = SlackConnectionService(client: fake, credentialStore: credentials)
+            try service.saveBotToken("xoxb-slack-bot-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(configuredTeamIds: ["T-STALE"])
+            )
+
+            let discovery = try await service.discoverConfigurationOptions()
+
+            #expect(discovery.identity.teamId == "T12345")
+            #expect(discovery.conversations.map(\.id) == ["C11111", "C22222"])
+            #expect(discovery.users.map(\.id) == ["U11111", "U22222"])
+            #expect(discovery.warnings.isEmpty)
+            #expect(await fake.conversationCursorsRequested() == [nil, "cursor-1"])
+            #expect(await fake.userCursorsRequested() == [nil, "cursor-1"])
         }
     }
 
@@ -1848,11 +1956,13 @@ private actor FakeSlackAPIClient: SlackAPIClientProtocol {
     private var messagesByChannel: [String: [SlackMessage]] = [:]
     private var messagePagesByChannel: [String: [SlackMessagePage]] = [:]
     private var conversationPages: [[SlackConversation]]?
+    private var userPages: [[SlackUser]]?
     private var sentMessages: [(channelId: String, content: String, threadTs: String?)] = []
     private var openedAppToken: String?
     private var socketOpenError: (any Error)?
     private var requestedMessageCursors: [String?] = []
     private var requestedConversationCursors: [String?] = []
+    private var requestedUserCursors: [String?] = []
 
     func setAuthFailureEchoingSecrets(botToken: String, signingSecret: String, appToken: String) {
         authFailureMessage = """
@@ -1882,12 +1992,21 @@ private actor FakeSlackAPIClient: SlackAPIClientProtocol {
         conversationPages = pages
     }
 
+    /// Configure explicit cursor-linked user pages.
+    func setUserPages(_ pages: [[SlackUser]]) {
+        userPages = pages
+    }
+
     func messageCursorsRequested() -> [String?] {
         requestedMessageCursors
     }
 
     func conversationCursorsRequested() -> [String?] {
         requestedConversationCursors
+    }
+
+    func userCursorsRequested() -> [String?] {
+        requestedUserCursors
     }
 
     private static func pageIndex(for cursor: String?) -> Int {
@@ -1970,6 +2089,21 @@ private actor FakeSlackAPIClient: SlackAPIClientProtocol {
         let index = min(Self.pageIndex(for: cursor), pages.count - 1)
         return SlackConversationPage(
             conversations: pages[index],
+            nextCursor: Self.cursor(forNextPageAfter: index, pageCount: pages.count)
+        )
+    }
+
+    func users(token: String, limit: Int, cursor: String?) async throws -> SlackUserPage {
+        requestedUserCursors.append(cursor)
+        let pages = userPages ?? [
+            [
+                SlackUser(id: "U55555", teamId: "T12345", name: "mike", realName: "Mike"),
+                SlackUser(id: "U66666", teamId: "T12345", name: "sarah", realName: "Sarah"),
+            ]
+        ]
+        let index = min(Self.pageIndex(for: cursor), pages.count - 1)
+        return SlackUserPage(
+            users: pages[index],
             nextCursor: Self.cursor(forNextPageAfter: index, pageCount: pages.count)
         )
     }

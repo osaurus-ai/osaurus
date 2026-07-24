@@ -135,6 +135,12 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
         }
     }
 
+    static func isValidSlackId(_ id: String, allowedPrefixes: Set<Character>) -> Bool {
+        let trimmed = normalizedId(id)
+        return isValidSlackId(trimmed)
+            && (trimmed.first.map { allowedPrefixes.contains($0) } ?? false)
+    }
+
     static func clampReadLimit(_ value: Int) -> Int {
         min(max(value, 1), 100)
     }

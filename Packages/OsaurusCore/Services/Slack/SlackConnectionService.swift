@@ -67,6 +67,15 @@ struct SlackConnectionDiagnostics: Equatable, Sendable {
     }
 }
 
+struct SlackConnectionDiscovery: Equatable, Sendable {
+    let identity: SlackAuthIdentity
+    let conversations: [SlackConversation]
+    let users: [SlackUser]
+    let conversationsTruncated: Bool
+    let usersTruncated: Bool
+    let warnings: [String]
+}
+
 struct SlackEventEnvelope: Codable, Equatable, Sendable {
     let token: String?
     let teamId: String?
@@ -208,6 +217,7 @@ final class SlackConnectionService: @unchecked Sendable {
     /// Page caps for cursor-following so one tool call cannot fan out into an
     /// unbounded number of Slack API requests.
     static let maxConversationListPages = 5
+    static let maxUserListPages = 5
     static let maxMessagePages = 5
 
     private let client: SlackAPIClientProtocol
@@ -453,6 +463,78 @@ final class SlackConnectionService: @unchecked Sendable {
         )
     }
 
+    /// Fetch metadata for the settings picker without applying the current
+    /// workspace/channel allowlists. Setup must be able to discover the
+    /// authenticated workspace even when the saved allowlist is empty or stale.
+    /// Authentication failure is fatal; channel/user scope failures are returned
+    /// as warnings so operators can still repair the rest of the configuration.
+    func discoverConfigurationOptions() async throws -> SlackConnectionDiscovery {
+        let token = try requireToken()
+        let signingSecret = credentialStore.signingSecret()
+        let appToken = credentialStore.appToken()
+        let identity: SlackAuthIdentity
+        do {
+            identity = try await client.authTest(token: token)
+            persistIdentity(identity)
+        } catch {
+            throw SlackConnectionServiceError.api(redacted(
+                error,
+                token: token,
+                signingSecret: signingSecret,
+                appToken: appToken
+            ))
+        }
+
+        var conversations: [SlackConversation] = []
+        var users: [SlackUser] = []
+        var conversationsTruncated = false
+        var usersTruncated = false
+        var warnings: [String] = []
+
+        do {
+            (conversations, conversationsTruncated) = try await collectConversations(token: token)
+        } catch {
+            warnings.append(
+                "Channels could not be loaded. "
+                    + redacted(error, token: token, signingSecret: signingSecret, appToken: appToken)
+            )
+        }
+
+        do {
+            (users, usersTruncated) = try await collectUsers(token: token)
+        } catch {
+            warnings.append(
+                "Workspace users could not be loaded. "
+                    + redacted(error, token: token, signingSecret: signingSecret, appToken: appToken)
+            )
+        }
+
+        if conversationsTruncated {
+            warnings.append(
+                "Only the first \(Self.maxConversationListPages * 100) Slack conversations are shown."
+            )
+        }
+        if usersTruncated {
+            warnings.append(
+                "Only the first \(Self.maxUserListPages * 200) Slack users are shown."
+            )
+        }
+
+        return SlackConnectionDiscovery(
+            identity: identity,
+            conversations: conversations.sorted {
+                if $0.isMember != $1.isMember { return $0.isMember && !$1.isMember }
+                return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+            },
+            users: users.sorted {
+                $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+            },
+            conversationsTruncated: conversationsTruncated,
+            usersTruncated: usersTruncated,
+            warnings: warnings
+        )
+    }
+
     func listWorkspaces() async throws -> [[String: Any]] {
         let token = try requireToken()
         let config = configuration()
@@ -481,19 +563,7 @@ final class SlackConnectionService: @unchecked Sendable {
             throw SlackConnectionServiceError.teamNotConfigured(normalizedTeamId)
         }
 
-        var channels: [SlackConversation] = []
-        var cursor: String?
-        var truncated = false
-        for page in 0 ..< Self.maxConversationListPages {
-            let result = try await client.conversations(token: token, limit: 100, cursor: cursor)
-            channels.append(contentsOf: result.conversations)
-            guard let nextCursor = result.nextCursor else {
-                truncated = false
-                break
-            }
-            cursor = nextCursor
-            truncated = page == Self.maxConversationListPages - 1
-        }
+        let (channels, truncated) = try await collectConversations(token: token)
         var rows: [[String: Any]] = channels.map { channel in
             [
                 "id": channel.id,
@@ -520,6 +590,40 @@ final class SlackConnectionService: @unchecked Sendable {
             ])
         }
         return rows
+    }
+
+    private func collectConversations(token: String) async throws -> ([SlackConversation], Bool) {
+        var conversations: [SlackConversation] = []
+        var cursor: String?
+        var truncated = false
+        for page in 0 ..< Self.maxConversationListPages {
+            let result = try await client.conversations(token: token, limit: 100, cursor: cursor)
+            conversations.append(contentsOf: result.conversations)
+            guard let nextCursor = result.nextCursor else {
+                truncated = false
+                break
+            }
+            cursor = nextCursor
+            truncated = page == Self.maxConversationListPages - 1
+        }
+        return (conversations, truncated)
+    }
+
+    private func collectUsers(token: String) async throws -> ([SlackUser], Bool) {
+        var users: [SlackUser] = []
+        var cursor: String?
+        var truncated = false
+        for page in 0 ..< Self.maxUserListPages {
+            let result = try await client.users(token: token, limit: 200, cursor: cursor)
+            users.append(contentsOf: result.users)
+            guard let nextCursor = result.nextCursor else {
+                truncated = false
+                break
+            }
+            cursor = nextCursor
+            truncated = page == Self.maxUserListPages - 1
+        }
+        return (users, truncated)
     }
 
     func readChannel(channelId: String, limit: Int?) async throws -> [String: Any] {

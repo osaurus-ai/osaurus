@@ -75,6 +75,12 @@ public enum AgentChannelEvalHarness {
             SlackConversationPage(conversations: [])
         }
 
+        func users(
+            token: String, limit: Int, cursor: String?
+        ) async throws -> SlackUserPage {
+            SlackUserPage(users: [])
+        }
+
         func messages(
             channelId: String, token: String, limit: Int, cursor: String?
         ) async throws -> SlackMessagePage {

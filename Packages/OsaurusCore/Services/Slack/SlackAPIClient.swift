@@ -98,6 +98,81 @@ struct SlackConversation: Codable, Equatable, Sendable {
     }
 }
 
+struct SlackUserProfile: Codable, Equatable, Sendable {
+    let displayName: String?
+    let realName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case displayName = "display_name"
+        case realName = "real_name"
+    }
+}
+
+struct SlackUser: Codable, Equatable, Identifiable, Sendable {
+    let id: String
+    let teamId: String?
+    let name: String?
+    let realName: String?
+    let profile: SlackUserProfile?
+    let deleted: Bool
+    let isBot: Bool
+    let isAppUser: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case teamId = "team_id"
+        case name
+        case realName = "real_name"
+        case profile
+        case deleted
+        case isBot = "is_bot"
+        case isAppUser = "is_app_user"
+    }
+
+    init(
+        id: String,
+        teamId: String? = nil,
+        name: String? = nil,
+        realName: String? = nil,
+        profile: SlackUserProfile? = nil,
+        deleted: Bool = false,
+        isBot: Bool = false,
+        isAppUser: Bool = false
+    ) {
+        self.id = id
+        self.teamId = teamId
+        self.name = name
+        self.realName = realName
+        self.profile = profile
+        self.deleted = deleted
+        self.isBot = isBot
+        self.isAppUser = isAppUser
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(String.self, forKey: .id),
+            teamId: try container.decodeIfPresent(String.self, forKey: .teamId),
+            name: try container.decodeIfPresent(String.self, forKey: .name),
+            realName: try container.decodeIfPresent(String.self, forKey: .realName),
+            profile: try container.decodeIfPresent(SlackUserProfile.self, forKey: .profile),
+            deleted: try container.decodeIfPresent(Bool.self, forKey: .deleted) ?? false,
+            isBot: try container.decodeIfPresent(Bool.self, forKey: .isBot) ?? false,
+            isAppUser: try container.decodeIfPresent(Bool.self, forKey: .isAppUser) ?? false
+        )
+    }
+
+    var displayName: String {
+        for candidate in [profile?.displayName, realName, profile?.realName, name] {
+            if let value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+                return value
+            }
+        }
+        return id
+    }
+}
+
 struct SlackMessage: Codable, Equatable, Sendable {
     let type: String?
     let user: String?
@@ -136,6 +211,16 @@ struct SlackConversationPage: Equatable, Sendable {
               !trimmed.isEmpty
         else { return nil }
         return trimmed
+    }
+}
+
+struct SlackUserPage: Equatable, Sendable {
+    let users: [SlackUser]
+    let nextCursor: String?
+
+    init(users: [SlackUser], nextCursor: String? = nil) {
+        self.users = users
+        self.nextCursor = SlackConversationPage.normalizedCursor(nextCursor)
     }
 }
 
@@ -231,6 +316,7 @@ protocol SlackAPIClientProtocol: Sendable {
     func authTest(token: String) async throws -> SlackAuthIdentity
     func openSocketModeConnection(appToken: String) async throws -> URL
     func conversations(token: String, limit: Int, cursor: String?) async throws -> SlackConversationPage
+    func users(token: String, limit: Int, cursor: String?) async throws -> SlackUserPage
     func messages(channelId: String, token: String, limit: Int, cursor: String?) async throws -> SlackMessagePage
     func threadMessages(
         channelId: String,
@@ -261,6 +347,16 @@ final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
 
         enum CodingKeys: String, CodingKey {
             case channels
+            case responseMetadata = "response_metadata"
+        }
+    }
+
+    private struct UserListPayload: Decodable {
+        let members: [SlackUser]
+        let responseMetadata: ResponseMetadataPayload?
+
+        enum CodingKeys: String, CodingKey {
+            case members
             case responseMetadata = "response_metadata"
         }
     }
@@ -339,6 +435,23 @@ final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
         )
         return SlackConversationPage(
             conversations: payload.channels,
+            nextCursor: payload.responseMetadata?.nextCursor
+        )
+    }
+
+    func users(token: String, limit: Int, cursor: String?) async throws -> SlackUserPage {
+        let safeLimit = min(max(limit, 1), 200)
+        var form = ["limit": "\(safeLimit)"]
+        if let cursor = SlackConversationPage.normalizedCursor(cursor) {
+            form["cursor"] = cursor
+        }
+        let payload: UserListPayload = try await postForm(
+            method: "users.list",
+            token: token,
+            form: form
+        )
+        return SlackUserPage(
+            users: payload.members,
             nextCursor: payload.responseMetadata?.nextCursor
         )
     }
@@ -484,7 +597,12 @@ final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
             do {
                 let status = try JSONDecoder().decode(SlackStatusEnvelope.self, from: data)
                 guard status.ok else {
-                    throw mapSlackError(status.error, token: token)
+                    throw mapSlackError(
+                        status.error,
+                        needed: status.needed,
+                        provided: status.provided,
+                        token: token
+                    )
                 }
                 return try JSONDecoder().decode(Payload.self, from: data)
             } catch let error as SlackAPIError {
@@ -516,9 +634,21 @@ final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
         }
     }
 
-    private func mapSlackError(_ error: String?, token: String) -> SlackAPIError {
+    private func mapSlackError(
+        _ error: String?,
+        needed: String? = nil,
+        provided: String? = nil,
+        token: String
+    ) -> SlackAPIError {
         let code = error ?? "unknown_error"
-        let message = SlackSecurity.redact("Slack API returned `\(code)`.", token: token)
+        var detail = "Slack API returned `\(code)`."
+        if let needed, !needed.isEmpty {
+            detail += " Required scope: \(needed)."
+        }
+        if let provided, !provided.isEmpty {
+            detail += " Granted scopes: \(provided)."
+        }
+        let message = SlackSecurity.redact(detail, token: token)
         switch code {
         case "invalid_auth", "not_authed", "account_inactive", "token_revoked":
             return .invalidToken
@@ -558,4 +688,6 @@ final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
 private struct SlackStatusEnvelope: Decodable {
     let ok: Bool
     let error: String?
+    let needed: String?
+    let provided: String?
 }

@@ -74,6 +74,7 @@ oauth_config:
       - im:read
       - mpim:history
       - mpim:read
+      - users:read
 settings:
   event_subscriptions:
     bot_events:
@@ -96,6 +97,7 @@ Scope notes:
 | `channels:read`, `groups:read`, `im:read`, `mpim:read` | Lists rooms/chats the bot can inspect. |
 | `channels:history`, `groups:history`, `im:history`, `mpim:history` | Reads recent messages for allowlisted rooms. |
 | `app_mentions:read` | Receives app mentions for Socket Mode/event proof. |
+| `users:read` | Populates the authorized-sender picker with workspace people. |
 
 Do not add `chat:write.public` for release proof. Invite the bot to the
 disposable channel instead, so channel membership stays explicit.
@@ -110,6 +112,14 @@ Socket Mode setup:
    `signing_secret`, and the Socket Mode app token under `app_token`.
 4. Install or reinstall the app after scope changes.
 5. Invite the bot to the read and write smoke channels.
+
+After saving the bot token in Settings -> Channels -> Slack, use **Load from
+Slack** to fetch the authenticated workspace, visible conversations, and
+workspace users. Select Read and Write independently for each joined channel,
+then select the users authorized to trigger inbound handling. Discovery never
+grants access by itself: only the saved selections become allowlists. If
+workspace policy withholds `users:read` or conversation-list scopes, the sheet
+shows the missing scope and keeps the Advanced manual-ID fields available.
 
 Non-secret native configuration shape:
 

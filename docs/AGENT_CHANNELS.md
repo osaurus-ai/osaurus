@@ -376,6 +376,14 @@ only non-secret IDs and policy in `slack.json`:
   `<!everyone>`, plus user-group markup such as `<!subteam^...>`, are rejected
   before any network call.
 
+The Slack settings sheet can fetch the authenticated workspace, visible
+conversations, and workspace users after the bot token is saved. Discovery is
+selection assistance only: it does not bypass allowlists or automatically
+grant read, write, or inbound-sender access. Channel rows expose independent
+Read and Write choices, unjoined channels are marked unavailable, and deleted,
+bot, and app users are omitted from sender choices. Manual IDs remain under
+Advanced for installations whose Slack scopes restrict directory discovery.
+
 Slack thread ids use `channel_id:thread_ts` so the canonical
 `agent_channel_read_thread` and `agent_channel_reply_thread` tools can route
 Slack thread operations without adding Slack-only tool names. Sent messages use
