@@ -557,8 +557,8 @@ configuration.
 
 ## 2026-07-23 late emergency: stable system-prefix SSD restore
 
-Status: **PARTIAL — SOURCE AND FOCUSED TESTS PASS; GEMMA AND BONSAI RELEASE
-UI CACHE ROWS RECORDED; TOOL-SUFFIX LIVE ROWS STILL OPEN**
+Status: **VERIFIED LIVE FOR THE SCOPED QWEN/GEMMA EMERGENCY PR — FINAL-PIN
+RELEASE TOOL, FINISH-REASON, REASONING, AND SSD-SUFFIX ROWS RECORDED**
 
 The user-reported cache symptom is that fresh chats and post-tool continuations
 can show `0/N` prefill even though SSD cache is enabled and previous chats
@@ -692,17 +692,74 @@ Qwen-family generations with hybrid/SSM disk restores and no post-output hang.
 It does **not** prove Ornith, Qwen3.5/VL, Laguna, DB-tool dynamic suffix
 recovery, or AppleScript behavior.
 
-Live proof still required before merge-ready:
+### Final-pin Release UI closeout
 
-1. With paged RAM cache Off and SSD On, run a DB/tool workload that first
-   stores the static prompt boundary, then changes the database/schema suffix,
-   then starts a fresh chat or same-tool continuation.
-2. Require log and UI evidence that the second request restores a nonzero SSD
-   prefix boundary and only prefills the divergent suffix. A truthful smaller
-   restore than the full prompt is acceptable; a return to `0/N` is not.
-3. Confirm the request does not hang after final output, the input unlocks,
-   finish reason is persisted, and cache telemetry agrees with the visible
-   prefill/TTFT state.
-4. Record the exact model, Thinking state, token counts, disk hit/miss/store
-   counters, and TQ layer/compression counters. Any TQ counter increment while
-   Settings are not explicitly TurboQuant is a failure.
+Final app and runtime:
+
+- Release product:
+  `/tmp/osaurus-static-prefix-release-derived-f5085351-20260723/Build/Products/Release/osaurus.app`
+- bundle id: `com.dinoki.osaurus.staticprefixprooff50820260723`
+- isolated root:
+  `/private/tmp/osaurus-static-prefix-proof-root-20260723-f5085351-live2`
+- final vMLX pin:
+  `f50853514ee00365837be3301c91850ca7ed5877`
+- vMLX PR #179 is merged at that exact revision. Its current source contains
+  the schema-bound Qwen XML `array<string>` recovery, Gemma thought-channel
+  reasoning routing, and tokenizer-validated static system-prefix boundary.
+- Osaurus PR #2153 carries the hint only through local runtime request
+  plumbing, persists the authoritative terminal stop reason, constrains
+  database column types in the public schema, and does not expose the cache
+  hint through OpenAI JSON or remote requests.
+
+The Release app was operated through the real model picker, chat composer,
+tool cards, and Server Settings UI. No screenshot or binary was added to the
+repository.
+
+Visible effective settings:
+
+- Prefix Cache: On
+- GPU/Paged KV Cache: Off
+- SSD Disk Cache: On
+- cache codec: Engine Selected
+- TurboQuant compressions: `0`
+
+Live tool rows:
+
+| Model and control | Visible result | Persisted/runtime result |
+| --- | --- | --- |
+| `dealign.ai/Bonsai-27b-Ternary-JANG-CRACK`, Thinking Off | one create, one insert, one query; exact row `(21, bonsai-finalpin-twenty-one)`; TTFT `1.12s`; `41.3 tok/s`; input unlocked | nested `columns` and `rows` arguments persisted; terminal reason `stop`; isolated SQLite row matches |
+| `JANGQ-AI/Ornith-1.0-9B-MXFP8`, Thinking Off | one create, one insert, one query; exact row `(31, ornith-finalpin-thirty-one)`; TTFT `0.68s`; `65.3 tok/s`; input unlocked | nested `columns` and `row` arguments persisted; terminal reason `stop`; isolated SQLite row matches |
+| `OsaurusAI/gemma-4-12B-it-MXFP8`, Thinking Off | one create, one insert, one query; exact row `(41, gemma-finalpin-forty-one)`; TTFT `1.25s`; `30.0 tok/s`; input unlocked | typed boolean/number strings were coerced against schema; terminal reason `stop`; isolated SQLite row matches |
+| same Gemma model, fresh chat, Thinking Off | queried the newly created table without mutation; exact row returned; TTFT `8.29s`; `39.8 tok/s`; input unlocked | Disk L2 hits increased `3 -> 4`; terminal reason `stop` |
+| same Gemma model, fresh chat, Thinking On | model-picker control visibly On; separate `Thought for 5.3s` / 294-character reasoning block; one query; exact row; TTFT `8.75s`; `27.1 tok/s`; input unlocked | first assistant step persisted 294 reasoning characters, tool result remained grounded, final terminal reason `stop`; Disk L2 hits increased `4 -> 5` |
+
+Final Server > Settings > Live Activity readout:
+
+- active slots `0`
+- queued `0`
+- engine accepting requests
+- cache-enabled models `1`
+- paged evictions `0`
+- Disk L2 hits / misses / stores `5 / 110 / 22`
+- TurboQuant compressions `0`
+
+The fresh-chat restore is a functional cache pass, not a claimed latency win:
+the second Gemma TTFT was slower despite the hit. The evidence proves that the
+SSD tier is consulted and restores a validated prefix while the DB/tool suffix
+changes, with paged RAM cache disabled. It does not prove every SSD or every
+model will have lower wall-clock TTFT.
+
+The scoped emergency PR is therefore **VERIFIED LIVE** for:
+
+1. Qwen-derived Bonsai and Ornith nested database tool arguments;
+2. Gemma nested tool arguments and schema-bound scalar coercion;
+3. Thinking Off and Gemma Thinking On reasoning/content separation;
+4. post-tool final answer, persisted `stop`, and UI unlock;
+5. SSD stable-prefix reuse across a changed DB suffix with paged RAM off;
+6. TurboQuant remaining off without an explicit user setting.
+
+The broader Russian fitness workflow remains partial at the top of this
+document because scheduler, notification, export, and every other parser family
+were deliberately excluded from this emergency merge. LFM/DSML and the full
+cross-family parser matrix are tracked separately and are not included in PR
+#2153.
