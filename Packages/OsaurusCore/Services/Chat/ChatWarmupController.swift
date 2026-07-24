@@ -238,6 +238,17 @@ final class ChatWarmupController: ObservableObject {
         let previousSwitch = activeModelSwitch
         activeModelSwitchID = switchID
         activeModelSwitch = Task { @MainActor in
+            // A user Stop can cancel this switch while `performSwitch` (or an
+            // older switch/warm-up awaited below) is suspended. Always retire
+            // our tracked task when it eventually unwinds; otherwise
+            // `needsPreSendHandshake` stays true forever and the next send
+            // appears permanently queued.
+            defer {
+                if self.activeModelSwitchID == switchID {
+                    self.activeModelSwitch = nil
+                    self.activeModelSwitchID = nil
+                }
+            }
             // Serialize with a still-running earlier switch so evictions
             // never interleave, then wait for the cancelled warm-up to
             // actually unwind — its generation lease would otherwise make
@@ -326,6 +337,28 @@ final class ChatWarmupController: ObservableObject {
     func cancelScheduledWarmup() {
         scheduleTask?.cancel()
         scheduleTask = nil
+    }
+
+    /// Cancel speculative work owned by a user-stopped pre-send handshake.
+    ///
+    /// Keep active switch / warm-up tasks tracked until they actually unwind:
+    /// the next send must await their residency and generation leases rather
+    /// than racing work that ignored cooperative cancellation. `switchEpoch`
+    /// prevents a suspended switch from scheduling a hidden warm-up when it
+    /// resumes after Stop.
+    func cancelPendingWorkForUserStop() {
+        let hadPendingWork =
+            scheduleTask != nil || activeModelSwitch != nil || inFlightWarmup != nil
+        guard hadPendingWork else { return }
+
+        switchEpoch &+= 1
+        scheduleTask?.cancel()
+        scheduleTask = nil
+        activeModelSwitch?.cancel()
+        inFlightWarmup?.cancel()
+        userIntentWarmupModel = nil
+        warmedFingerprint = nil
+        state = .cold
     }
 
     /// Wait for an in-flight warm-up generation to finish. Called before a
@@ -503,6 +536,11 @@ final class ChatWarmupController: ObservableObject {
         do {
             let stream = try await engine.streamChat(request: request)
             for try await _ in stream { /* discard warm-up output */  }
+            // Some engines finish normally even after the consumer task was
+            // cancelled. A user Stop must not let that late completion
+            // resurrect the green warm claim for an abandoned pre-send
+            // handshake.
+            guard !Task.isCancelled else { return }
             // Stale-writer guard: a reset() (chat cleared / agent switched)
             // during the generation dropped this warm-up's claim; its result
             // must not resurrect a warm dot for a payload that no longer

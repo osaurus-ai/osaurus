@@ -766,7 +766,7 @@ struct RuntimePolicySourceTests {
         // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
         // xcworkspace Package.resolved files. Miss one and the app resolves a
         // revision nobody proved.
-        let expectedRuntimeHardenedRevision = "c6a2b4d05bec0958146d26fd351782b2fc3e2b13"
+        let expectedRuntimeHardenedRevision = "7545ba66bf1060694ca4516cdf18768fef4b7c47"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)

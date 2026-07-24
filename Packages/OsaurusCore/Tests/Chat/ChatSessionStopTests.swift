@@ -12,9 +12,23 @@ struct ChatSessionStopTests {
         session: ChatSession,
         gate: IgnoringCancellationHandshakeGate
     ) async throws {
-        session.warmupController.handleModelSelectionChange(
+        try await beginSuspendedPreSendHandshake(
             session: session,
-            to: "handshake-test-model",
+            gate: gate,
+            warmupSession: session,
+            model: "handshake-test-model"
+        )
+    }
+
+    private func beginSuspendedPreSendHandshake(
+        session: ChatSession,
+        gate: IgnoringCancellationHandshakeGate,
+        warmupSession: any ChatWarmupSessionContext,
+        model: String
+    ) async throws {
+        session.warmupController.handleModelSelectionChange(
+            session: warmupSession,
+            to: model,
             performSwitch: { _ in await gate.wait() }
         )
         try await waitUntilAsync(timeout: Self.asyncTimeout) {
@@ -101,25 +115,53 @@ struct ChatSessionStopTests {
     @Test
     func stop_invalidatesSuspendedPreSendHandshakeWithoutLaunchingCapturedTurn() async throws {
         try await ChatHistoryTestStorage.run {
+            var chatConfig = ChatConfigurationStore.load()
+            chatConfig.warmModelsOnLoad = true
+            ChatConfigurationStore.save(chatConfig)
+
             let session = ChatSession()
             let gate = IgnoringCancellationHandshakeGate()
             let engine = PreSendHandshakeRecordingEngine()
             session.chatEngineFactory = { _ in engine }
-            try await beginSuspendedPreSendHandshake(session: session, gate: gate)
+            let warmupSession = IncomingWarmupSession(engine: engine)
+            try await beginSuspendedPreSendHandshake(
+                session: session,
+                gate: gate,
+                warmupSession: warmupSession,
+                model: "incoming-warmup-model"
+            )
 
             session.send("keep this stopped turn")
             #expect(session.turns.map(\.content) == ["keep this stopped turn"])
 
             session.stop()
-            // Keep the test focused on the outer ChatSession task rather than
-            // allowing the completed switch to schedule a speculative warm-up.
-            session.warmupController.reset()
             await gate.release()
+            try await waitUntil(timeout: Self.asyncTimeout) {
+                !session.warmupController.needsPreSendHandshake
+            }
+            // Give the zero-debounce task the stale switch used to schedule a
+            // chance to run. Counting only regular requests would miss this
+            // hidden post-Stop warm-up.
             try await Task.sleep(for: .milliseconds(250))
 
             #expect(session.isStreaming == false)
             #expect(session.turns.map(\.content) == ["keep this stopped turn"])
             #expect(await engine.regularRequestCount == 0)
+            #expect(await engine.warmupRequestCount == 0)
+
+            session.send("fresh turn after stopped handshake")
+            try await waitUntilAsync(timeout: Self.asyncTimeout) {
+                await engine.regularRequestCount == 1
+            }
+            try await waitUntil(timeout: Self.asyncTimeout) {
+                session.isSendActiveForComposer == false
+            }
+
+            #expect(
+                session.turns.filter { $0.role == .user }.map(\.content)
+                    == ["keep this stopped turn", "fresh turn after stopped handshake"]
+            )
+            #expect(await engine.regularRequestCount == 1)
         }
     }
 
@@ -175,6 +217,58 @@ struct ChatSessionStopTests {
 
             #expect(session.turns.isEmpty)
             #expect(await incomingEngine.requestCount == 1)
+        }
+    }
+
+    @Test
+    func stoppedPreSendWarmupCannotResurrectWarmStateAfterIgnoringCancellation() async throws {
+        try await ChatHistoryTestStorage.run {
+            var chatConfig = ChatConfigurationStore.load()
+            chatConfig.warmModelsOnLoad = true
+            ChatConfigurationStore.save(chatConfig)
+
+            let session = ChatSession()
+            let controller = session.warmupController
+            controller.projectedLoadFeasibility = { _ in nil }
+            let gate = IgnoringCancellationHandshakeGate()
+            let engine = CancellationIgnoringWarmupEngine(gate: gate)
+            let warmupSession = IncomingWarmupSession(engine: engine)
+            let regularEngine = PreSendHandshakeRecordingEngine()
+            session.chatEngineFactory = { _ in regularEngine }
+
+            controller.scheduleWarmup(session: warmupSession, debounce: .zero)
+            try await waitUntilAsync(timeout: Self.asyncTimeout) {
+                let started = await gate.started
+                let requestCount = await engine.requestCount
+                return started && requestCount == 1
+            }
+            #expect(controller.needsPreSendHandshake)
+
+            session.send("stop this turn while warm-up streamChat is suspended")
+            #expect(session.isSendActiveForComposer)
+            session.stop()
+            #expect(controller.state == .cold)
+
+            // The engine's streamChat is deliberately suspended on a checked
+            // continuation, so cancelling the consumer cannot unwind it. The
+            // controller must retain the cancelled task until the engine
+            // actually releases its generation lease.
+            try await Task.sleep(for: .milliseconds(100))
+            #expect(controller.needsPreSendHandshake)
+            #expect(await engine.requestCount == 1)
+            #expect(await regularEngine.regularRequestCount == 0)
+
+            await gate.release()
+
+            try await waitUntil(timeout: Self.asyncTimeout) {
+                !controller.needsPreSendHandshake
+            }
+            try await Task.sleep(for: .milliseconds(250))
+
+            #expect(controller.state == .cold)
+            #expect(await engine.requestCount == 1)
+            #expect(await regularEngine.regularRequestCount == 0)
+            #expect(session.isSendActiveForComposer == false)
         }
     }
 
@@ -405,9 +499,12 @@ private actor IgnoringCancellationHandshakeGate {
 
 private actor PreSendHandshakeRecordingEngine: ChatEngineProtocol {
     private(set) var regularRequestCount = 0
+    private(set) var warmupRequestCount = 0
 
     func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
-        if request.warmupPrefill != true {
+        if request.warmupPrefill == true {
+            warmupRequestCount += 1
+        } else {
             regularRequestCount += 1
         }
         return AsyncThrowingStream { continuation in
@@ -427,9 +524,9 @@ private final class IncomingWarmupSession: ChatWarmupSessionContext {
     let selectedModelIsLocal = true
     let isRemoteAgentTarget = false
     let isStreaming = false
-    private let engine: IncomingWarmupRecordingEngine
+    private let engine: any ChatEngineProtocol
 
-    init(engine: IncomingWarmupRecordingEngine) {
+    init(engine: any ChatEngineProtocol) {
         self.engine = engine
     }
 
@@ -446,6 +543,28 @@ private final class IncomingWarmupSession: ChatWarmupSessionContext {
     }
 
     func makeWarmupEngine() -> ChatEngineProtocol { engine }
+}
+
+private actor CancellationIgnoringWarmupEngine: ChatEngineProtocol {
+    private let gate: IgnoringCancellationHandshakeGate
+    private(set) var requestCount = 0
+
+    init(gate: IgnoringCancellationHandshakeGate) {
+        self.gate = gate
+    }
+
+    func streamChat(request _: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
+        requestCount += 1
+        // `withCheckedContinuation` does not unwind merely because the caller
+        // task is cancelled. This models an engine setup / stream-drain boundary
+        // that holds its generation lease until the runtime itself returns.
+        await gate.wait()
+        return AsyncThrowingStream { $0.finish() }
+    }
+
+    func completeChat(request _: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+        throw NSError(domain: "ChatSessionStopTests", code: 7)
+    }
 }
 
 private actor IncomingWarmupRecordingEngine: ChatEngineProtocol {

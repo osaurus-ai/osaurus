@@ -94,7 +94,7 @@ let package = Package(
         // chat's warm-start checkpoint.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "c6a2b4d05bec0958146d26fd351782b2fc3e2b13"
+            revision: "7545ba66bf1060694ca4516cdf18768fef4b7c47"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

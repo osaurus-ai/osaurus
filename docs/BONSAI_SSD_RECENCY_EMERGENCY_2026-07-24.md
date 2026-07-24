@@ -1,7 +1,7 @@
 # Bonsai SSD-recency emergency gate — 2026-07-24
 
-Status: **VERIFIED-LIVE FOR THE DEFAULT PAGED-OFF SSD-L2 EMERGENCY LANE AT
-THE FINAL vMLX SQUASH PIN; OSAURUS CI PENDING**
+Status: **PARTIAL — SOURCE TESTS PASS AT THE NEW vMLX SQUASH PIN; THE
+REBUILT EXACT-PIN OSAURUS LIVE UI MATRIX IS PENDING**
 
 This gate covers the user report:
 
@@ -172,6 +172,46 @@ live stall trace.
 Sampled published-app tool steps did emit stream-drained and lease-released
 events, with subsequent lease waits of 33–69 ms. Therefore an ordinary tool
 step orphan is not being claimed as the eviction root.
+
+## Rejected hybrid candidate and retained Stop-work follow-up
+
+Adversarial review after the first exact-squash smoke found two narrower
+contracts that the earlier proof did not close:
+
+1. `DiskCache.fetch` refreshed KV recency as soon as a payload deserialized,
+   before `CacheCoordinator` validated the recurrent companion required by a
+   hybrid SSM/GDN restore. Missing or incomplete companion state rejected the
+   candidate, but the unusable KV payload had already been made hot.
+2. Stop cancelled the outer pre-send handshake without cancelling and
+   retaining the controller-owned model-switch/warm-up work it awaited. A
+   suspended switch could therefore resume and schedule a hidden warm-up, and
+   a cancellation-ignoring warm-up could later resurrect the green warm claim.
+
+vMLX PR #182 was squash-merged as
+`7545ba66bf1060694ca4516cdf18768fef4b7c47`. The coordinator now fetches a
+candidate without touching recency and refreshes KV, or the linked
+KV-plus-companion pair, only after required companion validation succeeds.
+
+Current source-test evidence:
+
+- exact `c6a2b4d` baseline production source plus the two new rejected-candidate
+  tests: 0/2 passed; both missing and incomplete companion rows changed the KV
+  timestamp and failed;
+- patched source: the same 2/2 passed;
+- broader `DiskCache` selection: 17/17 passed;
+- `MLXLMCommon` build: completed;
+- corrected Osaurus Stop tests on `033fc0e2` production source: 12/14 passed,
+  with exactly the hidden post-Stop warm-up and cancellation-ignoring late
+  warm-state rows failing;
+- patched Osaurus source: `ChatSessionStopTests` 14/14 passed;
+- `git diff --check`: clean in both worktrees.
+
+The Osaurus controller now invalidates the suspended switch epoch, cancels
+scheduled/switch/warm-up work, keeps active tasks tracked until they actually
+unwind, and refuses a cancelled engine completion permission to write `.warm`.
+This is source/test evidence only until the exact
+`7545ba66bf1060694ca4516cdf18768fef4b7c47` Release app completes the live
+Stop/new-chat/tool/cache matrix below.
 
 ## Post-fix isolated Release UI proof
 

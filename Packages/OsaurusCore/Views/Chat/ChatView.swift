@@ -1835,7 +1835,11 @@ final class ChatSession: ObservableObject {
     }
 
     func stop() {
+        let wasAwaitingPreSendHandshake = awaitingPreSendHandshake
         invalidatePreSendHandshake()
+        if wasAwaitingPreSendHandshake {
+            warmupController.cancelPendingWorkForUserStop()
+        }
         stopRequested = true
         let task = currentTask
         task?.cancel()
