@@ -1,0 +1,44 @@
+{
+  "cases" : [
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.valid",
+      "label" : "valid",
+      "latencyMs" : 125.5,
+      "modelId" : "foundation",
+      "notes" : [],
+      "outcome" : "passed",
+      "query" : "write a file",
+      "toolUsage" : [
+        {
+          "calls" : 2,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_write"
+        }
+      ]
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.failed",
+      "label" : "failed",
+      "latencyMs" : 250,
+      "modelId" : "foundation",
+      "notes" : [
+        "tool error: shell_run({\"password\":\"abc12345\"})"
+      ],
+      "outcome" : "failed",
+      "query" : "run a command",
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 1,
+          "tool" : "shell_run"
+        }
+      ]
+    }
+  ],
+  "modelId" : "foundation",
+  "startedAt" : "2026-06-18T12:00:00Z"
+}

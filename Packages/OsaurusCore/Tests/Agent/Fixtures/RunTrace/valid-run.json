@@ -1,0 +1,57 @@
+{
+  "agentId" : "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB",
+  "costUSD" : 0.0025,
+  "endedAt" : "2026-06-18T12:00:04Z",
+  "errorMessage" : null,
+  "runId" : "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+  "sessionId" : "session-valid",
+  "startedAt" : "2026-06-18T12:00:00Z",
+  "status" : "success",
+  "tokensIn" : 123,
+  "tokensOut" : 45,
+  "triggerSource" : "chat",
+  "turns" : [
+    {
+      "content" : "Find the weather.",
+      "id" : "11111111-1111-1111-1111-111111111111",
+      "role" : "user",
+      "thinking" : null,
+      "toolCallId" : null,
+      "toolCalls" : null,
+      "toolResults" : null
+    },
+    {
+      "content" : "",
+      "id" : "22222222-2222-2222-2222-222222222222",
+      "role" : "assistant",
+      "thinking" : "Need current conditions.",
+      "toolCallId" : null,
+      "toolCalls" : [
+        {
+          "arguments" : "{\"location\":\"Tokyo\",\"api_key\":\"sk-live-secret\"}",
+          "id" : "call_weather",
+          "name" : "get_weather"
+        }
+      ],
+      "toolResults" : null
+    },
+    {
+      "content" : "{\"ok\":true,\"temp_c\":22,\"authorization\":\"Bearer live-token-value\"}",
+      "id" : "33333333-3333-3333-3333-333333333333",
+      "role" : "tool",
+      "thinking" : null,
+      "toolCallId" : "call_weather",
+      "toolCalls" : null,
+      "toolResults" : null
+    },
+    {
+      "content" : "It is 22 C in Tokyo.",
+      "id" : "44444444-4444-4444-4444-444444444444",
+      "role" : "assistant",
+      "thinking" : null,
+      "toolCallId" : null,
+      "toolCalls" : null,
+      "toolResults" : null
+    }
+  ]
+}

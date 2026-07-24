@@ -76,6 +76,10 @@ private struct RetainedNotchTabRecord: Codable {
 public final class BackgroundTaskManager: ObservableObject {
     public static let shared = BackgroundTaskManager()
 
+    /// Captured before this manager can dispatch a run. Persisted rows older than
+    /// this epoch cannot belong to the current process.
+    public let processStartedAt: Date
+
     // MARK: - Published State
 
     /// All background tasks keyed by task ID
@@ -156,6 +160,7 @@ public final class BackgroundTaskManager: ObservableObject {
         retainedTabsDefaults: UserDefaults = .standard,
         powerManager: AgentRunPowerManager? = .shared
     ) {
+        processStartedAt = Date()
         self.persistsRetainedTabs = persistsRetainedTabs
         self.retainedTabsDefaults = retainedTabsDefaults
         self.powerManager = powerManager
@@ -253,6 +258,22 @@ public final class BackgroundTaskManager: ObservableObject {
         recomputeSortedToastTasks()
         objectWillChange.send()
         return true
+    }
+
+    /// Persisted run ids that are still owned by a live background task.
+    public var liveAgentRunIds: Set<UUID> {
+        Set(backgroundTasks.values.compactMap { state in
+            state.status.isActive ? state.agentRunId : nil
+        })
+    }
+
+    /// Exact live task owning a persisted run. A stale DB `running` row has no match.
+    public func taskId(forAgentRunId runId: UUID, agentId: UUID? = nil) -> UUID? {
+        backgroundTasks.values.first { state in
+            state.agentRunId == runId
+                && state.status.isActive
+                && (agentId == nil || state.agentId == agentId)
+        }?.id
     }
 
     /// Background-task id (if any) the given window is bound to. Returns
@@ -763,7 +784,6 @@ public final class BackgroundTaskManager: ObservableObject {
             state.runTokensLimit = agent.settings.limits.runTokensLimit
             state.runCostUSDLimit = agent.settings.limits.runCostUSDLimit
         }
-
         // The actual execution start. Runs immediately when a slot is
         // available, or later from `pumpQueue()` when queued. Everything
         // that marks a run as "started" (the `agent_runs` row, the
@@ -784,7 +804,7 @@ public final class BackgroundTaskManager: ObservableObject {
                 // `triggerPayload` is intentionally minimal: persisting the
                 // full prompt here would duplicate ChatHistoryDatabase data
                 // and inflate the scheduler DB. We surface the dispatch
-                // source + external key so the Activity tab can tag the
+                // source + external key so Database History can tag the
                 // row with what woke it.
                 let triggerPayload = Self.triggerPayload(for: request)
                 do {
@@ -793,7 +813,8 @@ public final class BackgroundTaskManager: ObservableObject {
                         agentId: context.agentId,
                         triggerKind: triggerKind,
                         triggerPayload: triggerPayload,
-                        instructions: request.prompt
+                        instructions: request.prompt,
+                        sessionId: context.id
                     )
                     boundRunId = runId
                     state.agentRunId = runId
