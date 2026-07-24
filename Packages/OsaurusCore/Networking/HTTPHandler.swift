@@ -3972,13 +3972,46 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
             let expiration: AccessKeyExpiration = isPermanent ? .never : .days90
-            guard
-                let (fullKey, keyInfo) = try? APIKeyManager.shared.generate(
+            // Temporary pairings must durably track the metadata id *before*
+            // minting so a crash cannot leave an untracked long-lived key.
+            // Permanent keys skip tracking entirely.
+            let preassignedKeyId: UUID?
+            if isPermanent {
+                preassignedKeyId = nil
+            } else {
+                let pendingId = UUID()
+                guard TemporaryPairedKeyStore.shared.register(keyId: pendingId) else {
+                    reply(
+                        status: .internalServerError,
+                        body: #"{"error":"Failed to track temporary access key"}"#,
+                        code: 500
+                    )
+                    return
+                }
+                preassignedKeyId = pendingId
+            }
+
+            let generated: (fullKey: String, info: AccessKeyInfo)?
+            if let keyId = preassignedKeyId {
+                generated = try? APIKeyManager.shared.generate(
+                    label: label,
+                    expiration: expiration,
+                    agentIndex: agentIndex,
+                    keyId: keyId
+                )
+            } else {
+                generated = try? APIKeyManager.shared.generate(
                     label: label,
                     expiration: expiration,
                     agentIndex: agentIndex
                 )
-            else {
+            }
+            guard let (fullKey, keyInfo) = generated else {
+                // Roll back the durable tracking record so a failed mint does
+                // not leave a stale id that launch would try to delete forever.
+                if let keyId = preassignedKeyId {
+                    TemporaryPairedKeyStore.shared.unregister(keyId: keyId)
+                }
                 reply(
                     status: .internalServerError,
                     body: #"{"error":"Failed to generate access key"}"#,
@@ -3986,10 +4019,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 return
             }
-
-            // Temporary keys are revoked and removed from the key list on app exit.
-            if !isPermanent {
-                TemporaryPairedKeyStore.shared.register(keyId: keyInfo.id)
+            if let keyId = preassignedKeyId,
+                !TemporaryPairedKeyStore.shared.finishMint(keyId: keyId)
+            {
+                // Shutdown began while biometric/signing work was in flight.
+                // Do not return a newly minted credential after cleanup took
+                // its snapshot. Clear tracking only after checked deletion;
+                // otherwise the next launch retains the recovery pointer.
+                if APIKeyManager.shared.deleteTemporaryKeyChecked(id: keyId) == .succeeded {
+                    TemporaryPairedKeyStore.shared.unregister(keyId: keyId)
+                }
+                reply(
+                    status: .serviceUnavailable,
+                    body: #"{"error":"Pairing interrupted by server shutdown"}"#,
+                    code: 503
+                )
+                return
             }
 
             // 4b. Sign a server-identity attestation over the challenge nonce
@@ -4028,7 +4073,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         info: PairingKeyEnvelope.info(agentAddress: agentAddress, nonce: req.nonce)
                     )
                 else {
-                    APIKeyManager.shared.revoke(id: keyInfo.id)
+                    // Fail closed: drop the minted credential. Temporary keys
+                    // were tracked before mint — only clear tracking after a
+                    // checked durable delete succeeds. On failure, retain the
+                    // tracking ID so launch reconciliation can finish the job.
+                    if isPermanent {
+                        APIKeyManager.shared.revoke(id: keyInfo.id)
+                    } else if APIKeyManager.shared.deleteTemporaryKeyChecked(id: keyInfo.id)
+                        == .succeeded
+                    {
+                        TemporaryPairedKeyStore.shared.unregister(keyId: keyInfo.id)
+                    }
                     reply(status: .badRequest, body: #"{"error":"Invalid encryption key"}"#, code: 400)
                     return
                 }

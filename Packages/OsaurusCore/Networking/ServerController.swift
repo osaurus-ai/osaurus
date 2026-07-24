@@ -13,6 +13,14 @@ import NIOCore
 import NIOHTTP1
 import NIOPosix
 
+private enum ServerControllerLifecycleError: LocalizedError {
+    case previousServerStillStopping
+
+    var errorDescription: String? {
+        "The previous server is still stopping; retry after its event loop finishes."
+    }
+}
+
 /// Main controller responsible for managing the server lifecycle
 @MainActor
 final class ServerController: ObservableObject {
@@ -50,6 +58,9 @@ final class ServerController: ObservableObject {
     private var serverChannel: Channel?
     private var serverActor: OsaurusServer?
     private var agentsCancellable: AnyCancellable?
+    /// Main-actor latch set before the first startup suspension point.
+    /// Prevents Settings, App Intents, and launch tasks from racing two binds.
+    private var isStartInFlight = false
 
     /// Flipped once `applicationDidFinishLaunching` finishes its server
     /// wiring. The Bonjour-expose Combine sink consults this so it never
@@ -105,7 +116,30 @@ final class ServerController: ObservableObject {
 
     /// Starts the server with current configuration
     func startServer() async {
-        guard !isRunning else { return }
+        guard !isRunning, !isStartInFlight else { return }
+        isStartInFlight = true
+        defer { isStartInFlight = false }
+
+        let reconciliation =
+            await TemporaryPairedKeyStore.reconcileSharedBeforeServerStart()
+        guard case .ready = reconciliation else {
+            let reason: String
+            if case .failed(let failureReason) = reconciliation {
+                reason = failureReason
+            } else {
+                reason = "unknown temporary pairing reconciliation failure"
+            }
+            lastErrorMessage =
+                "Server start refused: temporary pairing security state is unavailable (\(reason))."
+            serverHealth = .error(lastErrorMessage!)
+            print("[Osaurus] \(lastErrorMessage!)")
+            return
+        }
+        guard !TemporaryPairedKeyStore.shared.isShutdownRequested() else {
+            lastErrorMessage = "Server start refused because application shutdown has begun."
+            serverHealth = .stopped
+            return
+        }
         guard configuration.isValidPort else {
             lastErrorMessage = "Invalid port: \(configuration.port). Port must be between 1 and 65535."
             serverHealth = .error(lastErrorMessage!)
@@ -125,11 +159,23 @@ final class ServerController: ObservableObject {
             try await stopServerIfNeeded()
 
             let server = OsaurusServer()
+            // Root the actor before the bind suspension so stop/quit paths can
+            // observe an in-progress start. A post-bind shutdown check below
+            // closes it if stop raced before the actor acquired its channel.
+            self.serverActor = server
             try await server.start(
                 .init(host: bindHost, port: configuration.port, trustLoopback: !configuration.exposeToNetwork),
                 serverConfiguration: self.configuration
             )
-            self.serverActor = server
+            guard !TemporaryPairedKeyStore.shared.isShutdownRequested() else {
+                let completed = await server.stop(gracefully: false)
+                if completed, self.serverActor === server {
+                    self.serverActor = nil
+                }
+                isRunning = false
+                serverHealth = .stopped
+                return
+            }
 
             // Update state
             isRunning = true
@@ -160,6 +206,13 @@ final class ServerController: ObservableObject {
             }
             RelayTunnelManager.shared.reconnectIfNeeded(port: configuration.port)
         } catch {
+            if TemporaryPairedKeyStore.shared.isShutdownRequested() {
+                // The quit path owns teardown/rooting. In particular, retain
+                // an actor whose event loop exceeded the bounded stop budget.
+                isRunning = false
+                serverHealth = .stopped
+                return
+            }
             handleServerError(error)
             await cleanupRuntime()
         }
@@ -189,8 +242,14 @@ final class ServerController: ObservableObject {
 
         // Stop the actor-backed server if present
         if let server = serverActor {
-            await server.stop(gracefully: true)
-            serverActor = nil
+            let completed = await server.stop(gracefully: true)
+            if completed {
+                serverActor = nil
+            } else {
+                print(
+                    "[Osaurus] NIO group is still draining; retaining serverActor until a later stop"
+                )
+            }
         }
 
         localNetworkAddress = "127.0.0.1"
@@ -421,6 +480,9 @@ final class ServerController: ObservableObject {
     private func stopServerIfNeeded() async throws {
         if serverActor != nil || serverChannel != nil || eventLoopGroup != nil {
             await stopServer()
+        }
+        guard serverActor == nil else {
+            throw ServerControllerLifecycleError.previousServerStillStopping
         }
     }
 
