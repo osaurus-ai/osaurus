@@ -8,6 +8,21 @@ import Testing
 struct ChatSessionStopTests {
     private static let asyncTimeout: Duration = .seconds(10)
 
+    private func beginSuspendedPreSendHandshake(
+        session: ChatSession,
+        gate: IgnoringCancellationHandshakeGate
+    ) async throws {
+        session.warmupController.handleModelSelectionChange(
+            session: session,
+            to: "handshake-test-model",
+            performSwitch: { _ in await gate.wait() }
+        )
+        try await waitUntilAsync(timeout: Self.asyncTimeout) {
+            await gate.started
+                && session.warmupController.needsPreSendHandshake
+        }
+    }
+
     @Test
     func stop_trimsTrailingEmptyAssistantPlaceholder() async throws {
         try await ChatHistoryTestStorage.run {
@@ -84,6 +99,219 @@ struct ChatSessionStopTests {
     }
 
     @Test
+    func stop_invalidatesSuspendedPreSendHandshakeWithoutLaunchingCapturedTurn() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            let gate = IgnoringCancellationHandshakeGate()
+            let engine = PreSendHandshakeRecordingEngine()
+            session.chatEngineFactory = { _ in engine }
+            try await beginSuspendedPreSendHandshake(session: session, gate: gate)
+
+            session.send("keep this stopped turn")
+            #expect(session.turns.map(\.content) == ["keep this stopped turn"])
+
+            session.stop()
+            // Keep the test focused on the outer ChatSession task rather than
+            // allowing the completed switch to schedule a speculative warm-up.
+            session.warmupController.reset()
+            await gate.release()
+            try await Task.sleep(for: .milliseconds(250))
+
+            #expect(session.isStreaming == false)
+            #expect(session.turns.map(\.content) == ["keep this stopped turn"])
+            #expect(await engine.regularRequestCount == 0)
+        }
+    }
+
+    @Test
+    func reset_doesNotResurrectTurnCapturedBySuspendedPreSendHandshake() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            let gate = IgnoringCancellationHandshakeGate()
+            let engine = PreSendHandshakeRecordingEngine()
+            session.chatEngineFactory = { _ in engine }
+            try await beginSuspendedPreSendHandshake(session: session, gate: gate)
+
+            session.send("old chat turn")
+            #expect(session.turns.map(\.content) == ["old chat turn"])
+
+            session.reset()
+            await gate.release()
+            try await Task.sleep(for: .milliseconds(250))
+
+            #expect(session.turns.isEmpty)
+            #expect(session.sessionId == nil)
+            #expect(session.isStreaming == false)
+            #expect(await engine.regularRequestCount == 0)
+        }
+    }
+
+    @Test
+    func reset_incomingWarmupSurvivesCancelledPreviousHandshake() async throws {
+        try await ChatHistoryTestStorage.run {
+            var chatConfig = ChatConfigurationStore.load()
+            chatConfig.warmModelsOnLoad = true
+            ChatConfigurationStore.save(chatConfig)
+
+            let session = ChatSession()
+            let gate = IgnoringCancellationHandshakeGate()
+            session.chatEngineFactory = { _ in PreSendHandshakeRecordingEngine() }
+            try await beginSuspendedPreSendHandshake(session: session, gate: gate)
+
+            session.send("old chat turn")
+            session.reset()
+
+            let incomingEngine = IncomingWarmupRecordingEngine()
+            let incomingSession = IncomingWarmupSession(engine: incomingEngine)
+            session.warmupController.scheduleWarmup(
+                session: incomingSession,
+                debounce: .milliseconds(250)
+            )
+
+            await gate.release()
+            try await waitUntilAsync(timeout: Self.asyncTimeout) {
+                await incomingEngine.requestCount == 1
+            }
+
+            #expect(session.turns.isEmpty)
+            #expect(await incomingEngine.requestCount == 1)
+        }
+    }
+
+    @Test
+    func sessionLoad_doesNotAppendTurnCapturedByPreviousHandshake() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            let gate = IgnoringCancellationHandshakeGate()
+            let engine = PreSendHandshakeRecordingEngine()
+            session.chatEngineFactory = { _ in engine }
+            try await beginSuspendedPreSendHandshake(session: session, gate: gate)
+
+            session.send("old chat turn")
+            let loaded = ChatSessionData(
+                id: UUID(),
+                title: "Loaded chat",
+                turns: [ChatTurnData(role: .user, content: "loaded turn")]
+            )
+            session.load(from: loaded)
+            await gate.release()
+            try await Task.sleep(for: .milliseconds(250))
+
+            #expect(session.sessionId == loaded.id)
+            #expect(session.turns.map(\.content) == ["loaded turn"])
+            #expect(session.isStreaming == false)
+            #expect(await engine.regularRequestCount == 0)
+        }
+    }
+
+    @Test
+    func sessionLoad_dropsQueuedDraftAndOneOffSkillFromPreviousHandshake() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            let gate = IgnoringCancellationHandshakeGate()
+            let engine = PreSendHandshakeRecordingEngine()
+            session.chatEngineFactory = { _ in engine }
+            try await beginSuspendedPreSendHandshake(session: session, gate: gate)
+
+            session.send("old chat turn")
+            session.pendingOneOffSkillId = UUID()
+            session.enqueueSend("old queued draft", attachments: [])
+            session.pendingOneOffSkillId = UUID()
+            #expect(session.queuedSend?.text == "old queued draft")
+            #expect(session.queuedSend?.oneOffSkillId != nil)
+            #expect(session.pendingOneOffSkillId != nil)
+
+            let loaded = ChatSessionData(
+                id: UUID(),
+                title: "Loaded chat",
+                turns: [ChatTurnData(role: .user, content: "loaded turn")]
+            )
+            session.load(from: loaded)
+
+            #expect(session.queuedSend == nil)
+            #expect(session.pendingOneOffSkillId == nil)
+
+            await gate.release()
+            try await Task.sleep(for: .milliseconds(250))
+
+            #expect(session.sessionId == loaded.id)
+            #expect(session.turns.map(\.content) == ["loaded turn"])
+            #expect(session.isSendActiveForComposer == false)
+            #expect(await engine.regularRequestCount == 0)
+        }
+    }
+
+    @Test
+    func send_ignoresReentrantSendWhilePreSendHandshakeIsSuspended() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            let gate = IgnoringCancellationHandshakeGate()
+            let engine = PreSendHandshakeRecordingEngine()
+            session.chatEngineFactory = { _ in engine }
+            try await beginSuspendedPreSendHandshake(session: session, gate: gate)
+
+            session.send("first")
+            session.send("second")
+
+            #expect(session.turns.filter { $0.role == .user }.map(\.content) == ["first"])
+
+            session.stop()
+            session.warmupController.reset()
+            await gate.release()
+        }
+    }
+
+    @Test
+    func sendCurrent_queuesDraftWhilePreSendHandshakeIsSuspended() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            let gate = IgnoringCancellationHandshakeGate()
+            session.chatEngineFactory = { _ in PreSendHandshakeRecordingEngine() }
+            try await beginSuspendedPreSendHandshake(session: session, gate: gate)
+
+            session.send("first")
+            #expect(session.isSendActiveForComposer)
+
+            session.input = "second"
+            session.sendCurrent()
+
+            #expect(session.turns.filter { $0.role == .user }.map(\.content) == ["first"])
+            #expect(session.queuedSend?.text == "second")
+            #expect(session.input.isEmpty)
+
+            session.stop()
+            #expect(session.isSendActiveForComposer == false)
+            session.warmupController.reset()
+            await gate.release()
+        }
+    }
+
+    @Test
+    func sendNowInterrupting_replacesSuspendedHandshakeWithQueuedSend() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            let gate = IgnoringCancellationHandshakeGate()
+            let engine = PreSendHandshakeRecordingEngine()
+            session.chatEngineFactory = { _ in engine }
+            try await beginSuspendedPreSendHandshake(session: session, gate: gate)
+
+            session.send("first")
+            session.enqueueSend("replacement", attachments: [])
+            session.sendNowInterrupting()
+
+            #expect(
+                session.turns.filter { $0.role == .user }.map(\.content)
+                    == ["first", "replacement"]
+            )
+
+            await gate.release()
+            try await waitUntilAsync(timeout: Self.asyncTimeout) {
+                await engine.regularRequestCount == 1
+            }
+        }
+    }
+
+    @Test
     func send_finishesReasoningOnlyLocalStream() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()
@@ -154,6 +382,82 @@ private actor ReasoningOnlyChatEngine: ChatEngineProtocol {
 
     func completeChat(request _: ChatCompletionRequest) async throws -> ChatCompletionResponse {
         throw NSError(domain: "ChatSessionStopTests", code: 2)
+    }
+}
+
+/// Suspends a model-selection switch and deliberately ignores task
+/// cancellation until the test releases it. This reproduces the production
+/// race where a pre-send handshake can outlive Stop/reset/session load.
+private actor IgnoringCancellationHandshakeGate {
+    private(set) var started = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        started = true
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private actor PreSendHandshakeRecordingEngine: ChatEngineProtocol {
+    private(set) var regularRequestCount = 0
+
+    func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
+        if request.warmupPrefill != true {
+            regularRequestCount += 1
+        }
+        return AsyncThrowingStream { continuation in
+            continuation.yield("unexpected stale dispatch")
+            continuation.finish()
+        }
+    }
+
+    func completeChat(request _: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+        throw NSError(domain: "ChatSessionStopTests", code: 5)
+    }
+}
+
+@MainActor
+private final class IncomingWarmupSession: ChatWarmupSessionContext {
+    let selectedModel: String? = "incoming-warmup-model"
+    let selectedModelIsLocal = true
+    let isRemoteAgentTarget = false
+    let isStreaming = false
+    private let engine: IncomingWarmupRecordingEngine
+
+    init(engine: IncomingWarmupRecordingEngine) {
+        self.engine = engine
+    }
+
+    func isImageGenerationModel(_: String?) -> Bool { false }
+
+    func makeWarmupPayload() async -> ChatWarmupPayload? {
+        ChatWarmupPayload(
+            model: "incoming-warmup-model",
+            messages: [ChatMessage(role: "system", content: "incoming chat prefix")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "incoming-warmup-model|incoming-chat-prefix"
+        )
+    }
+
+    func makeWarmupEngine() -> ChatEngineProtocol { engine }
+}
+
+private actor IncomingWarmupRecordingEngine: ChatEngineProtocol {
+    private(set) var requestCount = 0
+
+    func streamChat(request _: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
+        requestCount += 1
+        return AsyncThrowingStream { $0.finish() }
+    }
+
+    func completeChat(request _: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+        throw NSError(domain: "ChatSessionStopTests", code: 6)
     }
 }
 

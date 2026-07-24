@@ -85,10 +85,16 @@ let package = Package(
         // Gemma's decoded thought-channel opener into reasoning. The static
         // prefix hint revision lets Osaurus's byte-stable system prefix seed
         // SSD cache boundaries even when mutable DB/tool state changes later
-        // in the same rendered system message.
+        // in the same rendered system message. The disk-recency revision
+        // refreshes accepted KV + recurrent companion groups on restore so
+        // combined-quota eviction preserves genuinely hot SSD prefixes. The
+        // stable-checkpoint follow-up also refreshes the existing canonical
+        // system/tool seed when a longer compatible disk entry serves a
+        // growing turn, preventing tool-loop snapshots from evicting the next
+        // chat's warm-start checkpoint.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "f50853514ee00365837be3301c91850ca7ed5877"
+            revision: "c6a2b4d05bec0958146d26fd351782b2fc3e2b13"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
