@@ -100,17 +100,28 @@ struct ToolExecutionScopeWiringTests {
         let src = try Self.source("Tools/ToolRegistry.swift")
 
         guard
-            let strip = src.range(of: #"if toolsByName[name] == nil, name.hasPrefix("tool/")"#),
-            let check = src.range(of: "ChatExecutionContext.toolExecutionScope")
+            let execute = src.range(
+                of: "func execute(\n        name rawName: String,"
+            )
         else {
-            Issue.record("could not locate the normalization or the check")
+            Issue.record("could not locate ToolRegistry.execute")
+            return
+        }
+        let executeBody = src[execute.lowerBound...]
+        guard
+            let normalization = executeBody.range(
+                of: "let name = resolvedRegisteredName(for: rawName)"
+            ),
+            let check = executeBody.range(of: "ChatExecutionContext.toolExecutionScope")
+        else {
+            Issue.record("could not locate the normalization or the exposure check")
             return
         }
 
         // Checking the RAW name would let the model bypass the whole allowlist by prefixing a
         // name it was never given: `tool/sandbox_exec` normalizes to `sandbox_exec` afterwards.
         #expect(
-            strip.lowerBound < check.lowerBound,
+            normalization.lowerBound < check.lowerBound,
             "the allowlist must be checked on the NORMALIZED name, or `tool/` walks straight past it"
         )
     }
