@@ -9971,9 +9971,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         try await ToolRegistry.shared.execute(name: toolName, argumentsJSON: argsJSON)
                     }
                 }
+                // MCP transport stays HTTP 200; tool-level failure is signaled
+                // via isError when the body is a non-throwing ToolEnvelope.failure
+                // (or legacy error shape). Compute once for response + log.
+                let isError = ToolEnvelope.isError(result)
                 let payload: [String: Any] = [
                     "content": [["type": "text", "text": result]],
-                    "isError": false,
+                    "isError": isError,
                 ]
                 let d =
                     (try? JSONSerialization.data(withJSONObject: payload, options: .osaurusCanonical))
@@ -9995,7 +9999,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     arguments: argsJSON,
                     result: result,
                     durationMs: Date().timeIntervalSince(toolCallStartTime) * 1000,
-                    isError: false
+                    isError: isError
                 )
                 logSelf.logRequest(
                     method: "POST",
