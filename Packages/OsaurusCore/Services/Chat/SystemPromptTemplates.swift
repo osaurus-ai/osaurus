@@ -949,7 +949,8 @@ public enum SystemPromptTemplates {
     public static func spawnGuidance(
         agents: [SpawnAgentDescriptor],
         models: [SpawnModelDescriptor],
-        toolAccess: SpawnToolAccess = .none
+        toolAccess: SpawnToolAccess = .none,
+        maxParallel: Int = 1
     ) -> String {
         var lines: [String] = ["## Delegating subtasks (spawn)", ""]
         lines.append(
@@ -978,6 +979,14 @@ public enum SystemPromptTemplates {
             )
             for model in models { lines.append("  - " + modelLine(model)) }
         }
+        lines.append(
+            "- `spawn_batch(jobs)` fans out INDEPENDENT work across the same allowed agents/models. "
+                + "Each job needs a unique `id`, `target_type` (`agent` or `model`), exact `target`, "
+                + "and complete `input`. This agent allows at most \(maxParallel) jobs in one batch; "
+                + "at most \(maxParallel) workers run concurrently, and results "
+                + "come back in input order. Use one batch instead of emitting several separate "
+                + "spawn calls when the subtasks do not depend on each other."
+        )
         switch toolAccess {
         case .readOnly:
             lines.append(
@@ -998,8 +1007,9 @@ public enum SystemPromptTemplates {
                 + "if none clearly fits, just do it yourself rather than guessing."
         )
         lines.append(
-            "- Spawns of remote/cloud targets may run in parallel (several spawn calls in one turn); "
-                + "spawns of local targets run one at a time — a second local spawn waits for the GPU."
+            "- Remote/cloud batch jobs may overlap. Local jobs for the SAME model share one load and "
+                + "may batch together; different local models are serialized so they cannot race "
+                + "GPU residency or repeatedly unload the parent."
         )
         return lines.joined(separator: "\n")
     }

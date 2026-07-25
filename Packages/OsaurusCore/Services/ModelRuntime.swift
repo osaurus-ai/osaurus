@@ -423,7 +423,7 @@ public actor ModelRuntime {
         }
         return modelCache.values.map { holder in
             let activeConfig = holder.container.cacheCoordinator?.config
-            ModelCacheSummary(
+            return ModelCacheSummary(
                 name: holder.name,
                 bytes: holder.weightsSizeBytes,
                 isCurrent: holder.name == currentModelName,

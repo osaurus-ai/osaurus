@@ -1020,6 +1020,11 @@ public struct SystemPromptComposer: Sendable {
                     config: config,
                     settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings
                 )
+                let maxParallel = SubagentToolVisibility.effectiveBudgets(
+                    isDefault: isDefault,
+                    config: config,
+                    settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings
+                ).normalized.maxParallelSpawns
                 composer.append(
                     .static(
                         id: "spawn",
@@ -1027,7 +1032,8 @@ public struct SystemPromptComposer: Sendable {
                         content: SystemPromptTemplates.spawnGuidance(
                             agents: descriptors.agents,
                             models: descriptors.models,
-                            toolAccess: toolAccess
+                            toolAccess: toolAccess,
+                            maxParallel: maxParallel
                         )
                     )
                 )
@@ -2409,6 +2415,35 @@ public struct SystemPromptComposer: Sendable {
                 SpawnModelTool.constrainedSpec(
                     spawnModel,
                     allowedModelIds: allowedModelIds
+                )
+        }
+        if let spawnBatch = byName[SubagentCapabilityRegistry.spawnBatchToolName] {
+            let config = SubagentConfigurationStore.snapshot()
+            let isDefault = snapshot.agentId == Agent.defaultId
+            let settings = AgentManager.shared.agent(for: snapshot.agentId)?.settings
+            let allowedAgentNames = SubagentToolVisibility.effectiveSpawnableAgents(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: snapshot.spawnDelegationEnabled,
+                perAgentTargets: snapshot.spawnableAgentNames
+            )
+            let allowedModelIds = SubagentToolVisibility.effectiveSpawnableModels(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: snapshot.spawnDelegationEnabled,
+                perAgentModelTargets: snapshot.spawnableModelNames
+            )
+            let maxParallel = SubagentToolVisibility.effectiveBudgets(
+                isDefault: isDefault,
+                config: config,
+                settings: settings
+            ).normalized.maxParallelSpawns
+            byName[SubagentCapabilityRegistry.spawnBatchToolName] =
+                SpawnBatchTool.constrainedSpec(
+                    spawnBatch,
+                    allowedAgentNames: allowedAgentNames,
+                    allowedModelIds: allowedModelIds,
+                    maxParallel: maxParallel
                 )
         }
 

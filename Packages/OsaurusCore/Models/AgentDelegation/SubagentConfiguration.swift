@@ -195,9 +195,10 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
     /// call regardless).
     public var maxToolCalls: Int
     public var maxElapsedSeconds: Int
-    /// Maximum number of jobs one `spawn_batch` call may run at once. The
-    /// scheduler still groups local jobs by canonical model and serializes
-    /// different local models, so this is only a concurrency ceiling.
+    /// Maximum number of jobs accepted by one `spawn_batch` call and the
+    /// maximum number that may execute concurrently. The scheduler still
+    /// groups local jobs by canonical model and serializes different local
+    /// models, so actual local concurrency may be lower.
     public var maxParallelSpawns: Int
 
     /// Accepted bounds for each budget — the single source of truth shared by

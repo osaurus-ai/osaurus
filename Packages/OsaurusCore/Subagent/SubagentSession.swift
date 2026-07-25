@@ -448,7 +448,12 @@ public enum SubagentSession {
     /// model's name so same-model batches share one safe in-place lane.
     static func canonicalAdmissionModelKey(_ resolved: ResolvedModel) -> String? {
         guard resolved.isLocal else { return nil }
-        return ModelManager.findInstalledModel(named: resolved.name)?.name ?? resolved.name
+        return (
+            ModelManager.findInstalledModel(named: resolved.name)?.name
+                ?? resolved.name
+        )
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
     }
 }
 

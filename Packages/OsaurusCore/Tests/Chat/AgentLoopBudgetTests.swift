@@ -54,6 +54,33 @@ struct AgentLoopBudgetTests {
         #expect(resolution.source == .foundationFixed)
     }
 
+    @Test @MainActor func remoteProviderMetadataWinsOverGenericFallback() async {
+        let cache = ModelPickerItemCache.shared
+        let previous = cache._setItemsForTesting([
+            ModelPickerItem(
+                id: "router/model-with-window",
+                displayName: "Remote",
+                source: .remote(
+                    providerName: "Router",
+                    providerId: UUID()
+                ),
+                contextLength: 262_144
+            )
+        ])
+        defer { cache._setItemsForTesting(previous) }
+
+        let sync = AgentLoopBudget.resolveContextWindowResolutionSync(
+            modelId: "router/model-with-window"
+        )
+        let asyncResolution = await AgentLoopBudget.resolveContextWindowResolution(
+            modelId: "router/model-with-window"
+        )
+
+        #expect(sync.tokens == 262_144)
+        #expect(sync.source == .providerMetadata)
+        #expect(asyncResolution == sync)
+    }
+
     @Test func ratioUsesEffectiveBudgetNotRawWindow() {
         // 10_000 window → effective 8_500. 8_000 tokens is 94% of the
         // effective budget (near limit) even though it's only 80% of the

@@ -303,6 +303,7 @@ enum AgentLoopBudget {
     enum ContextWindowSource: String, Equatable, Sendable {
         case foundationFixed
         case bundleMetadata
+        case providerMetadata
         case metadataFallback
     }
 
@@ -327,10 +328,11 @@ enum AgentLoopBudget {
     static let defaultResponseReservation = 4_096
 
     /// Resolve the model's usable context window: Foundation ids first
-    /// (fixed window), then model bundle metadata (`ModelInfo.contextLength`),
-    /// then the user-configured chat fallback. This is THE definition of
-    /// "how big is the window" — the UI uses `resolveContextWindowSync`,
-    /// which must stay behavior-identical.
+    /// (fixed window), then local bundle metadata (`ModelInfo.contextLength`),
+    /// then already-discovered provider metadata from the model picker, and
+    /// finally the user-configured unknown-metadata fallback. This is THE
+    /// definition of "how big is the window" — the UI uses
+    /// `resolveContextWindowSync`, which must stay behavior-identical.
     static func resolveContextWindow(modelId: String) async -> Int {
         (await resolveContextWindowResolution(modelId: modelId)).tokens
     }
@@ -346,6 +348,14 @@ enum AgentLoopBudget {
         }
         if let info = ModelInfo.load(modelId: modelId), let ctx = info.model.contextLength {
             return ContextWindowResolution(tokens: ctx, source: .bundleMetadata)
+        }
+        if let providerContext = await MainActor.run(body: {
+            providerContextWindow(modelId: modelId)
+        }) {
+            return ContextWindowResolution(
+                tokens: providerContext,
+                source: .providerMetadata
+            )
         }
         return await MainActor.run {
             ContextWindowResolution(
@@ -383,12 +393,32 @@ enum AgentLoopBudget {
         if let info = ModelInfo.loadCachedOrWarm(modelId: modelId), let ctx = info.model.contextLength {
             return ContextWindowResolution(tokens: ctx, source: .bundleMetadata)
         }
+        if let providerContext = providerContextWindow(modelId: modelId) {
+            return ContextWindowResolution(
+                tokens: providerContext,
+                source: .providerMetadata
+            )
+        }
         return ContextWindowResolution(
             tokens:
                 ChatConfigurationStore.load().contextLength
                 ?? fallbackContextWindow,
             source: .metadataFallback
         )
+    }
+
+    /// Synchronous cache-only provider lookup used by both the async runtime
+    /// resolver and SwiftUI's synchronous context display. Provider discovery
+    /// populates `ModelPickerItemCache`; this function never performs network
+    /// I/O or rebuilds the catalog during a request/layout pass.
+    @MainActor
+    private static func providerContextWindow(modelId: String) -> Int? {
+        let trimmed = modelId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return ModelPickerItemCache.shared.items.first(where: {
+            guard case .remote = $0.source else { return false }
+            return $0.id == trimmed
+        })?.contextLength
     }
 
     // MARK: Shared budget assessment (UI + runtime parity)

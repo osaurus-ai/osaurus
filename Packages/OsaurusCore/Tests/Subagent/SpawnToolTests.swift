@@ -81,6 +81,15 @@ struct SpawnToolTests {
         }
         #expect(ToolEnvelope.isError(modelResult))
         #expect(modelResult.contains("cannot be called from inside"))
+
+        let batchResult = try await SubagentSession.$activeKindId.withValue("image") {
+            try await SpawnBatchTool().execute(
+                argumentsJSON:
+                    #"{"jobs":[{"id":"a","target_type":"model","target":"qwen3-4b-4bit","input":"summarize"}]}"#
+            )
+        }
+        #expect(ToolEnvelope.isError(batchResult))
+        #expect(batchResult.contains("cannot be called from inside"))
     }
 
     @Test func spawnAgentRejectsMissingArguments() async throws {
@@ -123,21 +132,27 @@ struct SpawnToolTests {
         // tools must opt out so the host owns the deadline.
         #expect(SpawnAgentTool().bypassRegistryTimeout)
         #expect(SpawnModelTool().bypassRegistryTimeout)
+        #expect(SpawnBatchTool().bypassRegistryTimeout)
     }
 
     @Test func toolNamesMatchTheRegistry() {
         // The two tools are the SSOT names from the shared `spawn` capability.
         #expect(SpawnAgentTool().name == "spawn_agent")
         #expect(SpawnModelTool().name == "spawn_model")
+        #expect(SpawnBatchTool().name == "spawn_batch")
         #expect(
-            SubagentCapabilityRegistry.spawn.toolNames == ["spawn_agent", "spawn_model"]
+            SubagentCapabilityRegistry.spawn.toolNames
+                == ["spawn_agent", "spawn_model", "spawn_batch"]
         )
     }
 
     @Test func agentKindShape() {
         let kind = TextSubagentKind(agentName: "helper", input: "x")
         #expect(kind.capability.id == "spawn")
-        #expect(kind.capability.toolNames == ["spawn_agent", "spawn_model"])
+        #expect(
+            kind.capability.toolNames
+                == ["spawn_agent", "spawn_model", "spawn_batch"]
+        )
         // spawn runs the chosen agent's model → it may resolve a DIFFERENT
         // local model and run the residency handoff (unlike the same-model
         // image / computer_use / sandbox kinds).

@@ -46,6 +46,35 @@ struct SubagentAdmissionTests {
         await gate.release(.localInPlace)
     }
 
+    @Test("same-model in-place runs overlap but a different local model waits")
+    func inPlaceAdmissionIsModelKeyed() async {
+        let gate = makeGate()
+        #expect(
+            await gate.admit(.localInPlace, modelKey: "model-a")
+                == .admitted
+        )
+        #expect(
+            await gate.admit(.localInPlace, modelKey: "MODEL-A")
+                == .admitted
+        )
+
+        let different = Task {
+            await gate.admit(
+                .localInPlace,
+                modelKey: "model-b",
+                timeoutSeconds: 5
+            )
+        }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        let held = await gate.snapshot()
+        #expect(held.inPlace == 2)
+
+        await gate.release(.localInPlace, modelKey: "model-a")
+        await gate.release(.localInPlace, modelKey: "model-a")
+        #expect(await different.value == .admitted)
+        await gate.release(.localInPlace, modelKey: "model-b")
+    }
+
     @Test("a second exclusive run queues until the first releases")
     func exclusiveSerializes() async {
         let gate = makeGate()

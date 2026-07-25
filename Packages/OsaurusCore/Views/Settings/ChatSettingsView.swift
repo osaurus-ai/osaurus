@@ -358,8 +358,9 @@ struct ChatSettingsView: View {
                     anchorId: "settings.chat.temperature"
                 )
                 SettingsStepperField(
-                    label: "Max Tokens",
-                    help: "Maximum response tokens",
+                    label: "Default Agent Max Output Tokens",
+                    help:
+                        "Optional per-response output cap for the default agent. Leave blank to inherit the active model bundle's generation_config maximum. This is not the model context window or KV retention.",
                     text: $tempChatMaxTokens,
                     range: 1 ... 65536,
                     step: 1024,

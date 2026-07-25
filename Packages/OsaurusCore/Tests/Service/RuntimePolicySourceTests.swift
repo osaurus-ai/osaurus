@@ -766,7 +766,7 @@ struct RuntimePolicySourceTests {
         // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
         // xcworkspace Package.resolved files. Miss one and the app resolves a
         // revision nobody proved.
-        let expectedRuntimeHardenedRevision = "da2872b07c33bd138f3217eb1760385b8cda259a"
+        let expectedRuntimeHardenedRevision = "8a243baea938c0e58bfdcb6d49dbeef7e168fd85"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -1198,6 +1198,14 @@ struct RuntimePolicySourceTests {
 
         #expect(!chat.contains(#"label: "Context Length""#))
         #expect(!chat.contains("tempChatContextLength"))
+        #expect(
+            chat.contains(#"label: "Default Agent Max Output Tokens""#)
+        )
+        #expect(
+            chat.contains(
+                "This is not the model context window or KV retention."
+            )
+        )
         #expect(
             cache.contains(
                 #"label: "Unknown-Model Metadata Fallback (tokens)""#

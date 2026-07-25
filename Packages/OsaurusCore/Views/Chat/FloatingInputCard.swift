@@ -6175,6 +6175,8 @@ private struct ContextBreakdownPopover: View {
             return L("Fixed model maximum")
         case .bundleMetadata:
             return L("Bundle model maximum")
+        case .providerMetadata:
+            return L("Provider model maximum")
         case .metadataFallback:
             return L("Metadata fallback")
         case nil:

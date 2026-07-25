@@ -162,8 +162,11 @@ public enum SettingsSearchIndex {
             id: "settings.chat.maxTokens",
             tab: .chat,
             section: "Generation",
-            title: "Max Tokens",
-            keywords: ["response length", "output tokens"]
+            title: "Default Agent Max Output Tokens",
+            keywords: [
+                "response length", "output tokens", "generation config",
+                "max new tokens", "not context", "not kv",
+            ]
         ),
         .init(
             id: "settings.chat.contextLength",
