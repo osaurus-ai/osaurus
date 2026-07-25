@@ -929,6 +929,7 @@ public enum AgentLoopEvaluator {
         case .cancelled: return "cancelled"
         case .overBudget: return "overBudget"
         case .emptyResponseExhausted: return "emptyResponseExhausted"
+        case .lengthExhausted: return "lengthExhausted"
         }
     }
 }

@@ -522,6 +522,64 @@ struct OpenAICompatibleStreamParserTests {
         #expect(visible == ["answer"])
     }
 
+    @Test func parser_strictDecodesFinishChunkWithoutDelta() throws {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        let finishChunk =
+            #"{"id":"c1","object":"chat.completion.chunk","created":1,"model":"deepseek-v4-flash","choices":[{"index":0,"finish_reason":"stop"}]}"#
+
+        let outcome = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(finishChunk.utf8),
+            options: .strict,
+            state: &state,
+            yield: { _ in }
+        )
+        guard case .continue = outcome else {
+            Issue.record("Expected delta-less finish chunk to decode and continue, got \(outcome)")
+            return
+        }
+        #expect(state.lastFinishReason == "stop")
+    }
+
+    @Test func service_skipsUnparseableChunkOutsideToolArguments() {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        let unknownShape = #"{"unexpected":"frame","payload":[1,2,3]}"#
+
+        let outcome = RemoteProviderService.handleStreamEvent(
+            jsonData: Data(unknownShape.utf8),
+            providerType: .openaiLegacy,
+            state: &state,
+            yield: { _ in }
+        )
+        guard case .continue = outcome else {
+            Issue.record("Expected unknown chunk shape to be skipped, got \(outcome)")
+            return
+        }
+    }
+
+    @Test func service_failsUnparseableChunkWhileReceivingToolArguments() {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        let toolStart =
+            #"{"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"file_write","arguments":"{\"pa"}}]}}]}"#
+        _ = RemoteProviderService.handleStreamEvent(
+            jsonData: Data(toolStart.utf8),
+            providerType: .openaiLegacy,
+            state: &state,
+            yield: { _ in }
+        )
+
+        let outcome = RemoteProviderService.handleStreamEvent(
+            jsonData: Data(#"{"unexpected":"frame"}"#.utf8),
+            providerType: .openaiLegacy,
+            state: &state,
+            yield: { _ in }
+        )
+        guard case .finishWithError(let error) = outcome else {
+            Issue.record("Expected unparseable chunk mid-arguments to fail, got \(outcome)")
+            return
+        }
+        #expect(error.localizedDescription.contains("while receiving tool arguments"))
+    }
+
     private func dispatchEvents(
         from parser: inout OpenAICompatibleStreamFramer.SSELineParser,
         options: OpenAICompatibleStreamFramer.Options

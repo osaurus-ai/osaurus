@@ -36,6 +36,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// Seconds from request start to first visible token, for latency
     /// reporting. Nil when unknown.
     public var timeToFirstToken: TimeInterval?
+    /// Authoritative runtime finish reason (`stop`, `length`, etc.). Nil for
+    /// legacy turns and providers that do not report one.
+    public var terminalStopReason: String?
     /// OpenAI Responses reasoning item captured for an assistant turn (opaque
     /// `id` + encrypted blob). Re-emitted for chain continuity. Nil for every
     /// non-Responses turn.
@@ -68,6 +71,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         completedAt: Date? = nil,
         generationTokenCount: Int? = nil,
         timeToFirstToken: TimeInterval? = nil,
+        terminalStopReason: String? = nil,
         reasoningItemId: String? = nil,
         reasoningEncrypted: String? = nil,
         routerBilling: RouterBillingSummary? = nil,
@@ -88,6 +92,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         self.completedAt = completedAt
         self.generationTokenCount = generationTokenCount
         self.timeToFirstToken = timeToFirstToken
+        self.terminalStopReason = terminalStopReason
         self.reasoningItemId = reasoningItemId
         self.reasoningEncrypted = reasoningEncrypted
         self.routerBilling = routerBilling
@@ -111,6 +116,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
         generationTokenCount = try container.decodeIfPresent(Int.self, forKey: .generationTokenCount)
         timeToFirstToken = try container.decodeIfPresent(TimeInterval.self, forKey: .timeToFirstToken)
+        terminalStopReason = try container.decodeIfPresent(String.self, forKey: .terminalStopReason)
         reasoningItemId = try container.decodeIfPresent(String.self, forKey: .reasoningItemId)
         reasoningEncrypted = try container.decodeIfPresent(String.self, forKey: .reasoningEncrypted)
         routerBilling = try container.decodeIfPresent(RouterBillingSummary.self, forKey: .routerBilling)
@@ -146,6 +152,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(completedAt, forKey: .completedAt)
         try container.encodeIfPresent(generationTokenCount, forKey: .generationTokenCount)
         try container.encodeIfPresent(timeToFirstToken, forKey: .timeToFirstToken)
+        try container.encodeIfPresent(terminalStopReason, forKey: .terminalStopReason)
         try container.encodeIfPresent(reasoningItemId, forKey: .reasoningItemId)
         try container.encodeIfPresent(reasoningEncrypted, forKey: .reasoningEncrypted)
         try container.encodeIfPresent(routerBilling, forKey: .routerBilling)
@@ -158,7 +165,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         case attachedImages  // legacy key for reading old sessions
         case toolCalls, toolCallId, toolResults, toolCallDurations, thinking
         case thinkingDuration
-        case createdAt, completedAt, generationTokenCount, timeToFirstToken
+        case createdAt, completedAt, generationTokenCount, timeToFirstToken, terminalStopReason
         case reasoningItemId, reasoningEncrypted
         case routerBilling
         case injectedContextPrefix
@@ -186,6 +193,7 @@ extension ChatTurnData {
         self.completedAt = turn.completedAt
         self.generationTokenCount = turn.generationTokenCount
         self.timeToFirstToken = turn.timeToFirstToken
+        self.terminalStopReason = turn.terminalStopReason
         self.reasoningItemId = turn.reasoningItemId
         self.reasoningEncrypted = turn.reasoningEncrypted
         self.routerBilling = turn.routerBilling
@@ -213,6 +221,7 @@ extension ChatTurn {
         self.completedAt = data.completedAt
         self.generationTokenCount = data.generationTokenCount
         self.timeToFirstToken = data.timeToFirstToken
+        self.terminalStopReason = data.terminalStopReason
         self.reasoningItemId = data.reasoningItemId
         self.reasoningEncrypted = data.reasoningEncrypted
         self.routerBilling = data.routerBilling

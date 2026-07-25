@@ -68,6 +68,9 @@ final class AppRecipeTests: XCTestCase {
         guard let text = AppRecipes.guidanceText(for: "TextEdit") else {
             return XCTFail("expected TextEdit guidance")
         }
+        XCTAssertTrue(text.contains("Create a blank document"))
+        XCTAssertTrue(text.contains("click New Document"))
+        XCTAssertTrue(text.contains("without typing example or placeholder text"))
         XCTAssertTrue(text.contains("Use set_value once"))
         XCTAssertTrue(text.contains("finish with done"))
         XCTAssertTrue(text.contains("Do not save"))

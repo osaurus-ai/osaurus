@@ -131,6 +131,72 @@ struct AgentToolLoopTests {
         #expect(surface.builtNotices == [[]])
     }
 
+    @Test func reasoningOnlyLengthIsNotClassifiedAsFinalResponse() {
+        let step = AgentLoopModelStep.classifyTerminal(
+            contentIsBlank: true,
+            thinkingIsBlank: false,
+            stopReason: "length"
+        )
+        guard case .lengthExhausted = step else {
+            Issue.record("reasoning-only stop=length must be lengthExhausted")
+            return
+        }
+    }
+
+    @Test func reasoningOnlyNaturalStopRemainsFinalResponse() {
+        let step = AgentLoopModelStep.classifyTerminal(
+            contentIsBlank: true,
+            thinkingIsBlank: false,
+            stopReason: "stop"
+        )
+        guard case .finalResponse = step else {
+            Issue.record("reasoning-only natural stop must preserve existing final behavior")
+            return
+        }
+    }
+
+    @Test func visibleLengthResponseIsIncompleteButPreservedForFallback() {
+        let step = AgentLoopModelStep.classifyTerminal(
+            contentIsBlank: false,
+            thinkingIsBlank: false,
+            stopReason: "length"
+        )
+        guard case .lengthExhausted = step else {
+            Issue.record("authoritative stop=length must remain incomplete")
+            return
+        }
+
+        let rendered = AgentLoopModelStep.contentWithLengthFallback(
+            "Visible partial answer.\n\n\n",
+            fallback: AgentToolLoop.lengthExhaustedFallback
+        )
+        #expect(rendered.hasPrefix("Visible partial answer.\n\n"))
+        #expect(rendered.hasSuffix(AgentToolLoop.lengthExhaustedFallback))
+        #expect(!rendered.contains("\n\n\n"))
+    }
+
+    @Test func whitespaceOnlyLengthResponseCollapsesToFallback() {
+        let rendered = AgentLoopModelStep.contentWithLengthFallback(
+            String(repeating: "\n", count: 1_776),
+            fallback: AgentToolLoop.lengthExhaustedFallback
+        )
+        #expect(rendered == AgentToolLoop.lengthExhaustedFallback)
+    }
+
+    @Test func lengthExhaustionSurfacesIncompleteStateWithoutRetry() async throws {
+        let surface = ScriptedLoopSurface(steps: [.lengthExhausted, .finalResponse])
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .lengthExhausted, iterations: 1))
+        #expect(surface.emittedFinalTexts == [AgentToolLoop.lengthExhaustedFallback])
+        #expect(surface.steps.count == 1, "length exhaustion must not silently launch a second generation")
+        #expect(surface.executedCalls.isEmpty)
+    }
+
     @Test func toolCallsExecuteThenFinish() async throws {
         let surface = ScriptedLoopSurface(steps: [
             .toolCalls([inv("file_search", #"{"query":"x"}"#), inv("shell_run", #"{"cmd":"ls"}"#)]),

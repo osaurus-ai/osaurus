@@ -331,6 +331,12 @@ final class ChatSession: ObservableObject {
     /// placeholder typing-indicator row so the wait shows "Loading Model..."
     /// instead of a silent gap under the user's message.
     private var awaitingPreSendHandshake = false
+    /// Composer-facing activity includes the outer warm-up handshake, before
+    /// `isStreaming` flips. This keeps Stop/queue behavior available during a
+    /// long model switch instead of presenting a second ordinary Send button.
+    var isSendActiveForComposer: Bool {
+        isStreaming || awaitingPreSendHandshake
+    }
     /// Stable placeholder assistant turn rendered (never persisted, never in
     /// `turns`) while `awaitingPreSendHandshake` is true. Stable identity so
     /// the typing-indicator block id doesn't churn across rebuilds.
@@ -471,6 +477,16 @@ final class ChatSession: ObservableObject {
     private var currentTask: Task<Void, Never>?
     private var activeRunId: UUID?
     private var activeRunContext: RunContext?
+    /// Outer task that parks a send behind an in-flight model-switch/warm-up
+    /// handshake. Retaining it is required for lifecycle cancellation: a
+    /// fire-and-forget task can otherwise resume after Stop, reset, or a
+    /// session load and dispatch the user turn captured from the old chat.
+    private var preSendHandshakeTask: Task<Void, Never>?
+    /// Monotonic chat/session generation for pre-send handshakes. Every
+    /// lifecycle invalidation bumps this value; the suspended task and
+    /// `dispatchSend` both re-check their captured epoch before touching the
+    /// transcript or starting inference.
+    private var preSendHandshakeEpoch: UInt64 = 0
     /// Set to true at the start of `stop()` so `completeRunCleanup` knows the
     /// run was cancelled by the user (or by `sendNowInterrupting`) and must
     /// not auto-flush a queued send. Reset to false at the top of `send(...)`.
@@ -482,6 +498,13 @@ final class ChatSession: ObservableObject {
     var chatEngineFactory: @MainActor (InferenceSource) -> ChatEngineProtocol = {
         ChatEngine(source: $0)
     }
+    #if DEBUG
+        /// Keeps ChatSession lifecycle tests independent of whichever local
+        /// image bundle the developer machine happens to expose through the
+        /// shared picker cache. Those tests inject a chat engine and must not
+        /// be silently diverted into a machine-local image generation path.
+        var forceChatEngineRouteForTests = false
+    #endif
     // nonisolated(unsafe) allows deinit to access these for cleanup
     nonisolated(unsafe) private var remoteModelsObserver: NSObjectProtocol?
     nonisolated(unsafe) private var modelSelectionCancellable: AnyCancellable?
@@ -872,6 +895,8 @@ final class ChatSession: ObservableObject {
 
     deinit {
         print("[ChatSession] deinit")
+        preSendHandshakeEpoch &+= 1
+        preSendHandshakeTask?.cancel()
         currentTask?.cancel()
         generativeGreetingTask?.cancel()
         if let observer = remoteModelsObserver {
@@ -1770,6 +1795,14 @@ final class ChatSession: ObservableObject {
     }
 
     func sendCurrent() {
+        // A normal UI send can arrive before SwiftUI has redrawn the composer
+        // into its queue/Stop state. Preserve that draft in the existing
+        // single-slot queue instead of clearing it and dropping it behind the
+        // retained handshake task.
+        if preSendHandshakeTask != nil {
+            enqueueSend(input, attachments: pendingAttachments)
+            return
+        }
         guard !isStreaming else { return }
         // One local generation at a time across all windows: the shared
         // inference context can't run two, and loading a second would evict and
@@ -1790,17 +1823,32 @@ final class ChatSession: ObservableObject {
     /// in-flight warm-up generation to finish so its prefilled KV prefix is
     /// stored and the real request can prefix-hit. Does NOT start new
     /// warm-up work.
-    private func prepareForSendWarmup() async {
+    private static func prepareForSendWarmup(
+        using warmupController: ChatWarmupController
+    ) async -> Bool {
+        await warmupController.awaitRetiringWork()
+        guard !Task.isCancelled else { return false }
         await warmupController.awaitActiveModelSwitch()
+        // Stop/reset/session-load may cancel this outer handshake while the
+        // model switch is suspended. The controller is reused by the incoming
+        // chat, so a stale task must not cancel that chat's newly scheduled
+        // warm-up after the old switch finally unwinds.
+        guard !Task.isCancelled else { return false }
         // The switch task's last step schedules a fresh warm-up; this send
         // owns the next generation, so drop that scheduled warm-up before it
         // starts (a warm-up that already reached generation is covered by
         // the await below and only pre-warms this send's own prefix).
         warmupController.cancelScheduledWarmup()
         await warmupController.awaitInFlightWarmup()
+        return !Task.isCancelled
     }
 
     func stop() {
+        let wasAwaitingPreSendHandshake = awaitingPreSendHandshake
+        invalidatePreSendHandshake()
+        if wasAwaitingPreSendHandshake {
+            warmupController.cancelPendingWorkForUserStop()
+        }
         stopRequested = true
         let task = currentTask
         task?.cancel()
@@ -1809,6 +1857,19 @@ final class ChatSession: ObservableObject {
         } else {
             completeRunCleanup()
         }
+    }
+
+    /// Cancel a send that is still waiting on the pre-send warm-up handshake
+    /// and invalidate its captured chat identity. Cancellation alone is not a
+    /// sufficient guard because the model-switch/warm-up operation being
+    /// awaited may finish normally (or ignore cooperative cancellation).
+    private func invalidatePreSendHandshake() {
+        preSendHandshakeEpoch &+= 1
+        preSendHandshakeTask?.cancel()
+        preSendHandshakeTask = nil
+        guard awaitingPreSendHandshake else { return }
+        awaitingPreSendHandshake = false
+        rebuildVisibleBlocks()
     }
 
     // MARK: - Queued Send (Cursor-style interrupt UX)
@@ -1878,7 +1939,7 @@ final class ChatSession: ObservableObject {
     func sendNowInterrupting() {
         guard let pending = queuedSend else { return }
         queuedSend = nil
-        if isStreaming || activeRunId != nil {
+        if isStreaming || activeRunId != nil || preSendHandshakeTask != nil {
             stop()
         }
         if let skillId = pending.oneOffSkillId {
@@ -2410,6 +2471,8 @@ final class ChatSession: ObservableObject {
         showVoiceOverlay = false
         input = ""
         pendingAttachments = []
+        pendingOneOffSkillId = nil
+        queuedSend = nil
         transientSessionIdForCurrentRun = nil
         appendedUserTurnForCurrentRun = false
         awaitingPreSendHandshake = false
@@ -3620,6 +3683,7 @@ final class ChatSession: ObservableObject {
                         engineTokensPerSecond = stats.tokensPerSecond
                     }
                     currentTurn.generationTokenCount = stats.tokenCount
+                    currentTurn.terminalStopReason = stats.stopReason
                     // Vmlx tells us the model never closed `</think>` before
                     // EOS / max_tokens. Persist on the turn so the bubble
                     // renderer can surface a one-line banner suggesting
@@ -3869,6 +3933,9 @@ final class ChatSession: ObservableObject {
     /// True when `id` names an on-device image-generation model in the picker
     /// catalog. Drives the image-vs-LLM branch in `send`.
     func isImageGenerationModel(_ id: String?) -> Bool {
+        #if DEBUG
+            if forceChatEngineRouteForTests { return false }
+        #endif
         guard let id, !id.isEmpty else { return false }
         return ModelPickerItemCache.shared.items.contains {
             $0.id == id && $0.source.isImageGeneration
@@ -4048,6 +4115,13 @@ final class ChatSession: ObservableObject {
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
         let isRegeneration = !hasContent && !turns.isEmpty
         guard hasContent || isRegeneration else { return }
+        // `isStreaming` does not flip until the pre-send handshake finishes.
+        // Treat the retained handshake as an active send so a second Send
+        // cannot queue another captured turn into the same lifecycle gap.
+        guard preSendHandshakeTask == nil else {
+            restoreTurnsRollbackAfterAbortedRegeneration()
+            return
+        }
         guard activeRunId == nil, !isStreaming else {
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
@@ -4094,15 +4168,28 @@ final class ChatSession: ObservableObject {
         awaitingPreSendHandshake = true
         rebuildVisibleBlocks()
 
-        Task { @MainActor in
-            await self.prepareForSendWarmup()
+        let handshakeEpoch = preSendHandshakeEpoch
+        let controller = warmupController
+        preSendHandshakeTask = Task { @MainActor [weak self] in
+            // Capture the controller rather than `self` across the await so
+            // this retained task cannot keep a torn-down ChatSession alive.
+            let warmupHandshakeCompleted = await Self.prepareForSendWarmup(using: controller)
+            guard
+                warmupHandshakeCompleted,
+                let self,
+                !Task.isCancelled,
+                self.preSendHandshakeEpoch == handshakeEpoch
+            else { return }
+
+            self.preSendHandshakeTask = nil
             self.awaitingPreSendHandshake = false
             self.dispatchSend(
                 trimmed: trimmed,
                 attachments: attachments,
                 hasContent: hasContent,
                 preAppendedUserTurn: preAppendedUserTurn,
-                preAppendIntroducedFirstTurn: preAppendIntroducedFirstTurn
+                preAppendIntroducedFirstTurn: preAppendIntroducedFirstTurn,
+                expectedPreSendHandshakeEpoch: handshakeEpoch
             )
         }
     }
@@ -4115,8 +4202,18 @@ final class ChatSession: ObservableObject {
         attachments: [Attachment],
         hasContent: Bool,
         preAppendedUserTurn: ChatTurn? = nil,
-        preAppendIntroducedFirstTurn: Bool = false
+        preAppendIntroducedFirstTurn: Bool = false,
+        expectedPreSendHandshakeEpoch: UInt64? = nil
     ) {
+        // The pre-send task already checks this after its await. Keep the same
+        // guard at the dispatch boundary so future refactors cannot restore
+        // the old behavior where a reset transcript caused the captured turn
+        // to be re-appended and launched in the new chat.
+        if let expectedPreSendHandshakeEpoch,
+            expectedPreSendHandshakeEpoch != preSendHandshakeEpoch
+        {
+            return
+        }
         guard activeRunId == nil, !isStreaming else {
             rollbackPreAppendedUserTurn(
                 preAppendedUserTurn,
@@ -5337,6 +5434,8 @@ final class ChatSession: ObservableObject {
                             // Mode 1 (plain remote inference via
                             // `/chat/completions`).
                             req.runAsRemoteAgent = self.isRemoteAgentTarget
+                            req.cacheStableSystemPrefix =
+                                self.isRemoteAgentTarget ? nil : context.staticPrefix
                             // Mode 2 routing: target the selected agent's
                             // provider directly (by id), so a stale
                             // `selectedModel` can never redirect the run to a
@@ -5420,19 +5519,11 @@ final class ChatSession: ObservableObject {
                                 // allowance.
                                 if invocations.isEmpty {
                                     transientRetries = 0
-                                    // An empty turn (0-token / EOS-first, no tool
-                                    // call) must not silently end the run as "No
-                                    // visible text was produced": let the driver
-                                    // nudge-and-retry, then fall back to a message.
-                                    // A reasoning-only turn (visible content blank
-                                    // but thinking present) is NOT empty — it's the
-                                    // model's intended answer in the reasoning
-                                    // channel — so require thinking blank too, matching
-                                    // the "No visible text was produced" condition.
-                                    return
-                                        (assistantTurn.contentIsBlank
-                                        && assistantTurn.thinkingIsBlank)
-                                        ? .emptyResponse : .finalResponse
+                                    return AgentLoopModelStep.classifyTerminal(
+                                        contentIsBlank: assistantTurn.contentIsBlank,
+                                        thinkingIsBlank: assistantTurn.thinkingIsBlank,
+                                        stopReason: assistantTurn.terminalStopReason
+                                    )
                                 }
                                 return .toolCalls(invocations)
                             } catch let error as RemoteProviderServiceError {
@@ -5575,7 +5666,15 @@ final class ChatSession: ObservableObject {
                             // malformed call cannot leave a tool card spinning.
                             assistantTurn.pendingToolName = nil
                             assistantTurn.clearPendingToolArgs()
-                            assistantTurn.appendContentAndNotify(text)
+                            if text == AgentToolLoop.lengthExhaustedFallback {
+                                assistantTurn.content =
+                                    AgentLoopModelStep.contentWithLengthFallback(
+                                        assistantTurn.content,
+                                        fallback: text
+                                    )
+                            } else {
+                                assistantTurn.appendContentAndNotify(text)
+                            }
                             self.rebuildVisibleBlocks()
                         }
                     )
@@ -5614,6 +5713,14 @@ final class ChatSession: ObservableObject {
                         rebuildVisibleBlocks()
                     }
 
+                    if runResult.exit == .lengthExhausted {
+                        // The driver already appended a visible, truthful
+                        // incomplete-state message. Mark lifecycle cleanup as
+                        // failed so this capped reasoning-only turn cannot be
+                        // announced or warmed as a completed agent task.
+                        lastStreamError = AgentToolLoop.lengthExhaustedFallback
+                    }
+
                     if runResult.exit == .iterationCapReached && isRunActive(runId) {
                         do {
                             var finalReq = ChatCompletionRequest(
@@ -5641,6 +5748,8 @@ final class ChatSession: ObservableObject {
                             )
                             finalReq.samplingParametersAreImplicit = true
                             finalReq.runAsRemoteAgent = isRemoteAgentTarget
+                            finalReq.cacheStableSystemPrefix =
+                                isRemoteAgentTarget ? nil : context.staticPrefix
                             // Carry the agent provider id on this path too so
                             // the route-by-provider invariant holds for *every*
                             // Mode 2 request — a `runAsRemoteAgent` send with no
@@ -6419,7 +6528,7 @@ struct ChatView: View {
                                 showVoiceOverlay: $observedSession.showVoiceOverlay,
                                 pickerItems: filteredPickerItems,
                                 activeModelOptions: $observedSession.activeModelOptions,
-                                isStreaming: observedSession.isStreaming,
+                                isStreaming: observedSession.isSendActiveForComposer,
                                 // Hide Stop ONLY while the redaction review
                                 // sheet is actually on screen (the sheet owns
                                 // its own Cancel and the streaming Task is
@@ -6441,7 +6550,7 @@ struct ChatView: View {
                                     if let manualText = manualText {
                                         observedSession.input = manualText
                                     }
-                                    if observedSession.isStreaming {
+                                    if observedSession.isSendActiveForComposer {
                                         observedSession.enqueueSend(
                                             observedSession.input,
                                             attachments: observedSession.pendingAttachments

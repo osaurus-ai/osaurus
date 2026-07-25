@@ -67,6 +67,14 @@ final class ChatWarmupController: ObservableObject {
             await ModelRuntime.shared.projectedLoadFeasibility(for: model)
         }
 
+    /// Resident-model preflight (test seam; production queries the shared
+    /// runtime). This actor hop is a cancellation boundary: a reset may cancel
+    /// the scheduled warm-up while the runtime answers, so callers must
+    /// re-check cancellation and session eligibility after awaiting it.
+    var hasResidentModelOther: @MainActor (String) async -> Bool = { model in
+        await ModelRuntime.shared.hasResidentModelOther(than: model)
+    }
+
     @Published private(set) var state: WarmState = .cold
 
     /// True when the UI should render the green "warm" dot.
@@ -86,11 +94,23 @@ final class ChatWarmupController: ObservableObject {
     /// consecutive switches serialize instead of interleaving unloads.
     private var activeModelSwitch: Task<Void, Never>?
     private var activeModelSwitchID: UUID?
+    /// Cancelled work from a previous chat/reset that may still own a model
+    /// residency or generation lease while it unwinds. This stays separate
+    /// from the current chat's switch and warm-up slots so new work can be
+    /// scheduled, but runtime-touching paths drain it before proceeding.
+    private var retiringWork: Task<Void, Never>?
+    private var retiringWorkID: UUID?
     /// Monotonic counter bumped by every switch-affecting entry point
     /// (selection change, reset). Handlers that suspend re-check it
     /// afterwards so a stale resume can't cancel or restore state installed
     /// by a newer event.
     private var switchEpoch: UInt64 = 0
+
+    #if DEBUG
+        /// Deterministic lifecycle tests retain the outgoing scheduled task
+        /// across reset so they can await its actual cancellation unwind.
+        var scheduledWarmupTaskForTests: Task<Void, Never>? { scheduleTask }
+    #endif
 
     /// True once the owning window began teardown. `session.stop()` during
     /// window close runs the normal run-completed cleanup, which schedules a
@@ -102,6 +122,7 @@ final class ChatWarmupController: ObservableObject {
         scheduleTask?.cancel()
         activeModelSwitch?.cancel()
         inFlightWarmup?.cancel()
+        retiringWork?.cancel()
     }
 
     /// Permanently stop this controller: cancel pending and in-flight warm-up
@@ -117,11 +138,29 @@ final class ChatWarmupController: ObservableObject {
         scheduleTask?.cancel()
         activeModelSwitch?.cancel()
         inFlightWarmup?.cancel()
+
+        let previousRetiringWork = retiringWork
+        let retiringSwitch = activeModelSwitch
+        let retiringWarmup = inFlightWarmup
+        if retiringSwitch != nil || retiringWarmup != nil {
+            let id = UUID()
+            retiringWorkID = id
+            retiringWork = Task { @MainActor [weak self] in
+                await previousRetiringWork?.value
+                await retiringSwitch?.value
+                await retiringWarmup?.value
+                guard let self, self.retiringWorkID == id else { return }
+                self.retiringWork = nil
+                self.retiringWorkID = nil
+            }
+        }
+
         scheduleTask = nil
         activeModelSwitch = nil
         activeModelSwitchID = nil
         inFlightWarmup = nil
         inFlightWarmupID = nil
+        userIntentWarmupModel = nil
         warmedFingerprint = nil
         state = .cold
     }
@@ -235,13 +274,26 @@ final class ChatWarmupController: ObservableObject {
         state = .warming
 
         let switchID = UUID()
+        let retiringWork = retiringWork
         let previousSwitch = activeModelSwitch
         activeModelSwitchID = switchID
         activeModelSwitch = Task { @MainActor in
+            // A user Stop can cancel this switch while `performSwitch` (or an
+            // older switch/warm-up awaited below) is suspended. Always retire
+            // our tracked task when it eventually unwinds; otherwise
+            // `needsPreSendHandshake` stays true forever and the next send
+            // appears permanently queued.
+            defer {
+                if self.activeModelSwitchID == switchID {
+                    self.activeModelSwitch = nil
+                    self.activeModelSwitchID = nil
+                }
+            }
             // Serialize with a still-running earlier switch so evictions
             // never interleave, then wait for the cancelled warm-up to
             // actually unwind — its generation lease would otherwise make
             // the runtime skip (not defer) the old model's unload.
+            await retiringWork?.value
             await previousSwitch?.value
             await staleWarmup?.value
             guard !Task.isCancelled else { return }
@@ -263,6 +315,12 @@ final class ChatWarmupController: ObservableObject {
     /// after a switch generates against a clean residency state.
     func awaitActiveModelSwitch() async {
         await activeModelSwitch?.value
+    }
+
+    /// Drain cancellation-ignoring lease owners from the previous chat before
+    /// a new switch, warm-up, or real send touches the shared runtime.
+    func awaitRetiringWork() async {
+        await retiringWork?.value
     }
 
     // MARK: - Warm-up
@@ -319,13 +377,35 @@ final class ChatWarmupController: ObservableObject {
     /// When false, sends can dispatch synchronously — preserving the
     /// "user turn is appended synchronously inside send()" contract.
     var needsPreSendHandshake: Bool {
-        activeModelSwitch != nil || inFlightWarmup != nil
+        retiringWork != nil || activeModelSwitch != nil || inFlightWarmup != nil
     }
 
     /// Drop a scheduled-but-not-started warm-up so it can't fire mid-run.
     func cancelScheduledWarmup() {
         scheduleTask?.cancel()
         scheduleTask = nil
+    }
+
+    /// Cancel speculative work owned by a user-stopped pre-send handshake.
+    ///
+    /// Keep active switch / warm-up tasks tracked until they actually unwind:
+    /// the next send must await their residency and generation leases rather
+    /// than racing work that ignored cooperative cancellation. `switchEpoch`
+    /// prevents a suspended switch from scheduling a hidden warm-up when it
+    /// resumes after Stop.
+    func cancelPendingWorkForUserStop() {
+        let hadPendingWork =
+            scheduleTask != nil || activeModelSwitch != nil || inFlightWarmup != nil
+        guard hadPendingWork else { return }
+
+        switchEpoch &+= 1
+        scheduleTask?.cancel()
+        scheduleTask = nil
+        activeModelSwitch?.cancel()
+        inFlightWarmup?.cancel()
+        userIntentWarmupModel = nil
+        warmedFingerprint = nil
+        state = .cold
     }
 
     /// Wait for an in-flight warm-up generation to finish. Called before a
@@ -354,6 +434,10 @@ final class ChatWarmupController: ObservableObject {
     }
 
     private func performWarmup(session: ChatWarmupSessionContext) async {
+        guard shouldAttemptWarmup(session: session) else { return }
+
+        await retiringWork?.value
+        guard !Task.isCancelled else { return }
         guard shouldAttemptWarmup(session: session) else { return }
 
         // Coalesce: let any in-flight warm-up finish first, then decide
@@ -406,16 +490,22 @@ final class ChatWarmupController: ObservableObject {
         // warm-up. The background load intent below is the atomic gate: it
         // coalesces a same-model load and refuses a conflicting load before it
         // can evict or cancel anything.
+        // Consume the one-shot pick grant before any further suspension. If a
+        // real send cancels this warm-up, the grant must not survive for a
+        // later speculative re-warm and regain permission to evict a model.
         let userIntent = consumeUserIntent(for: payload.model)
+        if !userIntent {
+            let hasOtherResidentModel = await hasResidentModelOther(payload.model)
+            guard !Task.isCancelled else { return }
+            guard shouldAttemptWarmup(session: session) else { return }
 
-        if !userIntent,
-            await ModelRuntime.shared.hasResidentModelOther(than: payload.model)
-        {
-            state = .cold
-            debugLog(
-                "[ChatWarmup] skipped model=\(payload.model): a different model is resident and this warm-up lacks user intent"
-            )
-            return
+            if hasOtherResidentModel {
+                state = .cold
+                debugLog(
+                    "[ChatWarmup] skipped model=\(payload.model): a different model is resident and this warm-up lacks user intent"
+                )
+                return
+            }
         }
 
         state = .warming
@@ -503,6 +593,11 @@ final class ChatWarmupController: ObservableObject {
         do {
             let stream = try await engine.streamChat(request: request)
             for try await _ in stream { /* discard warm-up output */  }
+            // Some engines finish normally even after the consumer task was
+            // cancelled. A user Stop must not let that late completion
+            // resurrect the green warm claim for an abandoned pre-send
+            // handshake.
+            guard !Task.isCancelled else { return }
             // Stale-writer guard: a reset() (chat cleared / agent switched)
             // during the generation dropped this warm-up's claim; its result
             // must not resurrect a warm dot for a payload that no longer

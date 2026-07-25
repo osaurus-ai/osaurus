@@ -271,8 +271,13 @@ final class DBCreateTableTool: OsaurusTool, @unchecked Sendable {
                         "name": .object(["type": .string("string")]),
                         "type": .object([
                             "type": .string("string"),
+                            "enum": .array(
+                                AgentDatabase.supportedColumnTypes.map(JSONValue.string)
+                            ),
                             "description": .string(
-                                "Column type affinity. One of TEXT, INTEGER, REAL, BLOB, NUMERIC."
+                                "Column type only; constraints belong in `nullable`, `default`, "
+                                    + "and `primary_key`. Do not include PRIMARY KEY, "
+                                    + "AUTOINCREMENT, DEFAULT, or NOT NULL here."
                             ),
                         ]),
                         "nullable": .object([
@@ -421,7 +426,12 @@ final class DBAlterTableTool: OsaurusTool, @unchecked Sendable {
                     "type": .string("object"),
                     "properties": .object([
                         "name": .object(["type": .string("string")]),
-                        "type": .object(["type": .string("string")]),
+                        "type": .object([
+                            "type": .string("string"),
+                            "enum": .array(
+                                AgentDatabase.supportedColumnTypes.map(JSONValue.string)
+                            ),
+                        ]),
                         "nullable": .object(["type": .string("boolean")]),
                         "default": .object(["type": .string("string")]),
                     ]),

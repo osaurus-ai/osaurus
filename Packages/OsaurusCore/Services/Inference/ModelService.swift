@@ -74,6 +74,10 @@ struct GenerationParameters: Sendable {
     /// history cache boundary before prefill (see
     /// `ChatCompletionRequest.warmupPrefill`).
     let warmupPrefill: Bool
+    /// Runtime-only byte-exact stable leading system prompt. This is not a
+    /// user/API control and is consumed only by local MLX as a validated SSD
+    /// prefix-boundary hint.
+    let cacheStableSystemPrefix: String?
     /// Where the request originated (chat UI, HTTP API, plugin, P2P).
     /// `ModelRuntime` records this per model so chat-window close can
     /// accelerate idle unload of chat-sourced models without touching models
@@ -113,6 +117,7 @@ struct GenerationParameters: Sendable {
         runAsRemoteAgent: Bool = false,
         suppressProgressUI: Bool = false,
         warmupPrefill: Bool = false,
+        cacheStableSystemPrefix: String? = nil,
         requestSource: RequestSource = .httpAPI,
         loadIntent: ModelLoadIntent = .interactive
     ) {
@@ -135,6 +140,7 @@ struct GenerationParameters: Sendable {
         self.runAsRemoteAgent = runAsRemoteAgent
         self.suppressProgressUI = suppressProgressUI
         self.warmupPrefill = warmupPrefill
+        self.cacheStableSystemPrefix = cacheStableSystemPrefix
         self.requestSource = requestSource
         self.loadIntent = loadIntent
     }

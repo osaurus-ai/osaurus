@@ -441,6 +441,11 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             throw SubagentError.emptyExhausted(
                 "Subagent '\(targetLabel)' returned empty output after tool execution; the task may be incomplete."
             )
+        case .lengthExhausted:
+            throw SubagentError.executionFailed(
+                message: "Subagent '\(targetLabel)' reached its output-token limit before producing a result.",
+                retryable: false
+            )
         }
     }
 

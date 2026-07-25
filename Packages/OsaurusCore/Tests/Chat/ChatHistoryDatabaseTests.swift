@@ -56,7 +56,7 @@ struct ChatHistoryDatabaseTests {
     func saveAndLoadSession_roundtripsAllFields() throws {
         let db = try openInMemory()
         let agentId = UUID()
-        let session = makeSession(
+        var session = makeSession(
             agentId: agentId,
             source: .plugin,
             sourcePluginId: "com.example.telegram",
@@ -64,6 +64,7 @@ struct ChatHistoryDatabaseTests {
             dispatchTaskId: UUID(),
             turnCount: 3
         )
+        session.turns[1].terminalStopReason = "length"
         try db.saveSession(session)
 
         let loaded = db.loadSession(id: session.id)
@@ -80,7 +81,21 @@ struct ChatHistoryDatabaseTests {
         #expect(loaded?.turns[0].role == .user)
         #expect(loaded?.turns[0].content == "turn 0")
         #expect(loaded?.turns[1].role == .assistant)
+        #expect(loaded?.turns[1].terminalStopReason == "length")
         #expect(loaded?.turns[2].content == "turn 2")
+    }
+
+    @Test
+    func terminalStopReasonUpdateInvalidatesContentHash() throws {
+        let db = try openInMemory()
+        let id = UUID()
+        var session = makeSession(id: id, turnCount: 2)
+        try db.saveSession(session)
+
+        session.turns[1].terminalStopReason = "length"
+        try db.saveSession(session)
+
+        #expect(db.loadSession(id: id)?.turns[1].terminalStopReason == "length")
     }
 
     @Test

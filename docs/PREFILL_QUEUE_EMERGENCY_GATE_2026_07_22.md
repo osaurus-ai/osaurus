@@ -287,14 +287,16 @@ the next isolated Release proof:
 
 ## Reported release evidence
 
-Both screenshots show `Bonsai 27B Ternary JANG`, Thinking enabled, and the same
-request stuck at `Queued 0/8823` instead of entering prefill:
+Both user-provided screenshots showed `Bonsai 27B Ternary JANG`, Thinking
+enabled, and the same request stuck at `Queued 0/8823` instead of entering
+prefill. The binary screenshots are intentionally not retained in Git; their
+identity and visible contents are recorded here instead:
 
-- `docs/internal/evidence/2026-07-22-prefill-queue/bonsai-release-queued-weather.png`
+- Weather screenshot:
   - Prompt: `what's the weather in nyc`
   - Visible memory: `33.2 / 48 GB`
   - SHA-256: `23833a7b6501e3639939b695cfcf0eeaa7689f8306a6cba2763ab8783a9c09bc`
-- `docs/internal/evidence/2026-07-22-prefill-queue/bonsai-release-queued-hello-world.png`
+- Hello-world screenshot:
   - Prompt: `hello world`
   - Visible memory: `29.3 / 48 GB`
   - SHA-256: `01575cd5741556a0d7fca8a5779b9d1d5ee38ae370d6bf6b4c79af7f669c16be`
@@ -466,12 +468,12 @@ App:
 - Source: Osaurus `0c6563c6`, vMLX `bbbf49e0`
 - Visible defaults exercised: Prefix Cache On, GPU/Paged Cache Off, Disk Cache
   On, cache codec Engine Selected, SSM Re-derive On.
-- Visible settings evidence:
-  `docs/internal/evidence/2026-07-22-prefill-queue/cache-settings-release-proof.png`
-  (SHA-256 `bbc07f9ded19011e1a8aa4ac0fe190494d9b4ab83e196d71a4cfdc052b9bb856`).
-- Full-KV cross-chat evidence:
-  `docs/internal/evidence/2026-07-22-prefill-queue/vibe-cross-chat-release-proof.png`
-  (SHA-256 `2edb41ee9e4bf9131ab8cd05a1b11fc54a6a62ca8e617d38814b5660a764ea1b`).
+- Computer Use visibly confirmed the cache settings listed above. The local
+  screenshot was reviewed but is not retained in Git; SHA-256
+  `bbc07f9ded19011e1a8aa4ac0fe190494d9b4ab83e196d71a4cfdc052b9bb856`.
+- Computer Use visibly confirmed the full-KV cross-chat result. The local
+  screenshot was reviewed but is not retained in Git; SHA-256
+  `2edb41ee9e4bf9131ab8cd05a1b11fc54a6a62ca8e617d38814b5660a764ea1b`.
 
 Bonsai 27B Ternary JANG (Thinking On):
 
@@ -581,14 +583,16 @@ each model through the visible chat UI:
   48 layers (8 `full_attention`, 40 `sliding_attention`); live storage reported
   `requiredCompanion=true` plus rotating offsets, matching that mixed topology.
 
-Visible exact-pin answer artifacts:
+The exact-pin answer screenshots were visually reviewed through Computer Use
+but are intentionally not retained in Git. Their identities are preserved as
+checksums:
 
-- `docs/internal/evidence/2026-07-22-prefill-queue/exact-merged-pin-lfm25-mxfp8.png`
-  (SHA-256 `f8b01fb868ea8cec70333b12b050fdc84f38f59531054ecaacb1aacef9ac5379`)
-- `docs/internal/evidence/2026-07-22-prefill-queue/exact-merged-pin-bonsai-ternary.png`
-  (SHA-256 `8f934593ede273bcd36ac08a1ae31abf6be1213d880be4432d83d6396d5c2597`)
-- `docs/internal/evidence/2026-07-22-prefill-queue/exact-merged-pin-gemma-jang4m.png`
-  (SHA-256 `c7df0859b270b42bc224fb2f2d209e3aeebcf5d3e7eaa5ce054e00a3ffafefeb`)
+- LFM2.5 MXFP8:
+  `f8b01fb868ea8cec70333b12b050fdc84f38f59531054ecaacb1aacef9ac5379`
+- Bonsai 27B Ternary JANG:
+  `8f934593ede273bcd36ac08a1ae31abf6be1213d880be4432d83d6396d5c2597`
+- Gemma 4 12B JANG_4M:
+  `c7df0859b270b42bc224fb2f2d209e3aeebcf5d3e7eaa5ce054e00a3ffafefeb`
 
 This closes the exact-pin emergency representative gate only. It does not
 convert the open paged-RAM, TurboQuant-KV, unsupported-family, AppleScript, or

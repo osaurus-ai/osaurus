@@ -459,6 +459,54 @@ struct ChatWarmupControllerCompletedRunTests {
 @MainActor
 struct ChatWarmupControllerRuntimeResidencyTests {
 
+    @Test("reset cancels a warm-up suspended in resident-model preflight")
+    func resetCancelsSuspendedResidentPreflight() async throws {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|resident-preflight"
+        )
+
+        let gate = FirstResidentPreflightGate()
+        let controller = ChatWarmupController()
+        controller.projectedLoadFeasibility = { _ in nil }
+        controller.hasResidentModelOther = { _ in
+            await gate.check()
+        }
+
+        controller.scheduleWarmup(session: session, debounce: .zero)
+        for _ in 0 ..< 100 {
+            if await gate.firstCallStarted { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(await gate.firstCallStarted)
+        let staleScheduledTask = try #require(controller.scheduledWarmupTaskForTests)
+
+        controller.reset()
+        controller.scheduleWarmup(session: session, debounce: .zero)
+
+        for _ in 0 ..< 100 {
+            if engine.requestCount == 1, controller.state == .warm { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(engine.requestCount == 1)
+        #expect(controller.state == .warm)
+
+        // The cancelled first preflight ignores cooperative cancellation.
+        // Releasing it must not let the outgoing chat create a second,
+        // untracked warm-up after reset.
+        await gate.releaseFirst()
+        await staleScheduledTask.value
+
+        #expect(engine.requestCount == 1)
+        #expect(controller.state == .warm)
+    }
+
     @Test("external eviction clears the warm claim and cached fingerprint")
     func externalEvictionClearsWarmClaimAndFingerprint() async {
         let engine = WarmupRecordingEngine()
@@ -629,6 +677,26 @@ private final class WarmupRecordingEngine: ChatEngineProtocol, @unchecked Sendab
             choices: [],
             usage: Usage(prompt_tokens: 0, completion_tokens: 0, total_tokens: 0)
         )
+    }
+}
+
+private actor FirstResidentPreflightGate {
+    private var continuation: CheckedContinuation<Bool, Never>?
+    private(set) var firstCallStarted = false
+    private var callCount = 0
+
+    func check() async -> Bool {
+        callCount += 1
+        guard callCount == 1 else { return false }
+        firstCallStarted = true
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func releaseFirst() {
+        continuation?.resume(returning: false)
+        continuation = nil
     }
 }
 

@@ -177,7 +177,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// stamped newer than this is refused (forward-version fail-fast).
     /// Internal (not private) so migration-repair tests assert "reconciled
     /// to the latest" against the real constant instead of a stale literal.
-    static let latestSchemaVersion = 11
+    static let latestSchemaVersion = 12
 
     private func runMigrations() throws {
         let current = try getSchemaVersion()
@@ -204,6 +204,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if current < 9 { try runMigrationStep(9, migrateToV9) }
         if current < 10 { try runMigrationStep(10, migrateToV10) }
         if current < 11 { try runMigrationStep(11, migrateToV11) }
+        if current < 12 { try runMigrationStep(12, migrateToV12) }
     }
 
     /// Run one migration body atomically. Called only from `runMigrations`,
@@ -422,6 +423,14 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private func migrateToV11() throws {
         try addColumnIfMissing("sessions", "pinned", "INTEGER NOT NULL DEFAULT 0")
         try setSchemaVersion(11)
+    }
+
+    /// v12: persist the runtime's authoritative finish reason so a reloaded
+    /// chat keeps distinguishing a natural stop from output-token exhaustion.
+    /// Nullable for legacy turns and providers that do not report a reason.
+    private func migrateToV12() throws {
+        try addColumnIfMissing("turns", "terminal_stop_reason", "TEXT")
+        try setSchemaVersion(12)
     }
 
     // MARK: - Public API: sessions
@@ -1122,6 +1131,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if let ttft = turn.timeToFirstToken {
             hasher.update(data: Data(String(ttft).utf8))
         }
+        if let stopReason = turn.terminalStopReason {
+            hasher.update(data: Data(stopReason.utf8))
+        }
         // Billing can land after the initial empty-turn save (the summary frame
         // often trails the content), so it must be part of the hash or the
         // incremental upsert would skip writing the row.
@@ -1229,8 +1241,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             (id, session_id, seq, role, content, attachments,
              tool_calls, tool_call_id, tool_results, thinking, content_hash,
              created_at, completed_at, generation_token_count, time_to_first_token,
-             tool_call_durations, thinking_duration, router_billing)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+             tool_call_durations, thinking_duration, router_billing, terminal_stop_reason)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
         ON CONFLICT(id) DO UPDATE SET
             session_id             = excluded.session_id,
             seq                    = excluded.seq,
@@ -1248,13 +1260,14 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             time_to_first_token    = excluded.time_to_first_token,
             tool_call_durations    = excluded.tool_call_durations,
             thinking_duration      = excluded.thinking_duration,
-            router_billing         = excluded.router_billing
+            router_billing         = excluded.router_billing,
+            terminal_stop_reason   = excluded.terminal_stop_reason
         """
 
     private static let selectTurnsSQL = """
         SELECT id, role, content, attachments, tool_calls, tool_call_id, tool_results, thinking,
                created_at, completed_at, generation_token_count, time_to_first_token,
-               tool_call_durations, thinking_duration, router_billing
+               tool_call_durations, thinking_duration, router_billing, terminal_stop_reason
         FROM turns
         WHERE session_id = ?1
         ORDER BY seq ASC
@@ -1331,6 +1344,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         let routerBilling: RouterBillingSummary? = sqlite3_column_text(stmt, 14)
             .map { String(cString: $0) }
             .flatMap(decodeJSON)
+        let terminalStopReason = sqlite3_column_text(stmt, 15).map { String(cString: $0) }
         return ChatTurnData(
             id: UUID(uuidString: idStr) ?? UUID(),
             role: role,
@@ -1346,6 +1360,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             completedAt: completedAt,
             generationTokenCount: tokenCount,
             timeToFirstToken: timeToFirstToken,
+            terminalStopReason: terminalStopReason,
             routerBilling: routerBilling
         )
     }
@@ -1390,6 +1405,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         bindText(stmt, index: 16, value: turn.toolCallDurations.isEmpty ? nil : encodeJSON(turn.toolCallDurations))
         bindNullableDouble(stmt, index: 17, value: turn.thinkingDuration)
         bindText(stmt, index: 18, value: turn.routerBilling.flatMap(encodeJSON))
+        bindText(stmt, index: 19, value: turn.terminalStopReason)
     }
 
     static func bindNullableDouble(_ stmt: OpaquePointer, index: Int, value: Double?) {

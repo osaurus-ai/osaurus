@@ -3,6 +3,38 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.10</title>
+            <pubDate>Fri, 24 Jul 2026 17:32:03 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.10</sparkle:version>
+            <sparkle:shortVersionString>0.22.10</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.10/Osaurus-0.22.10.dmg" length="67142200" type="application/octet-stream" sparkle:edSignature="F6BhdqYoj4ACSWCBfMWv65OSL2rh0nnei/guH1DL8ij2Xb1rHmXDWLqnRZTXdDtqy8uuwTL/1CyeJplJHUEcAw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Remove binary prefill proof artifacts (#2135) by @jjang-ai
+- Fix Bonsai DB recovery and SSD prefix reuse (#2153) by @jjang-ai
+- Fix TextEdit AppleScript state and completion handling (#2151) by @jjang-ai
+- Fix tool finalization and SSD cache warmup (#2146) by @jjang-ai
+
+## 🚀 Features
+
+- auto generate chat titles (#2144) by @RaajeevChandran
+- group consecutive thinking and tool activity into one expandable row (#2142) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- fix settings window opening offscreen with stale saved frame (#2154) by @RaajeevChandran
+- fix streaming error on deepseek and other openai compatible providers (#2150) by @RaajeevChandran
+- fix mcp tool calls failing after invoking a skill via slash command (#2149) by @RaajeevChandran
+- fix settings window not opening on sequoia (#2147) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.9...0.22.10
+]]></description>
+        </item>
+        <item>
             <title>0.22.9</title>
             <pubDate>Thu, 23 Jul 2026 04:34:25 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

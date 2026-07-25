@@ -1204,6 +1204,8 @@ struct MLXBatchAdapter {
                 buildRawPrompt: buildRawPrompt,
                 generation: generation,
                 toolChoice: toolChoice,
+                cacheStableSystemPrefix: buildRawPrompt == nil
+                    ? generation.cacheStableSystemPrefix : nil,
                 trace: trace
             )
             await exitPrepGate()
@@ -1500,6 +1502,7 @@ struct MLXBatchAdapter {
         chat: [MLXLMCommon.Chat.Message],
         toolsSpec: [[String: any Sendable]]?,
         additionalContext: [String: any Sendable],
+        cacheStableSystemPrefix: String?,
         processor: any MLXLMCommon.UserInputProcessor
     ) async -> LMInput? {
         let hasMedia = chat.contains {
@@ -1515,7 +1518,8 @@ struct MLXBatchAdapter {
                 chat: probeChat,
                 processing: .init(),
                 tools: toolsSpec,
-                additionalContext: additionalContext
+                additionalContext: additionalContext,
+                cacheStableSystemPrefix: cacheStableSystemPrefix
             )
             guard let prepared = try? await processor.prepare(input: input),
                 !prepared.hasMediaContent
@@ -1758,6 +1762,7 @@ struct MLXBatchAdapter {
         buildRawPrompt: (@Sendable () -> String)? = nil,
         generation: GenerationParameters,
         toolChoice: ToolChoiceOption?,
+        cacheStableSystemPrefix: String?,
         trace: TTFTTrace?
     ) async throws -> PreparedInput {
         // Heap-allocated outbox so the throwing closure can hand a value back
@@ -1839,7 +1844,8 @@ struct MLXBatchAdapter {
                     chat: chat,
                     processing: .init(),
                     tools: toolsSpec,
-                    additionalContext: additionalContext
+                    additionalContext: additionalContext,
+                    cacheStableSystemPrefix: cacheStableSystemPrefix
                 )
 
                 trace?.mark("batch_tokenization_start")
@@ -1859,6 +1865,7 @@ struct MLXBatchAdapter {
                             chat: chat,
                             toolsSpec: toolsSpec,
                             additionalContext: additionalContext,
+                            cacheStableSystemPrefix: cacheStableSystemPrefix,
                             processor: context.processor
                         )
                     {

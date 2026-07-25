@@ -1621,6 +1621,14 @@ final class PluginHostContext: @unchecked Sendable {
                     "shared_artifacts": sharedArtifacts,
                 ])
             }
+            if exit == .lengthExhausted {
+                return Self.jsonString([
+                    "error": "output_token_limit",
+                    "message": AgentToolLoop.lengthExhaustedFallback,
+                    "tool_calls_executed": toolCallsExecuted,
+                    "shared_artifacts": sharedArtifacts,
+                ])
+            }
 
             // A successful `complete`/`clarify` intercept ended the run
             // (`.endedBySurface`): build the matching terminal envelope
@@ -2102,6 +2110,16 @@ final class PluginHostContext: @unchecked Sendable {
                 return Self.jsonString([
                     "error": "empty_tool_task_completion",
                     "message": AgentToolLoop.emptyToolTaskFallback,
+                    "tool_calls_executed": toolCallsExecuted,
+                    "shared_artifacts": sharedArtifacts,
+                ])
+            }
+            if exit == .lengthExhausted {
+                emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "length"))
+                persistPartial(lastContent)
+                return Self.jsonString([
+                    "error": "output_token_limit",
+                    "message": AgentToolLoop.lengthExhaustedFallback,
                     "tool_calls_executed": toolCallsExecuted,
                     "shared_artifacts": sharedArtifacts,
                 ])

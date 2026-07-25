@@ -669,6 +669,92 @@ struct AgentDatabaseTests {
         #expect(info.rows.contains { $0[1] == .text("id") } == false)
     }
 
+    @Test
+    func createTableRejectsConstraintsEmbeddedInColumnType() throws {
+        let db = try makeDB()
+        do {
+            try db.createTable(
+                name: "water_log",
+                purpose: "reject compound type regression",
+                columns: [
+                    AgentColumnSpec(
+                        name: "id",
+                        type: "INTEGER PRIMARY KEY AUTOINCREMENT",
+                        nullable: false
+                    ),
+                    AgentColumnSpec(name: "ml", type: "INTEGER", nullable: false),
+                ],
+                actor: .agent,
+                runId: nil
+            )
+            Issue.record("compound column type should be rejected before SQL execution")
+        } catch let AgentDatabaseError.invalidArgument(message) {
+            #expect(message.contains("unsupported column type"))
+            #expect(message.contains("PRIMARY KEY"))
+        }
+        #expect(try db.schemaForTable("water_log") == nil)
+    }
+
+    @Test
+    func alterTableRejectsConstraintsEmbeddedInColumnType() throws {
+        let db = try makeDB()
+        try db.createTable(
+            name: "water_log",
+            purpose: "alter-type regression",
+            columns: [AgentColumnSpec(name: "ml", type: "INTEGER", nullable: false)],
+            actor: .agent,
+            runId: nil
+        )
+        do {
+            _ = try db.alterTableAddColumns(
+                name: "water_log",
+                additions: [
+                    AgentColumnSpec(name: "note", type: "TEXT NOT NULL", nullable: false)
+                ],
+                actor: .agent,
+                runId: nil
+            )
+            Issue.record("compound ALTER column type should be rejected before SQL execution")
+        } catch let AgentDatabaseError.invalidArgument(message) {
+            #expect(message.contains("unsupported column type"))
+        }
+        let schema = try #require(try db.schemaForTable("water_log"))
+        #expect(schema.columns.contains(where: { $0.name == "note" }) == false)
+    }
+
+    @Test
+    func typedDatabaseToolSchemasExposeOnlySupportedColumnTypes() throws {
+        func typeEnum(
+            in parameters: JSONValue?,
+            arrayKey: String
+        ) throws -> [String] {
+            guard case .object(let root) = parameters,
+                case .object(let properties)? = root["properties"],
+                case .object(let columns)? = properties[arrayKey],
+                case .object(let items)? = columns["items"],
+                case .object(let itemProperties)? = items["properties"],
+                case .object(let typeProperty)? = itemProperties["type"],
+                case .array(let values)? = typeProperty["enum"]
+            else {
+                Issue.record("missing `\(arrayKey).items.properties.type.enum`")
+                return []
+            }
+            return values.compactMap {
+                guard case .string(let value) = $0 else { return nil }
+                return value
+            }
+        }
+
+        #expect(
+            try typeEnum(in: DBCreateTableTool().parameters, arrayKey: "columns")
+                == AgentDatabase.supportedColumnTypes
+        )
+        #expect(
+            try typeEnum(in: DBAlterTableTool().parameters, arrayKey: "add_columns")
+                == AgentDatabase.supportedColumnTypes
+        )
+    }
+
     // MARK: - Batched soft delete (Database workspace bulk action)
 
     private func seedNotes(_ db: AgentDatabase, count: Int) throws -> [Int64] {

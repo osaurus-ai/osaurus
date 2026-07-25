@@ -2914,6 +2914,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         )
         if !composed.prompt.isEmpty {
             SystemPromptComposer.injectSystemContent(composed.prompt, into: &enriched.messages)
+            enriched.cacheStableSystemPrefix = composed.staticPrefix
         }
         // Session-stable memory injection: when the caller supplies a
         // session_id, previously injected prefixes are replayed onto the
@@ -5542,6 +5543,25 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: model,
                     toolCalls: loggedToolCalls.isEmpty ? nil : loggedToolCalls,
                     errorMessage: AgentToolLoop.emptyToolTaskFallback
+                )
+                return
+            }
+            if exitState == .lengthExhausted {
+                hop {
+                    writerBound.value.writeError(AgentToolLoop.lengthExhaustedFallback, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: loggedResponseText.isEmpty ? nil : loggedResponseText,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: model,
+                    toolCalls: loggedToolCalls.isEmpty ? nil : loggedToolCalls,
+                    errorMessage: AgentToolLoop.lengthExhaustedFallback
                 )
                 return
             }
