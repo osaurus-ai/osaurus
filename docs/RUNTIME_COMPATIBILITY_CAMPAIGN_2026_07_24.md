@@ -42,12 +42,17 @@ The Osaurus campaign package graph now pins the merged vMLX main commit
 `d0e1f1a9ef3115b505056b679d6b01d6861f8daa` in `Package.swift` and all three
 resolved-package files. Its affected runtime/parser/test source is identical
 to the exact campaign head exercised in the isolated Release app for LFM
-database tools and disk-L2 continuity. The rebased Osaurus app itself still
-requires a current-base Release rebuild and UI rerun before the combined row
-can be called current-pin live proof. The LFM family row remains `PARTIAL`
-because post-error final generations reproducibly ended inside an unclosed
-reasoning block; the rest of the family matrix is still unverified at this
-pin.
+database tools and disk-L2 continuity.
+
+The rebased Osaurus head `2b8466a36f2b87632a376c49d94dabb81ba60bc9`
+was then rebuilt in Release and exercised through the real UI against that
+merged pin. Its current-base Ornith same-model batch, worker disk-L2, parent
+continuation, and follow-up row is recorded below. A subsequent source fix
+removes synchronous model-root discovery from spawned-worker admission, so an
+exact post-fix Release UI rerun is required before the final PR head can be
+called live-proven. The LFM family row remains `PARTIAL` because post-error
+final generations reproducibly ended inside an unclosed reasoning block; the
+rest of the family matrix is still unverified at this pin.
 
 ## Round protocol
 
@@ -271,6 +276,22 @@ same-local admission, bounded wave scheduling, one shared handoff, local plus
 remote overlap, one-child failure isolation, pre-interrupted batches, prompt
 visibility, budget persistence, and provider-context resolution. Release-app
 tests are still required, so this lane remains `PARTIAL`.
+
+The first rebased CI run exposed a production-path latency defect rather than
+an eval timeout problem. `SubagentSession.canonicalAdmissionModelKey` called
+installed-model discovery synchronously for every worker. That discovery
+walks configured model roots and starved cooperative actor work, including
+Stop delivery, while a batch was starting. On the exact pre-fix source, the
+five focused Computer Use/subagent eval rows each took about 10.01 seconds and
+the interrupt row failed its four-second contract at 10.009 seconds.
+
+The current source derives the admission identity without I/O from the stable
+resolved id, or from the final component of a repository/short bundle id.
+Unknown display aliases remain separate conservative keys. It does not raise
+timeouts or suppress errors. After the change, all 39 focused evals passed in
+1.582 seconds: the Computer Use rows took 0.019–0.039 seconds and the interrupt
+row took 0.129 seconds. The focused Xcode admission, vMLX-pin, runtime-policy,
+and image-bridge contract suites also exited zero.
 
 After tightening the saved batch limit into a hard fan-out limit, the first
 post-edit run correctly failed the stale prompt-wording assertion. The
@@ -804,6 +825,45 @@ Two additional observations remain separate from the callback fixes:
   during an Ornith cache warmup. The visible warmup and following chat turn
   completed, so this is not being called the current hang root without a
   reproducer, but it is retained for runtime source tracing.
+
+### 2026-07-25 current-main exact-pin batch rerun
+
+The rebased Osaurus head
+`2b8466a36f2b87632a376c49d94dabb81ba60bc9`, based on
+`bf3484081d2fbcef096d676eb6fa960e63e7f3e2` and pinned to merged vMLX
+`d0e1f1a9ef3115b505056b679d6b01d6861f8daa`, built successfully in Release.
+The product was isolated as
+`com.dinoki.osaurus.runtimecompat7c37de3e20260724` at
+`/private/tmp/osaurus-runtimecompat-current-main-existingprefs-20260725-0323.app`
+and launched with test root
+`/private/tmp/osaurus-runtime-campaign-live-root-7c37de3e-20260724-2225`.
+
+Through the real UI, the selected model was
+`JANGQ-AI/Ornith-1.0-9B-JANG_4M`, Thinking was visibly off, and the composer
+reported `Chat prefix warm — ready for a fast next response.` A two-job
+same-model `spawn_batch` completed with a green card in 10.8 seconds. Its
+expanded JSON was well formed, preserved both complete worker instructions,
+reported two successes in input order and zero failures, and showed
+`max_parallel=3`. Both workers returned their exact requested values,
+`WORKER-ONE-7319` and `WORKER-TWO-7319`; the parent truthfully finalized
+`PARENT-CURRENT-7319`.
+
+Both workers stayed in-place with `handoff=false`. Worker one reported
+48.9 tok/s with 12 prompt and 9 completion tokens, plus process counters of
+one disk hit, 32 misses, and five stores. Worker two reported 50.4 tok/s with
+12 prompt and 9 completion tokens, plus one disk hit, 30 misses, and four
+stores. The parent restored a 6,662-token disk boundary with 92 tokens
+remaining and 48 SSM states before the batch, then restored 6,747 with 533
+remaining and 48 SSM states for its post-tool continuation. The final UI
+reported 1.16-second TTFT, 35.9 tok/s, and nine final tokens.
+
+The direct follow-up `FOLLOWUP-CURRENT-7319` restored the 7,273-token disk
+boundary with 43 remaining and 48 SSM states, then finalized at 0.79-second
+TTFT and 40.0 tok/s with ten tokens. In both turns every card settled, Stop
+disappeared, input unlocked, and no reasoning or protocol markup leaked into
+content. This is current-main/merged-pin proof for the tested same-model
+batch and parent/worker disk paths. The later admission-startup source change
+still requires the exact post-fix Release rerun recorded separately below.
 
 ## Per-turn live gate
 

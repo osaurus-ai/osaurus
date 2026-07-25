@@ -21,6 +21,29 @@ struct SubagentAdmissionTests {
         SubagentAdmission(pollNanoseconds: 2_000_000)  // 2 ms poll for tests
     }
 
+    @Test("admission model identity is pure and collapses repo id to bundle name")
+    func canonicalModelIdentity() {
+        let full = ResolvedModel(
+            name: "OsaurusAI/Ornith-1.0-9B-JANG_4M",
+            isLocal: true
+        )
+        let short = ResolvedModel(
+            name: "ornith-1.0-9b-jang_4m",
+            isLocal: true
+        )
+        let stable = ResolvedModel(
+            name: "friendly display alias",
+            id: "OsaurusAI/Ornith-1.0-9B-JANG_4M",
+            isLocal: true
+        )
+        let remote = ResolvedModel(name: "remote/model", isLocal: false)
+
+        #expect(SubagentSession.canonicalAdmissionModelKey(full) == "ornith-1.0-9b-jang_4m")
+        #expect(SubagentSession.canonicalAdmissionModelKey(short) == "ornith-1.0-9b-jang_4m")
+        #expect(SubagentSession.canonicalAdmissionModelKey(stable) == "ornith-1.0-9b-jang_4m")
+        #expect(SubagentSession.canonicalAdmissionModelKey(remote) == nil)
+    }
+
     @Test("remote admits concurrently, even while an exclusive run is active")
     func remoteAlwaysAdmits() async {
         let gate = makeGate()

@@ -443,17 +443,23 @@ public enum SubagentSession {
         return ToolEnvelope.fromError(error, tool: tool)
     }
 
-    /// Canonical local identity for the admission gate. Installed aliases
-    /// (short bundle name vs full repository id) collapse to the installed
-    /// model's name so same-model batches share one safe in-place lane.
+    /// Canonical local identity for the admission gate. This path runs for
+    /// every spawned/tool worker and therefore must remain pure: model
+    /// discovery can synchronously scan every configured model root and would
+    /// starve unrelated actor work (including Stop delivery) when many workers
+    /// start together. A known stable id wins; otherwise repository ids and
+    /// their short bundle names collapse by their final path component.
+    ///
+    /// A display alias that cannot be normalized syntactically stays distinct.
+    /// That is deliberately conservative: unrecognized aliases serialize under
+    /// their own keys, while repository and short ids collapse by the documented
+    /// model-picker identity without performing filesystem discovery.
     static func canonicalAdmissionModelKey(_ resolved: ResolvedModel) -> String? {
         guard resolved.isLocal else { return nil }
-        return (
-            ModelManager.findInstalledModel(named: resolved.name)?.name
-                ?? resolved.name
-        )
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-        .lowercased()
+        let identity = resolved.id ?? resolved.name
+        let trimmed = identity.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalComponent = trimmed.split(separator: "/", omittingEmptySubsequences: true).last
+        return (finalComponent.map(String.init) ?? trimmed).lowercased()
     }
 }
 
