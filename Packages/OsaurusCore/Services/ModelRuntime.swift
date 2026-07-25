@@ -55,6 +55,12 @@ public enum ModelLoadIntent: Sendable, Equatable {
     /// Housekeeping. Reuses a resident model or fills an empty slot; refuses
     /// rather than disturb a model that is resident or already loading.
     case background
+    /// Restore the model that a user-visible residency handoff temporarily
+    /// unloaded. Like an interactive load, this may evict a now-idle resident
+    /// model. Unlike an interactive load, it must never cancel a different
+    /// model whose cold load is already in flight: await that materialization,
+    /// then re-evaluate residency and restore in actor order.
+    case handoffRestore
 }
 
 public actor ModelRuntime {
@@ -1791,6 +1797,69 @@ public actor ModelRuntime {
         throw refusal
     }
 
+    /// Await a different model load without cancelling it, then publish the
+    /// resulting holder into the live cache when it completed successfully.
+    /// Used by flexible residency and handoff restoration; both must preserve
+    /// an already-started materialization rather than destroy another
+    /// request's load.
+    private func awaitConflictingLoadWithoutCancellation(
+        name: String,
+        record: LoadingTaskRecord
+    ) async {
+        do {
+            let holder = try await record.task.value
+            _ = try? await finishLoadedContainer(
+                name: name,
+                holder: holder,
+                loadID: record.id
+            )
+        } catch {
+            if loadingTasks[name]?.id == record.id {
+                loadingTasks.removeValue(forKey: name)
+            }
+            supersededLoadingTaskIDs.remove(record.id)
+        }
+    }
+
+    /// Resolve a different model load observed in the current actor segment.
+    ///
+    /// The same decision is required before and after acquiring the cold-load
+    /// slot. Keeping it here prevents those two residency loops from drifting:
+    /// strict interactive loads cancel and drain, strict handoff restoration
+    /// waits, background work refuses atomically, and flexible residency waits.
+    private func resolveConflictingLoad(
+        requestedName: String,
+        otherName: String,
+        otherRecord: LoadingTaskRecord,
+        policy: ModelEvictionPolicy,
+        intent: ModelLoadIntent,
+        afterColdLoadWait: Bool
+    ) async throws {
+        let suffix = afterColdLoadWait ? " after cold-load wait" : ""
+        if policy == .strictSingleModel, intent != .handoffRestore {
+            try refuseBackgroundLoadIfItWouldDisturb(
+                intent: intent,
+                requested: requestedName,
+                conflict: .wouldCancelLoadInFlight(otherName)
+            )
+            genLog.info(
+                "loadContainer: strict drain of in-flight load \(otherName, privacy: .public)\(suffix, privacy: .public)"
+            )
+            await cancelAndDrainLoadingTasks([(otherName, otherRecord)])
+            return
+        }
+
+        if policy == .strictSingleModel {
+            genLog.info(
+                "loadContainer: handoff restore waiting for in-flight load \(otherName, privacy: .public)\(suffix, privacy: .public)"
+            )
+        }
+        await awaitConflictingLoadWithoutCancellation(
+            name: otherName,
+            record: otherRecord
+        )
+    }
+
     /// True while any model load is registered or holds the cold-load slot.
     ///
     /// Diagnostics only. Do **not** gate a load on this: the answer is stale the
@@ -1902,35 +1971,14 @@ public actor ModelRuntime {
             }
 
             if let otherLoading = loadingTasks.first(where: { $0.key != name }) {
-                let otherName = otherLoading.key
-                let otherRecord = otherLoading.value
-                if policy == .strictSingleModel {
-                    // Same actor segment as the `loadingTasks` read above — no
-                    // `await` between observing the conflict and refusing.
-                    try refuseBackgroundLoadIfItWouldDisturb(
-                        intent: intent,
-                        requested: name,
-                        conflict: .wouldCancelLoadInFlight(otherName)
-                    )
-                    genLog.info(
-                        "loadContainer: strict drain of in-flight load \(otherName, privacy: .public)"
-                    )
-                    await cancelAndDrainLoadingTasks([(otherName, otherRecord)])
-                } else {
-                    do {
-                        let holder = try await otherRecord.task.value
-                        _ = try? await finishLoadedContainer(
-                            name: otherName,
-                            holder: holder,
-                            loadID: otherRecord.id
-                        )
-                    } catch {
-                        if loadingTasks[otherName]?.id == otherRecord.id {
-                            loadingTasks.removeValue(forKey: otherName)
-                        }
-                        supersededLoadingTaskIDs.remove(otherRecord.id)
-                    }
-                }
+                try await resolveConflictingLoad(
+                    requestedName: name,
+                    otherName: otherLoading.key,
+                    otherRecord: otherLoading.value,
+                    policy: policy,
+                    intent: intent,
+                    afterColdLoadWait: false
+                )
                 continue
             }
 
@@ -1990,36 +2038,17 @@ public actor ModelRuntime {
             }
 
             if let otherLoading = loadingTasks.first(where: { $0.key != name }) {
-                let otherName = otherLoading.key
-                let otherRecord = otherLoading.value
-                if policy == .strictSingleModel {
-                    // Re-checked after `acquireColdLoadSlot()`, which suspends —
-                    // the actor is reentrant across it, so the pre-slot check
-                    // above proves nothing about the state we see now.
-                    try refuseBackgroundLoadIfItWouldDisturb(
-                        intent: intent,
-                        requested: name,
-                        conflict: .wouldCancelLoadInFlight(otherName)
-                    )
-                    genLog.info(
-                        "loadContainer: strict drain of in-flight load \(otherName, privacy: .public) after cold-load wait"
-                    )
-                    await cancelAndDrainLoadingTasks([(otherName, otherRecord)])
-                } else {
-                    do {
-                        let holder = try await otherRecord.task.value
-                        _ = try? await finishLoadedContainer(
-                            name: otherName,
-                            holder: holder,
-                            loadID: otherRecord.id
-                        )
-                    } catch {
-                        if loadingTasks[otherName]?.id == otherRecord.id {
-                            loadingTasks.removeValue(forKey: otherName)
-                        }
-                        supersededLoadingTaskIDs.remove(otherRecord.id)
-                    }
-                }
+                // Re-checked after `acquireColdLoadSlot()`, which suspends —
+                // the actor is reentrant across it, so the pre-slot check above
+                // proves nothing about the state we see now.
+                try await resolveConflictingLoad(
+                    requestedName: name,
+                    otherName: otherLoading.key,
+                    otherRecord: otherLoading.value,
+                    policy: policy,
+                    intent: intent,
+                    afterColdLoadWait: true
+                )
                 continue
             }
 
@@ -3165,7 +3194,14 @@ public actor ModelRuntime {
             events: prepared.stream,
             modelName: modelName,
             trace: trace,
-            suppressProgressUI: parameters.suppressProgressUI
+            suppressProgressUI: parameters.suppressProgressUI,
+            onConsumerCancellation: {
+                // Cancel this exact generation wrapper, not every request
+                // using the same model. The wrapper drains the direct vmlx
+                // producer and releases this stream's ModelLease before a
+                // residency restore can evict the child model.
+                activeTask.cancel()
+            }
         )
     }
 

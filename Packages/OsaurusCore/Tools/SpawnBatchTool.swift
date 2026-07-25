@@ -67,7 +67,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                         ]),
                         "input": .object([
                             "type": .string("string"),
-                            "description": .string("The bounded task/query for this worker."),
+                            "description": .string(SpawnInputContract.schemaDescription),
                         ]),
                     ]),
                     "required": .array([
@@ -118,6 +118,15 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         let parsed = Self.parseJobs(argumentsJSON, tool: name)
         guard case .success(let jobs) = parsed else {
             return parsed.failureEnvelope ?? ""
+        }
+        for job in jobs {
+            if let failure = SpawnInputContract.validationFailure(
+                input: job.input,
+                field: "jobs[\(job.index)].input",
+                tool: name
+            ) {
+                return failure
+            }
         }
 
         let parentScope = SubagentScope.current()

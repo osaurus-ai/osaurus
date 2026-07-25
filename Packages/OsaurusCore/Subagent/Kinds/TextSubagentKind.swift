@@ -560,7 +560,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
                     ToolRegistry.shared.specs(forTools: readOnlyChildToolNames)
                 }
             }
-        } else if let specsOverride, agentSpecs.isEmpty {
+        } else if specsOverride != nil, agentSpecs.isEmpty {
             // Test seam parity: an explicit override with no grant still
             // yields nothing, exactly like the live registry path.
             return nil

@@ -201,6 +201,42 @@ The context work is reconciled onto current main and now has provider-metadata
 coverage. It remains source-only until compiled tests and live
 dense/Gemma-rotating/Qwen-hybrid rows complete.
 
+### 2026-07-24 local context/KV live control
+
+The exact-`7c37de3e` isolated Release app visibly separated the three local
+limits that had previously been conflated:
+
+- the LFM bundle maximum remained 128,000 tokens;
+- the chat composer showed a 108,000-token usable budget, matching the visible
+  85% compaction policy;
+- Server → Cache showed a distinct inherited 65,536-token active KV retention
+  cap.
+
+Changing the explicit KV Retention Override to 32,768 displayed an unsaved
+“Models reload after Save” warning. Save then reported that one loaded model
+was unloaded and would reload on the next request. Before that reload, the
+same screen correctly showed the saved resolved cap as 32,768 while retaining
+the old active snapshot at 65,536 instead of relabeling stale coordinator
+state.
+
+Back in the real chat UI, the model selector visibly changed to cold. The next
+prompt reloaded the same LFM bundle, restored 1,560 disk tokens with 4,361
+remaining while paged RAM was off, streamed a closed 579 ms Thought, emitted
+the exact requested `context-policy-reload-ok` in normal content, removed Stop,
+and unlocked input. The UI reported TTFT 7.75 s, 186.5 tok/s, and 94 generated
+tokens. Reopening Server → Cache then showed:
+
+- saved resolved KV cap: 32,768;
+- active `lfm2.5-8b-a1b-mxfp8-crack`: KV 32,768;
+- RAM off; SSD 10.0 GB; codec `Engine Selected`.
+
+The separate Chat settings surface labels its blankable output field
+`Default Agent Max Output Tokens` and states that blank inherits the active
+bundle's `generation_config` maximum and is neither context capacity nor KV
+retention. This closes the local LFM UI wiring control only. Provider metadata,
+Gemma rotating-SWA, and Qwen hybrid runtime rows remain required before the
+context lane is fully verified.
+
 ## Lane C — bounded batched subagents
 
 ### Confirmed current-source gap
@@ -275,6 +311,496 @@ agents/models the user allowed and the effective maximum job/parallel count.
 The orchestrator chooses the target for each job; there is no hidden model
 router.
 
+The Subagents settings UI is the owner of that allow-list. A user must be able
+to add, save, and remove:
+
+- scanned local models from the models directory selected in Settings; and
+- remote models exposed by cloud providers the user has configured and
+  authenticated.
+
+Saved choices must survive leaving settings and an app relaunch. Removed,
+unavailable, unauthenticated, or otherwise ineligible targets must disappear
+from the request-local `spawn_model`/`spawn_batch` schema and must fail
+validation before residency or provider work if referenced by stale state.
+The live gate therefore includes local add/save/relaunch/remove, provider
+add/save/relaunch/remove, and one mixed local-plus-remote batch selected by the
+orchestrator from exactly that saved pool.
+
+### 2026-07-24 exact-7c37 same-model batch live round
+
+The exact-`7c37de3e` isolated Release app was configured through the real
+Runtime Proof agent UI with Spawn enabled, one allowed local model
+`dealign.ai/LFM2.5-8B-A1B-MXFP8-CRACK`, permission `Always Allow`,
+text-only worker tools, 2,048 output tokens, two turns, 120 seconds, and a
+maximum of three jobs per batch.
+
+The first LFM orchestration attempt confused caller-stable job ids with agent
+targets and emitted two nonexistent agents named `Alpha` and `Beta`. The
+executor rejected the complete batch before starting either child and the
+parent reached a visible Question card. Its post-error generation retained
+disk-L2 continuity instead of resetting the cache.
+
+After the user supplied the exact allowed model id through that live Question
+UI, LFM emitted one structurally valid two-job `spawn_batch`. The green batch
+card finished in 9.1 seconds and preserved caller order. Both child envelopes
+reported:
+
+- model `dealign.ai/LFM2.5-8B-A1B-MXFP8-CRACK`;
+- `handoff: false`, proving the shared parent/child model was not
+  unloaded/reloaded between jobs;
+- one iteration and per-child token/s telemetry;
+- successful executor status with no child runtime failure.
+
+The full visible lifecycle nevertheless **failed semantic integrity**. The
+parent reduced each requested complete child instruction to the bare strings
+`alpha-child-ok` and `beta-child-ok`. The actual alpha summary said it did not
+understand the phrase; beta returned a generic greeting. The parent then
+falsely reported that the children returned the two requested exact strings.
+The final parent UI did terminate normally (Stop disappeared, input unlocked,
+the LFM selector remained warm, TTFT 2.34 seconds, 82.7 tok/s, 447 generated
+tokens), but a green executor envelope is not proof that the orchestrator
+faithfully transmitted or reported the work.
+
+This live row proves same-model no-handoff execution and ordered envelopes. It
+does not prove faithful task construction or result reporting for LFM as the
+orchestrator. A follow-up must provide complete child inputs, compare the
+actual expanded envelopes with the final answer, and then repeat with a
+different capable orchestrator before classifying any remaining behavior as
+model-specific.
+
+The explicit corrective follow-up failed the same semantic gate more strongly.
+The user supplied both complete worker instructions verbatim and told the
+parent to report the actual returned summaries. LFM first emitted
+`spawn_batch` in a single-job shape without the required `jobs` array. The
+honest `invalid_args` card completed in 602 ms and the model retried without a
+cache reset. Its retry again reduced the two complete inputs to bare
+`alpha-child-ok` and `beta-child-ok` strings. The expanded result showed alpha
+misread the token as `alice-child-ok` and beta returned
+`Hey kid-ok, how can I help you today?`; the parent nevertheless fabricated
+both requested exact summaries again. The turn still finalized (Stop gone,
+input unlocked, 0.69-second TTFT, 108.5 tok/s, 57 final tokens), both children
+remained `handoff: false`, and the short child prompts restored the 10-token
+disk block with three tokens remaining. This repeat rules out an ambiguous
+first instruction. LFM is not a passing orchestration model for faithful batch
+task construction/result reporting at this bundle revision.
+
+### 2026-07-24 Ornith JANG_4M same-model control
+
+The same exact-`7c37de3e` Release app was then changed through the real agent
+settings UI to parent model
+`JANGQ-AI/Ornith-1.0-9B-JANG_4M`. The saved spawn allow-list visibly contained
+both the scanned local LFM and Ornith bundles; the isolated agent JSON persisted
+that exact pair together with the 2,048-token, two-turn, 120-second, and
+three-job batch limits. No remote section was present because this isolated
+proof app has no authenticated cloud provider.
+
+With Thinking visibly off, Ornith initially asked for confirmation rather than
+calling the tool. After the user confirmed, it emitted one valid two-job
+`spawn_batch` whose expanded arguments preserved both complete worker
+instructions and targeted the exact allowed Ornith id. The executor returned
+both jobs in input order with `handoff: false`, so the same resident
+parent/child model was not unloaded and reloaded. Alpha returned the requested
+`alpha-child-ok`; beta interpreted the word `child` as a safety-sensitive
+request and refused. Unlike LFM, the parent accurately reported that mismatch
+instead of fabricating success.
+
+The green batch card finished in 10.2 seconds. The parent continuation restored
+the 5,284-token disk boundary and prefilling continued for 551 tokens with 48
+SSM companion states. The parent finalized at 1.58-second TTFT and 47.3 tok/s;
+Stop disappeared and input unlocked. Both short child prompts were cold in
+this first run (`prompt=23`, disk miss, 16-token store boundary), so this row
+does not yet prove child-prefix disk reuse. A neutral repeat must remove the
+ambiguous word `child`, compare both expanded result summaries verbatim, and
+then repeat with Thinking on to prove that the visible setting propagates into
+parent and spawned work.
+
+This control localizes the prior instruction truncation and fabricated summary
+behavior to the tested LFM orchestration output rather than the batch executor.
+The required neutral repeat then used complete `alpha-result-ok` and
+`beta-result-ok` instructions. Both expanded arguments were intact; both
+workers returned the exact requested text; the parent reported the real
+summaries verbatim; order and `handoff: false` remained correct. The batch took
+8.8 seconds and the parent finalized at 0.89-second TTFT and 52.4 tok/s with
+Stop gone and input unlocked.
+
+The cache attribution is deliberately narrower than the cumulative envelope
+counters. Each envelope showed the process-wide disk-hit count at one, but the
+live trace showed both *new* 23-token worker prompts missed all tiers and
+stored a 16-token boundary. The parent post-tool continuation, not either new
+worker prompt, restored the 6,074-token disk boundary with 507 tokens
+remaining. An identical-worker repeat is therefore required to prove that the
+16-token worker boundary itself restores from disk.
+
+The identical-worker repeat used the same two full worker inputs with new job
+ids. Both worker streams hit disk L2 at boundary 16 with seven tokens
+remaining, restored 48 SSM companion states, and skipped rewriting the already
+validated disk and SSM entries. Both outputs remained exact, both jobs remained
+`handoff: false`, the parent post-tool continuation hit boundary 6,725 with 507
+tokens remaining, and the UI finalized at 0.97-second TTFT and 51.8 tok/s with
+Stop gone and input unlocked.
+
+This is current-pin live proof that paged RAM off plus disk L2 can restore a
+valid partial worker prefix during same-model batched delegation. It is not
+proof of arbitrary suffix reuse or unrelated-block concatenation. The lane
+then advanced to the visible Thinking control.
+
+With Thinking switched on through the model popover, the parent streamed 58
+pre-tool `reasoning_content` deltas into a 275-character Thought card and then
+emitted the valid batch envelope. The two spawned Ornith workers emitted 784
+and 473 reasoning deltas respectively before returning concise, correct
+summaries (`19 × 23 = 437`; `31 × 17 = 527`). After the tool result, the parent
+streamed another 113 reasoning deltas into a 282-character Thought card and 77
+normal-content deltas into a truthful final. No `<think>` text or tool markup
+leaked into content; Stop disappeared and input unlocked at 1.44-second TTFT
+and 44.0 tok/s.
+
+The matched Thinking-off run used the same two arithmetic worker prompts. The
+parent emitted zero reasoning deltas before the batch, each spawned worker
+emitted zero reasoning deltas, and the post-tool parent emitted zero reasoning
+deltas. No new Thought card appeared. The two workers still returned the same
+correct values and the parent finalized truthfully at 1.53-second TTFT and
+38.7 tok/s with Stop gone and input unlocked. The on/off template change
+produced distinct cache keys: the 28-token Thinking-on and 30-token
+Thinking-off child prompts each reused only their own compatible 23-token
+boundary. This is current-pin live proof that the visible choice propagates
+through parent generation, same-model batched workers, and the post-tool
+continuation without fake inline reasoning or cross-mode KV reuse.
+
+The source path matches the live result: `SubagentScope.current()` captures
+`ChatExecutionContext.currentEnableThinking`; `SubagentSession` binds the
+prepared child scope for each job; and the text, browser, Computer Use, and
+AppleScript runners pass the scoped value into their nested model loop. This
+is not a prompt-injected or parser-synthesized Thinking result.
+
+During the Thinking-on row the disk quota trace also showed one real KV entry
+eviction: usage moved from 10,776,939,933 bytes to 10,401,899,383 bytes against
+the 10,737,418,240-byte maximum. The batch and final answer remained coherent.
+That proves this quota path can evict without corrupting the active turn; it
+does not yet prove the exact oldest/least-useful selection policy or a later
+reissue of the evicted entry.
+
+Cancellation/error isolation, RAM safety, allow-list removal/relaunch
+persistence, and mixed local/remote execution remain live gates.
+
+### 2026-07-24 spawn allow-list persistence and rejection
+
+The same isolated agent was edited through Settings → Agents → Runtime Proof →
+Abilities → Subagents. Removing LFM immediately persisted a one-item
+`spawnableModelNames` array containing only
+`JANGQ-AI/Ornith-1.0-9B-JANG_4M`; the default model and the 2,048-token,
+two-turn, 120-second, three-job limits did not change. The app was quit and
+relaunched from the same Release binary and test root, without rebuilding.
+After relaunch the real settings UI still showed only Ornith in Allowed
+models.
+
+The user then explicitly requested the removed
+`dealign.ai/LFM2.5-8B-A1B-MXFP8-CRACK` target and prohibited substitution.
+Ornith emitted one `spawn_model` envelope naming that exact target. The tool
+returned a visible red failed card:
+
+`Model 'dealign.ai/LFM2.5-8B-A1B-MXFP8-CRACK' is not spawnable from this
+agent. Add it in the agent's Subagents tab. Use exactly one configured id:
+'JANGQ-AI/Ornith-1.0-9B-JANG_4M'.`
+
+The rejected request did not evict or replace the resident Ornith model. The
+parent continuation restored the 4,993-token disk boundary with 115 tokens
+remaining, reported the failure honestly, and finalized at 5.87-second TTFT
+and 45.3 tok/s. Stop disappeared and input unlocked. LFM was then added back
+through the scanned Local Models picker; the UI again showed both models and
+the isolated JSON persisted both exact ids with the unchanged budgets.
+
+This is live proof of UI add/remove, process-restart persistence,
+reject-before-handoff, honest error continuation, and cache continuity for
+this local allow-list row. It does not substitute for the later RAM refusal,
+different-local handoff, or authenticated remote-provider rows.
+
+### 2026-07-24 RAM-safety refusal error-surface round
+
+The same Release app visibly had Local Orchestrator Handoff and RAM-Safety
+Preflight on, with Keep Chat Model Loaded off. With Ornith resident, the user
+requested exactly one allowed `JANGQ-AI/Laguna-S-2.1-JANG_2L` child. That local
+bundle is about 41.3 GiB before the handoff safety factor and headroom, so the
+preflight refused it before unloading Ornith. The mechanism made the correct
+residency decision, but the generic tool envelope exposed only:
+
+`The operation couldn't be completed.
+(OsaurusCore.ChatResidencyHandoff.HandoffError error 0.)`
+
+The parent then guessed that the session was already in a handoff state. This
+is a real user-facing failure, not a passing RAM-safety row. Source tracing
+showed that `HandoffError` preserved an actionable `description`, while the
+generic `ToolEnvelope.fromError` boundary used `localizedDescription`.
+Because the typed error did not conform to `LocalizedError`, Swift's NSError
+bridge discarded the reason.
+
+`ChatResidencyHandoff.HandoffError` now adopts `LocalizedError` and returns its
+existing typed description as `errorDescription`; no threshold, residency
+decision, or prompt behavior changed. The focused
+`ChatResidencyHandoffRestoreTests`, `ResidencyHandoffTests`, and
+`SubagentConfigurationTests` completed successfully, including an assertion
+that the exact needed/available memory values survive `localizedDescription`.
+
+The rebuilt isolated Release app then repeated the exact row. With preflight
+visibly on, the tool reported that Laguna needed about 56.6 GB while only
+about 55.9 GB would be available after freeing Ornith. No handoff occurred.
+The parent restored 5,170 disk tokens with 208 remaining and 48 SSM states,
+reported the refusal honestly, and finalized at 5.35-second TTFT and
+43.3 tok/s with Ornith still warm.
+
+With RAM-Safety Preflight then visibly off, the same exact target crossed the
+gate, emitted `unloading_chat_models`, made Ornith cold, and began a real
+Laguna load. It did not reach a first child token before the configured
+120-second subagent time budget. The child returned an honest timeout, but the
+tool UI remained in `restoring_chat_models` past three minutes until the main
+Stop control was used. A subsequent direct parent turn recovered and returned
+exactly `parent-restored` at 11.29-second TTFT and 44.8 tok/s, with a 5,616-token
+disk restore plus 191 remaining and 48 SSM states. The visible model chip still
+claimed Ornith was cold immediately after that successful generation.
+
+Therefore the actionable refusal fix is `VERIFIED-LIVE`, while the complete
+RAM-off handoff row remains `PARTIAL`: the setting was effective, but the
+large child timed out before first token, restoration did not settle on its
+own in the UI, and the post-recovery warm/cold indicator was stale or the
+residency bookkeeping remained inconsistent. Those failures require source
+attribution and a rebuilt live rerun; the successful recovery prompt does not
+erase them.
+
+### 2026-07-25 cancellation/restore source and live round
+
+Status: **VERIFIED-LIVE FOR THE REPRODUCED TIMEOUT/RESTORE ROW**
+
+Current source tracing found three distinct defects behind the RAM-off row:
+
+1. `AgentSubagentRunner` could cancel its nested mapped stream at the child
+   deadline without directly cancelling the exact `ModelRuntime` generation
+   wrapper that owned the child model lease. The lease could therefore outlive
+   the visible timeout envelope while orchestrator restoration waited in
+   `strictEvict`.
+2. `ChatResidencyHandoff.reloadAndVerify` performed a diagnostics-only
+   `hasLoadInFlight()` probe and then called `preload()` on a later actor hop.
+   That check-then-act result was stale by construction and could race with a
+   cold load.
+3. the composer chip displayed `ChatWarmupController` prefix state as
+   “Model cold/warm.” Tool turns deliberately skip redundant hidden warmup
+   because they already persist disk L2 blocks, so a successful resident model
+   could still be labeled cold.
+
+The current source makes ownership explicit:
+
+- `GenerationEventMapper` invokes a request-local cancellation closure when
+  its consumer is cancelled; `ModelRuntime` binds that closure to the exact
+  generation wrapper task so its producer drains and releases its own lease;
+- `ModelLoadIntent.handoffRestore` delegates the restore decision atomically to
+  `ModelRuntime`; strict restore awaits an already-started different-model
+  load instead of cancelling it, while the pre-existing background refusal and
+  interactive cancel/drain policies remain distinct;
+- the pre-slot and post-slot conflict branches now share one
+  `resolveConflictingLoad` implementation so their cancellation policy cannot
+  drift;
+- the chip now says `Chat prefix warm` or
+  `Chat prefix not pre-warmed`, which describes the state it actually reads.
+
+The duplicate/zombie audit removed the obsolete “Model cold” and “Model warm”
+localization keys and replaced the misleading load-specific helper name with a
+shared non-cancelling load helper. The focused
+`GenerationEventMapperTests`, `ChatResidencyHandoffRestoreTests`, and
+`ResidencyIntentTests` compile against the exact package graph. The mapper
+cancellation and atomic restore rows pass; after the shared resolver replaced
+the duplicated loop branches, the updated residency invariants pass for both
+pre-slot and post-slot calls.
+
+The exact patched source was rebuilt in Release, ad-hoc signed as
+`com.dinoki.osaurus.runtimecompat7c37de3e20260724`, and launched from
+`/private/tmp/osaurus-runtimecompat-cancelrestore-proof-20260725-0037.app`
+with the same isolated test root and exact vMLX pin `7c37de3e`. The real UI
+then reproduced both sides of the handoff:
+
+- a normal different-local Laguna XS child completed, reported
+  `handoff: true`, unloaded the parent in 7.24 seconds, restored it in
+  1.76 seconds, and returned control to an Ornith follow-up at 0.56-second
+  TTFT and 52.1 tok/s;
+- a deliberately overlong child exceeded the visibly configured 15-second
+  worker limit. The stream trace recorded
+  `[Osaurus][Stream] Consumer cancelled - stopping producer task`, the tool
+  returned the structured timeout, restoration completed without pressing
+  Stop, the parent emitted `AFTER-TIMEOUT`, and a direct follow-up completed at
+  0.53-second TTFT and 56.3 tok/s.
+
+In both rows the Stop control disappeared, input unlocked, and the model chip
+used the truthful `Chat prefix warm/not pre-warmed` wording rather than
+claiming model residency. This is current-source live proof for the reproduced
+timeout/restore defect. It is not a family-wide model compatibility claim.
+
+### 2026-07-25 spawn argument and disk-cache attribution round
+
+A persisted pre-patch chat contained one alarming mismatch: the user requested
+a new numbered-list child task while the visible `spawn_model` arguments
+repeated an earlier exact-response task. The current-pin Release app therefore
+ran controlled A/B rows before any parser or cache guard was considered:
+
+1. a fresh chat with disk L2 on used unique value `NEW-ARG-729`; the visible
+   arguments and child result were current;
+2. with disk L2 turned off and saved through Settings, two same-chat calls used
+   `CACHEOFF-A-314` and `CACHEOFF-B-2718`; both arguments were current and the
+   disk counters remained exactly zero hits, zero misses, and zero stores;
+3. after turning disk L2 back on, a tool/plain/tool history used
+   `HIST-A-1618`, `HIST-PLAIN-42`, and `HIST-B-271828`; the second tool
+   arguments were current while the parent restored the valid 6,650-token
+   disk boundary with 89 tokens remaining.
+
+The app was then relaunched from the same binary and test root with raw native
+tool-envelope tracing enabled. The empty-chat warmup restored 6,294 tokens
+from disk with one token remaining, proving process-restart disk reuse while
+paged RAM remained off. Disk quota enforcement also evicted complete KV and
+companion entries back under the configured 10 GiB limit; paged-store traces
+continued to report `effectiveKVLayers=0`, `blocks=0`, and `payload=false`.
+
+Two later same-chat traced calls establish the parser boundary:
+
+- in the first call Ornith's raw envelope itself passed only
+  `input = RAW-TRACE-909`. The executor received that exact value, and the
+  bare Laguna model reasonably returned a generic clarification rather than
+  the requested token;
+- after an intervening plain turn, Ornith's raw envelope passed the complete
+  `Reply exactly RAW-SECOND-2468 and nothing else.` input. The parser and
+  executor preserved it exactly, Laguna returned `RAW-SECOND-2468`, and the
+  parent finalized truthfully at 0.80-second TTFT and 45.5 tok/s. The child
+  card completed in 5.8 seconds, Stop disappeared, and input unlocked.
+
+The original stale-argument observation is therefore not reproducible as
+systemic SSD corruption or parser substitution across cache-on, cache-off,
+fresh-chat, history-shape, restart, and same-chat traced controls. The one
+failed Laguna result is attributed to the parent model's raw envelope
+under-specifying a context-isolated child task. Source inspection found the
+related contract gap: all three spawn schemas described `input` only as a
+“task/query,” even though a bare-model worker receives no parent transcript.
+The current source centralizes a complete-standalone-task description across
+`spawn_agent`, `spawn_model`, and `spawn_batch`: the input must include every
+instruction, value, constraint, and required output format because the worker
+cannot see the parent chat or interpret an opaque label. The schema test proves
+all three tools consume that single contract.
+
+The exact Release source was then rebuilt and tested through a two-turn live
+chat. Turn one stored `SCHEMA-ALPHA-7391` only in the parent transcript. Turn
+two asked Ornith to delegate the value to the isolated Laguna XS model. The raw
+tool envelope and expanded UI card both showed:
+
+```json
+{
+  "input": "Reply with exactly the secret value from the previous message and nothing else.",
+  "model": "JANGQ-AI/Laguna-XS-2.1-JANG_2L"
+}
+```
+
+Laguna correctly reported that it had no previous messages. The child still
+completed, residency restored, the parent finalized at 0.55-second TTFT and
+68.4 tok/s, Stop disappeared, and input unlocked. This is decisive live
+evidence that schema description alone was insufficient; it is recorded as a
+failed contract row rather than hidden behind the successful parent final.
+
+The next source round adds one shared reject-before-load validator for explicit
+parent-transcript references across `spawn_agent`, `spawn_model`, and every
+`spawn_batch` job. It does not copy a transcript or invent the missing value.
+It returns retryable `invalid_args` with the exact bad field and requires the
+parent to retry with standalone data before model load or residency handoff.
+Focused `SpawnToolTests` passed the three-surface rejection, retryability,
+field attribution, reject-before-spawnability ordering, and valid standalone
+input controls.
+
+The exact Release validator build then repeated the two-turn live row with
+`SCHEMA-BETA-8426`. Ornith's first raw `spawn_model` envelope again referenced
+only “the previous message.” The executor rejected it as retryable
+`invalid_args` before a child model load or residency handoff. Ornith visibly
+explained the retry, emitted a second raw envelope containing the standalone
+literal instruction `Reply with exactly the string: SCHEMA-BETA-8426`, and the
+Laguna XS worker returned it. The parent finalized `PARENT-DONE-8426` at
+0.76-second TTFT and 50.2 tok/s; a direct follow-up finalized
+`FOLLOWUP-OK-8426` at 0.68-second TTFT and 45.2 tok/s. Both turns ended with
+Stop gone and input unlocked. No tool XML leaked into visible content.
+
+The same app also ran a database error/continuation row. Ornith created
+`runtime_proof_8426`, emitted a malformed optional `todo` checklist, received a
+retryable validation error, then inserted and queried `validator=passed`
+without repeating the successful create. Disk L2 restored 8,835, 8,956, and
+8,987-token boundaries for the post-error database steps instead of resetting
+to zero. The UI finalized `DB-PROOF: validator=passed` at 0.89-second TTFT and
+38.9 tok/s. Settings → Agent → Memory → Database visibly showed the active
+row, then showed the same row dimmed in the Deleted filter after a real
+soft-delete. This is live proof for the corrected `NSTableViewDelegate` row
+path as well as malformed-tool cache continuity.
+
+The temporary live-test settings were restored through the real UI after this
+round. `Max seconds` visibly returned from 15 to 120, RAM-Safety Preflight
+returned to on, Local Orchestrator Handoff remained on, Keep Chat Model Loaded
+remained off, disk L2 remained on, paged RAM remained off, and no TurboQuant
+setting was enabled.
+
+### 2026-07-25 duplicate/zombie callback audit
+
+The exact focused Xcode build exposed callback-shaped source that compiled but
+was not a protocol witness:
+
+- six `BrowserSession` WebKit policy, upload, and JavaScript-dialog methods
+  lacked the Swift 6 `@MainActor @Sendable` completion-handler shape. The
+  compiler reported each as “nearly matches optional requirement,” which means
+  WebKit could bypass the intended scheme/download/file-upload/dialog policy;
+- `AgentDataGridView.Coordinator` implemented
+  `tableView(_:rowViewFor:)`, while the current `NSTableViewDelegate` witness
+  is `tableView(_:rowViewForRow:)`. The custom zebra/deleted-row view path was
+  therefore dead;
+- `TextSubagentKind.makeToolset` bound an unused `specsOverride` value only to
+  test whether it was non-nil, producing repeated warning noise around a
+  security-sensitive child-tool branch.
+
+The current source corrects the exact protocol signatures and removes the
+unused binding without changing policy. The focused WebKit smoke invocation
+exited 0 and the target no longer emitted those protocol-witness warnings; its
+new fixture exercised alert completion, confirm rejection, prompt text, and
+file-chooser rejection through the real `WKWebView` delegate.
+
+The exact Release app then enabled Browser Use through the visible agent
+setting. The already-open chat retained its original startup tool inventory,
+as expected for a frozen chat context; a new chat visibly showed the larger
+startup context and exposed `browser_use`. Its browser worker issued
+`browser_navigate` followed by `browser_read_page`, restored a 3,923-token disk
+boundary for the second browser step, and returned
+`BROWSER-SESSION: Example Domain`. The parent restored its 6,719-token disk
+boundary, finalized at 1.02-second TTFT and 19.3 tok/s, and unlocked input.
+Settings → Browser then listed the Runtime Proof profile as an active
+`example.com` session; opening it displayed the real WebKit window at
+`https://example.com/` with the visible `Example Domain` heading.
+The database grid live proof is recorded in the preceding section. The
+JavaScript-dialog/file-chooser row remains source plus focused real-WebKit
+proof because the simple navigation goal did not trigger those prompts.
+
+Two additional observations remain separate from the callback fixes:
+
+- clean app termination reproducibly logged `[HostAPIBridge] Stopped` twice.
+  Source tracing found an intentional belt-and-suspenders second
+  `HostAPIBridgeServer.stop()` call in `AppDelegate`, after
+  `SandboxManager.stopContainer()` already stops the bridge. The lifecycle
+  call remains intentionally idempotent; the false duplicate came from
+  `HostAPIBridgeServer.stop()` logging “Stopped” even when channel, event-loop
+  group, and socket path were already nil. Current source logs only when at
+  least one bridge resource existed. The focused cleanup suite passed 4/4,
+  including a real Unix-socket bridge start/stop and repeated idempotent
+  cleanup. The final exact Release product built with exit 0, was copied to
+  `/private/tmp/osaurus-runtimecompat-hostlog-proof-20260725-0232.app`,
+  ad-hoc signed as
+  `com.dinoki.osaurus.runtimecompat7c37de3e20260724`, and launched through the
+  real UI under the same isolated root. Its Sandbox page visibly reported the
+  root as not provisioned, so this run exercised the no-resource termination
+  path rather than claiming a live container start. Quitting from the UI
+  completed the app/server shutdown and emitted zero false
+  `[HostAPIBridge] Stopped` lines, where the immediately preceding unpatched
+  Release binary emitted two. This closes the duplicate no-op log regression;
+  a provisioned-container lifecycle remains a separate Sandbox matrix row;
+- the exact Release launch repeated
+  `E5RT encountered an STL exception. msg = unordered_map::at: key not found.`
+  during an Ornith cache warmup. The visible warmup and following chat turn
+  completed, so this is not being called the current hang root without a
+  reproducer, but it is retained for runtime source tracing.
+
 ## Per-turn live gate
 
 For every affected UI turn, inspect the entire lifecycle:
@@ -308,6 +834,14 @@ For every affected UI turn, inspect the entire lifecycle:
   arbitrary suffix match as reusable KV state;
 - with paged RAM off, disk L2 independently restores the best valid partial
   prefix across turns, chats, model reloads, and app restarts;
+- apply that disk-L2 contract independently to the main orchestrator and every
+  spawned local worker. If the exact model, generation/template configuration,
+  media salt, and architecture-specific companion state have compatible
+  persisted blocks, each must attempt the best valid partial-prefix restore
+  during handoff and return. Record parent and worker counters separately;
+- malformed JSON/XML/family-specific tool calls must fail and continue without
+  poisoning or silently discarding otherwise valid parent or worker cache
+  state;
 - with paged RAM explicitly on, enough distinct compatible prompts evict a
   known entry from RAM, after which reissuing it must restore from disk L2
   rather than cold-prefill;
@@ -523,16 +1057,18 @@ classification of this model's post-error behavior.
 | Tool parser | MiniMax M2.7 JANG/JANGTQ | SOURCE-PASS | Release UI parser, reasoning, generation-default, and cache proof |
 | Tool parser | Step 3.7, HY-3 MTP, Nemotron, available Mistral/DSML | SOURCE-PASS | Available-bundle Release UI rows and modality/MTP telemetry |
 | Controls | Bonsai/Ornith Qwen and Gemma 4 dense/MoE | SOURCE-PASS | Exact-pin regression rows for tools, reasoning, cache, and final unlock |
-| Context | Local bundle model max, 85% chat budget, bundle output max, KV override | SOURCE-PASS | Saved/active UI values and required reload behavior |
+| Context | Local bundle model max, 85% chat budget, bundle output max, KV override | PARTIAL | LFM saved/active UI values and required reload are live-proven; Gemma/Qwen runtime controls remain |
 | Context | Provider metadata max versus generic fallback | SOURCE-PASS | Remote-model UI row |
-| Batch | Two same-local jobs and same parent/child model | SOURCE-PASS | Prove one resident load, concurrent execution, one final unlock |
+| Batch | Two same-local jobs and same parent/child model | VERIFIED-LIVE | Ornith returned exact ordered results with intact inputs, no handoff, truthful terminal final, repeated worker disk restore 16+7 with 48 SSM states, and matched Thinking on/off propagation through parent, workers, and continuation |
+| Batch | Local allow-list add/remove, restart persistence, removed-target rejection | VERIFIED-LIVE | UI removal survived app relaunch; removed LFM rejected before handoff; Ornith stayed resident and continued from disk 4,993+115; UI add-back persisted both exact ids |
 | Batch | Two local plus one remote, exact user-allowed target selection | SOURCE-PASS | Prove mixed overlap and ordered results in Release UI |
-| Batch | Different-local models | SOURCE-PASS | Prove serialized handoff and parent restoration |
+| Batch | Different-local models | VERIFIED-LIVE | Laguna XS child used a real handoff; normal and timeout rows restored Ornith and finalized without manual Stop |
 | Batch | Oversized fan-out, malformed job, one-child failure, timeout, Stop | SOURCE-PASS | Release UI terminal-state and sibling-isolation trials |
-| Batch | RAM refusal and user safety-setting change | SOURCE-PASS | Visible refusal-before-unload and effective retry |
+| Batch | RAM refusal and user safety-setting change | PARTIAL | Refusal-before-unload and the RAM-off timeout/restore path are live-proven; restore the normal 120-second budget and RAM-safety setting, then run a fitting child through the enabled path |
 | Generation | Bundle temperature/top-p/top-k/min-p/repetition/stop/max-output merge | SOURCE-PASS | Runtime telemetry for parent and each selected child |
-| Cache | Paged RAM off, disk L2 partial prefix across child runs/new chats/restart | PARTIAL | Exact disk restored/remaining counters and coherent outputs |
+| Cache | Paged RAM off, disk L2 partial prefix across child runs/new chats/restart | VERIFIED-LIVE | Same-model workers restored 16+7 with 48 SSM states; new-chat/history controls restored 6,650+89; app restart restored 6,294+1 with paged payload absent |
 | Cache | Paged RAM on, eviction to disk, reissue from L2 | PARTIAL | RAM eviction plus later disk restore proof |
+| Cache | Disk quota enforcement and coherent active turn | PARTIAL | One live KV eviction reduced 10,776,939,933 bytes to 10,401,899,383 against a 10,737,418,240-byte limit without corrupting the batch; eviction ordering and later reissue remain |
 
 Locally available non-MXFP4 candidates currently include LFM2.5 MXFP8,
 Laguna S/XS JANG_2L/4M/6M, MiniMax M2.7 JANG/JANGTQ, ZAYA JANGTQ, HY-3 MTP,

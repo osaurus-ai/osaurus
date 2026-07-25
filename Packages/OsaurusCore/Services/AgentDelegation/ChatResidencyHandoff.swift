@@ -50,7 +50,7 @@ enum ChatResidencyHandoff {
         }
     }
 
-    enum HandoffError: Error, CustomStringConvertible {
+    enum HandoffError: Error, CustomStringConvertible, LocalizedError {
         case chatBusy
         case insufficientMemory(neededGB: Double, availableGB: Double)
         case restoreFailed(models: [String])
@@ -71,6 +71,13 @@ enum ChatResidencyHandoff {
                     + models.joined(separator: ", ")
             }
         }
+
+        /// Preserve the typed handoff reason when this error crosses the
+        /// generic tool-envelope boundary. Without `LocalizedError`, Swift's
+        /// NSError bridge replaces these actionable messages with an opaque
+        /// `HandoffError error N`, leaving the parent model to guess why the
+        /// spawn failed.
+        var errorDescription: String? { description }
     }
 
     /// Reclaimable physical memory (free + inactive + purgeable) in bytes.
@@ -231,20 +238,16 @@ enum ChatResidencyHandoff {
     /// loaded. Returns `true` only when the model is in the live runtime cache
     /// after the load. Never throws: callers branch on the Bool and retry.
     private static func reloadAndVerify(_ name: String) async -> Bool {
-        // A restore may displace a resident model — that is its job — but it
-        // must not preempt a load already in flight. Under the strict
-        // single-model policy this preload would cancel that load, and the
-        // client waiting on it (an API request, another chat window) gets a
-        // bare CancellationError tens of seconds into materializing a large
-        // pack. Report the restore as not-yet-done; the caller retries.
-        if await ModelRuntime.shared.hasLoadInFlight() {
-            logger.info(
-                "Orchestrator restore: deferring preload of \(name, privacy: .public) — another model load is in flight"
-            )
-            return false
-        }
         do {
-            try await ModelRuntime.shared.preload(name: name)
+            // This decision must be made atomically inside ModelRuntime.
+            // `hasLoadInFlight() + preload()` is explicitly diagnostics-only:
+            // the observation is stale after the actor hop. The restore intent
+            // waits for an already-started cold load instead of cancelling it,
+            // then regains the orchestrator in actor order.
+            try await ModelRuntime.shared.preload(
+                name: name,
+                intent: .handoffRestore
+            )
         } catch {
             logger.error(
                 "Orchestrator restore: preload threw for \(name, privacy: .public): \(error.localizedDescription, privacy: .public)"

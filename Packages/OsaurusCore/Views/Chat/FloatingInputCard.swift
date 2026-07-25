@@ -2899,10 +2899,12 @@ extension FloatingInputCard {
             switch warmupController.state {
             case .warm:
                 return String(
-                    localized: "Model warm — ready for a fast first response", bundle: .module)
+                    localized: "Chat prefix warm — ready for a fast next response", bundle: .module)
             case .cold:
                 return String(
-                    localized: "Model cold — will load on next response", bundle: .module)
+                    localized:
+                        "Chat prefix not pre-warmed — the next response may restore cache or prefill",
+                    bundle: .module)
             case .warming:
                 guard let model = selectedModel, let phase = warmupProgressHub.phases[model] else {
                     return String(localized: "Warming up…", bundle: .module)

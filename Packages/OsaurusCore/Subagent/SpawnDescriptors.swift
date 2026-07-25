@@ -14,6 +14,73 @@
 
 import Foundation
 
+/// Shared schema contract for every text-worker spawn surface.
+///
+/// Text workers are context-isolated: a bare model has no parent transcript,
+/// and an agent receives only its own prompt plus this input. Keeping one
+/// description prevents the single and batch tools from drifting into
+/// incompatible guidance.
+enum SpawnInputContract {
+    static let schemaDescription =
+        "The complete standalone task for the worker. Include every instruction, input value, "
+        + "constraint, and required output format the worker needs; it cannot see the parent chat "
+        + "or infer what an opaque label means. Never refer to a previous/earlier message, content "
+        + "above, or prior conversation; copy the exact required information into this input."
+
+    /// Reject an input that explicitly delegates unresolved parent-chat state.
+    ///
+    /// A text worker intentionally receives no parent transcript. Silently
+    /// running phrases such as “the value from the previous message” can only
+    /// produce a hallucination or an avoidable child failure. This validation
+    /// does not guess or inject context: it asks the parent model to retry with
+    /// the exact standalone value before any model load or residency handoff.
+    static func validationFailure(
+        input: String,
+        field: String = "input",
+        tool: String
+    ) -> String? {
+        let normalized =
+            input
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+        let parentContextReferences = [
+            "previous message",
+            "prior message",
+            "earlier message",
+            "message above",
+            "above message",
+            "previous instruction",
+            "prior instruction",
+            "earlier instruction",
+            "as discussed above",
+            "as discussed earlier",
+            "same as before",
+            "предыдущего сообщения",
+            "предыдущем сообщении",
+            "предыдущей инструкции",
+            "как обсуждалось выше",
+            "上一条消息",
+            "上面的消息",
+            "이전 메시지",
+            "vorherigen nachricht",
+        ]
+        guard let reference = parentContextReferences.first(where: normalized.contains) else {
+            return nil
+        }
+        return ToolEnvelope.failure(
+            kind: .invalidArgs,
+            message:
+                "The worker input depends on parent-chat context (`\(reference)`), but spawned "
+                + "workers cannot see the parent transcript. Retry this tool call with the exact "
+                + "value, text, constraints, and output format copied into `\(field)`.",
+            field: field,
+            expected: "a complete standalone worker task with no parent-chat references",
+            tool: tool,
+            retryable: true
+        )
+    }
+}
+
 /// One spawnable agent (`spawn_agent` target), resolved for the prompt.
 public struct SpawnAgentDescriptor: Sendable, Equatable {
     public let name: String
