@@ -51,7 +51,14 @@ enum JSONFormatter {
 /// group's batched expand-all, consecutive steps read as a two-level
 /// cascading ripple. No-op under Reduce Motion.
 enum ExpandFade {
-    static func run(_ view: NSView) {
+    /// - Parameters:
+    ///   - interval: delay between consecutive sections. The activity group
+    ///     passes a tighter value — its parts are whole steps, so the default
+    ///     cadence reads sluggish on runs with many of them.
+    ///   - duration: per-section fade/drift length.
+    static func run(
+        _ view: NSView, interval: TimeInterval = 0.12, duration: TimeInterval = 0.3
+    ) {
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
             view.alphaValue = 1
             return
@@ -68,15 +75,15 @@ enum ExpandFade {
             // doesn't render.
             part.wantsLayer = true
             part.alphaValue = 0
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12 * Double(index)) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + interval * Double(index)) {
                 [weak part] in
                 guard let part else { return }
                 NSAnimationContext.runAnimationGroup { ctx in
-                    ctx.duration = 0.3
+                    ctx.duration = duration
                     ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
                     part.animator().alphaValue = 1
                 }
-                drift(part, from: -12, duration: 0.3)
+                drift(part, from: -12, duration: duration)
             }
         }
     }

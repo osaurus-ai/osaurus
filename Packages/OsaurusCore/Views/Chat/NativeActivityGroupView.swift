@@ -206,7 +206,9 @@ final class NativeActivityGroupView: NSView {
 
         // After the children are (re)built — the ripple walks the child
         // stack, which is empty until configureChildren above has run.
-        if expandTransition { ExpandFade.run(childStack) }
+        // Tighter cadence than the in-step reveal: each part here is a whole
+        // step, and a long run at the default interval feels sluggish.
+        if expandTransition { ExpandFade.run(childStack, interval: 0.05, duration: 0.2) }
 
         applyHeight()
     }
