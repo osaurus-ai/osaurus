@@ -19,6 +19,11 @@
 //  stream with `.info(stopReason: .stop)`. Osaurus never inspects chunk
 //  text for stop-sequence matches.
 //
+//  The one exception to "purely a translation step" is the live guardrails
+//  (StreamDegenerationDetector.swift): text deltas are additionally fed to a
+//  per-stream degeneration detector (abort with a typed error) and template
+//  leak detector (log-only) — these observe, they never rewrite deltas.
+//
 
 import Foundation
 @preconcurrency import MLXLMCommon
@@ -37,11 +42,15 @@ enum GenerationEventMapper {
     ///   path, not in this translation layer. If a no-thinking request still
     ///   emits `.reasoning`, Osaurus keeps that signal visible for root-cause
     ///   debugging instead of merging or suppressing it.
+    /// - Parameter guardrails: Live-output guardrail switches, resolved from
+    ///   UserDefaults at call time by default; injectable so tests don't
+    ///   race on process-global defaults.
     static func map(
         events: AsyncStream<Generation>,
         modelName: String = "",
         trace: TTFTTrace? = nil,
-        suppressProgressUI: Bool = false
+        suppressProgressUI: Bool = false,
+        guardrails: StreamGuardrailSettings = .resolve()
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
         let task = Task {
@@ -66,6 +75,35 @@ enum GenerationEventMapper {
             // STEP-DECODE line at stream end covers those steps instead.
             var firstOutputAt: CFAbsoluteTime?
             var sawToolCall = false
+            // Live guardrails (see StreamDegenerationDetector.swift): one
+            // detector instance per stream. Degeneration observes BOTH
+            // `.tokens` and `.reasoning` (loops routinely start in the
+            // thinking channel) and aborts on trigger; the leak detector
+            // observes content only and never touches the stream.
+            var degenerationDetector = StreamDegenerationDetector()
+            var leakDetector = StreamTemplateLeakDetector()
+            var guardrailAborted = false
+
+            // Abort-only by design at THIS layer: retry-with-safe-settings
+            // is caller-side policy (`DegenerationRetry`, composed in
+            // `ModelRuntime.streamWithTools`/`respondWithTools`). The
+            // triggering delta is NOT yielded — by trigger time the caller
+            // has already received ~7 repeats of the loop; one more helps
+            // nobody. Not yielding it also keeps a first-content-delta loop
+            // retry-eligible (zero content forwarded downstream).
+            func handleDegeneration(in text: String) -> Bool {
+                guard guardrails.degenerationDetection,
+                    let fragment = degenerationDetector.observe(text)
+                else { return false }
+                mapperLog.error(
+                    "[Osaurus] guardrail: degeneration detected model=\(modelName, privacy: .public) fragment=\"\(fragment, privacy: .public)\""
+                )
+                guardrailAborted = true
+                continuation.finish(
+                    throwing: StreamGuardrailError.degeneration(fragment: fragment)
+                )
+                return true
+            }
 
             func markFirstModelOutput() {
                 guard !markedFirstModelOutput else { return }
@@ -87,7 +125,7 @@ enum GenerationEventMapper {
                 }
             }
 
-            for await event in events {
+            eventLoop: for await event in events {
                 if case .info(let info) = event {
                     sawCompletionInfo = true
                     finalTokenCount = info.generationTokenCount
@@ -108,6 +146,16 @@ enum GenerationEventMapper {
                 switch event {
                 case .chunk(let text):
                     guard !text.isEmpty else { continue }
+                    // Log-only: a leaked special token means the template
+                    // fallback mismatched the family — surface it for the
+                    // capability ledger, never filter it out of the stream.
+                    if guardrails.templateLeakDetection,
+                        let token = leakDetector.observe(text) {
+                        mapperLog.error(
+                            "[Osaurus] guardrail: template leak model=\(modelName, privacy: .public) token=\"\(token, privacy: .public)\""
+                        )
+                    }
+                    if handleDegeneration(in: text) { break eventLoop }
                     markFirstModelOutput()
                     if firstChunk {
                         firstChunk = false
@@ -118,6 +166,10 @@ enum GenerationEventMapper {
 
                 case .reasoning(let text):
                     guard !text.isEmpty else { continue }
+                    // Degeneration only — the leak detector deliberately
+                    // skips reasoning deltas (family markers are legitimate
+                    // on the engine-internal thinking channel).
+                    if handleDegeneration(in: text) { break eventLoop }
                     markFirstModelOutput()
                     sawReasoning = true
                     estimatedTextTokens += max(1, text.count / 4)
@@ -194,7 +246,10 @@ enum GenerationEventMapper {
                 }
             }
 
-            if !sawCompletionInfo {
+            // A guardrail abort already finished the stream with a thrown
+            // error; synthesizing completion info would be a silent no-op
+            // yield and a misleading "stream ended without info" log line.
+            if !sawCompletionInfo && !guardrailAborted {
                 finalTokenCount = estimatedTextTokens
                 mapperLog.notice(
                     "generation stream ended without vmlx completion info; synthesizing stats model=\(modelName, privacy: .public) estimatedTokens=\(estimatedTextTokens, privacy: .public) unclosedReasoning=\(sawReasoning, privacy: .public)"
@@ -241,7 +296,9 @@ enum GenerationEventMapper {
             )
 
             reportPrefillFinished()
-            continuation.finish()
+            if !guardrailAborted {
+                continuation.finish()
+            }
         }
         continuation.onTermination = { @Sendable _ in
             task.cancel()
