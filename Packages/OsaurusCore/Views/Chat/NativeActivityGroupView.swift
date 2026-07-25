@@ -340,7 +340,12 @@ final class NativeActivityGroupView: NSView {
         stepCountLabel.isHidden = hidden
         if hidden { return }
 
-        stepCountLabel.stringValue = stepCount == 1 ? L("step") : L("steps")
+        // With an overflow chip the "+N" already carries the number, so the
+        // label is just the word; small groups spell out the full count.
+        stepCountLabel.stringValue =
+            stepCount > 3
+            ? L("steps")
+            : (stepCount == 1 ? L("1 step") : "\(stepCount) \(L("steps"))")
         stepCountLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 2, weight: .medium)
         stepCountLabel.textColor = NSColor(theme.tertiaryText)
 
