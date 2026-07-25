@@ -26,7 +26,13 @@ final class NativeActivityGroupView: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     /// Shown in place of `titleLabel` while any child is still streaming.
     private let shimmerLabel = ShimmerLabel()
+    /// Collapsed-state step preview: overlapping status circles (one per
+    /// step, capped at 3) plus a trailing "steps" word for the overflow case.
+    private let stepChipsStack = NSStackView()
     private let stepCountLabel = NSTextField(labelWithString: "")
+    /// Signature of the currently built chips so per-token reconfigures
+    /// don't tear down and rebuild identical circles.
+    private var stepChipsSignature: String?
     private let chevronView = NSImageView()
     private let separatorView = NSView()
     private let contentContainer = NSView()
@@ -131,10 +137,13 @@ final class NativeActivityGroupView: NSView {
         let expanded = expandedIds.contains(blockId)
 
         let steps = ContentBlock.activityStepCount(of: children)
-        stepCountLabel.isHidden = expanded || steps == 0
-        stepCountLabel.stringValue = steps == 1 ? L("1 step") : "\(steps) \(L("steps"))"
-        stepCountLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 2, weight: .medium)
-        stepCountLabel.textColor = NSColor(theme.tertiaryText)
+        configureStepChips(
+            children: children,
+            stepCount: steps,
+            hidden: expanded || steps == 0,
+            theme: theme,
+            isStreaming: isStreaming
+        )
 
         let isSameBlock = configuredBlockId == blockId
         updateChevron(
@@ -258,6 +267,156 @@ final class NativeActivityGroupView: NSView {
         }
     }
 
+    // MARK: - Step chips
+
+    /// One rendered circle in the collapsed step preview.
+    private struct StepChip: Equatable {
+        /// SF Symbol shown in the circle; nil for the "+N" overflow chip.
+        var glyph: String?
+        /// Overflow text ("+4"); nil for icon chips.
+        var text: String?
+        var colorKey: ChipColor
+
+        enum ChipColor: String {
+            case neutral, running, success, error
+        }
+    }
+
+    /// Flattened per-step descriptors in run order — thinking segments count
+    /// as one step each, tool calls one each (mirrors `activityStepCount`).
+    private static func stepChips(
+        for children: [ContentBlock], stepCount: Int, isStreaming: Bool
+    ) -> [StepChip] {
+        var all: [StepChip] = []
+        for child in children {
+            switch child.kind {
+            case .thinking:
+                all.append(StepChip(glyph: "brain", text: nil, colorKey: .neutral))
+            case let .toolCallGroup(calls):
+                for call in calls {
+                    let name = call.call.function.name
+                    let glyph =
+                        SubagentCapabilityRegistry.iconName(forToolName: name)
+                        ?? ToolCategory.from(toolName: name).icon
+                    let colorKey: StepChip.ChipColor
+                    if call.result == nil {
+                        // Unresolved: running while the table streams; a
+                        // loaded chat's never-resolved call reads neutral.
+                        colorKey = isStreaming ? .running : .neutral
+                    } else if ToolEnvelope.isError(call.result ?? "") {
+                        colorKey = .error
+                    } else {
+                        colorKey = .success
+                    }
+                    all.append(StepChip(glyph: glyph, text: nil, colorKey: colorKey))
+                }
+            default:
+                break
+            }
+        }
+        guard all.count > 3 else { return all }
+        return Array(all.prefix(2)) + [
+            StepChip(glyph: nil, text: "+\(stepCount - 2)", colorKey: .neutral)
+        ]
+    }
+
+    private func chipColor(_ key: StepChip.ChipColor, theme: any ThemeProtocol) -> NSColor {
+        switch key {
+        case .neutral: return NSColor(theme.tertiaryText)
+        case .running: return NSColor(theme.accentColor)
+        case .success: return NSColor(theme.successColor)
+        case .error: return NSColor(theme.errorColor)
+        }
+    }
+
+    private func configureStepChips(
+        children: [ContentBlock],
+        stepCount: Int,
+        hidden: Bool,
+        theme: any ThemeProtocol,
+        isStreaming: Bool
+    ) {
+        stepChipsStack.isHidden = hidden
+        stepCountLabel.isHidden = hidden || stepCount <= 3
+        if hidden { return }
+
+        stepCountLabel.stringValue = L("steps")
+        stepCountLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 2, weight: .medium)
+        stepCountLabel.textColor = NSColor(theme.tertiaryText)
+
+        let chips = Self.stepChips(for: children, stepCount: stepCount, isStreaming: isStreaming)
+        let signature =
+            chips.map { "\($0.glyph ?? $0.text ?? "")/\($0.colorKey.rawValue)" }
+            .joined(separator: ",") + "|dark:\(theme.isDark)"
+        guard signature != stepChipsSignature else { return }
+        stepChipsSignature = signature
+
+        for v in stepChipsStack.arrangedSubviews {
+            stepChipsStack.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
+        // Opaque backing so overlapped circles don't show through each other.
+        let backing = NSColor(theme.primaryBackground)
+        for chip in chips {
+            let color = chipColor(chip.colorKey, theme: theme)
+            stepChipsStack.addArrangedSubview(makeChipView(chip, color: color, backing: backing))
+        }
+        // Trailing "steps" word (overflow case only — hidden views are
+        // detached from the stack's layout). Positive gap after the
+        // negatively-spaced circles.
+        stepChipsStack.addArrangedSubview(stepCountLabel)
+        if let lastChip = stepChipsStack.arrangedSubviews.dropLast().last {
+            stepChipsStack.setCustomSpacing(6, after: lastChip)
+        }
+    }
+
+    private static let chipSize: CGFloat = 20
+
+    private func makeChipView(_ chip: StepChip, color: NSColor, backing: NSColor) -> NSView {
+        let circle = NSView()
+        circle.translatesAutoresizingMaskIntoConstraints = false
+        circle.wantsLayer = true
+        circle.layer?.cornerRadius = Self.chipSize / 2
+        circle.layer?.borderWidth = 1.5
+        circle.layer?.borderColor = color.withAlphaComponent(0.55).cgColor
+        circle.layer?.backgroundColor =
+            (backing.blended(withFraction: 0.14, of: color) ?? backing).cgColor
+        circle.heightAnchor.constraint(equalToConstant: Self.chipSize).isActive = true
+
+        if let glyph = chip.glyph {
+            circle.widthAnchor.constraint(equalToConstant: Self.chipSize).isActive = true
+            let icon = NSImageView()
+            icon.translatesAutoresizingMaskIntoConstraints = false
+            icon.image = SymbolImageCache.image(
+                glyph, accessibilityDescription: nil, pointSize: 9, weight: .semibold)
+            icon.contentTintColor = color
+            icon.imageScaling = .scaleProportionallyDown
+            circle.addSubview(icon)
+            NSLayoutConstraint.activate([
+                icon.centerXAnchor.constraint(equalTo: circle.centerXAnchor),
+                icon.centerYAnchor.constraint(equalTo: circle.centerYAnchor),
+                icon.widthAnchor.constraint(equalToConstant: 10),
+                icon.heightAnchor.constraint(equalToConstant: 10),
+            ])
+        } else {
+            // Overflow "+N": capsule that widens with the text but never
+            // shrinks below a circle.
+            let label = NSTextField(labelWithString: chip.text ?? "")
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.font = NSFont.systemFont(ofSize: 9, weight: .semibold)
+            label.textColor = color
+            circle.addSubview(label)
+            circle.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.chipSize).isActive = true
+            NSLayoutConstraint.activate([
+                label.centerXAnchor.constraint(equalTo: circle.centerXAnchor),
+                label.centerYAnchor.constraint(equalTo: circle.centerYAnchor),
+                label.leadingAnchor.constraint(
+                    greaterThanOrEqualTo: circle.leadingAnchor, constant: 5),
+            ])
+        }
+        return circle
+    }
+
     private func tearDownChildren() {
         for v in childStack.arrangedSubviews {
             childStack.removeArrangedSubview(v)
@@ -309,10 +468,16 @@ final class NativeActivityGroupView: NSView {
         shimmerLabel.isHidden = true
         addSubview(shimmerLabel)
 
+        stepChipsStack.translatesAutoresizingMaskIntoConstraints = false
+        stepChipsStack.orientation = .horizontal
+        stepChipsStack.alignment = .centerY
+        // Negative spacing overlaps the circles into an avatar-style stack.
+        stepChipsStack.spacing = -6
+        addSubview(stepChipsStack)
+
         stepCountLabel.translatesAutoresizingMaskIntoConstraints = false
         stepCountLabel.isEditable = false; stepCountLabel.isBordered = false
         stepCountLabel.drawsBackground = false
-        addSubview(stepCountLabel)
 
         chevronView.translatesAutoresizingMaskIntoConstraints = false
         chevronView.wantsLayer = true
@@ -372,8 +537,8 @@ final class NativeActivityGroupView: NSView {
             chevronView.widthAnchor.constraint(equalToConstant: 12),
             chevronView.heightAnchor.constraint(equalToConstant: 12),
 
-            stepCountLabel.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -8),
-            stepCountLabel.centerYAnchor.constraint(equalTo: chevronView.centerYAnchor),
+            stepChipsStack.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -8),
+            stepChipsStack.centerYAnchor.constraint(equalTo: chevronView.centerYAnchor),
 
             separatorView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             separatorView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
