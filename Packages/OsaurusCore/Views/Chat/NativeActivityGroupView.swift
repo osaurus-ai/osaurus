@@ -337,10 +337,10 @@ final class NativeActivityGroupView: NSView {
         isStreaming: Bool
     ) {
         stepChipsStack.isHidden = hidden
-        stepCountLabel.isHidden = hidden || stepCount <= 3
+        stepCountLabel.isHidden = hidden
         if hidden { return }
 
-        stepCountLabel.stringValue = L("steps")
+        stepCountLabel.stringValue = stepCount == 1 ? L("step") : L("steps")
         stepCountLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 2, weight: .medium)
         stepCountLabel.textColor = NSColor(theme.tertiaryText)
 
