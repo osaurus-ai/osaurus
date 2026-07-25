@@ -1237,8 +1237,10 @@ final class NativeToolCallRowView: NSView {
 
         // After the detail views exist — on a first-ever expand the sections
         // are only built above, and a reveal fired before that would find an
-        // empty container and do nothing.
-        if expandTransition { ExpandFade.run(contentContainer) }
+        // empty container and do nothing. Slightly longer per-section fade
+        // than the default: the ARGUMENTS/RESULT bodies are dense, and the
+        // extra beat makes the reveal register.
+        if expandTransition { ExpandFade.run(contentContainer, duration: 0.38) }
 
         applyHeight()
     }
