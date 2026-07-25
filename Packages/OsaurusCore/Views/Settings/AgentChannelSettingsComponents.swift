@@ -98,6 +98,8 @@ struct AgentChannelCard: View {
     let subtitle: String
     var subtitleIsMonospaced = false
     var badge: AgentChannelStatusPresentation?
+    /// Optional third line, e.g. which agent(s) answer this channel.
+    var detail: String?
     var anchorId: String?
     let action: () -> Void
 
@@ -140,6 +142,20 @@ struct AgentChannelCard: View {
                         .foregroundColor(theme.secondaryText)
                         .lineLimit(1)
                         .truncationMode(.middle)
+
+                    if let detail {
+                        Label {
+                            Text(detail)
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        } icon: {
+                            Image(systemName: "person.crop.circle")
+                                .font(.system(size: 10))
+                                .foregroundColor(theme.tertiaryText)
+                        }
+                    }
                 }
 
                 Spacer(minLength: 8)
@@ -452,6 +468,100 @@ struct AgentChannelSecretField: View {
             return Text("Leave blank to keep current", bundle: .module)
         }
         return Text(LocalizedStringKey(placeholder), bundle: .module)
+    }
+}
+
+// MARK: - Setup Step Header
+
+/// Numbered wizard step header with a completion checkmark, shared by the
+/// provider settings sheets so every channel reads as the same guided flow.
+struct AgentChannelSetupStepHeader: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    let number: Int
+    let title: String
+    let done: Bool
+
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(done ? theme.successColor.opacity(0.14) : theme.tertiaryBackground)
+                    .frame(width: 22, height: 22)
+                if done {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(theme.successColor)
+                } else {
+                    Text("\(number)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                }
+            }
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+// MARK: - Copyable Command
+
+/// Monospaced command / message row with a copy button, for setup steps that
+/// ask the user to paste something elsewhere (BotFather commands, invite
+/// URLs, test messages).
+struct AgentChannelCopyableCommand: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    let command: String
+    /// Optional short explanation rendered next to the command.
+    var caption: String?
+    /// Called after the command is copied, e.g. to show a status toast.
+    var onCopied: (() -> Void)?
+
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(command)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6).stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
+            Button {
+                #if os(macOS)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(command, forType: .string)
+                #endif
+                onCopied?()
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 10, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(theme.accentColor)
+            .help(Text("Copy", bundle: .module))
+
+            if let caption {
+                Text(LocalizedStringKey(caption), bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
     }
 }
 

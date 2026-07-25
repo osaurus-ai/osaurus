@@ -124,6 +124,130 @@ struct DiscordConnectionTests {
         }
     }
 
+    @Test func pollingRecordsPerEventInboundActivityStages() async throws {
+        try await withIsolatedDiscordStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+            let fake = FakeDiscordAPIClient()
+            await fake.setMessages([
+                "222222222222222222": [
+                    .fixture(id: "90001", channelId: "222222222222222222", content: "existing"),
+                ],
+            ])
+            let activity = AgentChannelInboundActivityCenter()
+            let service = DiscordConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store,
+                recordMessageSnapshotsInline: true,
+                activityCenter: activity
+            )
+            try service.saveBotToken("discord-bot-token-super-secret")
+            try service.saveConfiguration(
+                DiscordConnectionConfiguration(
+                    configuredGuildIds: ["111111111111111111"],
+                    readableChannelIds: ["222222222222222222"],
+                    senderAllowlist: ["555555555555555555"]
+                )
+            )
+
+            // First poll only arms the cursor; nothing should be recorded.
+            _ = try await service.pollInboundMessages()
+            #expect(await activity.recent(connectionId: "discord").isEmpty)
+
+            await fake.setMessages([
+                "222222222222222222": [
+                    .fixture(
+                        id: "90003",
+                        channelId: "222222222222222222",
+                        content: "intruder question",
+                        author: DiscordMessageAuthor(
+                            id: "999999999999999999",
+                            username: "intruder",
+                            globalName: nil,
+                            bot: false
+                        )
+                    ),
+                    .fixture(id: "90002", channelId: "222222222222222222", content: "authorized question"),
+                    .fixture(id: "90001", channelId: "222222222222222222", content: "existing"),
+                ],
+            ])
+            _ = try await service.pollInboundMessages()
+
+            let events = await activity.recent(connectionId: "discord", limit: 20)
+
+            // Authorized message travels received → stored, then dispatch is
+            // suppressed because no agent dispatch is configured.
+            let acceptedStages = events
+                .filter { $0.providerEventId == "discord:90002" }
+                .map(\.stage)
+                .reversed()
+            #expect(Array(acceptedStages) == [.received, .stored, .dispatchSuppressed])
+            let suppressed = events.first {
+                $0.providerEventId == "discord:90002" && $0.stage == .dispatchSuppressed
+            }
+            #expect(suppressed?.reason == "inbound_dispatch_not_configured")
+
+            // Unauthorized sender is rejected with the boundary reason.
+            let rejectedStages = events
+                .filter { $0.providerEventId == "discord:90003" }
+                .map(\.stage)
+                .reversed()
+            #expect(Array(rejectedStages) == [.received, .rejected])
+            let rejected = events.first {
+                $0.providerEventId == "discord:90003" && $0.stage == .rejected
+            }
+            #expect(rejected?.reason == "sender_not_allowlisted")
+        }
+    }
+
+    @Test func diagnosticsReportsReceiveReadinessAndRoutedAgents() async throws {
+        try await withIsolatedDiscordStores { credentials in
+            let liveAgent = UUID()
+            let missingAgent = UUID()
+            let fake = FakeDiscordAPIClient()
+            let service = DiscordConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                inboundAgentAvailability: { $0 == liveAgent },
+                runningInstanceCount: { 1 }
+            )
+            try service.saveBotToken("discord-bot-token-super-secret")
+
+            // Token alone is not receive capability.
+            try service.saveConfiguration(DiscordConnectionConfiguration())
+            let tokenOnly = await service.diagnostics()
+            #expect(!tokenOnly.receiveReady)
+
+            // Full receive prerequisites flip readiness on.
+            try service.saveConfiguration(
+                DiscordConnectionConfiguration(
+                    configuredGuildIds: ["111111111111111111"],
+                    readableChannelIds: ["222222222222222222"],
+                    senderAllowlist: ["555555555555555555"],
+                    inboundDispatch: AgentChannelInboundDispatchConfiguration(
+                        enabled: true,
+                        targetAgentId: liveAgent,
+                        routes: [
+                            AgentChannelDispatchRoute(
+                                roomId: "222222222222222222", agentId: missingAgent
+                            )
+                        ]
+                    )
+                )
+            )
+            let diagnostics = await service.diagnostics()
+            #expect(diagnostics.receiveReady)
+            #expect(diagnostics.inboundDispatchEnabled)
+            #expect(diagnostics.inboundDispatchIssue == "inbound_agent_unavailable")
+
+            let report = AgentChannelLiveProofReadiness.discord(diagnostics)
+            #expect(report.status == .blocked)
+            #expect(report.blockers.contains { $0.contains("routed agent no longer exists") })
+        }
+    }
+
     @Test func apiClientRedactsTokenEchoedByDiscordErrorBody() async throws {
         let token = "discord-bot-token-super-secret"
         let session = DiscordHTTPStubProtocol.session(

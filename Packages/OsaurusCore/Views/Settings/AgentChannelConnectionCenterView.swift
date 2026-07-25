@@ -46,6 +46,8 @@ struct AgentChannelConnectionCenterView: View {
     @State private var selectedTab: AgentChannelsTab = .channels
     @State private var activeSheet: AgentChannelSheetTarget?
     @State private var nativeBadges: [AgentChannelKind: AgentChannelStatusPresentation] = [:]
+    @State private var nativeRoutingDetails: [AgentChannelKind: String] = [:]
+    @State private var anyNativeConfigured = false
     @State private var connections: [AgentChannelConnection] = []
 
     @State private var auditScopeId: String?
@@ -121,13 +123,22 @@ struct AgentChannelConnectionCenterView: View {
 
     // MARK: - Header
 
+    /// Custom channels are the advanced path; the primary header CTA only
+    /// appears once at least one channel exists so first-time users are
+    /// steered toward the guided native providers instead.
+    private var isFirstRun: Bool {
+        !anyNativeConfigured && connections.isEmpty
+    }
+
     private var headerView: some View {
         ManagerHeaderWithTabs(
             title: L("Channels"),
             subtitle: L("Let agents read and reply on Discord, Slack, and Telegram")
         ) {
-            HeaderPrimaryButton(L("Add Custom Channel"), icon: "plus") {
-                activeSheet = .newCustom
+            if !isFirstRun {
+                HeaderPrimaryButton(L("Add Custom Channel"), icon: "plus") {
+                    activeSheet = .newCustom
+                }
             }
         } tabsRow: {
             HeaderTabsRow(selection: $selectedTab)
@@ -139,6 +150,10 @@ struct AgentChannelConnectionCenterView: View {
     private var channelsTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                if isFirstRun {
+                    firstRunCallout
+                }
+
                 writeGateRow
 
                 VStack(spacing: 10) {
@@ -149,6 +164,7 @@ struct AgentChannelConnectionCenterView: View {
                             title: kind.displayName,
                             subtitle: Self.nativeSubtitle(for: kind),
                             badge: nativeBadges[kind],
+                            detail: nativeRoutingDetails[kind],
                             anchorId: "agentChannels.\(kind.rawValue)"
                         ) {
                             activeSheet = .native(kind)
@@ -160,11 +176,62 @@ struct AgentChannelConnectionCenterView: View {
                 if !connections.isEmpty {
                     customSection
                 }
+
+                if isFirstRun {
+                    Button {
+                        activeSheet = .newCustom
+                    } label: {
+                        Label {
+                            Text("Add a custom HTTP JSON channel instead", bundle: .module)
+                        } icon: {
+                            Image(systemName: "plus.circle")
+                        }
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 24)
             .frame(maxWidth: .infinity)
         }
+    }
+
+    /// Shown when no channel is configured yet: point at the guided native
+    /// providers as the recommended starting path.
+    private var firstRunCallout: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(theme.accentColor)
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(theme.accentColor.opacity(0.12)))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Connect your first channel", bundle: .module)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text(
+                    "Pick Discord, Slack, or Telegram below — each opens a guided, numbered setup that ends with a live verification of an incoming message.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.accentColor.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.accentColor.opacity(0.25), lineWidth: 1)
+                )
+        )
     }
 
     /// Master write switch, humanized: on = agents may send where allowlisted,
@@ -250,10 +317,7 @@ struct AgentChannelConnectionCenterView: View {
                         title: connection.name.isEmpty ? connection.id : connection.name,
                         subtitle: connection.id,
                         subtitleIsMonospaced: true,
-                        badge: AgentChannelStatusPresentation(
-                            label: connection.enabled ? L("Enabled") : L("Disabled"),
-                            tone: connection.enabled ? .success : .neutral
-                        )
+                        badge: Self.customBadge(for: connection)
                     ) {
                         activeSheet = .editCustom(connection)
                     }
@@ -269,7 +333,7 @@ struct AgentChannelConnectionCenterView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text(
-                    "Authorized incoming messages are stored in a local inbox that agent read tools consult. Nothing is ever answered automatically.",
+                    "Authorized incoming messages are stored in a local inbox that agent read tools consult. Channels only answer automatically when their dispatch and auto-reply settings are turned on.",
                     bundle: .module
                 )
                 .font(.system(size: 12))
@@ -478,15 +542,30 @@ struct AgentChannelConnectionCenterView: View {
     }
 
     /// Derive channel badges for native providers from saved-credential
-    /// presence plus (for Slack/Telegram) live receive-transport health.
+    /// presence plus live receive-transport health.
     private func refreshNativeBadges() {
+        let discordConfig = DiscordConnectionService.shared.configuration()
         let discordConfigured = DiscordConnectionService.shared.hasBotToken()
+        let discordReceiveExpected = discordConfigured
+            && !discordConfig.readableChannelIds.isEmpty
+            && !discordConfig.senderAllowlist.isEmpty
         let slackConfigured = SlackConnectionService.shared.hasBotToken()
         let slackReceiveExpected = SlackConnectionService.shared.hasAppToken()
+        let telegramConfig = TelegramConnectionService.shared.configuration()
         let telegramConfigured = TelegramConnectionService.shared.hasBotToken()
-        let telegramReceiveExpected = TelegramConnectionService.shared
-            .configuration().longPollingEnabled
+        let telegramReceiveExpected = telegramConfig.longPollingEnabled
+        let slackDispatch = SlackConnectionService.shared.configuration().inboundDispatch
+
+        anyNativeConfigured = discordConfigured || slackConfigured || telegramConfigured
+        nativeRoutingDetails[.discord] = Self.routingSummary(discordConfig.inboundDispatch)
+        nativeRoutingDetails[.slack] = Self.routingSummary(slackDispatch)
+        nativeRoutingDetails[.telegram] = Self.routingSummary(telegramConfig.inboundDispatch)
+
         Task {
+            let discordHealth = await AgentChannelTransportHealthCenter.shared.state(
+                connectionId: AgentChannelConnection.nativeDiscordConnectionId,
+                transportId: DiscordPollingTransportRuntime.transportId
+            )
             let slackHealth = await AgentChannelTransportHealthCenter.shared.state(
                 connectionId: AgentChannelConnection.nativeSlackConnectionId,
                 transportId: SlackSocketModeTransportRuntime.transportId
@@ -498,8 +577,8 @@ struct AgentChannelConnectionCenterView: View {
             await MainActor.run {
                 nativeBadges[.discord] = Self.nativeBadge(
                     configured: discordConfigured,
-                    receiveExpected: false,
-                    health: nil
+                    receiveExpected: discordReceiveExpected,
+                    health: discordHealth
                 )
                 nativeBadges[.slack] = Self.nativeBadge(
                     configured: slackConfigured,
@@ -513,6 +592,40 @@ struct AgentChannelConnectionCenterView: View {
                 )
             }
         }
+    }
+
+    /// One-line description of who answers this channel, shown on the card.
+    @MainActor
+    static func routingSummary(
+        _ dispatch: AgentChannelInboundDispatchConfiguration,
+        agentName: (UUID) -> String? = { AgentManager.shared.agent(for: $0)?.name }
+    ) -> String? {
+        guard dispatch.enabled else { return nil }
+        let names = dispatch.referencedAgentIds.map { agentName($0) ?? L("Unknown agent") }
+        switch names.count {
+        case 0:
+            return L("No agent assigned")
+        case 1:
+            return L("Answers as \(names[0])")
+        default:
+            return L("Routes to \(names.count) agents: \(names.joined(separator: ", "))")
+        }
+    }
+
+    /// Honest custom-channel badge: enabled alone is not usable — a custom
+    /// channel needs defined HTTP actions before agents can do anything.
+    static func customBadge(for connection: AgentChannelConnection) -> AgentChannelStatusPresentation {
+        guard connection.enabled else {
+            return AgentChannelStatusPresentation(label: L("Disabled"), tone: .neutral)
+        }
+        let actionCount = connection.customHTTP?.actions.count ?? 0
+        guard actionCount > 0 else {
+            return AgentChannelStatusPresentation(label: L("No actions defined"), tone: .warning)
+        }
+        if connection.writeEnabled {
+            return AgentChannelStatusPresentation(label: L("Enabled"), tone: .success)
+        }
+        return AgentChannelStatusPresentation(label: L("Enabled (read-only)"), tone: .success)
     }
 
     /// A saved token must not read as "Configured" while a receive transport

@@ -182,4 +182,86 @@ struct AgentChannelInboundActivityTests {
             health: nil
         ) == .diagnostics(status: "configured"))
     }
+
+    // MARK: - Card routing summary
+
+    @MainActor
+    @Test func routingSummaryDescribesDefaultRoutesAndMissingAgents() {
+        let agentA = UUID()
+        let agentB = UUID()
+        let names: [UUID: String] = [agentA: "Sales", agentB: "Support"]
+        func summary(_ dispatch: AgentChannelInboundDispatchConfiguration) -> String? {
+            AgentChannelConnectionCenterView.routingSummary(dispatch) { names[$0] }
+        }
+
+        // Dispatch off → no routing line at all.
+        #expect(summary(AgentChannelInboundDispatchConfiguration(enabled: false)) == nil)
+
+        // Enabled but nothing selected → honest empty state.
+        #expect(summary(AgentChannelInboundDispatchConfiguration(enabled: true)) == "No agent assigned")
+
+        // Single default agent.
+        #expect(
+            summary(
+                AgentChannelInboundDispatchConfiguration(enabled: true, targetAgentId: agentA)
+            ) == "Answers as Sales")
+
+        // Default + a route to a second agent → multi-agent summary.
+        let multi = AgentChannelInboundDispatchConfiguration(
+            enabled: true,
+            targetAgentId: agentA,
+            routes: [AgentChannelDispatchRoute(roomId: "C1", agentId: agentB)]
+        )
+        #expect(summary(multi) == "Routes to 2 agents: Sales, Support")
+
+        // A routed agent that no longer exists is still surfaced.
+        let missing = AgentChannelInboundDispatchConfiguration(
+            enabled: true,
+            targetAgentId: UUID()
+        )
+        #expect(summary(missing) == "Answers as Unknown agent")
+    }
+
+    // MARK: - Custom channel badge honesty
+
+    @MainActor
+    @Test func customBadgeReflectsUsabilityNotJustEnabledFlag() {
+        func connection(
+            enabled: Bool,
+            actions: [String: AgentChannelCustomHTTPAction],
+            writeEnabled: Bool = false
+        ) -> AgentChannelConnection {
+            AgentChannelConnection(
+                id: "webhook",
+                name: "Webhook",
+                kind: .customHTTP,
+                enabled: enabled,
+                writeEnabled: writeEnabled,
+                customHTTP: AgentChannelCustomHTTPConfiguration(
+                    baseURL: "https://example.com",
+                    actions: actions
+                )
+            )
+        }
+        let action = AgentChannelCustomHTTPAction(path: "/messages")
+
+        let disabled = AgentChannelConnectionCenterView.customBadge(
+            for: connection(enabled: false, actions: ["read_messages": action]))
+        #expect(disabled.tone == .neutral)
+
+        // Enabled with no actions is not usable and must warn, not show green.
+        let empty = AgentChannelConnectionCenterView.customBadge(
+            for: connection(enabled: true, actions: [:]))
+        #expect(empty.tone == .warning)
+
+        let readOnly = AgentChannelConnectionCenterView.customBadge(
+            for: connection(enabled: true, actions: ["read_messages": action]))
+        #expect(readOnly.tone == .success)
+        #expect(readOnly.label.contains("read-only"))
+
+        let writable = AgentChannelConnectionCenterView.customBadge(
+            for: connection(enabled: true, actions: ["send_message": action], writeEnabled: true))
+        #expect(writable.tone == .success)
+        #expect(!writable.label.contains("read-only"))
+    }
 }

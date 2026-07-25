@@ -86,7 +86,8 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             let connection = try resolveConnection(connectionId)
             switch connection.kind {
             case .discord:
-                var payload = await discordService.diagnostics().dictionary
+                let diagnostics = await discordService.diagnostics()
+                var payload = diagnostics.dictionary
                 payload["connection_id"] = connection.id
                 payload["kind"] = connection.kind.rawValue
                 payload["standard_actions"] = connection.supportedActions.map(\.rawValue)
@@ -96,10 +97,12 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 payload["transport_health"] = await AgentChannelTransportHealthCenter.shared
                     .allStates(connectionId: connection.id)
                     .map(\.dictionary)
+                // A token alone is not receive capability: polling only runs
+                // once readable channels and authorized senders exist too.
                 payload["receive_transport"] = [
-                    "status": discordService.hasBotToken() ? "configured" : "not_configured",
+                    "status": diagnostics.receiveReady ? "configured" : "not_configured",
                     "transport_id": DiscordPollingTransportRuntime.transportId,
-                    "summary": "Discord receive polling starts when readable channels and authorized sender IDs are configured.",
+                    "summary": "Discord receive polling starts when a bot token, readable channels, and authorized sender IDs are configured.",
                 ]
                 return payload
             case .slack:

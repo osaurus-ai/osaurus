@@ -41,17 +41,58 @@ struct AgentChannelCustomConnectionSheet: View {
             subtitle: L("JSON-defined HTTP channel")
         ) {
             VStack(alignment: .leading, spacing: 20) {
-                identitySection
-                SettingsDivider()
-                accessSection
-                SettingsDivider()
-                sendingSection
-                SettingsDivider()
-                actionsSection
+                VStack(alignment: .leading, spacing: 10) {
+                    AgentChannelSetupStepHeader(
+                        number: 1,
+                        title: L("Name this channel"),
+                        done: !trimmedDraftId.isEmpty
+                    )
+                    identitySection
+                }
 
                 if draft.kind == .customHTTP {
                     SettingsDivider()
-                    customHTTPSection
+                    VStack(alignment: .leading, spacing: 10) {
+                        AgentChannelSetupStepHeader(
+                            number: 2,
+                            title: L("Define the HTTP endpoint"),
+                            done: endpointStepDone
+                        )
+                        customHTTPSection
+                    }
+                }
+
+                SettingsDivider()
+                VStack(alignment: .leading, spacing: 10) {
+                    AgentChannelSetupStepHeader(
+                        number: 3,
+                        title: L("Choose what agents may do"),
+                        done: !draft.supportedActions.isEmpty
+                    )
+                    actionsSection
+                    accessSection
+                }
+
+                SettingsDivider()
+                VStack(alignment: .leading, spacing: 10) {
+                    AgentChannelSetupStepHeader(
+                        number: 4,
+                        title: L("Allow sending (optional)"),
+                        done: draft.writeEnabled
+                    )
+                    sendingSection
+                }
+
+                SettingsDivider()
+                VStack(alignment: .leading, spacing: 10) {
+                    AgentChannelSetupStepHeader(
+                        number: 5,
+                        title: L("Authorize incoming messages (optional)"),
+                        done: !AgentChannelConnectionDraft.parseListPreview(
+                            draft.inboundSenderAllowlistText
+                        ).isEmpty
+                    )
+                    inboundAuthorizationSection
                 }
 
                 SettingsDivider()
@@ -88,7 +129,7 @@ struct AgentChannelCustomConnectionSheet: View {
 
             HStack(spacing: 10) {
                 AgentChannelSheetActionButton(
-                    title: L("Run Diagnostics"),
+                    title: canRunLiveDiagnostics ? L("Run Diagnostics") : L("Check Configuration"),
                     busyTitle: L("Diagnosing..."),
                     isBusy: isDiagnosing,
                     action: diagnose
@@ -138,13 +179,27 @@ struct AgentChannelCustomConnectionSheet: View {
         draft.id.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Live diagnostics need the saved connection under its current id;
+    /// otherwise the button performs a local draft check instead.
+    private var canRunLiveDiagnostics: Bool {
+        guard let originalId = draft.originalId else { return false }
+        return AgentChannelConnection.normalizedId(trimmedDraftId) == originalId
+    }
+
+    private var endpointStepDone: Bool {
+        let url = draft.customBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !url.isEmpty else { return false }
+        return (try? AgentChannelConnectionDraft.parsedActionsPreview(draft.customActionsJSON))
+            .map { !$0.isEmpty } ?? false
+    }
+
     // MARK: - Sections
 
     private var identitySection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
                 StyledSettingsTextField(
-                    label: L("Connection ID"),
+                    label: L("Connection ID (required)"),
                     text: $draft.id,
                     placeholder: "ops-webhook",
                     help: L("Stable id used by agent_channel tools. Native provider ids are reserved.")
@@ -252,21 +307,59 @@ struct AgentChannelCustomConnectionSheet: View {
         SettingsSubsection(label: L("Custom HTTP")) {
             VStack(alignment: .leading, spacing: 12) {
                 StyledSettingsTextField(
-                    label: L("Base URL"),
+                    label: L("Base URL (required)"),
                     text: $draft.customBaseURL,
                     placeholder: "https://hooks.example.test",
                     help: L(
-                        "HTTP or HTTPS origin for this configured channel. Execution remains disabled until the security-reviewed runner lands."
+                        "HTTPS origin agent tools call for this channel. Requests only run for actions defined below and are always confirmed before sending."
                     )
                 )
                 AgentChannelMultilineSettingsField(
-                    title: L("Action Map JSON"),
+                    title: L("Action Map JSON (at least one action required)"),
                     text: $draft.customActionsJSON,
                     help: L(
                         "JSON object keyed by standard action names. Values define method, path, optional query, headers, and bodyTemplate."
                     )
                 )
             }
+        }
+    }
+
+    private var inboundAuthorizationSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(
+                "Custom channels are outbound-only until you authorize incoming senders. Anything posted to the inbound inbox API from senders not listed here is denied.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
+            HStack(alignment: .top, spacing: 12) {
+                AgentChannelMultilineSettingsField(
+                    title: L("Allowed Senders"),
+                    text: $draft.inboundSenderAllowlistText,
+                    placeholder: L("sender-id — one per line"),
+                    help: L("Sender ids whose incoming messages are stored. Empty denies everyone.")
+                )
+                AgentChannelMultilineSettingsField(
+                    title: L("Allowed Rooms"),
+                    text: $draft.inboundRoomAllowlistText,
+                    placeholder: L("room-id — one per line"),
+                    help: L("Room ids incoming messages may come from. Empty allows any allowlisted sender's room.")
+                )
+            }
+
+            SettingsToggle(
+                title: L("Accept Bot Messages"),
+                description: L("Store incoming messages flagged as sent by bots."),
+                isOn: $draft.inboundAllowBotMessages
+            )
+            SettingsToggle(
+                title: L("Accept Self Messages"),
+                description: L("Store messages this connection itself sent (echo events)."),
+                isOn: $draft.inboundAllowSelfMessages
+            )
         }
     }
 
@@ -328,13 +421,24 @@ struct AgentChannelCustomConnectionSheet: View {
         }
     }
 
+    /// For saved connections this runs the real service diagnostics; for
+    /// unsaved or renamed drafts it falls back to local draft validation so
+    /// the check works before saving.
     private func diagnose() {
         let connectionId = trimmedDraftId
         guard !connectionId.isEmpty else { return }
         guard let originalId = draft.originalId,
             AgentChannelConnection.normalizedId(connectionId) == originalId
         else {
-            showStatus(L("Save the channel connection before running diagnostics"), isError: true)
+            let issues = draft.validationIssues()
+            if issues.isEmpty {
+                diagnosticsText = L(
+                    "Draft configuration looks valid. Save to run live diagnostics against the endpoint.")
+                showStatus(L("Draft check passed"), isError: false)
+            } else {
+                diagnosticsText = issues.map { "• \($0)" }.joined(separator: "\n")
+                showStatus(L("Draft check found \(issues.count) issue(s)"), isError: true)
+            }
             return
         }
         isDiagnosing = true
@@ -395,6 +499,13 @@ struct AgentChannelConnectionDraft {
     var secretReferencesText = ""
     var customBaseURL = ""
     var customActionsJSON = Self.defaultActionsJSON
+    var inboundSenderAllowlistText = ""
+    var inboundRoomAllowlistText = ""
+    var inboundAllowBotMessages = false
+    var inboundAllowSelfMessages = false
+    /// Policy fields the sheet does not expose (duplicate behavior, event-id
+    /// requirement) are preserved from the loaded connection on save.
+    private var baseInboundAuthorization = AgentChannelInboundAuthorizationPolicy()
 
     var isNew: Bool { originalId == nil }
 
@@ -417,6 +528,13 @@ struct AgentChannelConnectionDraft {
             .joined(separator: "\n")
         customBaseURL = connection.customHTTP?.baseURL ?? ""
         customActionsJSON = Self.prettyActionsJSON(connection.customHTTP?.actions ?? [:])
+        baseInboundAuthorization = connection.inboundAuthorization
+        inboundSenderAllowlistText = connection.inboundAuthorization.senderAllowlist
+            .joined(separator: "\n")
+        inboundRoomAllowlistText = connection.inboundAuthorization.roomAllowlist
+            .joined(separator: "\n")
+        inboundAllowBotMessages = connection.inboundAuthorization.allowBotMessages
+        inboundAllowSelfMessages = connection.inboundAuthorization.allowSelfMessages
     }
 
     func connection() throws -> AgentChannelConnection {
@@ -442,7 +560,17 @@ struct AgentChannelConnectionDraft {
             writeEnabled: writeEnabled,
             defaultReadLimit: Int(defaultReadLimit) ?? 50,
             secrets: Self.parseSecretReferences(secretReferencesText),
-            customHTTP: customHTTP
+            customHTTP: customHTTP,
+            inboundAuthorization: AgentChannelInboundAuthorizationPolicy(
+                senderAllowlist: Self.parseList(inboundSenderAllowlistText),
+                roomAllowlist: Self.parseList(inboundRoomAllowlistText),
+                allowUnscopedSpaces: baseInboundAuthorization.allowUnscopedSpaces,
+                allowBotMessages: inboundAllowBotMessages,
+                allowSelfMessages: inboundAllowSelfMessages,
+                requireProviderEventId: baseInboundAuthorization.requireProviderEventId,
+                duplicateBehavior: baseInboundAuthorization.duplicateBehavior,
+                auditDecisionReason: baseInboundAuthorization.auditDecisionReason
+            )
         )
     }
 
@@ -469,6 +597,70 @@ struct AgentChannelConnectionDraft {
         text.components(separatedBy: CharacterSet(charactersIn: ", \n\t"))
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+
+    /// Non-throwing list parse for view-layer step-completion checks.
+    static func parseListPreview(_ text: String) -> [String] {
+        parseList(text)
+    }
+
+    /// Parse the action-map JSON for view-layer validation without building
+    /// the full connection.
+    static func parsedActionsPreview(
+        _ text: String
+    ) throws -> [String: AgentChannelCustomHTTPAction] {
+        try parseCustomActionsJSON(text)
+    }
+
+    /// Configuration problems checkable before the connection is saved, for
+    /// the pre-save "Check Configuration" affordance. Returns human-readable
+    /// issues; empty means the draft looks structurally valid.
+    func validationIssues() -> [String] {
+        var issues: [String] = []
+        if id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            issues.append(L("Connection ID is required."))
+        }
+        if kind == .customHTTP {
+            let base = customBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            if base.isEmpty {
+                issues.append(L("Base URL is required."))
+            } else if let url = URL(string: base) {
+                let scheme = url.scheme?.lowercased()
+                if scheme != "https" && scheme != "http" {
+                    issues.append(L("Base URL must start with https:// or http://."))
+                }
+                if url.host == nil {
+                    issues.append(L("Base URL is missing a host."))
+                }
+            } else {
+                issues.append(L("Base URL is not a valid URL."))
+            }
+            do {
+                let actions = try Self.parseCustomActionsJSON(customActionsJSON)
+                if actions.isEmpty {
+                    issues.append(L("Define at least one action in the action map."))
+                } else {
+                    let known = Set(AgentChannelAction.allCases.map(\.rawValue))
+                    for key in actions.keys.sorted() where !known.contains(key) {
+                        issues.append(
+                            L("Action \"\(key)\" is not a standard action name and will never be called."))
+                    }
+                }
+            } catch {
+                issues.append(L("Action map JSON is invalid: \(error.localizedDescription)"))
+            }
+        }
+        if supportedActions.isEmpty {
+            issues.append(L("Enable at least one standard action."))
+        }
+        if writeEnabled && Self.parseList(writeRoomAllowlistText).isEmpty {
+            issues.append(L("Sending is enabled but the write room allowlist is empty, so sends will be refused."))
+        }
+        for secret in Self.parseSecretReferences(secretReferencesText)
+        where secret.keychainId.isEmpty {
+            issues.append(L("Secret \"\(secret.name)\" has no keychain id (expected name=keychain-id)."))
+        }
+        return issues
     }
 
     private static func parseSecretReferences(_ text: String) -> [AgentChannelSecretReference] {

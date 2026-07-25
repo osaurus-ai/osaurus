@@ -566,18 +566,20 @@ final class SlackConnectionService: @unchecked Sendable {
 
         var inboundDispatchIssue: String?
         if config.inboundDispatch.enabled {
-            if let agentId = config.inboundDispatch.targetAgentId {
-                if await !inboundAgentAvailability(agentId) {
-                    inboundDispatchIssue = "inbound_agent_unavailable"
-                    failures.append(
-                        "Inbound dispatch is enabled but the selected agent no longer exists. Pick a different agent in Slack settings."
-                    )
-                }
-            } else {
+            let referencedAgents = config.inboundDispatch.referencedAgentIds
+            if referencedAgents.isEmpty {
                 inboundDispatchIssue = "inbound_agent_not_selected"
                 failures.append(
                     "Inbound dispatch is enabled but no agent is selected for incoming Slack messages."
                 )
+            } else {
+                for agentId in referencedAgents where await !inboundAgentAvailability(agentId) {
+                    inboundDispatchIssue = "inbound_agent_unavailable"
+                    failures.append(
+                        "Inbound dispatch is enabled but a routed agent no longer exists. Update the routing rules in Slack settings."
+                    )
+                    break
+                }
             }
         }
 

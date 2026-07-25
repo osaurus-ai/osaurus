@@ -28,6 +28,7 @@ struct SlackSettingsView: View {
     @State private var defaultReadLimit: String = "50"
     @State private var inboundDispatchEnabled = false
     @State private var inboundAgentId: UUID?
+    @State private var inboundRoutes: [AgentChannelDispatchRoute] = []
     @State private var inboundRequireMention = true
     @State private var inboundContinueThreads = true
     @State private var inboundAutoReplyEnabled = false
@@ -127,26 +128,7 @@ struct SlackSettingsView: View {
     // MARK: - Guided setup steps
 
     private func stepHeader(_ number: Int, _ title: String, done: Bool) -> some View {
-        HStack(spacing: 8) {
-            ZStack {
-                Circle()
-                    .fill(done ? theme.successColor.opacity(0.14) : theme.tertiaryBackground)
-                    .frame(width: 22, height: 22)
-                if done {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(theme.successColor)
-                } else {
-                    Text("\(number)")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                }
-            }
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-            Spacer(minLength: 0)
-        }
+        AgentChannelSetupStepHeader(number: number, title: title, done: done)
     }
 
     private var appConfigurationURL: URL {
@@ -394,7 +376,7 @@ struct SlackSettingsView: View {
             stepHeader(
                 5,
                 L("Send incoming messages to an agent"),
-                done: inboundDispatchEnabled && inboundAgentId != nil
+                done: inboundDispatchEnabled && (inboundAgentId != nil || !inboundRoutes.isEmpty)
             )
 
             SettingsToggle(
@@ -406,7 +388,12 @@ struct SlackSettingsView: View {
             )
 
             if inboundDispatchEnabled {
-                inboundAgentPicker
+                AgentChannelDispatchRoutingEditor(
+                    roomNoun: L("channel"),
+                    rooms: routableRooms,
+                    defaultAgentId: $inboundAgentId,
+                    routes: $inboundRoutes
+                )
                 SettingsToggle(
                     title: L("Require an @mention"),
                     description: L("Start new Slack conversations only when the bot is mentioned."),
@@ -513,19 +500,18 @@ struct SlackSettingsView: View {
         }
     }
 
-    private var inboundAgentPicker: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Agent", bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-            Picker("", selection: $inboundAgentId) {
-                Text("Select an agent", bundle: .module).tag(UUID?.none)
-                ForEach(agentManager.agents.filter { !$0.isBuiltIn }) { agent in
-                    Text(agent.name).tag(Optional(agent.id))
-                }
+    /// Discovered conversations mapped into the shared routing editor's
+    /// room shape, member channels first.
+    private var routableRooms: [AgentChannelRoutableRoom] {
+        guard let discovery else { return [] }
+        return discovery.conversations
+            .sorted { ($0.isMember ? 0 : 1, $0.name ?? $0.id) < ($1.isMember ? 0 : 1, $1.name ?? $1.id) }
+            .map { conversation in
+                AgentChannelRoutableRoom(
+                    id: conversation.id,
+                    name: conversation.name.map { "#\($0)" } ?? conversation.id
+                )
             }
-            .labelsHidden()
-        }
     }
 
     private var advancedSection: some View {
@@ -915,6 +901,7 @@ struct SlackSettingsView: View {
         defaultReadLimit = "\(configuration.defaultReadLimit)"
         inboundDispatchEnabled = configuration.inboundDispatch.enabled
         inboundAgentId = configuration.inboundDispatch.targetAgentId
+        inboundRoutes = configuration.inboundDispatch.routes
         inboundRequireMention = configuration.inboundDispatch.requireMention
         inboundContinueThreads = configuration.inboundDispatch.continueThreads
         inboundAutoReplyEnabled = configuration.inboundDispatch.autoReplyEnabled
@@ -1117,6 +1104,7 @@ struct SlackSettingsView: View {
             inboundDispatch: AgentChannelInboundDispatchConfiguration(
                 enabled: inboundDispatchEnabled,
                 targetAgentId: inboundAgentId,
+                routes: inboundRoutes,
                 requireMention: inboundRequireMention,
                 continueThreads: inboundContinueThreads,
                 autoReplyEnabled: inboundAutoReplyEnabled
@@ -1379,8 +1367,8 @@ struct SlackSettingsView: View {
         guard Int(defaultReadLimit) != nil else {
             return L("Default Read Limit must be a number from 1 to 100.")
         }
-        if inboundDispatchEnabled, inboundAgentId == nil {
-            return L("Select an agent for incoming Slack messages.")
+        if inboundDispatchEnabled, inboundAgentId == nil, inboundRoutes.isEmpty {
+            return L("Select a default agent or add a routing rule for incoming Slack messages.")
         }
         if inboundDispatchEnabled, inboundAutoReplyEnabled {
             guard writeEnabled else {

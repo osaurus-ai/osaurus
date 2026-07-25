@@ -402,6 +402,7 @@ final class TelegramConnectionService: @unchecked Sendable {
     private let credentialStore: any TelegramCredentialStorage
     private let messageStore: AgentChannelMessageStore?
     private let recordMessageSnapshotsInline: Bool
+    private let activityCenter: AgentChannelInboundActivityCenter
     private let sendGate = TelegramPerChatSendGate()
     private let botIdentityLock = NSLock()
     private var cachedBotId: Int64?
@@ -410,12 +411,14 @@ final class TelegramConnectionService: @unchecked Sendable {
         client: TelegramAPIClientProtocol,
         credentialStore: any TelegramCredentialStorage = KeychainTelegramCredentialStorage(),
         messageStore: AgentChannelMessageStore? = nil,
-        recordMessageSnapshotsInline: Bool = false
+        recordMessageSnapshotsInline: Bool = false,
+        activityCenter: AgentChannelInboundActivityCenter = .shared
     ) {
         self.client = client
         self.credentialStore = credentialStore
         self.messageStore = messageStore
         self.recordMessageSnapshotsInline = recordMessageSnapshotsInline
+        self.activityCenter = activityCenter
     }
 
     func configuration() -> TelegramConnectionConfiguration {
@@ -1019,8 +1022,19 @@ final class TelegramConnectionService: @unchecked Sendable {
         for item in pending {
             switch item {
             case .result(let result):
+                await activityCenter.record(
+                    connectionId: Self.connectionId,
+                    providerEventId: result.providerEventId,
+                    stage: .rejected,
+                    reason: result.reason
+                )
                 results.append(result)
             case .event(let event):
+                await activityCenter.record(
+                    connectionId: Self.connectionId,
+                    providerEventId: event.providerEventId,
+                    stage: .received
+                )
                 let authorization = try authorizationService.authorizeInboundMessage(
                     AgentChannelInboundMessageAuthorizationRequest(
                         connectionId: Self.connectionId,
@@ -1042,9 +1056,40 @@ final class TelegramConnectionService: @unchecked Sendable {
                 )
                 if receive.messageInserted { inserted += 1 }
                 if receive.disposition == .accepted {
+                    await activityCenter.record(
+                        connectionId: Self.connectionId,
+                        providerEventId: event.providerEventId,
+                        stage: .stored
+                    )
                     let submission = await relayInboundEvent(event, configuration: config)
                     dispatchAttempted += submission.dispatchAttempted
                     dispatchSuppressed += submission.dispatchSuppressed
+                    switch submission {
+                    case .dispatched(let agentId, let rule):
+                        await activityCenter.record(
+                            connectionId: Self.connectionId,
+                            providerEventId: event.providerEventId,
+                            stage: .dispatched,
+                            reason: await AgentChannelInboundActivityPresentation.dispatchReason(
+                                agentId: agentId,
+                                rule: rule
+                            )
+                        )
+                    case .suppressed(let reason):
+                        await activityCenter.record(
+                            connectionId: Self.connectionId,
+                            providerEventId: event.providerEventId,
+                            stage: .dispatchSuppressed,
+                            reason: reason
+                        )
+                    }
+                } else {
+                    await activityCenter.record(
+                        connectionId: Self.connectionId,
+                        providerEventId: event.providerEventId,
+                        stage: .rejected,
+                        reason: receive.authorizationReason
+                    )
                 }
                 results.append(
                     TelegramReceiveResult(

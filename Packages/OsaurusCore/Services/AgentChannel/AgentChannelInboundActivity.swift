@@ -151,8 +151,18 @@ enum AgentChannelInboundActivityPresentation {
         case "duplicate_event", "duplicate_event_acknowledge_without_dispatch",
              "duplicate_message_acknowledge_without_dispatch":
             return L("This event was already processed; the provider redelivered it.")
-        case "not_a_channel_message":
+        case "not_a_channel_message", "update_has_no_message":
             return L("The event was not a plain channel message (edits, joins, and system events are ignored).")
+        case "empty_message_content":
+            return L("The message had no readable text (stickers and media-only messages are ignored).")
+        case "message_too_long":
+            return L("The message exceeded the maximum inbound length and was ignored.")
+        case "self_message_denied", "bot_message_denied":
+            return L("Messages from bot accounts are ignored (see Advanced settings).")
+        case "telegram_mention_detection_unavailable":
+            return L("Telegram dispatch does not support mention gating. Turn off Require an @mention for Telegram.")
+        case "inbound_sender_missing":
+            return L("Telegram did not include a sender for this message, so it cannot be authorized.")
         case "undecodable_envelope":
             return L("The provider sent an envelope Osaurus could not decode.")
         case "mention_required":
@@ -165,13 +175,36 @@ enum AgentChannelInboundActivityPresentation {
             return L("This conversation already has an agent turn in flight; the message will need to be re-sent once it finishes.")
         case "invalid_dispatch_payload":
             return L("The message had no usable content to dispatch.")
+        case "no_route_matched":
+            return L("No routing rule claimed this message and no default agent is set. Add a route for this room or pick a default agent in the channel settings.")
         case "rate_limited":
             return L("Inbound handling is rate limited right now. Wait a moment and try again.")
         default:
+            if stage == .dispatched, let reason, !reason.isEmpty {
+                return reason
+            }
             if stage == .failed, let reason, !reason.isEmpty {
                 return reason
             }
             return nil
+        }
+    }
+
+    /// Human-readable dispatch detail recorded alongside the `dispatched`
+    /// stage: which agent was picked and which routing rule picked it.
+    @MainActor
+    static func dispatchReason(agentId: UUID, rule: String) -> String {
+        let agentName = AgentManager.shared.agent(for: agentId)?.displayName ?? L("Unknown agent")
+        switch rule {
+        case "default":
+            return L("Routed to \(agentName) (default agent)")
+        case let value where value.hasPrefix("alias:"):
+            let alias = String(value.dropFirst("alias:".count))
+            return L("Routed to \(agentName) (name \"\(alias)\")")
+        case let value where value.hasPrefix("room:"):
+            return L("Routed to \(agentName) (room rule)")
+        default:
+            return L("Routed to \(agentName)")
         }
     }
 }

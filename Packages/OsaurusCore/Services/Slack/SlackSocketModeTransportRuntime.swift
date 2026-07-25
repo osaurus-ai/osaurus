@@ -472,11 +472,15 @@ actor SlackSocketModeTransportRuntime {
             )
             submission = await service.relayInboundMessage(normalized)
             switch submission {
-            case .dispatched:
+            case .dispatched(let agentId, let rule):
                 await activityCenter.record(
                     connectionId: AgentChannelConnection.nativeSlackConnectionId,
                     providerEventId: providerEventId,
-                    stage: .dispatched
+                    stage: .dispatched,
+                    reason: AgentChannelInboundActivityPresentation.dispatchReason(
+                        agentId: agentId,
+                        rule: rule
+                    )
                 )
             case .suppressed(let reason):
                 await activityCenter.record(

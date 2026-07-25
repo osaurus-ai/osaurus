@@ -192,6 +192,15 @@ actor AgentChannelTransportSupervisor {
         }
     }
 
+    /// Temporarily stop the Telegram long-poll runtime so another consumer
+    /// (settings discovery issuing its own getUpdates) does not conflict
+    /// with it. Resume with `refreshTelegramRuntime()`.
+    func suspendTelegramRuntime(now: Date = Date()) async {
+        guard telegramStarted else { return }
+        telegramStarted = false
+        await telegramRuntime.stop(now: now)
+    }
+
     func refreshTelegramRuntime(now: Date = Date()) async {
         let configuration = telegramConfiguration()
         if configuration.canStartLongPolling(hasBotToken: telegramHasBotToken()) {

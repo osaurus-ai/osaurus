@@ -32,9 +32,50 @@ struct DiscordConnectionDiagnostics: Equatable, Sendable {
     let configuredGuilds: [DiscordConfiguredGuildDiagnostic]
     let readableChannelIds: [String]
     let writableChannelIds: [String]
+    let senderAllowlist: [String]
     let writeEnabled: Bool
+    let inboundDispatchEnabled: Bool
+    let inboundDispatchIssue: String?
     let status: String
     let failures: [String]
+    let warnings: [String]
+
+    init(
+        tokenSaved: Bool,
+        bot: DiscordBotIdentity?,
+        configuredGuilds: [DiscordConfiguredGuildDiagnostic],
+        readableChannelIds: [String],
+        writableChannelIds: [String],
+        senderAllowlist: [String] = [],
+        writeEnabled: Bool,
+        inboundDispatchEnabled: Bool = false,
+        inboundDispatchIssue: String? = nil,
+        status: String,
+        failures: [String],
+        warnings: [String] = []
+    ) {
+        self.tokenSaved = tokenSaved
+        self.bot = bot
+        self.configuredGuilds = configuredGuilds
+        self.readableChannelIds = readableChannelIds
+        self.writableChannelIds = writableChannelIds
+        self.senderAllowlist = senderAllowlist
+        self.writeEnabled = writeEnabled
+        self.inboundDispatchEnabled = inboundDispatchEnabled
+        self.inboundDispatchIssue = inboundDispatchIssue
+        self.status = status
+        self.failures = failures
+        self.warnings = warnings
+    }
+
+    /// True only when the polling receive path has every prerequisite it
+    /// needs for Discord messages to reach the local Agent Channel inbox.
+    var receiveReady: Bool {
+        tokenSaved
+            && bot != nil
+            && !readableChannelIds.isEmpty
+            && !senderAllowlist.isEmpty
+    }
 
     var dictionary: [String: Any] {
         var result: [String: Any] = [
@@ -42,10 +83,19 @@ struct DiscordConnectionDiagnostics: Equatable, Sendable {
             "configured_guilds": configuredGuilds.map(\.dictionary),
             "readable_channel_ids": readableChannelIds,
             "writable_channel_ids": writableChannelIds,
+            "sender_allowlist": senderAllowlist,
             "write_enabled": writeEnabled,
+            "inbound_dispatch_enabled": inboundDispatchEnabled,
+            "receive_ready": receiveReady,
             "status": status,
             "failures": failures,
         ]
+        if let inboundDispatchIssue {
+            result["inbound_dispatch_issue"] = inboundDispatchIssue
+        }
+        if !warnings.isEmpty {
+            result["warnings"] = warnings
+        }
         if let bot {
             result["bot"] = [
                 "id": bot.id,
@@ -126,6 +176,9 @@ final class DiscordConnectionService: @unchecked Sendable {
     private let credentialStore: any DiscordCredentialStorage
     private let messageStore: AgentChannelMessageStore?
     private let recordMessageSnapshotsInline: Bool
+    private let activityCenter: AgentChannelInboundActivityCenter
+    private let inboundAgentAvailability: @Sendable (UUID) async -> Bool
+    private let runningInstanceCount: @Sendable () -> Int
     private let channelGuildCacheLock = NSLock()
     private var channelGuildCache: (updatedAt: Date, values: [String: String])?
 
@@ -133,12 +186,24 @@ final class DiscordConnectionService: @unchecked Sendable {
         client: DiscordAPIClientProtocol,
         credentialStore: any DiscordCredentialStorage = KeychainDiscordCredentialStorage(),
         messageStore: AgentChannelMessageStore? = nil,
-        recordMessageSnapshotsInline: Bool = false
+        recordMessageSnapshotsInline: Bool = false,
+        activityCenter: AgentChannelInboundActivityCenter = .shared,
+        inboundAgentAvailability: @escaping @Sendable (UUID) async -> Bool = { agentId in
+            await MainActor.run {
+                AgentManager.shared.agent(for: agentId).map { !$0.isBuiltIn } ?? false
+            }
+        },
+        runningInstanceCount: @escaping @Sendable () -> Int = {
+            OsaurusRunningInstanceInspector.runningInstanceCount()
+        }
     ) {
         self.client = client
         self.credentialStore = credentialStore
         self.messageStore = messageStore
         self.recordMessageSnapshotsInline = recordMessageSnapshotsInline
+        self.activityCenter = activityCenter
+        self.inboundAgentAvailability = inboundAgentAvailability
+        self.runningInstanceCount = runningInstanceCount
     }
 
     func configuration() -> DiscordConnectionConfiguration {
@@ -249,6 +314,12 @@ final class DiscordConnectionService: @unchecked Sendable {
             }
             for message in ordered {
                 received += 1
+                let providerEventId = "discord:\(message.id)"
+                await activityCenter.record(
+                    connectionId: Self.nativeConnectionId,
+                    providerEventId: providerEventId,
+                    stage: .received
+                )
                 let authorizationService = AgentChannelConnectionService(
                     discordService: self,
                     slackService: .shared,
@@ -257,7 +328,7 @@ final class DiscordConnectionService: @unchecked Sendable {
                 let authorization = try authorizationService.authorizeInboundMessage(
                     AgentChannelInboundMessageAuthorizationRequest(
                         connectionId: Self.nativeConnectionId,
-                        providerEventId: "discord:\(message.id)",
+                        providerEventId: providerEventId,
                         providerMessageId: message.id,
                         spaceId: channelGuildIds[channelId],
                         roomId: channelId,
@@ -274,7 +345,7 @@ final class DiscordConnectionService: @unchecked Sendable {
                 )
                 let result = try messageStore.recordReceiveEvent(
                     connectionId: Self.nativeConnectionId,
-                    providerEventId: "discord:\(message.id)",
+                    providerEventId: providerEventId,
                     authorization: authorization,
                     message: storedMessage,
                     cursor: message.id
@@ -285,6 +356,20 @@ final class DiscordConnectionService: @unchecked Sendable {
                     cursor: message.id
                 )
                 if result.messageInserted { stored += 1 }
+                if result.disposition != .accepted {
+                    await activityCenter.record(
+                        connectionId: Self.nativeConnectionId,
+                        providerEventId: providerEventId,
+                        stage: .rejected,
+                        reason: result.authorizationReason
+                    )
+                } else {
+                    await activityCenter.record(
+                        connectionId: Self.nativeConnectionId,
+                        providerEventId: providerEventId,
+                        stage: .stored
+                    )
+                }
                 guard result.shouldDispatch else {
                     dispatchSuppressed += 1
                     continue
@@ -292,6 +377,25 @@ final class DiscordConnectionService: @unchecked Sendable {
                 let relay = await relayInboundMessage(message, botId: bot.id, config: config)
                 dispatchAttempted += relay.dispatchAttempted
                 dispatchSuppressed += relay.dispatchSuppressed
+                switch relay {
+                case .dispatched(let agentId, let rule):
+                    await activityCenter.record(
+                        connectionId: Self.nativeConnectionId,
+                        providerEventId: providerEventId,
+                        stage: .dispatched,
+                        reason: await AgentChannelInboundActivityPresentation.dispatchReason(
+                            agentId: agentId,
+                            rule: rule
+                        )
+                    )
+                case .suppressed(let reason):
+                    await activityCenter.record(
+                        connectionId: Self.nativeConnectionId,
+                        providerEventId: providerEventId,
+                        stage: .dispatchSuppressed,
+                        reason: reason
+                    )
+                }
             }
         }
         return DiscordReceiveBatchResult(
@@ -403,13 +507,16 @@ final class DiscordConnectionService: @unchecked Sendable {
                 configuredGuilds: [],
                 readableChannelIds: config.readableChannelIds,
                 writableChannelIds: config.writableChannelIds,
+                senderAllowlist: config.senderAllowlist,
                 writeEnabled: config.writeEnabled,
+                inboundDispatchEnabled: config.inboundDispatch.enabled,
                 status: "not_configured",
                 failures: ["No Discord bot token is saved."]
             )
         }
 
         var failures: [String] = []
+        var warnings: [String] = []
         let bot: DiscordBotIdentity?
         do {
             bot = try await client.currentUser(token: token)
@@ -442,6 +549,36 @@ final class DiscordConnectionService: @unchecked Sendable {
             }
         }
 
+        var inboundDispatchIssue: String?
+        if config.inboundDispatch.enabled {
+            let referencedAgents = config.inboundDispatch.referencedAgentIds
+            if referencedAgents.isEmpty {
+                inboundDispatchIssue = "inbound_agent_not_selected"
+                failures.append(
+                    "Inbound dispatch is enabled but no agent is selected for incoming Discord messages."
+                )
+            } else {
+                for agentId in referencedAgents where await !inboundAgentAvailability(agentId) {
+                    inboundDispatchIssue = "inbound_agent_unavailable"
+                    failures.append(
+                        "Inbound dispatch is enabled but a routed agent no longer exists. Update the routing rules in Discord settings."
+                    )
+                    break
+                }
+            }
+            if config.senderAllowlist.isEmpty {
+                failures.append(
+                    "Inbound dispatch is enabled but no authorized Discord senders are allowlisted, so nothing will be received."
+                )
+            }
+        }
+
+        if let duplicateWarning = OsaurusRunningInstanceInspector.duplicateInstanceWarning(
+            instanceCount: runningInstanceCount()
+        ) {
+            warnings.append(duplicateWarning)
+        }
+
         let status: String
         if bot == nil {
             status = "token_invalid_or_unavailable"
@@ -461,9 +598,13 @@ final class DiscordConnectionService: @unchecked Sendable {
             configuredGuilds: guildRows,
             readableChannelIds: config.readableChannelIds,
             writableChannelIds: config.writableChannelIds,
+            senderAllowlist: config.senderAllowlist,
             writeEnabled: config.writeEnabled,
+            inboundDispatchEnabled: config.inboundDispatch.enabled,
+            inboundDispatchIssue: inboundDispatchIssue,
             status: status,
-            failures: failures
+            failures: failures,
+            warnings: warnings
         )
     }
 

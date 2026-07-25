@@ -44,15 +44,19 @@ struct AgentChannelInboundRelayRequest: Sendable {
 }
 
 enum AgentChannelInboundRelaySubmission: Equatable, Sendable {
-    case dispatched
+    /// The message was handed to `agentId`; `rule` is the matched routing
+    /// rule ("alias:<alias>", "room:<roomId>", or "default") for telemetry.
+    case dispatched(agentId: UUID, rule: String)
     case suppressed(String)
 
     var dispatchAttempted: Int {
-        self == .dispatched ? 1 : 0
+        if case .dispatched = self { return 1 }
+        return 0
     }
 
     var dispatchSuppressed: Int {
-        self == .dispatched ? 0 : 1
+        if case .dispatched = self { return 0 }
+        return 1
     }
 }
 
@@ -86,13 +90,21 @@ final class AgentChannelInboundRelay {
         guard request.settings.enabled else {
             return .suppressed("inbound_dispatch_disabled")
         }
-        guard let agentId = request.settings.targetAgentId,
-              let agent = AgentManager.shared.agent(for: agentId),
+        guard let resolution = AgentChannelDispatchRouter.resolve(
+            settings: request.settings,
+            roomId: request.providerRoute.conversationId,
+            content: request.content
+        ) else {
+            return .suppressed("no_route_matched")
+        }
+        let agentId = resolution.agentId
+        guard let agent = AgentManager.shared.agent(for: agentId),
               !agent.isBuiltIn
         else {
             return .suppressed("inbound_agent_unavailable")
         }
-        guard (!request.content.isEmpty || !request.attachments.isEmpty),
+        let content = resolution.content
+        guard (!content.isEmpty || !request.attachments.isEmpty),
               !request.connectionId.isEmpty,
               !request.providerEventId.isEmpty,
               !request.providerRoute.conversationId.isEmpty
@@ -113,7 +125,7 @@ final class AgentChannelInboundRelay {
             ChannelRemoteSafetyRequest(
                 identity: request.identity,
                 action: .dispatch,
-                content: request.content,
+                content: content,
                 taskId: request.providerEventId
             )
         )
@@ -138,7 +150,7 @@ final class AgentChannelInboundRelay {
         }
 
         let prompt = ChannelRemoteSafetyGate.wrapUntrustedContent(
-            request.content + Self.attachmentContext(request.attachments),
+            content + Self.attachmentContext(request.attachments),
             source: request.sourceLabel,
             assessment: safety.contentAssessment
         )
@@ -153,6 +165,7 @@ final class AgentChannelInboundRelay {
                 metadata: [
                     "conversation_hash": partition.conversationHash,
                     "external_session_key": partition.externalSessionKey,
+                    "dispatch_rule": resolution.matchedRule,
                 ]
             )
         )
@@ -165,7 +178,7 @@ final class AgentChannelInboundRelay {
                 prompt: prompt
             )
         }
-        return .dispatched
+        return .dispatched(agentId: agentId, rule: resolution.matchedRule)
     }
 
     private func run(
