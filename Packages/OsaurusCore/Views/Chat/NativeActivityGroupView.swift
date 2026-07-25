@@ -169,11 +169,21 @@ final class NativeActivityGroupView: NSView {
         contentContainer.isHidden = !expanded
         separatorView.isHidden = !expanded
 
-        // Expand-all only makes sense while the group is open and at least
-        // one step is still collapsed.
-        expandAllButton.isHidden =
-            !expanded
-            || Self.stepToggleIds(of: children).allSatisfy { expandedIds.contains($0) }
+        // Expand All / Collapse All while the group is open: expand when any
+        // step is still collapsed, collapse once everything is open.
+        let toggleIds = Self.stepToggleIds(of: children)
+        expandAllButton.isHidden = !expanded || toggleIds.isEmpty
+        let allStepsExpanded =
+            !toggleIds.isEmpty && toggleIds.allSatisfy { expandedIds.contains($0) }
+        expandAllButton.title = allStepsExpanded ? L("Collapse All") : L("Expand All")
+        expandAllButton.image = SymbolImageCache.image(
+            allStepsExpanded
+                ? "arrow.down.right.and.arrow.up.left"
+                : "arrow.up.left.and.arrow.down.right",
+            accessibilityDescription: nil, pointSize: 10, weight: .semibold)
+        expandAllButton.toolTip =
+            allStepsExpanded ? L("Collapse all steps") : L("Expand all steps")
+        expandAllButton.setAccessibilityLabel(expandAllButton.toolTip ?? "")
         expandAllButton.contentTintColor = NSColor(theme.tertiaryText)
 
         if expanded {
@@ -631,13 +641,17 @@ final class NativeActivityGroupView: NSView {
         }
     }
 
-    /// Expands every still-collapsed step. Batched: each toggle triggers a
-    /// cell reconfigure + row re-measure, so a run with dozens of steps would
-    /// stutter if expanded in one burst. A few per tick keeps the table
+    /// Expands every still-collapsed step, or — when everything is already
+    /// open — collapses them all. Batched: each toggle triggers a cell
+    /// reconfigure + row re-measure, so a run with dozens of steps would
+    /// stutter if flipped in one burst. A few per tick keeps the table
     /// responsive and reads as a quick top-to-bottom cascade.
     @objc private func expandAllTapped() {
-        let pending = Self.stepToggleIds(of: lastChildren)
-            .filter { !lastExpandedIds.contains($0) }
+        let allIds = Self.stepToggleIds(of: lastChildren)
+        let collapsed = allIds.filter { !lastExpandedIds.contains($0) }
+        // Any collapsed step → expand those; none → collapse everything.
+        let expanding = !collapsed.isEmpty
+        let pending = expanding ? collapsed : allIds
         guard !pending.isEmpty, let toggle = onToggleChild else { return }
 
         expandAllGeneration += 1
@@ -653,9 +667,10 @@ final class NativeActivityGroupView: NSView {
                 guard let self, self.expandAllGeneration == generation, self.isExpanded
                 else { return }
                 // Re-check against the latest expansion state — a step the
-                // user opened (or closed) since the tap must not be toggled
-                // back the other way.
-                for id in batch where !self.lastExpandedIds.contains(id) {
+                // user flipped since the tap must not be toggled back the
+                // other way.
+                for id in batch
+                where self.lastExpandedIds.contains(id) != expanding {
                     toggle(id)
                 }
             }
