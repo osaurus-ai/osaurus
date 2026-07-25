@@ -1,7 +1,7 @@
 # Bonsai SSD-recency emergency gate — 2026-07-24
 
-Status: **PARTIAL — SOURCE TESTS PASS AT THE NEW vMLX SQUASH PIN; THE
-REBUILT EXACT-PIN OSAURUS LIVE UI MATRIX IS PENDING**
+Status: **PARTIAL — EXACT-PIN SOURCE TESTS AND THE SCOPED BONSAI LIVE UI
+LIFECYCLE PASS; FINAL OSAURUS PR-HEAD CI AND MERGE ARE PENDING**
 
 This gate covers the user report:
 
@@ -30,9 +30,11 @@ Gemma 4 QAT, broad parser cleanup, automatic routing, hardware guidance,
 TurboQuant defaults, AppleScript behavior, and unrelated model-family work are
 not part of this emergency diff.
 
-## Current-source owner
+## Published 0.22.10 root-cause baseline
 
-Current engine baseline: vMLX `f50853514ee00365837be3301c91850ca7ed5877`.
+Root-cause baseline: published Osaurus 0.22.10 using vMLX
+`f50853514ee00365837be3301c91850ca7ed5877`. This section preserves the
+pre-fix source trace; it is not the final candidate pin.
 
 The SSD cache advertises oldest/LRU-style quota eviction, but a successful
 read does not update durable recency:
@@ -95,7 +97,7 @@ Observed through the live UI and matched runtime trace:
 This is source-and-live correlation for the eviction root. It is not
 post-fix proof.
 
-## Engine patch checkpoint
+## Historical PR #181 engine checkpoint
 
 Merged vMLX revision:
 `c6a2b4d05bec0958146d26fd351782b2fc3e2b13` (squashed from the
@@ -115,7 +117,7 @@ The patch:
   paths do not receive the new stable-checkpoint touch;
 - keeps KV and companion eviction atomic.
 
-Current source-test evidence:
+Historical PR #181 source-test evidence:
 
 - the final retained-restore LRU rows: 3/3 passed;
 - all tests in `DiskCacheTests.swift` at the preceding recency checkpoint:
@@ -124,10 +126,10 @@ Current source-test evidence:
   sites compiled successfully;
 - `git diff --check`: passed.
 
-These are focused source tests. The matching isolated Release Osaurus UI
-evidence is recorded below.
+These are focused source tests. The matching historical PR #181 isolated
+Release Osaurus UI evidence is recorded below.
 
-## Separate lifecycle patch checkpoint
+## First lifecycle checkpoint
 
 The published-app trace also exposed a distinct chat-lifecycle race; it is not
 being conflated with SSD eviction:
@@ -148,7 +150,7 @@ handshake as composer activity, preserves a reentrant draft in the existing
 single-slot queue, and clears that queue plus one-off skill state when loading
 another chat.
 
-Focused current-source evidence:
+Focused historical candidate evidence:
 
 - `ChatSessionStopTests`: 13/13 passed, 0 failed or skipped;
 - the suite includes a cancellation-ignoring handshake, an old-chat queued
@@ -159,8 +161,9 @@ Focused current-source evidence:
   scheduled warm-up;
 - `git diff --check`: passed.
 
-The Stop -> New Chat lifecycle race is also covered by the matching isolated
-Release Osaurus UI evidence below.
+The historical isolated Release Osaurus UI evidence below exercised a
+Stop -> New Chat path, but it predates the separate reset-retirement barrier
+added to the final candidate.
 
 Separately, cache persistence remains synchronous after the final visible model
 delta and before terminal stream metadata. Existing traces can localize a
@@ -209,11 +212,189 @@ Current source-test evidence:
 The Osaurus controller now invalidates the suspended switch epoch, cancels
 scheduled/switch/warm-up work, keeps active tasks tracked until they actually
 unwind, and refuses a cancelled engine completion permission to write `.warm`.
-This is source/test evidence only until the exact
-`7545ba66bf1060694ca4516cdf18768fef4b7c47` Release app completes the live
-Stop/new-chat/tool/cache matrix below.
+This was source/test evidence for the intermediate
+`7545ba66bf1060694ca4516cdf18768fef4b7c47` candidate. It was superseded by
+the final accepted-only engine checkpoint and reset-retirement barrier below.
 
-## Post-fix isolated Release UI proof
+## Final accepted-only engine checkpoint
+
+vMLX PR #183 was squash-merged as
+`da2872b07c33bd138f3217eb1760385b8cda259a`
+(`Count only accepted hybrid cache restores`). It supersedes the intermediate
+PR #182 pin `7545ba66bf1060694ca4516cdf18768fef4b7c47`.
+
+The final source makes cache hit accounting and durable recency conditional on
+an accepted restore:
+
+- `DiskCache.fetch` accepts independent `touchRecency` and `countHit` controls.
+  Coordinator candidate reads use both as `false`; deserializing a candidate
+  alone neither refreshes its LRU position nor increments disk-hit telemetry.
+- After architecture-specific validation succeeds, `CacheCoordinator` records
+  one accepted disk hit and refreshes either the dense KV entry or the linked
+  KV-plus-recurrent group with one timestamp.
+- `SSMCompanionDiskStore.fetch` can require a complete companion and reject an
+  incomplete sidecar before tensor deserialization or file-recency changes.
+- `SSMStateCache.fetchEntry` propagates that completeness contract. An
+  incomplete reusable-state lookup does not hydrate L1, increment SSM hits, or
+  make the entry hotter; the attempted lookup remains an honest miss.
+- Both solo `Evaluate` and `BatchEngine` require complete N-1 recurrent seed
+  state before consuming a path-dependent full disk restore.
+
+This does not mean candidate probing emits no telemetry: genuine absent or
+invalid candidates can still count as misses. The corrected contract is that
+only an accepted restore counts as a hit or refreshes eviction recency.
+
+Local source evidence on `a8f88a6c1480cf144b29c0ac73f1a1987cf0b42a`,
+whose Git tree is identical to final squash `da2872b`, recorded:
+
+- deterministic rejected-candidate RED controls;
+- accepted/rejected restore controls: 3/3 passed;
+- cache-focused selection: 28/28 passed;
+- `DiskCacheTests`: 17/17 passed;
+- `MLXLMCommon` build completed;
+- `git diff --check` passed.
+
+GitHub CI must not be described as green: all four PR #183 Build and Test jobs
+were `SKIPPED`.
+
+## Separate reset retirement barrier
+
+This lifecycle root is distinct from SSD eviction and from the earlier
+post-Stop warm-state fix.
+
+The earlier controller retained cancelled switch and warm-up tasks until they
+unwound. `ChatSession.reset()`, however, cancelled those tasks and then cleared
+the controller's active task slots. If an engine ignored cooperative
+cancellation while still holding the generation lease, New Chat lost the
+reference needed to drain that old owner. An immediate follow-up could then
+race the old lease, remain queued, or observe an unload/load decision made
+while the prior generation still existed.
+
+The current candidate moves cancelled switch/warm-up work into a separate
+`retiringWork` barrier before clearing the current-chat slots. New work can be
+scheduled for the incoming chat, but every runtime-touching switch, warm-up,
+and pre-send handshake waits for the retired owner to unwind first.
+`needsPreSendHandshake` remains true during that drain.
+
+Adversarial review then found a second suspension boundary before a scheduled
+warm-up becomes `inFlightWarmup`: the resident-model preflight actor hop. A
+reset could cancel the scheduled task during that await, after which stale
+work could resume and create a new untracked generation. The final source
+re-checks cancellation and current session eligibility immediately after that
+hop, before consuming user intent or creating the in-flight generation.
+
+The deterministic regression test performs:
+
+1. a cancellation-ignoring warm-up that owns the engine;
+2. a send waiting on that warm-up;
+3. Stop followed by reset/New Chat;
+4. an immediate follow-up send;
+5. proof that no fresh request dispatches before the old gate releases;
+6. proof that exactly one fresh request dispatches afterward, only the incoming
+   user turn remains, and the composer reaches its terminal state.
+
+A separate deterministic row suspends the old scheduled warm-up inside a
+cancellation-ignoring resident-model preflight, resets and completes the
+incoming warm-up, then releases the stale preflight and proves it cannot launch
+a second generation or overwrite the incoming warm state.
+
+These are source-test evidence only. They do not replace the required
+exact-pin live Stop -> New Chat -> follow-up UI row.
+
+## Exact final-pin source checkpoint
+
+All six Osaurus dependency and pin-guard surfaces name
+`da2872b07c33bd138f3217eb1760385b8cda259a`:
+
+- app-project `Package.resolved`;
+- root-workspace `Package.resolved`;
+- `Packages/OsaurusCore/Package.resolved`;
+- `Packages/OsaurusCore/Package.swift`;
+- `ImageGenerationBridgeContractTests`;
+- `RuntimePolicySourceTests`.
+
+The Xcode derived checkout used by the focused run resolves to that exact HEAD.
+
+Artifact:
+
+`/private/tmp/osaurus-bonsai-emergency-da2872-release-derived-20260724/Logs/Test/Test-OsaurusCoreTests-2026.07.24_17-57-15--0700.xcresult`
+
+Result:
+
+- `RuntimePolicySourceTests`: 97/97;
+- `ChatSessionStopTests`: 15/15;
+- `ImageGenerationBridgeContractTests`: 2/2;
+- `ChatWarmupControllerRuntimeResidencyTests`: 3/3;
+- total: 117/117 passed, 0 failed, 0 skipped.
+
+This is a selected focused suite, not the full repository test suite.
+`git diff --check` is clean.
+
+## Exact final-pin scoped Release UI proof
+
+Exact app:
+
+- source checkout:
+  `/private/tmp/osaurus-bonsai-emergency-20260724`;
+- Release app:
+  `/private/tmp/osaurus-bonsai-emergency-da2872-release-derived-20260724/Build/Products/Release/osaurus.app`;
+- isolated bundle identifier:
+  `com.dinoki.osaurus.bonsaida287proof20260724`;
+- isolated root:
+  `/private/tmp/osaurus-bonsai-emergency-da2872-root-20260724`;
+- executable SHA-256:
+  `5035b9d0e4a8f64e628cd9a3cf746d77d6b46c074f2aff8134b664c4dc4a1f8e`;
+- resolved vMLX checkout:
+  `da2872b07c33bd138f3217eb1760385b8cda259a`;
+- runtime trace:
+  `/private/tmp/osaurus-bonsai-emergency-da2872-live-20260724.log`;
+- prefill trace:
+  `/tmp/osaurus-prefill-debug.log`.
+
+The executable was rebuilt after the last lifecycle edit, ad-hoc signed, and
+passed strict deep signature verification. Computer Use then completed fresh
+onboarding and visibly inspected Settings -> Server -> Cache. The fresh
+real-user defaults were:
+
+- Prefix Cache: On;
+- Enable GPU Cache: Off;
+- Disk Cache: On;
+- Disk Cache Size: blank, documented by the UI as the 10 GB engine default;
+- Codec: Engine Selected, with no forced TurboQuant setting;
+- Re-derive SSM State After Generation: On.
+
+Bundle:
+`/Users/eric/models/dealign.ai/Bonsai-27b-Ternary-JANG-CRACK`.
+
+The exact reported lifecycle was exercised through the chat UI:
+
+1. A baseline request visibly completed `BASELINE READY.` at TTFT 0.90 s /
+   30.5 tok/s. The trace accepted disk boundary 3,005 with 19 tokens remaining
+   and `ssm=96`.
+2. A 300-item response restored boundary 3,026 with 38 tokens remaining and
+   visibly entered decode. Stop was pressed after item 50 at 34.7 tok/s.
+   Stop disappeared and the composer unlocked.
+3. New Chat was opened immediately. Its warm-up restored boundary 3,007 with
+   1 token remaining. The immediate user request visibly showed
+   `Prefill 3007/3026`, then completed `RECOVERED AFTER STOP.` at TTFT 0.65 s /
+   29.9 tok/s. Stop disappeared and input unlocked; it never remained in
+   `Queued 0/N`, `Prefill 0/N`, or a yellow spinner.
+4. The app was quit and relaunched from the same exact executable and isolated
+   root. The new process restored boundary 3,007 with 1 token remaining during
+   warm-up and boundary 3,019 with 7 tokens remaining for the repeated user
+   request, both with `ssm=96`. `RECOVERED AFTER STOP.` visibly completed at
+   TTFT 0.54 s / 31.0 tok/s, with Stop gone and the composer unlocked.
+
+Every corresponding paged-store trace reported
+`effectiveKVLayers=0 blocks=0 payload=false`, while disk stores and accepted
+disk hits were present. The new-chat and process-restart restores therefore
+came from the enabled SSD tier, not a hidden GPU-paged payload.
+
+This exact-final-pin live gate is deliberately scoped to the reported Bonsai
+Stop -> New Chat -> restart regression. The broader family/parser/media matrix
+remains separate follow-up work and is not claimed by this emergency proof.
+
+## Historical PR #181 isolated Release UI proof
 
 Exact app:
 
@@ -281,14 +462,14 @@ companion offsets. The 1.5 GB disk quota also evicted complete KV/companion
 groups during the run without leaving a permanently yellow `Queued 0/N` or
 `Prefill 0/N` state.
 
-## Exact final-squash-pin smoke
+## Historical PR #181 squash-pin smoke
 
 After vMLX PR #181 was squash-merged, all Osaurus dependency and pin-guard
 surfaces were changed to the resulting commit
 `c6a2b4d05bec0958146d26fd351782b2fc3e2b13`. Xcode resolved that exact
 checkout and built the Release app again.
 
-Exact final-pin app:
+Historical PR #181 squash-pin app:
 
 - app:
   `/private/tmp/osaurus-bonsai-final-c6a2b4d-oldid-app/osaurus.app`;
@@ -301,7 +482,8 @@ Exact final-pin app:
 - runtime trace:
   `/private/tmp/osaurus-bonsai-final-c6a2b4d-oldid-live-20260724.log`.
 
-Computer Use visibly re-read the effective cache settings in that exact app:
+Computer Use visibly re-read the effective cache settings in that historical
+candidate app:
 Prefix Cache On, Enable GPU Cache Off, Disk Cache On, 1.5 GB, Codec Engine
 Selected, and SSM re-derive On.
 
@@ -336,9 +518,10 @@ subsequent rows then proved the intended current-configuration path:
   separate Bonsai 1-bit UI row.
 - Failed-tool recovery and broad tool/parser behavior remain separate campaign
   rows; they are not claimed by this cache/lifecycle diff.
-- Osaurus is pinned to and was rebuilt/smoke-tested against the final vMLX
-  squash commit `c6a2b4d05bec0958146d26fd351782b2fc3e2b13`; Osaurus CI is still
-  required before merge.
+- The current Osaurus candidate is pinned to vMLX
+  `da2872b07c33bd138f3217eb1760385b8cda259a`, but the historical UI evidence
+  above only covers `7aa4271`/`c6a2b4d`. Exact-`da2872b` Computer Use proof and
+  final-head Osaurus CI are still required before merge.
 
 No image files are to be added to Git history or a pull request. Local
 screenshots may be used only for operator inspection.

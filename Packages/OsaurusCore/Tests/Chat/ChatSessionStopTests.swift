@@ -273,6 +273,62 @@ struct ChatSessionStopTests {
     }
 
     @Test
+    func resetRetainsCancelledWarmupAsDrainBarrierForImmediateFollowUp() async throws {
+        try await ChatHistoryTestStorage.run {
+            var chatConfig = ChatConfigurationStore.load()
+            chatConfig.warmModelsOnLoad = true
+            ChatConfigurationStore.save(chatConfig)
+
+            let session = ChatSession()
+            let controller = session.warmupController
+            controller.projectedLoadFeasibility = { _ in nil }
+            let gate = IgnoringCancellationHandshakeGate()
+            let warmupEngine = CancellationIgnoringWarmupEngine(gate: gate)
+            let warmupSession = IncomingWarmupSession(engine: warmupEngine)
+            let regularEngine = PreSendHandshakeRecordingEngine()
+            session.chatEngineFactory = { _ in regularEngine }
+            session.forceChatEngineRouteForTests = true
+
+            controller.scheduleWarmup(session: warmupSession, debounce: .zero)
+            try await waitUntilAsync(timeout: Self.asyncTimeout) {
+                let started = await gate.started
+                let requestCount = await warmupEngine.requestCount
+                return started && requestCount == 1
+            }
+
+            session.send("outgoing turn waiting on warm-up")
+            #expect(session.isSendActiveForComposer)
+            session.stop()
+            session.reset()
+
+            // New Chat must not detach the cancelled warm-up from the
+            // controller while its engine still owns the generation lease.
+            #expect(controller.needsPreSendHandshake)
+
+            session.send("fresh new-chat follow-up")
+            #expect(session.isSendActiveForComposer)
+            try await Task.sleep(for: .milliseconds(100))
+
+            #expect(await warmupEngine.requestCount == 1)
+            #expect(await regularEngine.regularRequestCount == 0)
+
+            await gate.release()
+
+            try await waitUntil(timeout: Self.asyncTimeout) {
+                session.isSendActiveForComposer == false
+            }
+
+            #expect(!controller.needsPreSendHandshake)
+            #expect(
+                session.turns.filter { $0.role == .user }.map(\.content)
+                    == ["fresh new-chat follow-up"]
+            )
+            #expect(await warmupEngine.requestCount == 1)
+            #expect(await regularEngine.regularRequestCount == 1)
+        }
+    }
+
+    @Test
     func sessionLoad_doesNotAppendTurnCapturedByPreviousHandshake() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()

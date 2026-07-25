@@ -498,6 +498,13 @@ final class ChatSession: ObservableObject {
     var chatEngineFactory: @MainActor (InferenceSource) -> ChatEngineProtocol = {
         ChatEngine(source: $0)
     }
+    #if DEBUG
+        /// Keeps ChatSession lifecycle tests independent of whichever local
+        /// image bundle the developer machine happens to expose through the
+        /// shared picker cache. Those tests inject a chat engine and must not
+        /// be silently diverted into a machine-local image generation path.
+        var forceChatEngineRouteForTests = false
+    #endif
     // nonisolated(unsafe) allows deinit to access these for cleanup
     nonisolated(unsafe) private var remoteModelsObserver: NSObjectProtocol?
     nonisolated(unsafe) private var modelSelectionCancellable: AnyCancellable?
@@ -1819,6 +1826,8 @@ final class ChatSession: ObservableObject {
     private static func prepareForSendWarmup(
         using warmupController: ChatWarmupController
     ) async -> Bool {
+        await warmupController.awaitRetiringWork()
+        guard !Task.isCancelled else { return false }
         await warmupController.awaitActiveModelSwitch()
         // Stop/reset/session-load may cancel this outer handshake while the
         // model switch is suspended. The controller is reused by the incoming
@@ -3924,6 +3933,9 @@ final class ChatSession: ObservableObject {
     /// True when `id` names an on-device image-generation model in the picker
     /// catalog. Drives the image-vs-LLM branch in `send`.
     func isImageGenerationModel(_ id: String?) -> Bool {
+        #if DEBUG
+            if forceChatEngineRouteForTests { return false }
+        #endif
         guard let id, !id.isEmpty else { return false }
         return ModelPickerItemCache.shared.items.contains {
             $0.id == id && $0.source.isImageGeneration
