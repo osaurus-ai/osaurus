@@ -159,6 +159,9 @@ final class NativeActivityGroupView: NSView {
         )
 
         let isSameBlock = configuredBlockId == blockId
+        // Same-block collapsed → expanded: fade the children in instead of
+        // popping (cell recycling and streaming reconfigures must not fade).
+        let expandTransition = isSameBlock && expanded && !self.isExpanded
         updateChevron(
             expanded: expanded,
             animated: isSameBlock && expanded != self.isExpanded
@@ -200,6 +203,10 @@ final class NativeActivityGroupView: NSView {
             // its markdown/tool layers alive off-screen.
             tearDownChildren()
         }
+
+        // After the children are (re)built — the ripple walks the child
+        // stack, which is empty until configureChildren above has run.
+        if expandTransition { ExpandFade.run(childStack) }
 
         applyHeight()
     }

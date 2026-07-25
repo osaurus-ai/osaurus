@@ -146,6 +146,9 @@ final class NativeThinkingView: NSView {
         charCountLabel.textColor = NSColor(theme.tertiaryText)
 
         let isSameBlock = configuredBlockId == blockId
+        // Same-block collapsed → expanded: fade the reasoning in instead of
+        // popping (cell recycling and streaming reconfigures must not fade).
+        let expandTransition = isSameBlock && isExpanded && !self.isExpanded
         updateChevron(
             expanded: isExpanded,
             animated: isSameBlock && isExpanded != self.isExpanded
@@ -180,6 +183,11 @@ final class NativeThinkingView: NSView {
             )
             mdv.onHeightChanged = { [weak self] in self?.applyHeight() }
         }
+
+        // After the markdown view exists — on a first-ever expand it is only
+        // created above, and a reveal fired before that would find an empty
+        // container and do nothing.
+        if expandTransition { ExpandFade.run(contentContainer) }
 
         applyHeight()
     }
