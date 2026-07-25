@@ -1,6 +1,6 @@
 # Osaurus Runtime Compatibility Campaign — 2026-07-24
 
-Status: **PARTIAL — CURRENT-PIN LIVE UI PROOF IS NOT COMPLETE**
+Status: **PARTIAL — REQUIRED FAMILY MATRIX REMAINS OPEN**
 
 This is the current-source ledger for one coherent Osaurus PR covering three
 ordered lanes:
@@ -45,14 +45,15 @@ to the exact campaign head exercised in the isolated Release app for LFM
 database tools and disk-L2 continuity.
 
 The rebased Osaurus head `2b8466a36f2b87632a376c49d94dabb81ba60bc9`
-was then rebuilt in Release and exercised through the real UI against that
-merged pin. Its current-base Ornith same-model batch, worker disk-L2, parent
-continuation, and follow-up row is recorded below. A subsequent source fix
-removes synchronous model-root discovery from spawned-worker admission, so an
-exact post-fix Release UI rerun is required before the final PR head can be
-called live-proven. The LFM family row remains `PARTIAL` because post-error
-final generations reproducibly ended inside an unclosed reasoning block; the
-rest of the family matrix is still unverified at this pin.
+was rebuilt in Release and exercised through the real UI against that merged
+pin. A subsequent source fix at
+`12be46cf7f2bf70c05b2afad2165b864aed6690c` removed synchronous model-root
+discovery from spawned-worker admission; that exact runtime source was then
+rebuilt in Release and passed the normal same-model batch, follow-up, mid-batch
+Stop, and post-cancel follow-up rows recorded below. The LFM family row remains
+`PARTIAL` because post-error final generations reproducibly ended inside an
+unclosed reasoning block; the rest of the family matrix is still unverified
+at this pin.
 
 ## Round protocol
 
@@ -864,6 +865,55 @@ disappeared, input unlocked, and no reasoning or protocol markup leaked into
 content. This is current-main/merged-pin proof for the tested same-model
 batch and parent/worker disk paths. The later admission-startup source change
 still requires the exact post-fix Release rerun recorded separately below.
+
+### 2026-07-25 exact-12be worker-start and Stop rerun
+
+Exact runtime source
+`12be46cf7f2bf70c05b2afad2165b864aed6690c` was built in Release against
+merged vMLX `d0e1f1a9ef3115b505056b679d6b01d6861f8daa`. The copied product at
+`/private/tmp/osaurus-runtimecompat-final-12be46cf-20260725-0340.app`
+was ad-hoc signed, verified on disk, and launched as
+`com.dinoki.osaurus.runtimecompat7c37de3e20260724` with isolated root
+`/private/tmp/osaurus-runtime-campaign-live-root-7c37de3e-20260724-2225`.
+Computer Use confirmed that the running process came from that exact new app
+path rather than the preceding proof binary.
+
+The real UI visibly selected `JANGQ-AI/Ornith-1.0-9B-JANG_4M`, showed
+Thinking off, and settled the warm status green before the test. One
+two-worker `spawn_batch` then preserved both complete standalone inputs in
+well-formed expanded JSON. The expanded result reported two successes, zero
+failures, `max_parallel=3`, and `handoff=false` for both workers. Worker one
+returned exactly `WORKER-ONE-8241` at 57.2 tok/s with 12 prompt and nine
+completion tokens; worker two returned exactly `WORKER-TWO-8241` at
+39.1 tok/s with the same token counts. Their process cache counters ended at
+one disk hit with 28 misses/four stores and one hit with 30 misses/five stores
+respectively.
+
+The parent restored the 6,662-token disk boundary with 92 remaining and 48 SSM
+states, then restored 6,747 with 535 remaining and 48 SSM states after the
+tool result. It truthfully finalized `PARENT-FINAL-8241` at 1.17-second TTFT,
+30.8 tok/s, and nine tokens. The direct follow-up restored 7,275 tokens with
+43 remaining and 48 SSM states and finalized `FOLLOWUP-FINAL-8241` at
+0.67-second TTFT, 54.3 tok/s, and ten tokens. Both turns had no reasoning
+deltas with Thinking off, no protocol leakage, settled cards, disappearing
+Stop controls, and unlocked input.
+
+The Stop row used two deliberately long same-model worker instructions. The
+first worker generated 893 completion tokens at 36 tok/s. The second worker
+then restored the compatible 90-token disk boundary with seven remaining and
+48 SSM states. Pressing the visible Stop control cancelled that worker; its
+producer emitted `Consumer cancelled - stopping producer task` and terminated
+in 0.50 seconds. The expanded batch result honestly reported one success and
+one failure, with the failed worker message:
+`Subagent 'JANGQ-AI/Ornith-1.0-9B-JANG_4M' was cancelled with the parent run.`
+The card settled, Stop disappeared, and input unlocked.
+
+A post-cancel turn remained usable. It restored the 7,387-token parent boundary
+with 1,339 remaining and 48 SSM states, returned exactly
+`AFTER-STOP-8241`, and finalized at 2.40-second TTFT and 29.2 tok/s. This
+closes the reproduced worker-admission starvation/Stop row without increasing
+timeouts or hiding a failure. It is not a claim that every model family,
+remote provider, or paged-RAM configuration has completed the broader matrix.
 
 ## Per-turn live gate
 
