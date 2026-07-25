@@ -212,9 +212,11 @@ final class NativeThinkingView: NSView {
         layer?.masksToBounds = false
         layer?.backgroundColor = NSColor.clear.cgColor
 
-        // header button in back - transparent overlay covering the header row for click handling
+        // transparent overlay covering the header row for click handling;
+        // re-ordered to the front once all header views exist (see below)
         headerButton.translatesAutoresizingMaskIntoConstraints = false
         headerButton.title = ""; headerButton.isBordered = false; headerButton.bezelStyle = .inline
+        headerButton.isTransparent = true
         headerButton.target = self; headerButton.action = #selector(headerTapped)
         addSubview(headerButton)
 
@@ -318,8 +320,10 @@ final class NativeThinkingView: NSView {
             contentContainer.topAnchor.constraint(equalTo: separatorView.bottomAnchor, constant: 8),
         ])
 
-        // keep the transparent header control behind expanded content so it cannot steal clicks
-        addSubview(headerButton, positioned: .below, relativeTo: nil)
+        // Front of Z-order so the title and count labels cannot swallow header
+        // clicks. The button is pinned to the 44pt header row, so it never
+        // overlaps expanded content below.
+        addSubview(headerButton, positioned: .above, relativeTo: nil)
     }
 
     private func ensureMarkdownView() -> NativeMarkdownView {
