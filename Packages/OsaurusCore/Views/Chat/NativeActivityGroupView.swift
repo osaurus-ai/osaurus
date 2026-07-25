@@ -33,6 +33,9 @@ final class NativeActivityGroupView: NSView {
     /// Signature of the currently built chips so per-token reconfigures
     /// don't tear down and rebuild identical circles.
     private var stepChipsSignature: String?
+    /// Shown while the group is expanded — expands every step inside the
+    /// group (in batches, see `expandAllTapped`).
+    private let expandAllButton = NSButton()
     private let chevronView = NSImageView()
     private let separatorView = NSView()
     private let contentContainer = NSView()
@@ -53,6 +56,13 @@ final class NativeActivityGroupView: NSView {
     /// streaming appends don't rebuild (and re-animate) existing children.
     private var childViews: [String: NSView] = [:]
     private var childOrder: [String] = []
+    /// Last configured children/expansion — the expand-all action needs the
+    /// per-step toggle ids and which of them are still collapsed.
+    private var lastChildren: [ContentBlock] = []
+    private var lastExpandedIds: Set<String> = []
+    private var onToggleChild: ((String) -> Void)?
+    /// Invalidates in-flight expand-all batches on collapse/teardown.
+    private var expandAllGeneration = 0
 
     // MARK: Callbacks
 
@@ -91,7 +101,10 @@ final class NativeActivityGroupView: NSView {
     ) {
         self.onToggle = onToggle
         self.onHeightChanged = onHeightChanged
+        self.onToggleChild = onToggleChild
         self.currentWidth = width
+        self.lastChildren = children
+        self.lastExpandedIds = expandedIds
 
         let tint = NSColor(theme.primaryText)
         let titleFont = NSFont.systemFont(ofSize: CGFloat(theme.captionSize), weight: .semibold)
@@ -155,6 +168,13 @@ final class NativeActivityGroupView: NSView {
 
         contentContainer.isHidden = !expanded
         separatorView.isHidden = !expanded
+
+        // Expand-all only makes sense while the group is open and at least
+        // one step is still collapsed.
+        expandAllButton.isHidden =
+            !expanded
+            || Self.stepToggleIds(of: children).allSatisfy { expandedIds.contains($0) }
+        expandAllButton.contentTintColor = NSColor(theme.tertiaryText)
 
         if expanded {
             configureChildren(
@@ -423,6 +443,8 @@ final class NativeActivityGroupView: NSView {
     }
 
     private func tearDownChildren() {
+        // Collapsing the group cancels any in-flight expand-all batches.
+        expandAllGeneration += 1
         for v in childStack.arrangedSubviews {
             childStack.removeArrangedSubview(v)
             v.removeFromSuperview()
@@ -483,6 +505,21 @@ final class NativeActivityGroupView: NSView {
         stepCountLabel.translatesAutoresizingMaskIntoConstraints = false
         stepCountLabel.isEditable = false; stepCountLabel.isBordered = false
         stepCountLabel.drawsBackground = false
+
+        expandAllButton.translatesAutoresizingMaskIntoConstraints = false
+        expandAllButton.image = SymbolImageCache.image(
+            "arrow.up.left.and.arrow.down.right", accessibilityDescription: nil,
+            pointSize: 10, weight: .semibold)
+        expandAllButton.imagePosition = .imageOnly
+        expandAllButton.isBordered = false
+        expandAllButton.focusRingType = .none
+        expandAllButton.contentTintColor = .tertiaryLabelColor
+        expandAllButton.toolTip = L("Expand all steps")
+        expandAllButton.setAccessibilityLabel(L("Expand all steps"))
+        expandAllButton.target = self
+        expandAllButton.action = #selector(expandAllTapped)
+        expandAllButton.isHidden = true
+        addSubview(expandAllButton)
 
         chevronView.translatesAutoresizingMaskIntoConstraints = false
         chevronView.wantsLayer = true
@@ -545,6 +582,12 @@ final class NativeActivityGroupView: NSView {
             stepChipsStack.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -8),
             stepChipsStack.centerYAnchor.constraint(equalTo: chevronView.centerYAnchor),
 
+            // Occupies the chips' slot — chips show collapsed, this shows expanded.
+            expandAllButton.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -8),
+            expandAllButton.centerYAnchor.constraint(equalTo: chevronView.centerYAnchor),
+            expandAllButton.widthAnchor.constraint(equalToConstant: 20),
+            expandAllButton.heightAnchor.constraint(equalToConstant: 20),
+
             separatorView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             separatorView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             separatorView.topAnchor.constraint(equalTo: topAnchor, constant: headerH),
@@ -568,6 +611,54 @@ final class NativeActivityGroupView: NSView {
         // area. Transparent, and only 44pt tall, so it never paints over or
         // intercepts the expanded children below.
         addSubview(headerButton, positioned: .above, relativeTo: nil)
+        // The expand-all control must sit above the transparent header
+        // overlay or its clicks would toggle the group instead.
+        addSubview(expandAllButton, positioned: .above, relativeTo: headerButton)
+    }
+
+    // MARK: - Expand all
+
+    /// Toggle ids of every step in the group, in display order: a thinking
+    /// child expands by its block id, a tool-call child by each call id.
+    private static func stepToggleIds(of children: [ContentBlock]) -> [String] {
+        children.flatMap { child -> [String] in
+            switch child.kind {
+            case .thinking: return [child.id]
+            case let .toolCallGroup(calls): return calls.map { $0.call.id }
+            default: return []
+            }
+        }
+    }
+
+    /// Expands every still-collapsed step. Batched: each toggle triggers a
+    /// cell reconfigure + row re-measure, so a run with dozens of steps would
+    /// stutter if expanded in one burst. A few per tick keeps the table
+    /// responsive and reads as a quick top-to-bottom cascade.
+    @objc private func expandAllTapped() {
+        let pending = Self.stepToggleIds(of: lastChildren)
+            .filter { !lastExpandedIds.contains($0) }
+        guard !pending.isEmpty, let toggle = onToggleChild else { return }
+
+        expandAllGeneration += 1
+        let generation = expandAllGeneration
+        let batchSize = 3
+        let batchInterval = 0.12
+
+        for (batchIndex, start) in stride(from: 0, to: pending.count, by: batchSize).enumerated() {
+            let batch = Array(pending[start ..< min(start + batchSize, pending.count)])
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + batchInterval * Double(batchIndex)
+            ) { [weak self] in
+                guard let self, self.expandAllGeneration == generation, self.isExpanded
+                else { return }
+                // Re-check against the latest expansion state — a step the
+                // user opened (or closed) since the tap must not be toggled
+                // back the other way.
+                for id in batch where !self.lastExpandedIds.contains(id) {
+                    toggle(id)
+                }
+            }
+        }
     }
 
     private func updateChevron(expanded: Bool, animated: Bool) {
