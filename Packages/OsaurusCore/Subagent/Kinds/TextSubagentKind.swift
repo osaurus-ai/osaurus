@@ -88,6 +88,12 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// consumed by `makeHandoff()`. `.none` when no swap is needed.
     private var residencyPlan: ResidencyPlan = .none
 
+    /// Batch scheduler inspection after `resolveModel`: lets the outer
+    /// reject-before-load phase aggregate RAM requirements and choose one
+    /// shared handoff for a canonical local-model group. Internal only; the
+    /// public spawn contract remains the resolved model + result envelope.
+    var preparedResidencyPlan: ResidencyPlan { residencyPlan }
+
     /// `spawn_agent` entry point (agent context). The optional `modelOverride`
     /// is the eval seam.
     init(agentName: String, input: String, modelOverride: String? = nil) {
