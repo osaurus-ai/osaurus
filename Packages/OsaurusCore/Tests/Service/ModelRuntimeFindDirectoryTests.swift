@@ -171,6 +171,43 @@ struct ModelRuntimeFindDirectoryTests {
         #expect(topology >= 512 * 1024 * 1024)
     }
 
+    @Test("Architecture KV RAM preflight uses the resolved retention policy")
+    func architectureKVHeadroomUsesResolvedRetentionCap() throws {
+        let dir = try makeIsolatedDir()
+        let config = """
+            {
+              "model_type": "qwen3_5",
+              "num_hidden_layers": 48,
+              "num_attention_heads": 32,
+              "num_key_value_heads": 8,
+              "head_dim": 128,
+              "max_position_embeddings": 262144,
+              "torch_dtype": "bfloat16"
+            }
+            """
+        try Data(config.utf8).write(to: dir.appendingPathComponent("config.json"))
+
+        let weights: Int64 = 20 * 1024 * 1024 * 1024
+        let strictCap = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: weights,
+            modelDirectory: dir,
+            kvRetentionCap: 16_384
+        )
+        let safeAutoCap = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: weights,
+            modelDirectory: dir,
+            kvRetentionCap: 65_536
+        )
+        let uncapped = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: weights,
+            modelDirectory: dir,
+            kvRetentionCap: nil
+        )
+
+        #expect(safeAutoCap == strictCap * 4)
+        #expect(uncapped == strictCap * 16)
+    }
+
     @Test("Routed JANGTQ pre-load RAM gate uses MLXPress hot working set")
     func routedJANGTQLoadFootprintUsesCompressionHotSet() throws {
         let dir = try makeIsolatedDir()

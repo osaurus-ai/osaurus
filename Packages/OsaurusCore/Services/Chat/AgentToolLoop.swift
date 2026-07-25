@@ -300,6 +300,17 @@ struct AgentLoopHooks {
 /// window and what's reserved".
 enum AgentLoopBudget {
 
+    enum ContextWindowSource: String, Equatable, Sendable {
+        case foundationFixed
+        case bundleMetadata
+        case metadataFallback
+    }
+
+    struct ContextWindowResolution: Equatable, Sendable {
+        let tokens: Int
+        let source: ContextWindowSource
+    }
+
     /// Model ids that route to the Apple Foundation model, whose context
     /// window is fixed and not described by any `ModelInfo` bundle.
     static let foundationModelIds: Set<String> = ["foundation", "default"]
@@ -321,11 +332,29 @@ enum AgentLoopBudget {
     /// "how big is the window" — the UI uses `resolveContextWindowSync`,
     /// which must stay behavior-identical.
     static func resolveContextWindow(modelId: String) async -> Int {
-        if foundationModelIds.contains(modelId) { return foundationContextWindow }
-        if let info = ModelInfo.load(modelId: modelId), let ctx = info.model.contextLength {
-            return ctx
+        (await resolveContextWindowResolution(modelId: modelId)).tokens
+    }
+
+    static func resolveContextWindowResolution(
+        modelId: String
+    ) async -> ContextWindowResolution {
+        if foundationModelIds.contains(modelId) {
+            return ContextWindowResolution(
+                tokens: foundationContextWindow,
+                source: .foundationFixed
+            )
         }
-        return await MainActor.run { ChatConfigurationStore.load().contextLength ?? fallbackContextWindow }
+        if let info = ModelInfo.load(modelId: modelId), let ctx = info.model.contextLength {
+            return ContextWindowResolution(tokens: ctx, source: .bundleMetadata)
+        }
+        return await MainActor.run {
+            ContextWindowResolution(
+                tokens:
+                    ChatConfigurationStore.load().contextLength
+                    ?? fallbackContextWindow,
+                source: .metadataFallback
+            )
+        }
     }
 
     /// MainActor-synchronous twin of `resolveContextWindow` for SwiftUI
@@ -333,16 +362,33 @@ enum AgentLoopBudget {
     /// resolution order, same values.
     @MainActor
     static func resolveContextWindowSync(modelId: String) -> Int {
-        if foundationModelIds.contains(modelId) { return foundationContextWindow }
+        resolveContextWindowResolutionSync(modelId: modelId).tokens
+    }
+
+    @MainActor
+    static func resolveContextWindowResolutionSync(
+        modelId: String
+    ) -> ContextWindowResolution {
+        if foundationModelIds.contains(modelId) {
+            return ContextWindowResolution(
+                tokens: foundationContextWindow,
+                source: .foundationFixed
+            )
+        }
         // Serve the memo or warm it off-thread — never probe disk here. This runs
         // on every layout pass (context chip, send gate), and `ModelInfo.load`'s
         // cold path (`findModelDirectory` + `config.json` read) blocks the main
         // thread long enough to trip the app-hang detector. A transient nil on a
         // cold cache falls through to the conservative store/fallback value.
         if let info = ModelInfo.loadCachedOrWarm(modelId: modelId), let ctx = info.model.contextLength {
-            return ctx
+            return ContextWindowResolution(tokens: ctx, source: .bundleMetadata)
         }
-        return ChatConfigurationStore.load().contextLength ?? fallbackContextWindow
+        return ContextWindowResolution(
+            tokens:
+                ChatConfigurationStore.load().contextLength
+                ?? fallbackContextWindow,
+            source: .metadataFallback
+        )
     }
 
     // MARK: Shared budget assessment (UI + runtime parity)
@@ -1339,7 +1385,8 @@ enum AgentToolLoop {
                         for (index, entry) in toExecute.enumerated()
                         where index < executions.count {
                             let execution = executions[index]
-                            let wasError = execution.isError
+                            let wasError =
+                                execution.isError
                                 || Self.isTerminalDesktopSubagentFailure(
                                     toolName: entry.invocation.toolName,
                                     result: execution.result
@@ -1400,7 +1447,8 @@ enum AgentToolLoop {
                             } else if let execution = await executeBatch(
                                 [(deferred.invocation, deferred.callId)]
                             ).first {
-                                let wasError = execution.isError
+                                let wasError =
+                                    execution.isError
                                     || Self.isTerminalDesktopSubagentFailure(
                                         toolName: deferred.invocation.toolName,
                                         result: execution.result
@@ -1502,7 +1550,8 @@ enum AgentToolLoop {
                         }
 
                         let execution = await hooks.executeTool(invocation, callId)
-                        let wasError = execution.isError
+                        let wasError =
+                            execution.isError
                             || Self.isTerminalDesktopSubagentFailure(
                                 toolName: invocation.toolName,
                                 result: execution.result

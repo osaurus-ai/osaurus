@@ -44,6 +44,16 @@ struct AgentLoopBudgetTests {
         return ContextBreakdown(context: ctx, messages: msgs, disable: nil)
     }
 
+    @Test @MainActor func foundationResolutionReportsItsFixedSource() {
+        let resolution =
+            AgentLoopBudget.resolveContextWindowResolutionSync(
+                modelId: "foundation"
+            )
+
+        #expect(resolution.tokens == AgentLoopBudget.foundationContextWindow)
+        #expect(resolution.source == .foundationFixed)
+    }
+
     @Test func ratioUsesEffectiveBudgetNotRawWindow() {
         // 10_000 window → effective 8_500. 8_000 tokens is 94% of the
         // effective budget (near limit) even though it's only 80% of the

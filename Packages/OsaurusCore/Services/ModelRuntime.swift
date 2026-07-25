@@ -104,6 +104,19 @@ public actor ModelRuntime {
         let mlxPressStatus: MLXPressStatus
         let cacheStats: CacheCoordinatorStatsSnapshot?
         let cacheTopology: ModelCacheTopologySnapshot?
+        /// Exact coordinator settings captured by this resident model. These
+        /// remain intentionally separate from the currently saved settings:
+        /// a model loaded before a settings edit can otherwise make a newly
+        /// saved cap look live when it is not.
+        let activeCachePolicy: ActiveCachePolicy?
+    }
+
+    struct ActiveCachePolicy: Equatable, Sendable {
+        let maxKVSize: Int?
+        let longPromptMultiplier: Double
+        let pagedRAMEnabled: Bool
+        let diskL2Enabled: Bool
+        let diskL2MaxGB: Double
     }
 
     struct LiveVoiceAudioPreencodeResult: Sendable, Equatable {
@@ -409,6 +422,7 @@ public actor ModelRuntime {
             }
         }
         return modelCache.values.map { holder in
+            let activeConfig = holder.container.cacheCoordinator?.config
             ModelCacheSummary(
                 name: holder.name,
                 bytes: holder.weightsSizeBytes,
@@ -419,7 +433,16 @@ public actor ModelRuntime {
                 nativeMTPReason: holder.nativeMTPReason,
                 mlxPressStatus: holder.container.mlxPressStatus(),
                 cacheStats: holder.container.cacheCoordinator?.snapshotStats(),
-                cacheTopology: holder.cacheTopology
+                cacheTopology: holder.cacheTopology,
+                activeCachePolicy: activeConfig.map {
+                    ActiveCachePolicy(
+                        maxKVSize: $0.defaultMaxKVSize,
+                        longPromptMultiplier: $0.longPromptMultiplier,
+                        pagedRAMEnabled: $0.usePagedCache,
+                        diskL2Enabled: $0.enableDiskCache,
+                        diskL2MaxGB: Double($0.diskCacheMaxGB)
+                    )
+                }
             )
         }.sorted { lhs, rhs in
             if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }
@@ -1192,13 +1215,17 @@ public actor ModelRuntime {
     static func estimatedKVHeadroomBytes(
         forWeights weights: Int64,
         modelDirectory: URL? = nil,
-        modelName: String? = nil
+        modelName: String? = nil,
+        kvRetentionCap: Int? = ServerRuntimeSettingsStore.resolvedKVRetentionCap()
     ) -> Int64 {
         if let knownHeadroom = Self.knownMiMoOrN2JANGTQKVHeadroomBytes(modelName: modelName) {
             return knownHeadroom
         }
         if let modelDirectory,
-            let architectureHeadroom = estimatedArchitectureKVHeadroomBytes(at: modelDirectory)
+            let architectureHeadroom = estimatedArchitectureKVHeadroomBytes(
+                at: modelDirectory,
+                kvRetentionCap: kvRetentionCap
+            )
         {
             return architectureHeadroom
         }
@@ -1231,7 +1258,10 @@ public actor ModelRuntime {
         return nil
     }
 
-    private static func estimatedArchitectureKVHeadroomBytes(at directory: URL) -> Int64? {
+    private static func estimatedArchitectureKVHeadroomBytes(
+        at directory: URL,
+        kvRetentionCap: Int?
+    ) -> Int64? {
         let configURL = directory.appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: configURL),
             let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -1271,8 +1301,13 @@ public actor ModelRuntime {
             ?? intValue(config["max_sequence_length"])
             ?? intValue(config["seq_length"])
             ?? 32768
-        let kvCap = ServerRuntimeSettingsStore.snapshot().cache.defaultMaxKVSize ?? 8192
-        let maxPositions = min(declaredPositions, max(kvCap, 4096))
+        // Price the same RESOLVED Memory Safety/cache policy that a newly
+        // loaded coordinator receives. The old raw-field lookup used 8K when
+        // the saved override was blank even though Safe Auto actually loaded
+        // a 64K cap, materially under-reporting projected KV headroom.
+        let maxPositions =
+            kvRetentionCap.map { min(declaredPositions, max($0, 4096)) }
+            ?? declaredPositions
         guard let kvHeads, let headDim, kvHeads > 0, headDim > 0, maxPositions > 0 else {
             return nil
         }

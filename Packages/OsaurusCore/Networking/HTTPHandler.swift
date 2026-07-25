@@ -920,6 +920,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     mlxPressStatus["cold_fraction"] = NSNull()
                 }
                 row["mlx_press"] = mlxPressStatus
+                if let active = summary.activeCachePolicy {
+                    row["active_cache_policy"] =
+                        [
+                            "max_kv_size": active.maxKVSize as Any? ?? NSNull(),
+                            "long_prompt_multiplier": active.longPromptMultiplier,
+                            "paged_ram_enabled": active.pagedRAMEnabled,
+                            "disk_l2_enabled": active.diskL2Enabled,
+                            "disk_l2_max_gb": active.diskL2MaxGB,
+                        ] as [String: Any]
+                } else {
+                    row["active_cache_policy"] = NSNull()
+                }
                 guard let stats = summary.cacheStats else {
                     row["cache_enabled"] = false
                     return row
@@ -1028,6 +1040,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 baseLoadConfiguration: .osaurusProduction,
                 host: memoryStatus
             )
+            let metadataFallbackTokens = await MainActor.run {
+                ChatConfigurationStore.load().contextLength
+            }
 
             var obj: [String: Any] = [
                 "status": "ok",
@@ -1040,6 +1055,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     memoryStatus: memoryStatus,
                     lastLoadDecision: lastMemorySafetyLoadDecision
                 ),
+                "context_policy": [
+                    "metadata_fallback_tokens":
+                        metadataFallbackTokens as Any? ?? NSNull(),
+                    "conversation_safety_margin":
+                        ContextBudgetManager.safetyMargin,
+                    "saved_kv_retention_override_tokens":
+                        runtimeSettings.cache.defaultMaxKVSize as Any? ?? NSNull(),
+                    "resolved_kv_retention_tokens":
+                        memorySafetyPlan.cache.defaultMaxKVSize as Any? ?? NSNull(),
+                ] as [String: Any],
                 "storage_locations": Self.storageLocationsJSONObject(),
             ]
             if let batchDiagnostics {
@@ -1255,9 +1280,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
-            let next: VMLXServerRuntimeSettings
+            let requested: VMLXServerRuntimeSettings
             do {
-                next = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: parsedBody.data)
+                requested = try JSONDecoder().decode(
+                    VMLXServerRuntimeSettings.self,
+                    from: parsedBody.data
+                )
             } catch {
                 let body = Self.errorBody(
                     .openai(type: "invalid_request_error"),
@@ -1284,6 +1312,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 return
             }
+            let next =
+                ServerRuntimeSettingsStore.canonicalizedContextAndKVPolicy(
+                    requested
+                )
 
             if previous.network != next.network {
                 let body = Self.errorBody(
@@ -1351,6 +1383,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 previous.cache != next.cache
                 || previous.multimodal != next.multimodal
                 || previous.mtp != next.mtp
+                || previous.memorySafety != next.memorySafety
                 // The tied-head codec applies at model construction
                 // (TiedHeadQuantizationPolicy is read while loading the head),
                 // so a change takes effect on the next load — evicting the
@@ -1792,7 +1825,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // Check for dev proxy configuration
                     if let proxyURL = Self.loadDevProxyURL(for: pluginId) {
                         let relPath = PluginManifest.WebSpec.relativeSubpath(
-                            subpath: subpath, mount: webSpec.mount)
+                            subpath: subpath,
+                            mount: webSpec.mount
+                        )
                         let targetPath = relPath.isEmpty ? "/" : relPath
                         // Forward the original method/headers/body so HMR,
                         // POST APIs, and any non-GET dev-server traffic
@@ -1822,7 +1857,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
 
                     let relPath = PluginManifest.WebSpec.relativeSubpath(
-                        subpath: subpath, mount: webSpec.mount)
+                        subpath: subpath,
+                        mount: webSpec.mount
+                    )
                     let filePath: String
                     if relPath.isEmpty || relPath == "/" {
                         filePath = webSpec.entry

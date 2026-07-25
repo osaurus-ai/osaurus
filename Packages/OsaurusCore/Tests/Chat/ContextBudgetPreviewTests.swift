@@ -1026,6 +1026,24 @@ struct ContextBudgetUtilizationTests {
         #expect(usage.remainingTokens == 27_000)
     }
 
+    @Test("chat denominator uses the same 85 percent budget as compaction")
+    func usableBudget_matchesRuntimeCompactionBudget() {
+        let modelMaximum = 262_144
+        let usable =
+            ContextBudgetManager(
+                contextLength: modelMaximum
+            ).effectiveBudget
+        let usage = computeContextBudgetUtilization(
+            usedTokens: 111_411,
+            maxTokens: usable
+        )
+
+        #expect(usable == 222_822)
+        #expect(usage.maxTokens == 222_822)
+        #expect(usage.fraction == 0.5)
+        #expect(usage.remainingTokens == 111_411)
+    }
+
     @Test("usage above the model window clamps visual metrics")
     func overflow_clampsVisualMetrics() {
         let usage = computeContextBudgetUtilization(

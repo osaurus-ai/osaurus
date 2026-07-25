@@ -157,6 +157,84 @@ struct ServerRuntimeSettingsStoreTests {
         #expect(plan.concurrency.maxConcurrentSequences == 3)
     }
 
+    @Test func legacyMemorySafetyKVCapMigratesToTheSingleCacheOwner() {
+        var settings = VMLXServerRuntimeSettings()
+        settings.cache.defaultMaxKVSize = 16_384
+        settings.memorySafety.customDefaultMaxKVSize = 98_304
+
+        let canonical =
+            ServerRuntimeSettingsStore.canonicalizedContextAndKVPolicy(
+                settings
+            )
+
+        // The legacy Memory Safety field had higher runtime precedence than
+        // the Cache field, so preserving user behavior means it wins exactly
+        // once during migration and is then cleared.
+        #expect(canonical.cache.defaultMaxKVSize == 98_304)
+        #expect(canonical.memorySafety.customDefaultMaxKVSize == nil)
+        #expect(
+            ServerRuntimeSettingsStore.resolvedKVRetentionCap(
+                for: canonical
+            ) == 98_304
+        )
+    }
+
+    @Test func resolvedKVRetentionCapUsesProfileUnlessCacheOverridesIt() {
+        var safeAuto = VMLXServerRuntimeSettings()
+        safeAuto.memorySafety.mode = .safeAuto
+        safeAuto.cache.defaultMaxKVSize = nil
+        safeAuto.memorySafety.customDefaultMaxKVSize = nil
+        #expect(
+            ServerRuntimeSettingsStore.resolvedKVRetentionCap(
+                for: safeAuto
+            ) == 65_536
+        )
+
+        safeAuto.cache.defaultMaxKVSize = 24_576
+        #expect(
+            ServerRuntimeSettingsStore.resolvedKVRetentionCap(
+                for: safeAuto
+            ) == 24_576
+        )
+
+        var diagnostic = VMLXServerRuntimeSettings()
+        diagnostic.memorySafety.mode = .diagnosticDangerous
+        diagnostic.cache.defaultMaxKVSize = nil
+        diagnostic.memorySafety.customDefaultMaxKVSize = nil
+        #expect(
+            ServerRuntimeSettingsStore.resolvedKVRetentionCap(
+                for: diagnostic
+            ) == nil
+        )
+    }
+
+    @Test @MainActor func saveCanonicalizesAndPersistsLegacyKVOwnership() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            var settings = VMLXServerRuntimeSettings()
+            settings.cache.defaultMaxKVSize = 8_192
+            settings.memorySafety.customDefaultMaxKVSize = 49_152
+
+            ServerRuntimeSettingsStore.save(settings)
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let loaded = try #require(ServerRuntimeSettingsStore.load())
+
+            #expect(loaded.cache.defaultMaxKVSize == 49_152)
+            #expect(loaded.memorySafety.customDefaultMaxKVSize == nil)
+
+            let persisted = try JSONDecoder().decode(
+                VMLXServerRuntimeSettings.self,
+                from: Data(
+                    contentsOf: dir.appendingPathComponent(
+                        "server-runtime.json"
+                    )
+                )
+            )
+            #expect(persisted.cache.defaultMaxKVSize == 49_152)
+            #expect(persisted.memorySafety.customDefaultMaxKVSize == nil)
+        }
+    }
+
     @Test func bundleSpecificPlanReportsItsActualRaisedLoadBudget() throws {
         let physical: UInt64 = 128 << 30
         let weights: UInt64 = 94 << 30

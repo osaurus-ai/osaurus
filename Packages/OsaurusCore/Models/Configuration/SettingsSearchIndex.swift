@@ -167,10 +167,14 @@ public enum SettingsSearchIndex {
         ),
         .init(
             id: "settings.chat.contextLength",
-            tab: .chat,
-            section: "Generation",
-            title: "Context Length",
-            keywords: ["context window", "context"]
+            tab: .server,
+            section: "Cache",
+            title: "Context & KV Policy",
+            keywords: [
+                "context window", "context", "model maximum",
+                "metadata fallback", "kv retention", "cache window",
+            ],
+            subTab: "cache"
         ),
         .init(
             id: "settings.chat.topP",

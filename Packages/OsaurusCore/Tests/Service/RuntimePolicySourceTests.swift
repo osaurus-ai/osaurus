@@ -1175,9 +1175,50 @@ struct RuntimePolicySourceTests {
 
         #expect(controller.contains("loadedModelRuntimeInputsRequireRefresh"))
         #expect(controller.contains("previous.cache != next.cache"))
+        #expect(controller.contains("previous.memorySafety != next.memorySafety"))
         #expect(controller.contains("previous.multimodal != next.multimodal"))
         #expect(controller.contains("previous.mtp != next.mtp"))
         #expect(controller.contains("await ModelRuntime.shared.clearAll()"))
+    }
+
+    @Test("Context and KV settings have one editable owner and report saved versus active policy")
+    func contextAndKVSettingsHaveOneTruthfulOwner() throws {
+        let chat = try Self.source("Views/Settings/ChatSettingsView.swift")
+        let cache = try Self.source(
+            "Views/Settings/ServerSettings/CacheSection.swift"
+        )
+        let memorySafety = try Self.source(
+            "Views/Settings/ServerSettings/MemorySafetySection.swift"
+        )
+        let tab = try Self.source(
+            "Views/Settings/ServerSettingsTabContent.swift"
+        )
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let http = try Self.source("Networking/HTTPHandler.swift")
+
+        #expect(!chat.contains(#"label: "Context Length""#))
+        #expect(!chat.contains("tempChatContextLength"))
+        #expect(
+            cache.contains(
+                #"label: "Unknown-Model Metadata Fallback (tokens)""#
+            )
+        )
+        #expect(
+            cache.contains(
+                #"label: "KV Retention Override (tokens)""#
+            )
+        )
+        #expect(cache.contains("Usable conversation budget"))
+        #expect(cache.contains("Active loaded policy"))
+        #expect(cache.contains("$draft.cache.defaultMaxKVSize"))
+        #expect(!memorySafety.contains("$draft.memorySafety.customDefaultMaxKVSize"))
+        #expect(tab.contains("requiresModelReload"))
+        #expect(tab.contains("unloadedModelCount"))
+        #expect(runtime.contains("activeCachePolicy"))
+        #expect(http.contains(#""active_cache_policy""#))
+        #expect(http.contains(#""context_policy""#))
+        #expect(http.contains(#""metadata_fallback_tokens""#))
+        #expect(http.contains(#""resolved_kv_retention_tokens""#))
     }
 
     @Test("Server settings concurrency UI does not advertise false restart or runtime wiring")
