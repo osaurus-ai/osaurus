@@ -19,11 +19,12 @@ local; GitHub-visible evidence is text only.
 
 ## Current exact source
 
-- Osaurus base: `b7fc8c3c7b255a46a411c2c6d0c11cab43b67681`
-- merged vMLX base pin: `da2872b07c33bd138f3217eb1760385b8cda259a`
-- current vMLX campaign head:
-  `7c37de3e77daf1ce1e3a212c0aaad3ba4cb471b9` on
-  `codex/runtime-compat-campaign-20260724`
+- Osaurus base: `bf3484081d2fbcef096d676eb6fa960e63e7f3e2`
+- current vMLX main pin:
+  `d0e1f1a9ef3115b505056b679d6b01d6861f8daa`, the squash merge of vMLX
+  PR #184. A scoped diff confirms its runtime/parser/test files are
+  byte-identical to the live-proven campaign head
+  `7c37de3e77daf1ce1e3a212c0aaad3ba4cb471b9`:
   - `4480b4aa`: nested LFM/DSML/Pythonic arguments and LFM quantized
     auxiliary-tensor sanitization;
   - `8a243bae`: schema-aware ZAYA XML parameter resynchronization;
@@ -37,13 +38,16 @@ local; GitHub-visible evidence is text only.
     bracket-list closer. It reports the malformed envelope without executing
     or repairing the call.
 
-The Osaurus campaign package graph now pins the full
-`7c37de3e77daf1ce1e3a212c0aaad3ba4cb471b9` revision in `Package.swift` and
-all three resolved-package files. The exact combined pin has now been exercised
-in the isolated Release app for LFM database tools and disk-L2 continuity. That
-family row remains `PARTIAL` because post-error final generations reproducibly
-ended inside an unclosed reasoning block; the rest of the family matrix is
-still unverified at this pin.
+The Osaurus campaign package graph now pins the merged vMLX main commit
+`d0e1f1a9ef3115b505056b679d6b01d6861f8daa` in `Package.swift` and all three
+resolved-package files. Its affected runtime/parser/test source is identical
+to the exact campaign head exercised in the isolated Release app for LFM
+database tools and disk-L2 continuity. The rebased Osaurus app itself still
+requires a current-base Release rebuild and UI rerun before the combined row
+can be called current-pin live proof. The LFM family row remains `PARTIAL`
+because post-error final generations reproducibly ended inside an unclosed
+reasoning block; the rest of the family matrix is still unverified at this
+pin.
 
 ## Round protocol
 
