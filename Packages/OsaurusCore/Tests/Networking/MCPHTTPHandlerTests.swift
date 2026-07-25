@@ -27,6 +27,11 @@ struct MCPHTTPHandlerTests {
         "agent_channel_draft_message",
         "agent_channel_send_message",
         "agent_channel_reply_thread",
+        "agent_channel_edit_message",
+        "agent_channel_delete_message",
+        "agent_channel_add_reaction",
+        "agent_channel_remove_reaction",
+        "agent_channel_send_typing",
     ]
 
     @Test func mcp_health_returns_ok() async throws {
