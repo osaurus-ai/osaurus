@@ -510,7 +510,9 @@ final class NativeActivityGroupView: NSView {
         expandAllButton.image = SymbolImageCache.image(
             "arrow.up.left.and.arrow.down.right", accessibilityDescription: nil,
             pointSize: 10, weight: .semibold)
-        expandAllButton.imagePosition = .imageOnly
+        expandAllButton.title = L("Expand All")
+        expandAllButton.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        expandAllButton.imagePosition = .imageLeading
         expandAllButton.isBordered = false
         expandAllButton.focusRingType = .none
         expandAllButton.contentTintColor = .tertiaryLabelColor
@@ -585,7 +587,6 @@ final class NativeActivityGroupView: NSView {
             // Occupies the chips' slot — chips show collapsed, this shows expanded.
             expandAllButton.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -8),
             expandAllButton.centerYAnchor.constraint(equalTo: chevronView.centerYAnchor),
-            expandAllButton.widthAnchor.constraint(equalToConstant: 20),
             expandAllButton.heightAnchor.constraint(equalToConstant: 20),
 
             separatorView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
