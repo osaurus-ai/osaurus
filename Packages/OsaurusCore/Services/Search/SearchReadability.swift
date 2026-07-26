@@ -51,6 +51,20 @@ enum SearchReadability {
         var extracted: Bool { status == .ok }
     }
 
+    /// Exposed separately from `extract` so tests can inspect the session's
+    /// proxy configuration directly, matching the pattern used by the other
+    /// `GlobalProxySettings`-backed call sites. The default delegate value
+    /// (rather than requiring callers to pass one) means tests don't need
+    /// access to the private redirect delegate type at all; `extract` still
+    /// passes its own instance explicitly so it can read `.blockedReason`
+    /// afterward.
+    static func makeSession(
+        configuration: URLSessionConfiguration = .ephemeral,
+        delegate: URLSessionTaskDelegate = SearchReadabilityRedirectDelegate()
+    ) -> URLSession {
+        GlobalProxySettings.makeSession(base: configuration, delegate: delegate, delegateQueue: nil)
+    }
+
     /// Fetch `url` and extract the main content. Always returns a typed status
     /// so tool payloads can explain failures without raw network errors.
     static func extract(
@@ -84,7 +98,7 @@ enum SearchReadability {
         )
 
         let delegate = SearchReadabilityRedirectDelegate()
-        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+        let session = makeSession(configuration: configuration, delegate: delegate)
         defer {
             session.invalidateAndCancel()
         }

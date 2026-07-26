@@ -300,6 +300,13 @@ enum SearchHTTPClient {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
     ]
 
+    /// Exposed separately from `request` so tests can inspect the session's
+    /// proxy configuration directly, matching the pattern used by the other
+    /// `GlobalProxySettings`-backed call sites (e.g. `GitHubSkillService`).
+    static func makeSession() -> URLSession {
+        GlobalProxySettings.sharedSession()
+    }
+
     static func request(
         url: String,
         method: String = "GET",
@@ -322,7 +329,7 @@ enum SearchHTTPClient {
         for (k, v) in combined { req.setValue(v, forHTTPHeaderField: k) }
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: req)
+            let (data, response) = try await makeSession().data(for: req)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             return (status, data)
         } catch is CancellationError {
