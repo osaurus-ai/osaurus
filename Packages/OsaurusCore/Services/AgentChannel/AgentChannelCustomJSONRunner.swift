@@ -1359,13 +1359,16 @@ final class AgentChannelCustomJSONRunner: AgentChannelCustomJSONRunning, @unchec
         return trimmed
     }
 
-    private static func makeDefaultHTTPClient() -> URLSession {
+    /// Not `private`: exposed so tests can inspect the session's proxy
+    /// configuration directly, matching the pattern used by the other
+    /// `GlobalProxySettings`-backed call sites.
+    static func makeDefaultHTTPClient() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpShouldSetCookies = false
         configuration.httpCookieAcceptPolicy = .never
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        return URLSession(
-            configuration: configuration,
+        return GlobalProxySettings.makeSession(
+            base: configuration,
             delegate: AgentChannelNoRedirectDelegate(),
             delegateQueue: nil
         )
