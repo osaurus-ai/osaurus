@@ -1189,3 +1189,90 @@ Laguna S/XS JANG_2L/4M/6M, MiniMax M2.7 JANG/JANGTQ, ZAYA JANGTQ, HY-3 MTP,
 Step 3.7 JANG, Nemotron Audex variants, Ornith JANG/MXFP8, Qwen AgentWorld,
 Qwen 3.6 MXFP8/JANG, Bonsai JANG, and Gemma 4 MXFP8/JANG dense/MoE bundles.
 No result is inferred from a sibling quant or architecture.
+
+## 2026-07-26 Gemma/Qwen post-tool completion emergency round
+
+This round used Osaurus base `afa32e5c84191aea90b70fa44afa72ad64feee1f`,
+candidate `e9173ee99412944a4c47e98b7c38bff6d4eed392`, and exact vMLX pin
+`d0e1f1a9ef3115b505056b679d6b01d6861f8daa`. The Release app was ad-hoc
+signed as `com.dinoki.osaurus.gemmaqwencompletionproof20260726` and launched
+under isolated test root
+`/private/tmp/osaurus-gemma-qwen-completion-proof-root-20260726-025205`.
+The app executable SHA-256 was
+`4c6397039e507a26545280ffd93e9ddf55e20c2fa297eca3332301124b736225`.
+
+Source attribution found three separate owning contracts rather than one
+global parser failure:
+
+- model-family guidance previously routed from the display name, so Ornith
+  missed Qwen 3.5 guidance even though its bundle declares
+  `model_type=qwen3_5_moe`; the candidate carries bundle `modelType` through
+  picker, warmup, compose, and system-prompt construction;
+- a total page-extraction failure previously escaped as a thrown tool error;
+  the candidate returns a structured, model-visible failure envelope while
+  keeping partial extraction successful and classifying permanent 4xx errors
+  as non-retryable;
+- a successful, parseable Todo created during the current run now owns pending
+  work. If it still has unchecked items after visible progress prose, the loop
+  continues in a fresh assistant turn. Stale, failed, or malformed Todo calls
+  cannot arm continuation. A reasoning-only terminal after real tool work gets
+  one exact-history retry in an excluded assistant turn.
+
+The candidate does not inject thinking tags, bias EOS, clamp sampling, match
+progress prose heuristically, mask parser errors, or change cache/TurboQuant
+policy. A normal visible final remains final unless the current run itself
+created a valid Todo that still reports pending work.
+
+Focused workspace tests produced 225 passes, zero failures, and zero skips in
+`/private/tmp/osaurus-gemma-qwen-loop-clean-tests-derived-20260726/Logs/Test/Test-OsaurusCoreTests-2026.07.26_02-38-09--0700.xcresult`.
+Those tests are source/mock evidence only; the rows below are the Release-app
+acceptance evidence.
+
+### Live Release UI rows
+
+- Gemma 4 26B A4B JANG_4M, Thinking on: blocked Hugging Face retrieval
+  continued through closed reasoning and search cards to a qualified final at
+  TTFT 1.44 s, 69.3 tok/s, and 2,325 tokens. A no-tool attribution follow-up
+  finalized at TTFT 5.19 s, 50.7 tok/s, and 1,367 tokens. Stop disappeared and
+  input unlocked after both turns.
+- Ornith 1.0 35B MXFP8, Thinking off: the full three-organization research
+  prompt completed its current-run Todo, settled failed search cards, emitted
+  a final, and unlocked at TTFT 0.67 s, 58.0 tok/s, and 983 tokens. Its
+  follow-up finalized at TTFT 1.35 s, 65.3 tok/s, and 2,403 tokens with no
+  reasoning card or inline `<think>` content.
+- Ornith 1.0 35B MXFP8, Thinking on: multiple structured extraction failures
+  stayed model-visible; the model eventually closed its Todo and emitted a
+  qualified final at TTFT 3.89 s, 43.3 tok/s, and 411 tokens. A no-tool
+  one-sentence follow-up closed its reasoning card and finalized at TTFT
+  12.92 s, 51.3 tok/s, and 86 tokens. Stop disappeared and input unlocked.
+- Bonsai 27B Ternary JANG, Thinking on: a real `search_and_extract` challenge
+  produced a failed visible tool card and a qualified final at TTFT 0.80 s,
+  44.0 tok/s, and 204 tokens. The no-tool follow-up truthfully stated that the
+  page was not extracted, finalized at TTFT 16.97 s, 23.3 tok/s, and 72
+  tokens, and unlocked the composer.
+- Qwen AgentWorld 35B A3B MXFP8, Thinking on: the normal initially visible
+  `web_search` path completed reasoning -> tool -> reasoning -> final at TTFT
+  1.09 s, 52.7 tok/s, and 1,339 tokens. Its no-tool follow-up finalized at TTFT
+  6.63 s, 53.3 tok/s, and 377 tokens. Both turns ended with Stop absent and
+  input unlocked.
+
+Cache traces are observations, not a cache-algorithm acceptance claim for this
+PR. The live rows used disk restores at stable boundaries with hybrid companion
+state, but some new-chat/follow-up prompts missed all tiers when their stable
+boundary changed. No cache implementation or setting was changed here.
+
+### Honest remaining boundary
+
+A synthetic Qwen AgentWorld prompt that demanded `search_and_extract` before
+that lazy capability was loaded did not reach a tool call. With Thinking on it
+emitted 8,451 reasoning deltas over 212.94 seconds, repeatedly reconsidering
+tool discovery, until manual Stop. The reasoning remained in the reasoning UI
+and cancellation unlocked the composer, so this was not an inline-channel or
+terminal-cleanup failure. It remains a `PARTIAL` model/tool-discovery row and
+is not claimed fixed by this post-tool completion change. A producer or tool
+await that literally never returns also remains outside this candidate because
+Chat has no new global watchdog in this diff.
+
+The scoped post-tool completion regression is `VERIFIED-LIVE` for the rows
+above. Arbitrary lazy-capability discovery and the broader cache/family matrix
+remain `PARTIAL` and must not be represented as closed by this emergency PR.
