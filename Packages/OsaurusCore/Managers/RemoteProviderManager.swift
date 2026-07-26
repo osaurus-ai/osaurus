@@ -65,6 +65,15 @@ public final class RemoteProviderManager: ObservableObject {
     /// Runtime state for each provider
     @Published public private(set) var providerStates: [UUID: RemoteProviderState] = [:]
 
+    /// Connectivity-driven offline mode, fed by the network path monitor
+    /// below. While true, the manager exposes no remote chat services or
+    /// cached remote models, so cloud entries vanish from every model picker
+    /// and chat routing without disconnecting providers or erasing their
+    /// catalogs — they come back as-is on the recovery edge. Starts false
+    /// (the monitor's baseline reading arrives asynchronously) so launch
+    /// never flickers through a spurious offline state.
+    @Published public private(set) var isOffline: Bool = false
+
     /// Active service instances keyed by provider ID
     private var services: [UUID: RemoteProviderService] = [:]
 
@@ -785,10 +794,20 @@ public final class RemoteProviderManager: ObservableObject {
         monitor.start(queue: DispatchQueue(label: "ai.osaurus.provider.pathmonitor"))
     }
 
-    private func handleNetworkPathUpdate(satisfied: Bool) {
+    /// Internal (not private) so offline-mode tests can drive connectivity
+    /// edges without a real `NWPath`.
+    func handleNetworkPathUpdate(satisfied: Bool) {
         defer { lastNetworkPathWasSatisfied = satisfied }
-        // Only the recovery edge matters: we must have previously seen the
-        // network down, and now see it up.
+        if isOffline == satisfied {
+            isOffline = !satisfied
+            // Remote models are gated on `isOffline` (see
+            // `cachedAvailableModels()` / `connectedServices()`); rebuild the
+            // pickers on both edges so cloud entries disappear the moment the
+            // network drops and reappear the moment it returns.
+            notifyModelsChanged()
+        }
+        // Only the recovery edge matters for reconnects: we must have
+        // previously seen the network down, and now see it up.
         guard satisfied, lastNetworkPathWasSatisfied == false else { return }
         // Debounce flapping paths — replace any in-flight sweep.
         networkRecoveryTask?.cancel()
@@ -920,8 +939,11 @@ public final class RemoteProviderManager: ObservableObject {
         return services[providerId]
     }
 
-    /// Get all connected services
+    /// Get all connected services. Empty while offline: a remote request
+    /// cannot succeed without a network path, so chat routing sees no remote
+    /// services instead of dispatching a send that is guaranteed to fail.
     public func connectedServices() -> [RemoteProviderService] {
+        guard !isOffline else { return [] }
         return Array(services.values)
     }
 
@@ -952,8 +974,13 @@ public final class RemoteProviderManager: ObservableObject {
         public let models: [String]
     }
 
-    /// Get all available models synchronously from cached state
+    /// Get all available models synchronously from cached state. Empty while
+    /// offline so the model picker (via `ModelPickerItemCache`) hides every
+    /// cloud model and chat sessions fall back to Foundation/local; the
+    /// underlying provider states are untouched, so the same models reappear
+    /// on the connectivity-recovery edge.
     public func cachedAvailableModels() -> [CachedProviderModels] {
+        guard !isOffline else { return [] }
         ensureManagedOsaurusRouterProviderIfNeeded()
         var result: [CachedProviderModels] = []
 
@@ -1390,6 +1417,12 @@ public final class RemoteProviderManager: ObservableObject {
         refreshConnectedTask = nil
         osaurusRouterEnableTask?.cancel()
         osaurusRouterEnableTask = nil
+        // Reset connectivity state so an offline-mode test can't leak its
+        // simulated path edges (or a pending recovery sweep) into later tests.
+        networkRecoveryTask?.cancel()
+        networkRecoveryTask = nil
+        lastNetworkPathWasSatisfied = nil
+        isOffline = false
         // Restore the master switch to its default (on) so a test that toggled
         // it off can't bleed into another test's managed-router expectations.
         isOsaurusRouterEnabled = true

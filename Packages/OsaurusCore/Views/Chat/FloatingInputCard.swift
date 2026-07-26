@@ -626,12 +626,25 @@ struct FloatingInputCard: View {
     }
 
     /// Whether the credits chip (and its wallet panel) is available at all:
-    /// the router master switch is on and a signing identity exists — the same
-    /// gate `RemoteProviderManager` uses for the managed router provider. Shown
+    /// the router master switch is on, a signing identity exists, and the
+    /// device is online — the balance is spent on cloud services only, so an
+    /// offline composer shows no wallet at all. This gate (without the fetched
+    /// balance below) also keys the balance-refresh task in `body`, so the
+    /// first fetch can run while the chip is still hidden.
+    private var creditsChipAvailable: Bool {
+        remoteProviders.isOsaurusRouterEnabled
+            && !remoteProviders.isOffline
+            && OsaurusIdentity.existsCached()
+    }
+
+    /// Visibility gate for the credits chip. On top of availability, a balance
+    /// must have actually been fetched: with no server-confirmed balance
+    /// (offline at fetch time, router outage, auth failure) the chip's $0 /
+    /// "Add credits" states would be lies, so it stays hidden entirely. Shown
     /// in every session (not just router-billed ones) because credits are the
     /// account-level wallet other routed services will draw from too.
     private var showCreditsChip: Bool {
-        remoteProviders.isOsaurusRouterEnabled && OsaurusIdentity.existsCached()
+        creditsChipAvailable && accountService.balance != nil
     }
 
     private var mainContent: some View {
@@ -732,6 +745,16 @@ struct FloatingInputCard: View {
     var body: some View {
         let _ = ChatPerfTrace.shared.count("body.FloatingInputCard")
         mainContent
+            // Refresh the router balance whenever the wallet becomes available
+            // (router on + identity + online). Keyed on availability rather
+            // than chip visibility because the chip stays hidden until a
+            // balance has been fetched — this task is what performs that
+            // first fetch, and it re-fires on the connectivity-recovery edge.
+            .task(id: creditsChipAvailable) {
+                if creditsChipAvailable {
+                    await accountService.refreshBalance()
+                }
+            }
             // Float the configuration-context error ABOVE the card as an
             // overlay so it never reflows the input/selector layout when it
             // appears or clears. Anchored to the card's top edge and shifted
@@ -2650,11 +2673,6 @@ extension FloatingInputCard {
             // Outside-click dismissal flips the binding directly; unpin so the
             // next hover preview behaves normally.
             if !isShown { walletPanelPinned = false }
-        }
-        .task(id: showCreditsChip) {
-            if showCreditsChip {
-                await accountService.refreshBalance()
-            }
         }
     }
 
