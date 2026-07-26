@@ -932,18 +932,15 @@ extension ConfigurationView {
             return
         }
 
-        // Candidate target directories
-        let brewBin = URL(fileURLWithPath: "/opt/homebrew/bin", isDirectory: true)
+        // Candidate target directories. /opt/homebrew/bin is intentionally
+        // NOT a candidate: it's a directory Homebrew owns and manages, and
+        // Osaurus isn't distributed via a Homebrew formula — its presence
+        // on a user's machine for unrelated packages isn't a reason for
+        // this app to write into it. See osaurus-ai/osaurus#2137.
         let usrLocalBin = URL(fileURLWithPath: "/usr/local/bin", isDirectory: true)
         let userLocalBin = fm.homeDirectoryForCurrentUser
             .appendingPathComponent(".local", isDirectory: true)
             .appendingPathComponent("bin", isDirectory: true)
-
-        if tryInstall(cliURL: cliURL, into: brewBin) {
-            cliInstallSuccess = true
-            cliInstallMessage = "Installed to \(brewBin.appendingPathComponent("osaurus").path)"
-            return
-        }
 
         if tryInstall(cliURL: cliURL, into: usrLocalBin) {
             cliInstallSuccess = true

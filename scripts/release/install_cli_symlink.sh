@@ -11,7 +11,9 @@ set -euo pipefail
 #
 # Notes:
 # - When no path is provided, common install locations are checked.
-# - On Apple Silicon, Homebrew typically lives at /opt/homebrew; we auto-detect it.
+# - Default target is /usr/local/bin, falling back to ~/.local/bin. Homebrew's
+#   prefix is never used automatically (see resolve_target_bin_dir below) —
+#   use --prefix to target it explicitly if that's what you want.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -78,19 +80,16 @@ resolve_cli_from_dev() {
 }
 
 resolve_target_bin_dir() {
-  # Priority: explicit --prefix, Homebrew prefix/bin, /usr/local/bin, ~/.local/bin
+  # Priority: explicit --prefix, /usr/local/bin, ~/.local/bin.
+  #
+  # Homebrew's prefix is intentionally NOT used as a default: it's a
+  # directory Homebrew owns and manages, and Osaurus isn't distributed via
+  # a Homebrew formula — brew being present on a user's machine for
+  # unrelated packages isn't a reason for this app to write into it.
+  # See osaurus-ai/osaurus#2137.
   if [[ -n "$PREFIX_OVERRIDE" ]]; then
     echo "$PREFIX_OVERRIDE/bin"
     return 0
-  fi
-
-  if command -v brew >/dev/null 2>&1; then
-    local brew_prefix
-    brew_prefix="$(brew --prefix 2>/dev/null || true)"
-    if [[ -n "$brew_prefix" ]]; then
-      echo "$brew_prefix/bin"
-      return 0
-    fi
   fi
 
   if [[ -d "/usr/local/bin" ]]; then
