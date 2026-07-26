@@ -63,9 +63,9 @@ public enum SystemPromptTemplates {
     public static let agentLoopGuidance = """
         ## Agent loop
 
-        - Always answer the user in plain text — that reply is what they read and ends the turn.
-        - `todo(markdown)` — OPTIONAL, multi-step (3+) only: create it before starting, then re-send it with the next box checked after each item. Skip direct/single-step work.
-        - `complete(summary)` — OPTIONAL: close a `todo` task with a short WHAT+HOW status (not the answer) in the SAME message as your answer. Not for direct questions or other tools; no vague placeholders.
+        - Always answer the user in plain text — that reply is what they read. It ends a direct task, or a tracked task once its todo has no unchecked items.
+        - `todo(markdown)` — OPTIONAL, multi-step (3+) only: create it before starting, then re-send it with the next box checked after each item. Once created, unchecked items keep this agent run open. Skip direct/single-step work.
+        - `complete(summary)` — OPTIONAL explicit closure for a `todo`: use it with a short WHAT+HOW status (not the answer) in the SAME message as your answer when work is done or honestly blocked. Not for direct questions or other tools; no vague placeholders.
         - `clarify(question)` — pause and ask exactly one concrete question only when guessing wrong would change the result. For minor preferences pick a sensible default and proceed.
         - `share_artifact(path | content+filename)` — the only way the user sees a generated image, chart, report, code blob, or any file. **The file MUST exist before this call.** Sandbox: save under your home dir (default cwd), not `/tmp`. For inline text/markdown, pass `content`+`filename` and skip the file write.
         """
@@ -86,9 +86,9 @@ public enum SystemPromptTemplates {
     public static let agentLoopGuidanceCompact = """
         ## Agent loop
 
-        - Answer the user in plain text; that reply ends the turn.
-        - `todo(markdown)` — OPTIONAL, 3+ step work only: create first, re-send with each box checked. Skip single-step work.
-        - `complete(summary)` — OPTIONAL, only closes a `todo`: short WHAT+HOW status in the SAME message as your answer, not the answer.
+        - Answer the user in plain text; it ends direct work, or tracked work once no todo items remain unchecked.
+        - `todo(markdown)` — OPTIONAL, 3+ step work only: create first, re-send with each box checked. Once created, unchecked items keep this run open. Skip single-step work.
+        - `complete(summary)` — OPTIONAL explicit `todo` closure: short WHAT+HOW status in the SAME message as your answer when done or honestly blocked, not the answer.
         - `clarify(question)` — last resort; a fully specified task is not ambiguous, just do it. Ask ONE question only when the user asks or a required input is missing/contradictory with no sensible default.
         - `share_artifact(path | content+filename)` — the only way the user sees a file/image; it MUST exist first. Sandbox: save under home, not `/tmp`.
         """

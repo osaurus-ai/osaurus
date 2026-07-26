@@ -502,6 +502,53 @@ struct ContextBudgetPreviewTests {
         }
     }
 
+    /// Local discovery first publishes a cheap id-only row, then enriches the
+    /// same id from config.json. The metadata-only picker update must evict the
+    /// cached generic preview so the next budget/warm-up/send all use the
+    /// authoritative architecture guidance. Before this regression fix the
+    /// picker showed the refreshed item while the preview and green warm claim
+    /// remained tied to the old generic prompt.
+    @Test("same-id model_type enrichment invalidates the cached family preview")
+    func sameIdModelTypeEnrichment_invalidatesFamilyPreview() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            var chatConfig = ChatConfigurationStore.load()
+            chatConfig.warmModelsOnLoad = false
+            ChatConfigurationStore.save(chatConfig)
+
+            let modelId = "local/renamed-backbone"
+            let session = ChatSession()
+            session.agentId = agentId
+            session.pickerItems = [
+                ModelPickerItem(
+                    id: modelId,
+                    displayName: "Renamed Backbone",
+                    source: .local
+                )
+            ]
+            session.selectedModel = modelId
+
+            @MainActor func familyTokens() -> Int {
+                session.estimatedContextBreakdown.context
+                    .first { $0.id == "modelFamilyGuidance" }?.tokens ?? 0
+            }
+
+            let genericTokens = familyTokens()
+            #expect(genericTokens > 0)
+
+            session.applyPickerItems([
+                ModelPickerItem(
+                    id: modelId,
+                    displayName: "Renamed Backbone",
+                    source: .local,
+                    modelType: "qwen3_5"
+                )
+            ])
+
+            #expect(session.selectedPickerItem?.modelType == "qwen3_5")
+            #expect(familyTokens() != genericTokens)
+        }
+    }
+
     // MARK: - Skills are load-on-demand only
 
     /// Regression for the 55k-token Skills bloat: skills MUST be

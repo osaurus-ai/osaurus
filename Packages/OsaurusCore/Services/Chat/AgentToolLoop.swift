@@ -123,21 +123,47 @@ enum AgentLoopModelStep {
     /// call. Visible partial content or reasoning may be present, but the
     /// authoritative terminal reason says generation was incomplete.
     case lengthExhausted
+    /// The stream ended after emitting reasoning but no user-visible answer,
+    /// or the runtime reported that the reasoning envelope never closed.
+    /// Agent runs require a normal final answer after reasoning/tool work, so
+    /// an explicitly recovery-capable surface may perform one bounded retry;
+    /// other surfaces end with a typed incomplete result instead of presenting
+    /// the reasoning card as a completed response.
+    case incompleteReasoning
+    /// The runtime reported an unclosed reasoning envelope after already
+    /// emitting user-visible content. Streaming surfaces cannot retract that
+    /// content, so transparently replaying would concatenate two attempts.
+    /// End honestly without an automatic retry.
+    case incompleteVisibleResponse
 
     /// Classify a naturally completed model step from its rendered channels
     /// and authoritative terminal stop reason.
     ///
-    /// A reasoning-only natural `stop` remains final for model families that
-    /// intentionally answer in their reasoning channel. A reasoning-only
-    /// `length` is different: the runtime says the model hit its configured
-    /// cap, so accepting it as success abandons the task.
+    /// A reasoning-only natural `stop` is not a complete agent response. The
+    /// reasoning rail is visible diagnostic work, while the user-facing answer
+    /// belongs in content. This distinction matters after tools: a reported
+    /// 29K-character Gemma thought block had no answer, but its saved artifact
+    /// lacked terminal provenance, so this classifier relies on live stop and
+    /// envelope state rather than inferring completion from reasoning alone.
     static func classifyTerminal(
         contentIsBlank: Bool,
         thinkingIsBlank: Bool,
-        stopReason: String?
+        stopReason: String?,
+        unclosedReasoning: Bool = false,
+        requiresVisibleFinalResponse: Bool
     ) -> Self {
         if stopReason == "length" {
             return .lengthExhausted
+        }
+        if requiresVisibleFinalResponse
+            && unclosedReasoning && !contentIsBlank
+        {
+            return .incompleteVisibleResponse
+        }
+        if requiresVisibleFinalResponse
+            && (unclosedReasoning || (contentIsBlank && !thinkingIsBlank))
+        {
+            return .incompleteReasoning
         }
         if contentIsBlank, thinkingIsBlank {
             return .emptyResponse
@@ -153,6 +179,21 @@ enum AgentLoopModelStep {
             return fallback
         }
         return String(content[...lastVisible]) + "\n\n" + fallback
+    }
+}
+
+/// Whether a surface owes the user a normal visible answer after a
+/// reasoning-only model stop. Merely advertising tool schemas is not evidence
+/// that an agent/tool workflow occurred: ordinary direct chats may expose
+/// baseline tools while a reasoning-only bundle intentionally returns on its
+/// reasoning rail. Structured tool work in this logical run and remote-agent
+/// execution are the two contracts that require a visible final response.
+enum AgentLoopVisibleResponsePolicy {
+    static func requiresVisibleFinalResponse(
+        hasStructuredToolWork: Bool,
+        isRemoteAgentTarget: Bool
+    ) -> Bool {
+        hasStructuredToolWork || isRemoteAgentTarget
     }
 }
 
@@ -184,6 +225,16 @@ struct AgentLoopToolOutcome {
     let wasError: Bool
 }
 
+/// Typed, session-scoped view of the checklist the `todo` tool owns.
+/// The driver compares snapshots from successful current-run `todo` calls;
+/// it never infers progress from assistant prose or tool-result strings.
+struct AgentTodoProgressSnapshot: Equatable, Sendable {
+    let done: Int
+    let total: Int
+
+    var pending: Int { max(0, total - done) }
+}
+
 // MARK: - Hooks
 
 /// Surface-specific behavior, injected as async closures. All closures
@@ -208,6 +259,24 @@ struct AgentLoopHooks {
     /// routing) and classify the outcome. Thrown errors abort the run and
     /// propagate to the caller of `run` (chat's catch blocks live there).
     var modelStep: (_ messages: [ChatMessage], _ iteration: Int) async throws -> AgentLoopModelStep
+
+    /// Keep the just-finished incomplete attempt in the surface transcript and
+    /// prepare a fresh output buffer for one natural retry. The retry's
+    /// model-visible history must remain byte-for-byte equivalent to the
+    /// pre-attempt history: local templates disagree on how a tool-free
+    /// `reasoning_content` assistant message is serialized (some drop it,
+    /// others close and rewrite it). This boundary must not append that
+    /// incomplete attempt to the next model request or inject a prompt,
+    /// reasoning tag, sampler override, EOS override, or other coercion.
+    var prepareIncompleteReasoningContinuation: (() async -> Void)?
+
+    /// Preserve an ordinary assistant response from a run that successfully
+    /// created/updated a todo list while structured unchecked work remains,
+    /// then prepare a fresh output buffer for the next model step. Unlike
+    /// incomplete-reasoning recovery, the response MUST remain model-visible:
+    /// it is real work/progress emitted by the model. Only chat opts into this
+    /// boundary; headless surfaces keep their existing terminal behavior.
+    var prepareTrackedTaskContinuation: (() async -> Void)?
 
     /// Called for every parsed invocation before the dedupe check, so the
     /// chat surface can materialise its tool-call row (and UI timers)
@@ -244,11 +313,15 @@ struct AgentLoopHooks {
     var onBatchComplete: (_ outcomes: [AgentLoopToolOutcome]) async -> Void
 
     /// Number of UNCHECKED items on the session's todo list, or nil when
-    /// the surface has no session-scoped todo (HTTP/plugin/eval). When
-    /// set, the driver stages a one-line staleness notice after
-    /// `AgentLoopPolicy.todoStalenessThreshold` iterations pass without a
-    /// `todo` call while pending items remain. Chat-only today.
+    /// the surface has no session-scoped todo (HTTP/plugin/eval). Chat uses
+    /// this only for the periodic staleness notice.
     var pendingTodoCount: (() async -> Int)?
+
+    /// Current structured checklist counts for the run's captured session.
+    /// Chat supplies this so a successful current-run `todo` cannot be silently
+    /// abandoned while unchecked work remains. Other surfaces retain their
+    /// existing terminal behavior by leaving it nil.
+    var todoProgressSnapshot: (() async -> AgentTodoProgressSnapshot?)?
 
     /// Emit a final, user-visible assistant message when an empty turn could
     /// not be recovered (the model produced nothing across the bounded
@@ -262,6 +335,8 @@ struct AgentLoopHooks {
         isCancelled: @escaping () async -> Bool = { false },
         buildMessages: @escaping (_ notices: [String]) async -> AgentLoopIterationInput,
         modelStep: @escaping (_ messages: [ChatMessage], _ iteration: Int) async throws -> AgentLoopModelStep,
+        prepareIncompleteReasoningContinuation: (() async -> Void)? = nil,
+        prepareTrackedTaskContinuation: (() async -> Void)? = nil,
         willProcessCall: @escaping (_ invocation: ServiceToolInvocation, _ callId: String) async -> Void = { _, _ in },
         onDedupedResult:
             @escaping (_ invocation: ServiceToolInvocation, _ callId: String, _ heldResult: String) async -> Void = {
@@ -275,17 +350,21 @@ struct AgentLoopHooks {
         )? = nil,
         onBatchComplete: @escaping (_ outcomes: [AgentLoopToolOutcome]) async -> Void = { _ in },
         pendingTodoCount: (() async -> Int)? = nil,
+        todoProgressSnapshot: (() async -> AgentTodoProgressSnapshot?)? = nil,
         emitFallbackText: ((_ text: String) async -> Void)? = nil
     ) {
         self.isCancelled = isCancelled
         self.buildMessages = buildMessages
         self.modelStep = modelStep
+        self.prepareIncompleteReasoningContinuation = prepareIncompleteReasoningContinuation
+        self.prepareTrackedTaskContinuation = prepareTrackedTaskContinuation
         self.willProcessCall = willProcessCall
         self.onDedupedResult = onDedupedResult
         self.executeTool = executeTool
         self.executeBatch = executeBatch
         self.onBatchComplete = onBatchComplete
         self.pendingTodoCount = pendingTodoCount
+        self.todoProgressSnapshot = todoProgressSnapshot
         self.emitFallbackText = emitFallbackText
     }
 }
@@ -713,6 +792,9 @@ enum AgentToolLoop {
         /// The model exhausted the configured output-token budget without an
         /// executable tool call. Any visible partial text is preserved.
         case lengthExhausted
+        /// Bounded recovery could not turn reasoning-only/unclosed output into
+        /// a user-visible final answer.
+        case incompleteReasoningExhausted
     }
 
     struct RunResult: Equatable, Sendable {
@@ -720,6 +802,16 @@ enum AgentToolLoop {
         /// Iterations charged against the budget (transient retries are
         /// not charged).
         var iterations: Int
+        /// Structured unfinished-work state captured when a current-run Todo
+        /// reaches the hard iteration cap. Nil for every other exit, including
+        /// an ordinary tool-loop cap with no Todo contract.
+        var unfinishedTodoCount: Int?
+
+        init(exit: Exit, iterations: Int, unfinishedTodoCount: Int? = nil) {
+            self.exit = exit
+            self.iterations = iterations
+            self.unfinishedTodoCount = unfinishedTodoCount
+        }
     }
 
     /// The dedupe-replay notice staged when a held result short-circuits
@@ -752,6 +844,31 @@ enum AgentToolLoop {
         "The model reached the configured output-token limit before naturally completing an answer or tool call. "
         + "The agent task is incomplete; increase Max Tokens, disable Thinking for this task, "
         + "or continue from the latest tool result."
+
+    /// Only one natural continuation generation is allowed after a
+    /// reasoning-only assistant step. The surface preserves that real step in
+    /// history and starts a fresh output buffer; the driver does not fabricate
+    /// a user/system message or alter decode controls.
+    static let maxIncompleteReasoningRetries = 1
+
+    static let incompleteReasoningFallback =
+        "The model ended in reasoning without producing a user-visible final answer. "
+        + "The agent task may be incomplete; retry with Thinking disabled or continue from the latest tool result."
+
+    /// Structured state notice used when a model emits an ordinary stop while
+    /// the Todo it created this run still has unchecked work. This is not a
+    /// prose classifier: the count comes from `AgentTodoStore`, and the loop is
+    /// still bounded by the user's normal tool-attempt budget.
+    static func todoPendingFinalNotice(pending: Int) -> String {
+        "[System Notice] The todo you created this turn still has \(pending) unchecked item\(pending == 1 ? "" : "s"). Continue the task now. If you cannot finish, give the user an honest final answer and call `complete(summary)` with what remains blocked."
+    }
+
+    /// Honest chat fallback when a structured current-run Todo remains
+    /// unfinished at the hard agent-step cap. This is driven by typed Todo
+    /// state, never by classifying the model's prose.
+    static func unfinishedTodoCapFallback(pending: Int) -> String {
+        "The agent reached the configured step limit with \(pending) todo item\(pending == 1 ? "" : "s") still unfinished. The task is incomplete; continue from the latest completed step or increase Max Agent Steps in Chat settings."
+    }
 
     /// The iteration-budget warning staged when the remaining budget
     /// drops to the policy threshold.
@@ -1138,6 +1255,22 @@ enum AgentToolLoop {
         "[System Notice] Your todo list still has \(pending) unchecked item\(pending == 1 ? "" : "s") and has not been updated recently. If you finished any, re-send the full list with those boxes checked now; if the plan changed, rewrite the list."
     }
 
+    /// Read structured checklist counts from the real Todo invocation body.
+    /// This is deliberately parser-based, not a prose/result-text heuristic,
+    /// and preserves the order of multiple Todo updates in one tool batch.
+    static func todoProgressSnapshot(
+        from invocation: ServiceToolInvocation
+    ) -> AgentTodoProgressSnapshot? {
+        guard invocation.toolName == "todo",
+            let data = invocation.jsonArguments.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let markdown = dict["markdown"] as? String
+        else { return nil }
+        let todo = AgentTodo.parse(markdown)
+        guard todo.totalCount > 0 else { return nil }
+        return AgentTodoProgressSnapshot(done: todo.doneCount, total: todo.totalCount)
+    }
+
     // Capability schemas loaded mid-run are delivered append-only in the
     // `capabilities_load` tool *result* (see
     // `CapabilitiesLoadTool.loadedSchemaBlock`), never by rewriting the frozen
@@ -1202,6 +1335,19 @@ enum AgentToolLoop {
         return hasher.finalize().prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
+    /// Stable suffix for one logical generation attempt. Transport retries
+    /// reuse the same recovery ordinal and therefore the same key; the one
+    /// deliberate reasoning recovery increments it so a billing/router
+    /// idempotency layer cannot replay attempt 1 instead of generating attempt
+    /// 2 from the otherwise-identical message body.
+    static func recoveryAwareIdempotencySuffix(
+        messages: [ChatMessage],
+        incompleteReasoningRetryOrdinal: Int
+    ) -> String {
+        "r\(max(0, incompleteReasoningRetryOrdinal))-"
+            + stepIdempotencyFingerprint(messages: messages)
+    }
+
     /// Run the canonical loop to completion. Errors thrown by
     /// `hooks.modelStep` propagate to the caller (surface-specific error
     /// handling stays at the call site).
@@ -1227,6 +1373,19 @@ enum AgentToolLoop {
         // productive turn; bounds the nudge-and-retry recovery so the loop
         // can never spin on a deterministically-empty model.
         var consecutiveEmptyTurns = 0
+        // Total (not merely consecutive) reasoning-only recovery attempts.
+        // A tool call between attempts must not re-arm another potentially
+        // huge reasoning cycle in the same logical run.
+        var incompleteReasoningRetries = 0
+        // Session Todo state persists across user turns. Arm terminal gating
+        // only after THIS run successfully executes a valid `todo`; an older
+        // stale checklist must never hijack an unrelated direct answer.
+        var hasSuccessfulCurrentRunTodo = false
+        // Keep the last parseable current-run checklist as a fail-closed
+        // fallback. The session store is authoritative when available, but a
+        // transient missing lookup must not turn known unchecked work into a
+        // clean final response.
+        var lastSuccessfulCurrentRunTodoProgress: AgentTodoProgressSnapshot?
         // Last iteration that carried a `todo` call (0 = run start), for
         // the staleness check below.
         var lastTodoIteration = 0
@@ -1265,8 +1424,55 @@ enum AgentToolLoop {
             }
 
             let step = try await hooks.modelStep(input.messages, iteration)
+            // `modelStep` may return because the user pressed Stop and the
+            // surface cancelled its upstream stream. Cancellation must win
+            // before terminal classification: otherwise a cancelled,
+            // reasoning-only turn can prepare continuation state (or emit an
+            // incomplete fallback) even though no follow-up generation should
+            // occur.
+            if await hooks.isCancelled() {
+                return RunResult(exit: .cancelled, iterations: iteration - 1)
+            }
             switch step {
             case .finalResponse:
+                if hasSuccessfulCurrentRunTodo,
+                    let prepareContinuation = hooks.prepareTrackedTaskContinuation,
+                    let todoProgressSnapshot = hooks.todoProgressSnapshot
+                {
+                    let progress = await todoProgressSnapshot()
+                        ?? lastSuccessfulCurrentRunTodoProgress
+                    // The store lookup suspends across an actor boundary. Stop
+                    // must win if it lands during that await; never create a
+                    // fresh assistant turn after the user cancelled.
+                    if await hooks.isCancelled() {
+                        return RunResult(exit: .cancelled, iterations: iteration - 1)
+                    }
+                    if let progress, progress.pending > 0 {
+                        // Preserve the model's real response in visible/model
+                        // history and start the next attempt in a fresh
+                        // assistant turn. This boundary also runs at the hard
+                        // cap so Chat's existing tool-free finalizer does not
+                        // concatenate its wrap-up onto progress prose.
+                        await prepareContinuation()
+                        if await hooks.isCancelled() {
+                            return RunResult(exit: .cancelled, iterations: iteration)
+                        }
+                        if iteration < policy.maxIterations {
+                            pendingTodoNotice = Self.todoPendingFinalNotice(
+                                pending: progress.pending
+                            )
+                            continue
+                        }
+                        return RunResult(
+                            exit: .iterationCapReached,
+                            iterations: iteration,
+                            unfinishedTodoCount: progress.pending
+                        )
+                    }
+                }
+                // A direct answer, a stale pre-run Todo, or a completed
+                // current-run Todo remains authoritative. Explicit successful
+                // `complete` / `clarify` calls end earlier through endRun.
                 return RunResult(exit: .finalResponse, iterations: iteration)
 
             case .retryWithoutCharge:
@@ -1307,6 +1513,37 @@ enum AgentToolLoop {
                 await hooks.emitFallbackText?(Self.lengthExhaustedFallback)
                 return RunResult(exit: .lengthExhausted, iterations: iteration)
 
+            case .incompleteReasoning:
+                if let prepareRetry = hooks.prepareIncompleteReasoningContinuation,
+                    incompleteReasoningRetries < Self.maxIncompleteReasoningRetries
+                {
+                    incompleteReasoningRetries += 1
+                    // Keep the incomplete reasoning visible to the surface,
+                    // but replay the exact pre-attempt model-visible history
+                    // from a fresh output buffer. No synthetic notice, closing
+                    // tag, prompt coercion, sampler override, or EOS override
+                    // is introduced here.
+                    await prepareRetry()
+                    // This is protocol continuation rather than agent/tool
+                    // progress, so do not charge it against the tool budget.
+                    iteration -= 1
+                    continue
+                }
+                return RunResult(
+                    exit: .incompleteReasoningExhausted,
+                    iterations: iteration
+                )
+
+            case .incompleteVisibleResponse:
+                // The surface has already emitted visible content, so a
+                // transparent replay would splice two attempts into one
+                // answer. Return the typed incomplete exit and let each
+                // surface render its native error/banner without retrying.
+                return RunResult(
+                    exit: .incompleteReasoningExhausted,
+                    iterations: iteration
+                )
+
             case .toolCalls(let invocations):
                 // A productive turn — reset the empty-turn recovery budget so
                 // a later unrelated empty turn gets its own fresh allowance.
@@ -1327,7 +1564,38 @@ enum AgentToolLoop {
                     ),
                     let emitFinalText = hooks.emitFallbackText
                 {
+                    var pendingTrackedTodoCount: Int?
+                    if hasSuccessfulCurrentRunTodo,
+                        let todoProgressSnapshot = hooks.todoProgressSnapshot
+                    {
+                        let progress = await todoProgressSnapshot()
+                            ?? lastSuccessfulCurrentRunTodoProgress
+                        if await hooks.isCancelled() {
+                            return RunResult(exit: .cancelled, iterations: iteration - 1)
+                        }
+                        if let progress, progress.pending > 0 {
+                            pendingTrackedTodoCount = progress.pending
+                        }
+                    }
+
                     await emitFinalText(summary)
+                    if let pending = pendingTrackedTodoCount,
+                        let prepareContinuation = hooks.prepareTrackedTaskContinuation
+                    {
+                        await prepareContinuation()
+                        if await hooks.isCancelled() {
+                            return RunResult(exit: .cancelled, iterations: iteration)
+                        }
+                        if iteration < policy.maxIterations {
+                            pendingTodoNotice = Self.todoPendingFinalNotice(pending: pending)
+                            continue
+                        }
+                        return RunResult(
+                            exit: .iterationCapReached,
+                            iterations: iteration,
+                            unfinishedTodoCount: pending
+                        )
+                    }
                     return RunResult(exit: .finalResponse, iterations: iteration)
                 }
 
@@ -1629,6 +1897,25 @@ enum AgentToolLoop {
                 if !outcomes.isEmpty {
                     completedToolWork = true
                 }
+                let successfulTodoOutcomes = outcomes.filter { outcome in
+                    outcome.invocation.toolName == "todo"
+                        && !outcome.wasError
+                        && ToolEnvelope.isSuccess(outcome.result)
+                }
+                let successfulTodoOutcome = !successfulTodoOutcomes.isEmpty
+                if successfulTodoOutcome {
+                    lastTodoIteration = iteration
+                    // A successful envelope is not enough by itself: arm the
+                    // terminal contract only when at least one invocation has
+                    // a real parseable checklist. This keeps malformed/empty
+                    // calls and synthetic success stubs from hijacking finals.
+                    if let latestProgress = successfulTodoOutcomes.compactMap({
+                        Self.todoProgressSnapshot(from: $0.invocation)
+                    }).last {
+                        hasSuccessfulCurrentRunTodo = true
+                        lastSuccessfulCurrentRunTodoProgress = latestProgress
+                    }
+                }
 
                 // Data-movement relief: when an iteration's tool calls
                 // are ALL successful bulk loads (db_import / bulk
@@ -1667,9 +1954,8 @@ enum AgentToolLoop {
                 // items and no `todo` call has landed for a threshold of
                 // iterations, stage a one-line nudge. Firing re-arms the
                 // window so the nudge repeats at most once per threshold.
-                if invocations.contains(where: { $0.toolName == "todo" }) {
-                    lastTodoIteration = iteration
-                } else if let pendingTodoCount = hooks.pendingTodoCount,
+                if !successfulTodoOutcome,
+                    let pendingTodoCount = hooks.pendingTodoCount,
                     iteration - lastTodoIteration >= policy.todoStalenessThreshold
                 {
                     let pending = await pendingTodoCount()
@@ -1678,6 +1964,31 @@ enum AgentToolLoop {
                         lastTodoIteration = iteration
                     }
                 }
+            }
+        }
+
+        // The loop can consume its final allowed iteration with a tool batch,
+        // not only with `.finalResponse`. If this run created a real Todo and
+        // that checklist is still pending, preserve the typed pending count so
+        // Chat cannot launch its generic tool-free finalizer and guess that the
+        // unfinished task completed. `onBatchComplete` has already created the
+        // fresh assistant buffer for the terminal fallback on the chat surface.
+        if hasSuccessfulCurrentRunTodo,
+            let todoProgressSnapshot = hooks.todoProgressSnapshot
+        {
+            let progress = await todoProgressSnapshot()
+                ?? lastSuccessfulCurrentRunTodoProgress
+            // The store lookup suspends across an actor boundary. A Stop that
+            // lands during it must still win over the cap fallback.
+            if await hooks.isCancelled() {
+                return RunResult(exit: .cancelled, iterations: iteration)
+            }
+            if let progress, progress.pending > 0 {
+                return RunResult(
+                    exit: .iterationCapReached,
+                    iterations: iteration,
+                    unfinishedTodoCount: progress.pending
+                )
             }
         }
 

@@ -452,6 +452,11 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
                 message: "Subagent '\(targetLabel)' reached its output-token limit before producing a result.",
                 retryable: false
             )
+        case .incompleteReasoningExhausted:
+            throw SubagentError.executionFailed(
+                message: "Subagent '\(targetLabel)' ended in reasoning without producing a visible result.",
+                retryable: false
+            )
         }
     }
 

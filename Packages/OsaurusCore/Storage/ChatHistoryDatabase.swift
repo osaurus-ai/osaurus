@@ -177,7 +177,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// stamped newer than this is refused (forward-version fail-fast).
     /// Internal (not private) so migration-repair tests assert "reconciled
     /// to the latest" against the real constant instead of a stale literal.
-    static let latestSchemaVersion = 12
+    static let latestSchemaVersion = 13
 
     private func runMigrations() throws {
         let current = try getSchemaVersion()
@@ -205,6 +205,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if current < 10 { try runMigrationStep(10, migrateToV10) }
         if current < 11 { try runMigrationStep(11, migrateToV11) }
         if current < 12 { try runMigrationStep(12, migrateToV12) }
+        if current < 13 { try runMigrationStep(13, migrateToV13) }
     }
 
     /// Run one migration body atomically. Called only from `runMigrations`,
@@ -431,6 +432,14 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private func migrateToV12() throws {
         try addColumnIfMissing("turns", "terminal_stop_reason", "TEXT")
         try setSchemaVersion(12)
+    }
+
+    /// v13: mark an abandoned reasoning/protocol attempt as transcript-only.
+    /// The turn remains visible to the user, but later requests (including
+    /// after an app restart) must not replay it beside the successful retry.
+    private func migrateToV13() throws {
+        try addColumnIfMissing("turns", "model_context_excluded", "INTEGER NOT NULL DEFAULT 0")
+        try setSchemaVersion(13)
     }
 
     // MARK: - Public API: sessions
@@ -1134,6 +1143,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if let stopReason = turn.terminalStopReason {
             hasher.update(data: Data(stopReason.utf8))
         }
+        if turn.modelContextExcluded {
+            hasher.update(data: Data([UInt8(1)]))
+        }
         // Billing can land after the initial empty-turn save (the summary frame
         // often trails the content), so it must be part of the hash or the
         // incremental upsert would skip writing the row.
@@ -1241,8 +1253,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             (id, session_id, seq, role, content, attachments,
              tool_calls, tool_call_id, tool_results, thinking, content_hash,
              created_at, completed_at, generation_token_count, time_to_first_token,
-             tool_call_durations, thinking_duration, router_billing, terminal_stop_reason)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+             tool_call_durations, thinking_duration, router_billing, terminal_stop_reason,
+             model_context_excluded)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
         ON CONFLICT(id) DO UPDATE SET
             session_id             = excluded.session_id,
             seq                    = excluded.seq,
@@ -1261,13 +1274,15 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             tool_call_durations    = excluded.tool_call_durations,
             thinking_duration      = excluded.thinking_duration,
             router_billing         = excluded.router_billing,
-            terminal_stop_reason   = excluded.terminal_stop_reason
+            terminal_stop_reason   = excluded.terminal_stop_reason,
+            model_context_excluded = excluded.model_context_excluded
         """
 
     private static let selectTurnsSQL = """
         SELECT id, role, content, attachments, tool_calls, tool_call_id, tool_results, thinking,
                created_at, completed_at, generation_token_count, time_to_first_token,
-               tool_call_durations, thinking_duration, router_billing, terminal_stop_reason
+               tool_call_durations, thinking_duration, router_billing, terminal_stop_reason,
+               model_context_excluded
         FROM turns
         WHERE session_id = ?1
         ORDER BY seq ASC
@@ -1345,6 +1360,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             .map { String(cString: $0) }
             .flatMap(decodeJSON)
         let terminalStopReason = sqlite3_column_text(stmt, 15).map { String(cString: $0) }
+        let modelContextExcluded = sqlite3_column_int(stmt, 16) != 0
         return ChatTurnData(
             id: UUID(uuidString: idStr) ?? UUID(),
             role: role,
@@ -1361,6 +1377,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             generationTokenCount: tokenCount,
             timeToFirstToken: timeToFirstToken,
             terminalStopReason: terminalStopReason,
+            modelContextExcluded: modelContextExcluded,
             routerBilling: routerBilling
         )
     }
@@ -1406,6 +1423,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         bindNullableDouble(stmt, index: 17, value: turn.thinkingDuration)
         bindText(stmt, index: 18, value: turn.routerBilling.flatMap(encodeJSON))
         bindText(stmt, index: 19, value: turn.terminalStopReason)
+        sqlite3_bind_int(stmt, 20, turn.modelContextExcluded ? 1 : 0)
     }
 
     static func bindNullableDouble(_ stmt: OpaquePointer, index: Int, value: Double?) {

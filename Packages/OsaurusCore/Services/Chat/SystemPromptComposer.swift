@@ -94,6 +94,7 @@ public struct SystemPromptComposer: Sendable {
         agentId: UUID,
         executionMode: ExecutionMode,
         model: String? = nil,
+        modelType: String? = nil,
         query: String = "",
         messages: [ChatMessage] = [],
         toolsDisabled: Bool = false,
@@ -108,6 +109,7 @@ public struct SystemPromptComposer: Sendable {
                 agentId: agentId,
                 executionMode: executionMode,
                 model: model,
+                modelType: modelType,
                 query: query,
                 messages: messages,
                 toolsDisabled: toolsDisabled,
@@ -139,7 +141,8 @@ public struct SystemPromptComposer: Sendable {
         let snapshot = AgentConfigSnapshot.capture(
             agentId: request.agentId,
             requestToolsDisabled: request.toolsDisabled,
-            modelOverride: request.model
+            modelOverride: request.model,
+            modelTypeOverride: request.modelType
         )
         let composer = forChat(
             snapshot: snapshot,
@@ -832,6 +835,7 @@ public struct SystemPromptComposer: Sendable {
         if !effectiveToolsOff,
             let familyGuidance = ModelFamilyGuidance.guidance(
                 forModelId: snapshot.model,
+                modelType: snapshot.modelType,
                 compact: toolset.prefersCompactPrompt
             )
         {
@@ -1795,13 +1799,15 @@ public struct SystemPromptComposer: Sendable {
     static func composePreviewContext(
         agentId: UUID,
         executionMode: ExecutionMode,
-        model: String? = nil
+        model: String? = nil,
+        modelType: String? = nil
     ) -> ComposedContext {
         // Same one-shot snapshot as the real send path so the popover
         // can never disagree with the next compose's gate decisions.
         let snapshot = AgentConfigSnapshot.capture(
             agentId: agentId,
-            modelOverride: model
+            modelOverride: model,
+            modelTypeOverride: modelType
         )
         return composePreviewContext(snapshot: snapshot, executionMode: executionMode)
     }

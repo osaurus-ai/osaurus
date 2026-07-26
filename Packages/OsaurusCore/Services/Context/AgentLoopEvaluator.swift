@@ -930,6 +930,7 @@ public enum AgentLoopEvaluator {
         case .overBudget: return "overBudget"
         case .emptyResponseExhausted: return "emptyResponseExhausted"
         case .lengthExhausted: return "lengthExhausted"
+        case .incompleteReasoningExhausted: return "incompleteReasoningExhausted"
         }
     }
 }

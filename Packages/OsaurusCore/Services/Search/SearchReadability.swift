@@ -96,7 +96,16 @@ enum SearchReadability {
             }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard (200 ... 299).contains(status) else {
-                return failure(status: .fetchFailed, message: "HTTP status \(status)")
+                // Retry only statuses that can plausibly recover without
+                // changing the URL. A persistent 401/403/404 is not a
+                // transport outage; labeling it `fetch_failed` previously
+                // invited the agent to request the same blocked page forever.
+                let retryableHTTPStatus = status == 408 || status == 425 || status == 429
+                    || (500 ... 599).contains(status)
+                return failure(
+                    status: retryableHTTPStatus ? .fetchFailed : .blocked,
+                    message: "HTTP status \(status)"
+                )
             }
             if response.expectedContentLength > Int64(maxHTMLBytes) {
                 return failure(status: .tooLarge, message: "response exceeds \(maxHTMLBytes) bytes")

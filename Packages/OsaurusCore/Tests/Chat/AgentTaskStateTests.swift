@@ -856,6 +856,125 @@ struct AgentTaskStateTests {
         #expect(guarded.contains("transition_required"))
     }
 
+    @Test func webSearchLoop_allChallengeExtractionDoesNotResetGuard() throws {
+        let state = AgentTaskState()
+        for n in 1 ... 4 {
+            state.record(
+                name: "web_search",
+                argsJSON: #"{"query":"Hugging Face org models \#(n)"}"#,
+                result: ToolEnvelope.success(tool: "web_search", text: "ranked snippets")
+            )
+        }
+
+        let extractionFailure = SearchAndExtractTool.extractionEnvelope(
+            payload: [
+                "mode": "direct_url",
+                "provider": "direct_url",
+                "results": [
+                    [
+                        "url": "https://huggingface.co/OsaurusAI/models",
+                        "extracted": false,
+                        "extract_status": "challenge",
+                        "extract_error": "challenge_page",
+                    ],
+                ],
+            ]
+        )
+        let extractionArgs = #"{"url":"https://huggingface.co/OsaurusAI/models"}"#
+        state.record(
+            name: "search_and_extract",
+            argsJSON: extractionArgs,
+            result: extractionFailure
+        )
+
+        let guarded = try #require(state.guardedResult(name: "web_search"))
+        #expect(guarded.contains("transition_required"))
+        #expect(extractionFailure.contains("do not claim these pages were read"))
+        let replay = try #require(
+            state.heldResult(name: "search_and_extract", argsJSON: extractionArgs)
+        )
+        #expect(replay == extractionFailure)
+        #expect(state.lastReplayNotice?.contains("was NOT re-executed") == true)
+    }
+
+    @Test func webSearchLoop_transientExtractionFailureGetsOneRetryThenStops() throws {
+        let state = AgentTaskState()
+        let extractionArgs = #"{"url":"https://example.com/temporarily-slow"}"#
+        let extractionFailure = SearchAndExtractTool.extractionEnvelope(
+            payload: [
+                "mode": "direct_url",
+                "provider": "direct_url",
+                "results": [
+                    [
+                        "url": "https://example.com/temporarily-slow",
+                        "extracted": false,
+                        "extract_status": "timeout",
+                    ],
+                ],
+            ]
+        )
+        state.record(
+            name: "search_and_extract",
+            argsJSON: extractionArgs,
+            result: extractionFailure
+        )
+
+        #expect(ToolEnvelope.isError(extractionFailure))
+        #expect(state.heldResult(name: "search_and_extract", argsJSON: extractionArgs) == nil)
+
+        state.record(
+            name: "search_and_extract",
+            argsJSON: extractionArgs,
+            result: extractionFailure
+        )
+        let exhausted = try #require(
+            state.heldResult(name: "search_and_extract", argsJSON: extractionArgs)
+        )
+        #expect(ToolEnvelope.isError(exhausted))
+        #expect(exhausted.contains(#""retry_exhausted":true"#))
+        #expect(exhausted.contains(#""retryable":false"#))
+        #expect(exhausted.contains("Do not execute the same arguments again"))
+    }
+
+    @Test func webSearchLoop_contentfulExtractionResetsAndMayReplay() {
+        let state = AgentTaskState()
+        for n in 1 ... 4 {
+            state.record(
+                name: "web_search",
+                argsJSON: #"{"query":"Hugging Face org models \#(n)"}"#,
+                result: ToolEnvelope.success(tool: "web_search", text: "ranked snippets")
+            )
+        }
+
+        let extractionArgs = #"{"url":"https://example.com/model-card"}"#
+        let extractionSuccess = SearchAndExtractTool.extractionEnvelope(
+            payload: [
+                "mode": "direct_url",
+                "provider": "direct_url",
+                "results": [
+                    [
+                        "url": "https://example.com/model-card",
+                        "extracted": true,
+                        "extract_status": "ok",
+                        "markdown": "verified model card content",
+                    ],
+                ],
+            ]
+        )
+        state.record(
+            name: "search_and_extract",
+            argsJSON: extractionArgs,
+            result: extractionSuccess
+        )
+
+        #expect(state.nextStepBias() == nil)
+        #expect(state.guardedResult(name: "web_search") == nil)
+        #expect(
+            state.heldResult(name: "search_and_extract", argsJSON: extractionArgs)
+                == extractionSuccess
+        )
+    }
+
     @Test func webSearchLoop_metaToolDetourDoesNotResetGuard() throws {
         let state = AgentTaskState()
         for n in 1 ... 4 {

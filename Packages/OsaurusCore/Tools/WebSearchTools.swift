@@ -431,7 +431,7 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
             if !hostedTexts.isEmpty {
                 payload["extract_source"] = "premium"
             }
-            return ToolEnvelope.success(tool: name, result: payload)
+            return Self.extractionEnvelope(payload: payload)
         }
 
         var warnings: [String] = []
@@ -479,10 +479,75 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
         )
         WebSearchResultFormatter.applySourceMetadata(&payload, run: run)
 
-        return ToolEnvelope.success(
-            tool: name,
-            result: payload,
+        return Self.extractionEnvelope(
+            payload: payload,
             warnings: warnings.isEmpty ? nil : warnings
+        )
+    }
+
+    /// Turn per-result extraction statuses into an honest tool-level result.
+    ///
+    /// `search_and_extract` promises retrieved page content, not another list
+    /// of discovery URLs.  A request where every attempted extraction was a
+    /// challenge/timeout/empty page therefore did not succeed.  Returning an
+    /// `ok:true` envelope for that case used to reset the agent loop's
+    /// discovery budget and let Gemma/Qwen families search, load capabilities,
+    /// and reason indefinitely from snippets while believing retrieval had
+    /// progressed.
+    ///
+    /// Partial success remains a success: the model gets every result plus
+    /// explicit counts and can use whichever sources were actually retrieved.
+    /// Total failure preserves the complete search/extraction payload as
+    /// metadata. Challenge/content-policy failures are non-retryable as-is;
+    /// transport failures remain retryable so a transient outage is not
+    /// mislabeled as a permanent source contract.
+    static func extractionEnvelope(
+        payload rawPayload: [String: Any],
+        warnings: [String]? = nil
+    ) -> String {
+        var payload = rawPayload
+        let results = payload["results"] as? [[String: Any]] ?? []
+        let attempted = results.filter { $0["extract_status"] != nil }
+        let extractedCount = results.filter { ($0["extracted"] as? Bool) == true }.count
+        let failedCount = attempted.filter { ($0["extracted"] as? Bool) != true }.count
+
+        payload["extraction_attempted_count"] = attempted.count
+        payload["extracted_count"] = extractedCount
+        payload["extraction_failed_count"] = failedCount
+
+        guard extractedCount > 0 else {
+            let statuses = attempted.compactMap { $0["extract_status"] as? String }
+            let transientStatuses: Set<String> = [
+                SearchExtractionStatus.fetchFailed.rawValue,
+                SearchExtractionStatus.timeout.rawValue,
+            ]
+            let hasTransientFailure = statuses.contains { transientStatuses.contains($0) }
+            let allTimedOut = !statuses.isEmpty
+                && statuses.allSatisfy { $0 == SearchExtractionStatus.timeout.rawValue }
+            let retryable = hasTransientFailure || attempted.isEmpty
+
+            var metadata = payload
+            metadata["next_action"] = [
+                "instruction": retryable
+                    ? "A transient retrieval failure occurred. Retry once or choose a materially different retrievable source; if retrieval still fails, report the blocker. Do not claim these pages were inspected."
+                    : "Choose a materially different retrievable source or report that page retrieval is blocked. Do not claim these pages were inspected.",
+            ]
+            if let warnings, !warnings.isEmpty { metadata["warnings"] = warnings }
+
+            return ToolEnvelope.failure(
+                kind: allTimedOut ? .timeout : .executionError,
+                message:
+                    "No page content was retrieved from any attempted source. The returned URLs/snippets are discovery results, not inspected page evidence. Change the source or retrieval method, or report that retrieval is blocked; do not claim these pages were read.",
+                tool: "search_and_extract",
+                retryable: retryable,
+                metadata: metadata
+            )
+        }
+
+        return ToolEnvelope.success(
+            tool: "search_and_extract",
+            result: payload,
+            warnings: warnings
         )
     }
 

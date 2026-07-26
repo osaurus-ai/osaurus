@@ -44,6 +44,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// non-Responses turn.
     public var reasoningItemId: String?
     public var reasoningEncrypted: String?
+    /// An abandoned reasoning/protocol attempt can remain visible in the
+    /// transcript without being replayed to the model. False for legacy turns.
+    public var modelContextExcluded: Bool
     /// Osaurus Router billing snapshot (cost, token counts, status) for this
     /// assistant turn. Metadata only - no prompt/response text. Nil for local
     /// models and non-router providers.
@@ -74,6 +77,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         terminalStopReason: String? = nil,
         reasoningItemId: String? = nil,
         reasoningEncrypted: String? = nil,
+        modelContextExcluded: Bool = false,
         routerBilling: RouterBillingSummary? = nil,
         injectedContextPrefix: String? = nil
     ) {
@@ -95,6 +99,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         self.terminalStopReason = terminalStopReason
         self.reasoningItemId = reasoningItemId
         self.reasoningEncrypted = reasoningEncrypted
+        self.modelContextExcluded = modelContextExcluded
         self.routerBilling = routerBilling
         self.injectedContextPrefix = injectedContextPrefix
     }
@@ -119,6 +124,8 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         terminalStopReason = try container.decodeIfPresent(String.self, forKey: .terminalStopReason)
         reasoningItemId = try container.decodeIfPresent(String.self, forKey: .reasoningItemId)
         reasoningEncrypted = try container.decodeIfPresent(String.self, forKey: .reasoningEncrypted)
+        modelContextExcluded =
+            try container.decodeIfPresent(Bool.self, forKey: .modelContextExcluded) ?? false
         routerBilling = try container.decodeIfPresent(RouterBillingSummary.self, forKey: .routerBilling)
         injectedContextPrefix = try container.decodeIfPresent(String.self, forKey: .injectedContextPrefix)
 
@@ -155,6 +162,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(terminalStopReason, forKey: .terminalStopReason)
         try container.encodeIfPresent(reasoningItemId, forKey: .reasoningItemId)
         try container.encodeIfPresent(reasoningEncrypted, forKey: .reasoningEncrypted)
+        if modelContextExcluded {
+            try container.encode(true, forKey: .modelContextExcluded)
+        }
         try container.encodeIfPresent(routerBilling, forKey: .routerBilling)
         try container.encodeIfPresent(injectedContextPrefix, forKey: .injectedContextPrefix)
     }
@@ -167,6 +177,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         case thinkingDuration
         case createdAt, completedAt, generationTokenCount, timeToFirstToken, terminalStopReason
         case reasoningItemId, reasoningEncrypted
+        case modelContextExcluded
         case routerBilling
         case injectedContextPrefix
     }
@@ -196,6 +207,7 @@ extension ChatTurnData {
         self.terminalStopReason = turn.terminalStopReason
         self.reasoningItemId = turn.reasoningItemId
         self.reasoningEncrypted = turn.reasoningEncrypted
+        self.modelContextExcluded = turn.modelContextExcluded
         self.routerBilling = turn.routerBilling
         self.injectedContextPrefix = turn.injectedContextPrefix
     }
@@ -224,6 +236,7 @@ extension ChatTurn {
         self.terminalStopReason = data.terminalStopReason
         self.reasoningItemId = data.reasoningItemId
         self.reasoningEncrypted = data.reasoningEncrypted
+        self.modelContextExcluded = data.modelContextExcluded
         self.routerBilling = data.routerBilling
         self.injectedContextPrefix = data.injectedContextPrefix
     }

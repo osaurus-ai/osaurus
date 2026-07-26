@@ -64,6 +64,11 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// been picked yet.
     public let model: String?
 
+    /// Canonical local-bundle `config.json.model_type` captured alongside the
+    /// selected model. This keeps family guidance architecture-derived and
+    /// session-deterministic instead of re-reading a changing scan cache.
+    public let modelType: String?
+
     /// User-selected manual tool names, or nil when not in manual mode.
     public let manualToolNames: [String]?
 
@@ -159,6 +164,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         autonomousConfig: AutonomousExecConfig?,
         toolMode: ToolSelectionMode,
         model: String?,
+        modelType: String? = nil,
         manualToolNames: [String]?,
         systemPrompt: String,
         dbEnabled: Bool,
@@ -186,6 +192,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.autonomousConfig = autonomousConfig
         self.toolMode = toolMode
         self.model = model
+        self.modelType = modelType
         self.manualToolNames = manualToolNames
         self.systemPrompt = systemPrompt
         self.dbEnabled = dbEnabled
@@ -221,7 +228,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     public static func capture(
         agentId: UUID,
         requestToolsDisabled: Bool = false,
-        modelOverride: String? = nil
+        modelOverride: String? = nil,
+        modelTypeOverride: String? = nil
     ) -> AgentConfigSnapshot {
         let mgr = AgentManager.shared
         // One resolve services every capability gate (positive polarity),
@@ -235,6 +243,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             autonomousConfig: mgr.effectiveAutonomousExec(for: agentId),
             toolMode: mgr.effectiveToolSelectionMode(for: agentId),
             model: modelOverride ?? mgr.effectiveModel(for: agentId),
+            modelType: modelTypeOverride,
             manualToolNames: mgr.effectiveManualToolNames(for: agentId),
             systemPrompt: mgr.effectiveSystemPrompt(for: agentId),
             dbEnabled: caps.dbEnabled,

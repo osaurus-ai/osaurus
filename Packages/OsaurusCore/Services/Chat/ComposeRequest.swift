@@ -18,6 +18,10 @@ struct ComposeRequest: Sendable {
     let agentId: UUID
     let executionMode: ExecutionMode
     let model: String?
+    /// Canonical local-bundle `config.json.model_type`, captured with the
+    /// picker selection. Nil for remote/unresolved models, which deliberately
+    /// fall back to identifier-based family routing.
+    let modelType: String?
     let query: String
     let messages: [ChatMessage]
     let toolsDisabled: Bool
@@ -38,6 +42,7 @@ struct ComposeRequest: Sendable {
         agentId: UUID,
         executionMode: ExecutionMode,
         model: String? = nil,
+        modelType: String? = nil,
         query: String = "",
         messages: [ChatMessage] = [],
         toolsDisabled: Bool = false,
@@ -50,6 +55,7 @@ struct ComposeRequest: Sendable {
         self.agentId = agentId
         self.executionMode = executionMode
         self.model = model
+        self.modelType = modelType
         self.query = query
         self.messages = messages
         self.toolsDisabled = toolsDisabled

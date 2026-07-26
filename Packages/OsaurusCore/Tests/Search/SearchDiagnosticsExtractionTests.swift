@@ -136,6 +136,39 @@ struct SearchDiagnosticsExtractionTests {
         #expect(extraction.message?.contains("\(SearchReadability.maxHTMLBytes)") == true)
     }
 
+    @Test func persistentHTTPFailureIsBlockedButServerFailureMayRetry() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [SearchExtractionHTTPStubProtocol.self]
+        var statusCode = 403
+        SearchExtractionHTTPStubProtocol.handler = { request in
+            let response = HTTPURLResponse(
+                url: try #require(request.url),
+                statusCode: statusCode,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "text/plain"]
+            )
+            return (try #require(response), Data())
+        }
+        defer { SearchExtractionHTTPStubProtocol.handler = nil }
+
+        let forbidden = await SearchReadability.extract(
+            url: "https://198.51.100.1/forbidden",
+            timeout: 1,
+            configuration: configuration
+        )
+        #expect(forbidden.status == .blocked)
+        #expect(forbidden.message == "HTTP status 403")
+
+        statusCode = 503
+        let unavailable = await SearchReadability.extract(
+            url: "https://198.51.100.1/unavailable",
+            timeout: 1,
+            configuration: configuration
+        )
+        #expect(unavailable.status == .fetchFailed)
+        #expect(unavailable.message == "HTTP status 503")
+    }
+
     @Test func extractionPreservesRawCSVHeaderAndRows() async {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [SearchExtractionHTTPStubProtocol.self]

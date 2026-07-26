@@ -79,14 +79,18 @@ struct ChatHistoryMigrationRepairTests {
     private static let alterV7 = ["ALTER TABLE turns ADD COLUMN thinking_duration REAL"]
     private static let alterV8 = ["ALTER TABLE turns ADD COLUMN router_billing TEXT"]
     private static let alterV12 = ["ALTER TABLE turns ADD COLUMN terminal_stop_reason TEXT"]
+    private static let alterV13 = [
+        "ALTER TABLE turns ADD COLUMN model_context_excluded INTEGER NOT NULL DEFAULT 0"
+    ]
 
-    // MARK: - Reporter-exact: v1 stuck, every column except v8 router_billing
+    // MARK: - Reporter-exact legacy state: v1 stuck before v8 router_billing
 
-    /// The exact reproduced failure state: `user_version = 1`, all columns
-    /// through v7 present, only `router_billing` missing. Opening must NOT
-    /// throw, must add `router_billing`, must reconcile the version to the latest,
-    /// must return the pre-existing turns (not nil), and a fresh save must
-    /// round-trip.
+    /// The exact reproduced failure state at the time of the report:
+    /// `user_version = 1`, all columns through v7 present, and `router_billing`
+    /// missing. Newer migrations may now add later columns too. Opening must
+    /// NOT throw, must reconcile every missing column and the version to the
+    /// latest, must return the pre-existing turns (not nil), and a fresh save
+    /// must round-trip.
     @Test
     func stuckV1MissingRouterBillingHealsAndPreservesHistory() async throws {
         try await runWithPlaintextRoot {
@@ -121,6 +125,7 @@ struct ChatHistoryMigrationRepairTests {
 
             #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
             #expect(self.diskColumns(table: "turns").contains("router_billing"))
+            #expect(self.diskColumns(table: "turns").contains("model_context_excluded"))
 
             let loaded = db.loadSession(id: sid)
             #expect(loaded != nil)
@@ -128,6 +133,7 @@ struct ChatHistoryMigrationRepairTests {
             #expect(loaded?.turns.first?.role == .user)
             #expect(loaded?.turns.first?.content == "hello from before the upgrade")
             #expect(loaded?.turns.last?.role == .assistant)
+            #expect(loaded?.turns.allSatisfy { !$0.modelContextExcluded } == true)
 
             let newId = UUID()
             let newSession = ChatSessionData(
@@ -145,7 +151,7 @@ struct ChatHistoryMigrationRepairTests {
     // MARK: - v1 stuck, every turn-column migration already present
 
     /// A store whose `user_version` is stuck at 1 but already carries every
-    /// migrated turn column (including v12). Every migration ALTER must be skipped, the
+    /// migrated turn column (including v13). Every migration ALTER must be skipped, the
     /// version reconciled to the latest, and data must still load + save.
     @Test
     func stuckV1WithAllColumnsPresentOpensCleanly() async throws {
@@ -157,15 +163,15 @@ struct ChatHistoryMigrationRepairTests {
             statements.append(Self.createTurnsV1)
             statements +=
                 Self.alterV2 + Self.alterV5 + Self.alterV6 + Self.alterV7
-                + Self.alterV8 + Self.alterV12
+                + Self.alterV8 + Self.alterV12 + Self.alterV13
             statements += [
                 """
                 INSERT INTO sessions (id, title, created_at, updated_at, source, turn_count, archived, capabilities)
                 VALUES ('\(sid.uuidString)', 'All columns', 1000, 2000, 'chat', 1, 0, '')
                 """,
                 """
-                INSERT INTO turns (id, session_id, seq, role, content)
-                VALUES ('\(UUID().uuidString)', '\(sid.uuidString)', 0, 'user', 'already fully columned')
+                INSERT INTO turns (id, session_id, seq, role, content, model_context_excluded)
+                VALUES ('\(UUID().uuidString)', '\(sid.uuidString)', 0, 'user', 'already fully columned', 1)
                 """,
                 "PRAGMA user_version = 1",
             ]
@@ -179,6 +185,7 @@ struct ChatHistoryMigrationRepairTests {
             let loaded = db.loadSession(id: sid)
             #expect(loaded?.turns.count == 1)
             #expect(loaded?.turns.first?.content == "already fully columned")
+            #expect(loaded?.turns.first?.modelContextExcluded == true)
 
             let newId = UUID()
             try db.saveSession(
