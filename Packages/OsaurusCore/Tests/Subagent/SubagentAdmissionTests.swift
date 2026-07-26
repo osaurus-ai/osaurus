@@ -21,6 +21,29 @@ struct SubagentAdmissionTests {
         SubagentAdmission(pollNanoseconds: 2_000_000)  // 2 ms poll for tests
     }
 
+    @Test("admission model identity is pure and collapses repo id to bundle name")
+    func canonicalModelIdentity() {
+        let full = ResolvedModel(
+            name: "OsaurusAI/Ornith-1.0-9B-JANG_4M",
+            isLocal: true
+        )
+        let short = ResolvedModel(
+            name: "ornith-1.0-9b-jang_4m",
+            isLocal: true
+        )
+        let stable = ResolvedModel(
+            name: "friendly display alias",
+            id: "OsaurusAI/Ornith-1.0-9B-JANG_4M",
+            isLocal: true
+        )
+        let remote = ResolvedModel(name: "remote/model", isLocal: false)
+
+        #expect(SubagentSession.canonicalAdmissionModelKey(full) == "ornith-1.0-9b-jang_4m")
+        #expect(SubagentSession.canonicalAdmissionModelKey(short) == "ornith-1.0-9b-jang_4m")
+        #expect(SubagentSession.canonicalAdmissionModelKey(stable) == "ornith-1.0-9b-jang_4m")
+        #expect(SubagentSession.canonicalAdmissionModelKey(remote) == nil)
+    }
+
     @Test("remote admits concurrently, even while an exclusive run is active")
     func remoteAlwaysAdmits() async {
         let gate = makeGate()
@@ -44,6 +67,35 @@ struct SubagentAdmissionTests {
         #expect(counts.inPlace == 2)
         await gate.release(.localInPlace)
         await gate.release(.localInPlace)
+    }
+
+    @Test("same-model in-place runs overlap but a different local model waits")
+    func inPlaceAdmissionIsModelKeyed() async {
+        let gate = makeGate()
+        #expect(
+            await gate.admit(.localInPlace, modelKey: "model-a")
+                == .admitted
+        )
+        #expect(
+            await gate.admit(.localInPlace, modelKey: "MODEL-A")
+                == .admitted
+        )
+
+        let different = Task {
+            await gate.admit(
+                .localInPlace,
+                modelKey: "model-b",
+                timeoutSeconds: 5
+            )
+        }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        let held = await gate.snapshot()
+        #expect(held.inPlace == 2)
+
+        await gate.release(.localInPlace, modelKey: "model-a")
+        await gate.release(.localInPlace, modelKey: "model-a")
+        #expect(await different.value == .admitted)
+        await gate.release(.localInPlace, modelKey: "model-b")
     }
 
     @Test("a second exclusive run queues until the first releases")

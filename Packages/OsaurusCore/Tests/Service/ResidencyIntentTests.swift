@@ -37,15 +37,18 @@ struct ResidencyIntentTests {
         get throws { try source("Services/ModelRuntime.swift") }
     }
 
-    /// The body of `loadContainer`, where every strict-policy eviction lives.
-    private static func loadContainerBody() throws -> String {
+    private static func functionBody(startingWith signature: String) throws -> String {
         let src = try modelRuntimeSource
-        let start = try #require(src.range(of: "private func loadContainer("))
-        // `loadContainer` is followed by the next `private func` at the same depth.
+        let start = try #require(src.range(of: signature))
         let end = try #require(
             src.range(of: "\n    private func ", range: start.upperBound ..< src.endIndex)
         )
         return String(src[start.lowerBound ..< end.lowerBound])
+    }
+
+    /// The body of `loadContainer`, where every strict-policy eviction lives.
+    private static func loadContainerBody() throws -> String {
+        try functionBody(startingWith: "private func loadContainer(")
     }
 
     // MARK: - The atomicity invariant
@@ -79,6 +82,7 @@ struct ResidencyIntentTests {
     @Test("Every strict-policy eviction is guarded, in both loops")
     func everyEvictionIsGuarded() throws {
         let body = try Self.loadContainerBody()
+        let resolver = try Self.functionBody(startingWith: "private func resolveConflictingLoad(")
 
         // `loadContainer` runs its residency loop twice: once before
         // `acquireColdLoadSlot()` and once after. The second pass is not
@@ -86,33 +90,32 @@ struct ResidencyIntentTests {
         // it, so state observed before the wait proves nothing after it. Both
         // passes evict, so both passes must guard.
         let evictions = body.components(separatedBy: "await strictEvict(").count - 1
-        let cancels = body.components(separatedBy: "await cancelAndDrainLoadingTasks(").count - 1
-        let guards =
+        let resolverCalls = body.components(separatedBy: "resolveConflictingLoad(").count - 1
+        let cancels = resolver.components(separatedBy: "await cancelAndDrainLoadingTasks(").count - 1
+        let resolverGuards =
+            resolver.components(separatedBy: "try refuseBackgroundLoadIfItWouldDisturb(").count - 1
+        let evictionGuards =
             body.components(separatedBy: "try refuseBackgroundLoadIfItWouldDisturb(").count - 1
 
         #expect(evictions == 2, "expected the resident-eviction branch in both residency loops")
-        #expect(cancels == 2, "expected the in-flight-cancel branch in both residency loops")
-        #expect(
-            guards >= evictions + cancels,
-            """
-            Found \(evictions) evictions + \(cancels) in-flight cancels but only \
-            \(guards) guards in loadContainer. Every destructive branch needs its \
-            own refusal, in the same actor segment that observed the conflict.
-            """
-        )
+        #expect(resolverCalls == 2, "both residency loops must use the shared conflict resolver")
+        #expect(cancels == 1, "the shared resolver must own exactly one in-flight-cancel branch")
+        #expect(resolverGuards == 1, "the shared in-flight-cancel branch must have one refusal")
+        #expect(evictionGuards == 2, "both resident-eviction branches must retain their refusal")
     }
 
     @Test("The guard precedes the eviction it protects, with no await in between")
     func guardPrecedesEvictionWithoutSuspending() throws {
         let body = try Self.loadContainerBody()
+        let resolver = try Self.functionBody(startingWith: "private func resolveConflictingLoad(")
 
         // For each destructive call, walk back to the nearest guard and assert
         // nothing suspends in the gap. An `await` between them would hand the actor
         // to another task after we decided it was safe to evict.
-        for destructive in ["await strictEvict(", "await cancelAndDrainLoadingTasks("] {
-            var cursor = body.startIndex
-            while let call = body.range(of: destructive, range: cursor ..< body.endIndex) {
-                let preceding = String(body[body.startIndex ..< call.lowerBound])
+        func assertGuard(in source: String, before destructive: String) throws {
+            var cursor = source.startIndex
+            while let call = source.range(of: destructive, range: cursor ..< source.endIndex) {
+                let preceding = String(source[source.startIndex ..< call.lowerBound])
                 let lastGuard = try #require(
                     preceding.range(of: "try refuseBackgroundLoadIfItWouldDisturb(", options: .backwards),
                     "\(destructive) is not preceded by a residency guard"
@@ -129,6 +132,9 @@ struct ResidencyIntentTests {
                 cursor = call.upperBound
             }
         }
+
+        try assertGuard(in: body, before: "await strictEvict(")
+        try assertGuard(in: resolver, before: "await cancelAndDrainLoadingTasks(")
     }
 
     @Test("Flexible (manualMultiModel) residency is guarded too")
@@ -176,6 +182,20 @@ struct ResidencyIntentTests {
             loadIntent: .background
         )
         #expect(params.loadIntent == .background)
+    }
+
+    @Test("Handoff restore waits for conflicting cold loads instead of cancelling them")
+    func handoffRestoreHasDedicatedNonCancellingPath() throws {
+        let source = try Self.modelRuntimeSource
+        #expect(
+            source.contains("intent != .handoffRestore"),
+            "the shared conflict resolver must exclude handoff restoration from cancellation"
+        )
+        #expect(source.contains("awaitConflictingLoadWithoutCancellation("))
+        #expect(
+            source.components(separatedBy: "resolveConflictingLoad(").count - 1 == 3,
+            "one declaration plus both pre-slot and post-slot calls must use the shared resolver"
+        )
     }
 
     // MARK: - The intent must survive the trip, and must expire

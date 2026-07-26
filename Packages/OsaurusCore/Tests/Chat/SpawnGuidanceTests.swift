@@ -94,6 +94,7 @@ struct SpawnGuidanceTests {
         #expect(text.contains("## Delegating subtasks (spawn)"))
         #expect(text.contains("`spawn_agent(input, agent)`"))
         #expect(text.contains("`spawn_model(input, model)`"))
+        #expect(text.contains("`spawn_batch(jobs)`"))
 
         // Agent descriptor: name, description, locality, model id.
         #expect(text.contains("`sparky`"))
@@ -133,6 +134,8 @@ struct SpawnGuidanceTests {
         )
         #expect(agentsOnly.contains("`spawn_agent(input, agent)`"))
         #expect(!agentsOnly.contains("`spawn_model(input, model)`"))
+        #expect(modelsOnly.contains("`spawn_batch(jobs)`"))
+        #expect(agentsOnly.contains("`spawn_batch(jobs)`"))
     }
 
     // MARK: - Renderer: tool reach + parallelism policy
@@ -157,18 +160,21 @@ struct SpawnGuidanceTests {
         #expect(!readOnly.contains("Workers are text-only"))
     }
 
-    @Test("context-offload framing, self-contained input rule, and the parallel policy are always present")
+    @Test("context-offload framing, self-contained input rule, and batch limits are always present")
     func coreRulesAlwaysPresent() {
         let text = SystemPromptTemplates.spawnGuidance(
             agents: [agent("helper")],
-            models: []
+            models: [],
+            maxParallel: 3
         )
         #expect(text.contains("compact result digest"))
         #expect(text.contains("bulk reading + summarization"))
         #expect(text.contains("COMPLETE task as a self-contained prompt"))
         #expect(text.contains("not this conversation"))
-        #expect(text.contains("may run in parallel"))
-        #expect(text.contains("local targets run one at a time"))
+        #expect(text.contains("at most 3 jobs in one batch"))
+        #expect(text.contains("at most 3 workers run concurrently"))
+        #expect(text.contains("SAME model share one load"))
+        #expect(text.contains("different local models are serialized"))
     }
 
     @Test("a note is only rendered when present (no dangling em-dash for note-less models)")

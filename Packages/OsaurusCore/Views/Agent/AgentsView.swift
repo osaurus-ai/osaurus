@@ -4030,7 +4030,7 @@ struct AgentDetailView: View {
             if spawnLimitsExpanded {
                 VStack(alignment: .leading, spacing: 8) {
                     subagentBudgetStepper(
-                        title: "Max tokens",
+                        title: "Max output tokens per subagent",
                         value: subagentBudgetBinding(\.maxDelegateTokens),
                         range: SubagentBudgets.tokenBounds,
                         step: 256
@@ -4047,6 +4047,12 @@ struct AgentDetailView: View {
                         range: SubagentBudgets.elapsedBounds,
                         step: 15
                     )
+                    subagentBudgetStepper(
+                        title: "Max subagents per batch",
+                        value: subagentBudgetBinding(\.maxParallelSpawns),
+                        range: SubagentBudgets.parallelSpawnBounds,
+                        step: 1
+                    )
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -4059,7 +4065,10 @@ struct AgentDetailView: View {
         let tokens = subagentBudgetBinding(\.maxDelegateTokens).wrappedValue
         let turns = subagentBudgetBinding(\.maxDelegateTurns).wrappedValue
         let seconds = subagentBudgetBinding(\.maxElapsedSeconds).wrappedValue
-        return "\(tokens.formatted()) tok · \(turns) turn\(turns == 1 ? "" : "s") · \(seconds)s"
+        let parallel = subagentBudgetBinding(\.maxParallelSpawns).wrappedValue
+        return
+            "\(tokens.formatted()) tok · \(turns) turn\(turns == 1 ? "" : "s") · "
+            + "\(seconds)s · \(parallel) per batch"
     }
 
     private func subagentBudgetStepper(

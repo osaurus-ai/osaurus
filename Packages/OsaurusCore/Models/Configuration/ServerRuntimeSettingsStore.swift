@@ -104,6 +104,7 @@ public enum ServerRuntimeSettingsStore {
     /// Persists the settings to disk and updates the nonisolated
     /// snapshot consumed by `ModelRuntime`.
     public nonisolated static func save(_ settings: VMLXServerRuntimeSettings) {
+        let settings = canonicalizedContextAndKVPolicy(settings)
         let url = fileURL()
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         do {
@@ -200,6 +201,7 @@ public enum ServerRuntimeSettingsStore {
         host: MemoryStatus? = nil,
         request: VMLXMemoryRequestEstimate? = nil
     ) -> VMLXResolvedMemorySafetyPlan {
+        let settings = canonicalizedContextAndKVPolicy(settings)
         var plan = settings.resolvedMemorySafetyPlan(
             baseLoadConfiguration: baseLoadConfiguration,
             bundleFacts: bundleFacts,
@@ -228,6 +230,42 @@ public enum ServerRuntimeSettingsStore {
         return plan
     }
 
+    /// Canonicalize the single user-owned KV-retention override.
+    ///
+    /// Older builds exposed the same effective cap in two places:
+    /// `cache.defaultMaxKVSize` and
+    /// `memorySafety.customDefaultMaxKVSize`. vMLX gave the latter
+    /// precedence, so two independently editable values could disagree while
+    /// the UI showed only one resolved number. Cache settings now own the
+    /// explicit override. Preserve the old effective behavior by moving the
+    /// higher-precedence legacy value into the cache field, then clearing the
+    /// legacy field.
+    public nonisolated static func canonicalizedContextAndKVPolicy(
+        _ settings: VMLXServerRuntimeSettings
+    ) -> VMLXServerRuntimeSettings {
+        guard let legacyCap = settings.memorySafety.customDefaultMaxKVSize else {
+            return settings
+        }
+        var canonical = settings
+        canonical.cache.defaultMaxKVSize = legacyCap
+        canonical.memorySafety.customDefaultMaxKVSize = nil
+        return canonical
+    }
+
+    /// The saved settings' effective KV-retention cap after Memory Safety
+    /// profile resolution. This is the exact cap used to build a newly loaded
+    /// model's `CacheCoordinator`; callers must not inspect the raw cache
+    /// override and invent their own fallback.
+    public nonisolated static func resolvedKVRetentionCap(
+        for settings: VMLXServerRuntimeSettings? = nil,
+        host: MemoryStatus? = nil
+    ) -> Int? {
+        resolvedMemorySafetyPlan(
+            for: settings ?? snapshot(),
+            host: host
+        ).cache.defaultMaxKVSize
+    }
+
     private nonisolated static func memorySafetyDisplaySummary(
         settings: VMLXServerRuntimeSettings,
         plan: VMLXResolvedMemorySafetyPlan
@@ -252,7 +290,7 @@ public enum ServerRuntimeSettingsStore {
     private nonisolated static func normalizeLoadedSettings(
         _ settings: VMLXServerRuntimeSettings
     ) -> VMLXServerRuntimeSettings {
-        var normalized = settings
+        var normalized = canonicalizedContextAndKVPolicy(settings)
         // vmlx-swift e095d0f changed the engine default from "MTP off" to
         // "auto". Existing Osaurus installs persisted the old default exactly,
         // so without this repair tuned MXFP8/MTP bundles still never reach the

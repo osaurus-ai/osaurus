@@ -11,30 +11,24 @@ import SwiftUI
     import AppKit
 #endif
 
-/// Sub-tabs for the Agent Channels management pane.
-enum AgentChannelsTab: String, CaseIterable, AnimatedTabItem {
-    case channels
+/// Pages of the Channels pane: connection management is the primary surface;
+/// Activity is a secondary destination reached from the header.
+private enum AgentChannelsPage {
+    case connections
     case activity
-
-    var title: String {
-        switch self {
-        case .channels: return L("Connections")
-        case .activity: return L("Activity")
-        }
-    }
 }
 
 /// Which channel's configuration sheet is open.
 private enum AgentChannelSheetTarget: Identifiable {
+    case addChannel
     case native(AgentChannelKind)
     case editCustom(AgentChannelConnection)
-    case newCustom
 
     var id: String {
         switch self {
+        case .addChannel: return "add-channel"
         case .native(let kind): return "native-\(kind.rawValue)"
         case .editCustom(let connection): return "custom-\(connection.id)"
-        case .newCustom: return "new-custom"
         }
     }
 }
@@ -43,10 +37,11 @@ struct AgentChannelConnectionCenterView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
     @State private var hasAppeared = false
-    @State private var selectedTab: AgentChannelsTab = .channels
+    @State private var page: AgentChannelsPage = .connections
     @State private var activeSheet: AgentChannelSheetTarget?
     @State private var nativeBadges: [AgentChannelKind: AgentChannelStatusPresentation] = [:]
     @State private var nativeRoutingDetails: [AgentChannelKind: String] = [:]
+    @State private var nativeConfigured: [AgentChannelKind: Bool] = [:]
     @State private var anyNativeConfigured = false
     @State private var connections: [AgentChannelConnection] = []
 
@@ -70,9 +65,9 @@ struct AgentChannelConnectionCenterView: View {
                 .managerHeaderEntrance(hasAppeared: hasAppeared)
 
             Group {
-                switch selectedTab {
-                case .channels:
-                    channelsTab
+                switch page {
+                case .connections:
+                    connectionsPage
                 case .activity:
                     activityTab
                 }
@@ -91,8 +86,8 @@ struct AgentChannelConnectionCenterView: View {
                 hasAppeared = true
             }
         }
-        .onChange(of: selectedTab) {
-            if selectedTab == .channels {
+        .onChange(of: page) {
+            if page == .connections {
                 refreshNativeBadges()
             } else {
                 reloadAuditWorkbench()
@@ -100,6 +95,10 @@ struct AgentChannelConnectionCenterView: View {
         }
         .sheet(item: $activeSheet, onDismiss: handleSheetDismiss) { target in
             switch target {
+            case .addChannel:
+                AgentChannelAddChannelSheet(nativeBadges: configuredNativeBadges) {
+                    reloadConnections()
+                }
             case .native(.discord):
                 DiscordSettingsView()
             case .native(.slack):
@@ -113,84 +112,88 @@ struct AgentChannelConnectionCenterView: View {
                 AgentChannelCustomConnectionSheet(connection: connection) {
                     reloadConnections()
                 }
-            case .newCustom:
-                AgentChannelCustomConnectionSheet(connection: nil) {
-                    reloadConnections()
-                }
             }
         }
     }
 
     // MARK: - Header
 
-    /// Custom channels are the advanced path; the primary header CTA only
-    /// appears once at least one channel exists so first-time users are
-    /// steered toward the guided native providers instead.
     private var isFirstRun: Bool {
         !anyNativeConfigured && connections.isEmpty
     }
 
-    private var headerView: some View {
-        ManagerHeaderWithTabs(
-            title: L("Channels"),
-            subtitle: L("Let agents read and reply on Discord, Slack, and Telegram")
-        ) {
-            if !isFirstRun {
-                HeaderPrimaryButton(L("Add Custom Channel"), icon: "plus") {
-                    activeSheet = .newCustom
-                }
+    private var connectedChannelCount: Int {
+        Self.nativeProviderKinds.filter { nativeConfigured[$0] == true }.count + connections.count
+    }
+
+    /// Badges for the Add Channel picker, limited to providers that are
+    /// already set up so re-picking one reads as editing.
+    private var configuredNativeBadges: [AgentChannelKind: AgentChannelStatusPresentation] {
+        nativeBadges.filter { nativeConfigured[$0.key] == true }
+    }
+
+    private var headerSubtitle: String {
+        switch page {
+        case .activity:
+            return L("Incoming messages and receive decisions across your channels")
+        case .connections:
+            if !globalWritesEnabled {
+                return L("Sending is paused — every channel is read-only")
             }
-        } tabsRow: {
-            HeaderTabsRow(selection: $selectedTab)
+            return L("Let agents read and reply on Discord, Slack, and Telegram")
         }
     }
 
-    // MARK: - Channels Tab
+    private var headerView: some View {
+        ManagerHeaderWithActions(
+            title: L("Channels"),
+            subtitle: headerSubtitle,
+            count: connectedChannelCount > 0 ? connectedChannelCount : nil
+        ) {
+            switch page {
+            case .connections:
+                HeaderSecondaryButton(L("Activity"), icon: "clock.arrow.circlepath") {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        page = .activity
+                    }
+                }
+                HeaderPrimaryButton(L("Add Channel"), icon: "plus") {
+                    activeSheet = .addChannel
+                }
+            case .activity:
+                HeaderSecondaryButton(L("Back to Channels"), icon: "chevron.left") {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        page = .connections
+                    }
+                }
+            }
+        }
+    }
 
-    private var channelsTab: some View {
+    // MARK: - Connections Page
+
+    private var connectedNativeKinds: [AgentChannelKind] {
+        Self.nativeProviderKinds.filter { nativeConfigured[$0] == true }
+    }
+
+    private var availableNativeKinds: [AgentChannelKind] {
+        Self.nativeProviderKinds.filter { nativeConfigured[$0] != true }
+    }
+
+    private var connectionsPage: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 20) {
                 if isFirstRun {
-                    firstRunCallout
+                    emptyStateHero
+                } else {
+                    connectedSection
+                }
+
+                if !availableNativeKinds.isEmpty {
+                    availableSection
                 }
 
                 writeGateRow
-
-                VStack(spacing: 10) {
-                    ForEach(Self.nativeProviderKinds, id: \.self) { kind in
-                        AgentChannelCard(
-                            icon: kind.icon,
-                            gradient: kind.brandGradient,
-                            title: kind.displayName,
-                            subtitle: Self.nativeSubtitle(for: kind),
-                            badge: nativeBadges[kind],
-                            detail: nativeRoutingDetails[kind],
-                            anchorId: "agentChannels.\(kind.rawValue)"
-                        ) {
-                            activeSheet = .native(kind)
-                        }
-                    }
-                }
-                .settingsLandingAnchor("agentChannels.overview")
-
-                if !connections.isEmpty {
-                    customSection
-                }
-
-                if isFirstRun {
-                    Button {
-                        activeSheet = .newCustom
-                    } label: {
-                        Label {
-                            Text("Add a custom HTTP JSON channel instead", bundle: .module)
-                        } icon: {
-                            Image(systemName: "plus.circle")
-                        }
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                    }
-                    .buttonStyle(.plain)
-                }
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 24)
@@ -198,40 +201,122 @@ struct AgentChannelConnectionCenterView: View {
         }
     }
 
-    /// Shown when no channel is configured yet: point at the guided native
-    /// providers as the recommended starting path.
-    private var firstRunCallout: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 15, weight: .semibold))
+    /// Polished first-run state: one clear action, with the provider catalog
+    /// listed right below as the guided starting path.
+    private var emptyStateHero: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "bubble.left.and.bubble.right.fill")
+                .font(.system(size: 26, weight: .semibold))
                 .foregroundColor(theme.accentColor)
-                .frame(width: 32, height: 32)
-                .background(Circle().fill(theme.accentColor.opacity(0.12)))
+                .frame(width: 56, height: 56)
+                .background(Circle().fill(theme.accentColor.opacity(0.1)))
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(spacing: 4) {
                 Text("Connect your first channel", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 Text(
-                    "Pick Discord, Slack, or Telegram below — each opens a guided, numbered setup that ends with a live verification of an incoming message.",
+                    "Let agents read and reply where your team already talks. Each guided setup ends with a live verification of an incoming message.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
+                .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
+                .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 420)
             }
-            Spacer(minLength: 0)
+
+            Button {
+                activeSheet = .addChannel
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Add Channel", bundle: .module)
+                }
+            }
+            .buttonStyle(SettingsButtonStyle(isPrimary: true))
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(theme.accentColor.opacity(0.06))
+                .fill(theme.cardBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.accentColor.opacity(0.25), lineWidth: 1)
+                        .stroke(theme.cardBorder, lineWidth: 1)
                 )
         )
+        .settingsLandingAnchor("agentChannels.overview")
+    }
+
+    /// Channels that are set up: configured native providers first, then
+    /// custom connections. This is the page's primary list.
+    private var connectedSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionLabel(L("Connected"))
+
+            VStack(spacing: 10) {
+                ForEach(connectedNativeKinds, id: \.self) { kind in
+                    nativeCard(for: kind)
+                }
+
+                VStack(spacing: 10) {
+                    ForEach(connections) { connection in
+                        AgentChannelCard(
+                            icon: connection.kind.icon,
+                            gradient: connection.kind.brandGradient,
+                            title: connection.name.isEmpty ? connection.id : connection.name,
+                            subtitle: connection.id,
+                            subtitleIsMonospaced: true,
+                            badge: Self.customBadge(for: connection)
+                        ) {
+                            activeSheet = .editCustom(connection)
+                        }
+                    }
+                }
+                .settingsLandingAnchor(connections.isEmpty ? nil : "agentChannels.customJSON")
+            }
+            .settingsLandingAnchor("agentChannels.overview")
+        }
+    }
+
+    /// Native providers that are not configured yet, kept discoverable below
+    /// the connected list without competing with it.
+    private var availableSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !isFirstRun {
+                sectionLabel(L("Available"))
+            }
+
+            VStack(spacing: 10) {
+                ForEach(availableNativeKinds, id: \.self) { kind in
+                    nativeCard(for: kind)
+                }
+            }
+        }
+    }
+
+    private func nativeCard(for kind: AgentChannelKind) -> some View {
+        AgentChannelCard(
+            icon: kind.icon,
+            gradient: kind.brandGradient,
+            title: kind.displayName,
+            subtitle: Self.nativeSubtitle(for: kind),
+            badge: nativeBadges[kind],
+            detail: nativeRoutingDetails[kind],
+            anchorId: "agentChannels.\(kind.rawValue)"
+        ) {
+            activeSheet = .native(kind)
+        }
+    }
+
+    private func sectionLabel(_ title: String) -> some View {
+        Text(LocalizedStringKey(title), bundle: .module)
+            .textCase(.uppercase)
+            .font(.system(size: 10, weight: .bold))
+            .foregroundColor(theme.tertiaryText)
+            .tracking(0.5)
     }
 
     /// Master write switch, humanized: on = agents may send where allowlisted,
@@ -298,33 +383,6 @@ struct AgentChannelConnectionCenterView: View {
                 )
         )
         .settingsLandingAnchor("agentChannels.globalWrites")
-    }
-
-    private var customSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Custom", bundle: .module)
-                .textCase(.uppercase)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(theme.tertiaryText)
-                .tracking(0.5)
-                .padding(.top, 6)
-
-            VStack(spacing: 10) {
-                ForEach(connections) { connection in
-                    AgentChannelCard(
-                        icon: connection.kind.icon,
-                        gradient: connection.kind.brandGradient,
-                        title: connection.name.isEmpty ? connection.id : connection.name,
-                        subtitle: connection.id,
-                        subtitleIsMonospaced: true,
-                        badge: Self.customBadge(for: connection)
-                    ) {
-                        activeSheet = .editCustom(connection)
-                    }
-                }
-            }
-        }
-        .settingsLandingAnchor("agentChannels.customJSON")
     }
 
     // MARK: - Activity Tab
@@ -557,6 +615,9 @@ struct AgentChannelConnectionCenterView: View {
         let slackDispatch = SlackConnectionService.shared.configuration().inboundDispatch
 
         anyNativeConfigured = discordConfigured || slackConfigured || telegramConfigured
+        nativeConfigured[.discord] = discordConfigured
+        nativeConfigured[.slack] = slackConfigured
+        nativeConfigured[.telegram] = telegramConfigured
         nativeRoutingDetails[.discord] = Self.routingSummary(discordConfig.inboundDispatch)
         nativeRoutingDetails[.slack] = Self.routingSummary(slackDispatch)
         nativeRoutingDetails[.telegram] = Self.routingSummary(telegramConfig.inboundDispatch)

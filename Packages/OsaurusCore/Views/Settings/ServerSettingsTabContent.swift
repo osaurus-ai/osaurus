@@ -38,6 +38,11 @@ struct ServerSettingsTabContent: View {
     /// `ServerConfiguration` (model eviction policy, idle residency,
     /// max body sizes).
     @State private var draftLegacy: ServerConfiguration = .default
+    /// Fallback conversation window for models/providers whose metadata does
+    /// not declare a maximum. It is edited beside the KV/cache controls so a
+    /// user cannot mistake it for the loaded model's cache window.
+    @State private var draftMetadataFallbackTokens: Int?
+    @State private var savedMetadataFallbackTokens: Int?
 
     @State private var hasLoaded: Bool = false
     @State private var saving: Bool = false
@@ -80,6 +85,7 @@ struct ServerSettingsTabContent: View {
 
     private var hasUnsavedChanges: Bool {
         draft != server.runtimeSettings
+            || draftMetadataFallbackTokens != savedMetadataFallbackTokens
             || draftLegacy.modelEvictionPolicy != server.configuration.modelEvictionPolicy
             || draftLegacy.globalProxyURL != server.configuration.globalProxyURL
             || draftLegacy.modelIdleResidencyPolicy != server.configuration.modelIdleResidencyPolicy
@@ -96,6 +102,16 @@ struct ServerSettingsTabContent: View {
     /// "Restart required" chip in `ServerSettingsActionBar`.
     private var requiresRestart: Bool { pendingRestart && server.isRunning }
 
+    /// A saved change to settings captured by the loaded container cannot be
+    /// applied in place. Surface the exact lifecycle before the user saves:
+    /// resident models are unloaded, then lazily reloaded on the next request.
+    private var requiresModelReload: Bool {
+        ServerController.loadedModelRuntimeInputsRequireRefresh(
+            previous: server.runtimeSettings,
+            next: ServerRuntimeSettingsStore.canonicalizedContextAndKVPolicy(draft)
+        )
+    }
+
     var body: some View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
@@ -110,6 +126,7 @@ struct ServerSettingsTabContent: View {
                 ServerSettingsActionBar(
                     hasUnsavedChanges: hasUnsavedChanges,
                     requiresRestart: requiresRestart,
+                    requiresModelReload: requiresModelReload,
                     saving: saving,
                     onSave: { Task { await save() } },
                     onReset: resetToDefaults
@@ -133,6 +150,9 @@ struct ServerSettingsTabContent: View {
             hasLoaded = true
             draft = server.runtimeSettings
             draftLegacy = server.configuration
+            let fallback = ChatConfigurationStore.load().contextLength
+            draftMetadataFallbackTokens = fallback
+            savedMetadataFallbackTokens = fallback
         }
         .onChange(of: managementState.serverSectionRequest) { _, _ in
             applySectionRequest()
@@ -184,9 +204,14 @@ struct ServerSettingsTabContent: View {
                     ConcurrencySection(draft: $draft)
                         .id(ServerSettingsSection.concurrency)
                         .settingsSearchHighlight(landedSection == .concurrency)
-                    CacheSection(draft: $draft)
-                        .id(ServerSettingsSection.cache)
-                        .settingsSearchHighlight(landedSection == .cache)
+                    CacheSection(
+                        draft: $draft,
+                        metadataFallbackTokens: $draftMetadataFallbackTokens,
+                        savedSettings: server.runtimeSettings,
+                        savedMetadataFallbackTokens: savedMetadataFallbackTokens
+                    )
+                    .id(ServerSettingsSection.cache)
+                    .settingsSearchHighlight(landedSection == .cache)
                     MemorySafetySection(draft: $draft)
                         .id(ServerSettingsSection.memorySafety)
                         .settingsSearchHighlight(landedSection == .memorySafety)
@@ -242,6 +267,7 @@ struct ServerSettingsTabContent: View {
             serverConfiguration: ServerConfiguration.default,
             userDefaults: .standard
         )
+        draftMetadataFallbackTokens = ChatConfiguration.default.contextLength
         let defaults = ServerConfiguration.default
         var reset = draftLegacy
         reset.modelEvictionPolicy = defaults.modelEvictionPolicy
@@ -269,9 +295,28 @@ struct ServerSettingsTabContent: View {
             server.saveConfiguration()
         }
 
-        await server.saveRuntimeSettings(draft)
+        if draftMetadataFallbackTokens != savedMetadataFallbackTokens {
+            var chat = ChatConfigurationStore.load()
+            chat.contextLength = draftMetadataFallbackTokens
+            ChatConfigurationStore.save(chat)
+            savedMetadataFallbackTokens = draftMetadataFallbackTokens
+        }
+
+        let effects = await server.saveRuntimeSettings(draft)
+        // The controller canonicalizes legacy ownership before persisting
+        // (including old Memory Safety KV overrides). Re-read its published
+        // value so the form cannot remain dirty against a canonical save.
+        draft = server.runtimeSettings
         mirrorMaxBatchSizeToUserDefaults(draft.concurrency.maxConcurrentSequences)
-        showSuccess(L("Settings saved successfully"))
+        if effects.unloadedModelCount > 0 {
+            showSuccess(
+                L(
+                    "Settings saved. \(effects.unloadedModelCount) loaded model(s) were unloaded and will reload with the new runtime policy on the next request."
+                )
+            )
+        } else {
+            showSuccess(L("Settings saved successfully"))
+        }
     }
 
     /// Mirror BatchEngine concurrency into the legacy UserDefaults key

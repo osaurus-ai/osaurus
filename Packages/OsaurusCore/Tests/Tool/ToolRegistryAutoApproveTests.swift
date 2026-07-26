@@ -80,6 +80,28 @@ struct ToolRegistryAutoApproveTests {
         #expect(tool.executions == 0)
     }
 
+    @Test func parserInvalidArgumentsEnvelopeNeverExecutesToolBody() async throws {
+        let tool = PolicyProbeTool(name: "test_parser_invalid_args_probe", policy: .auto)
+        ToolRegistry.shared.register(tool)
+        defer { ToolRegistry.shared.unregister(names: [tool.name]) }
+
+        let arguments =
+            #"{"_error":"invalid_tool_arguments","_tool":"test_parser_invalid_args_probe","_message":"duplicate argument: columns","_field":"columns","_expected":"one value per declared parameter"}"#
+        let result = try await ToolRegistry.shared.execute(
+            name: tool.name,
+            argumentsJSON: arguments)
+
+        #expect(tool.executions == 0)
+        #expect(ToolEnvelope.isError(result))
+        let data = try #require(result.data(using: .utf8))
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["kind"] as? String == "invalid_args")
+        #expect(object["field"] as? String == "columns")
+        #expect(object["expected"] as? String == "one value per declared parameter")
+        #expect(object["retryable"] as? Bool == true)
+    }
+
     // MARK: Two-phase batch (serial approvals → parallel execution)
 
     /// The canonical headless batch (`runBatchInParallel(sessionId:agentId:)`)

@@ -907,6 +907,7 @@ struct SystemPromptComposerToolResolutionTests {
                 // No spawn toggle / list → spawn stays hidden even though image is on.
                 #expect(!names.contains("spawn_agent"))
                 #expect(!names.contains("spawn_model"))
+                #expect(!names.contains("spawn_batch"))
             }
         }
     }
@@ -968,7 +969,7 @@ struct SystemPromptComposerToolResolutionTests {
 
     /// A custom agent surfaces `spawn_agent` only with its own toggle AND a
     /// non-empty per-agent AGENT list, and `spawn_model` only with a non-empty
-    /// MODEL list — each spawn tool gates independently on its own pool. `image`
+    /// MODEL list. `spawn_batch` appears when either pool is usable; `image`
     /// stays hidden when its own toggle is off.
     @Test
     func autoMode_customAgentSurfacesSpawnOnlyWithToggleAndTargets() async {
@@ -985,6 +986,7 @@ struct SystemPromptComposerToolResolutionTests {
             )
             #expect(withAgents.contains("spawn_agent"))
             #expect(!withAgents.contains("spawn_model"))
+            #expect(withAgents.contains("spawn_batch"))
             #expect(!withAgents.contains("image"))
 
             // Model pool only → spawn_model, not spawn_agent.
@@ -1002,6 +1004,7 @@ struct SystemPromptComposerToolResolutionTests {
             let withModels = Set(modelTools.map { $0.function.name })
             #expect(withModels.contains("spawn_model"))
             #expect(!withModels.contains("spawn_agent"))
+            #expect(withModels.contains("spawn_batch"))
             #expect(spawnModelEnum(modelTools) == remoteModelIds)
 
             // Toggle on but BOTH lists empty → nothing to spawn → both hidden.
@@ -1016,6 +1019,7 @@ struct SystemPromptComposerToolResolutionTests {
             )
             #expect(!noTargets.contains("spawn_agent"))
             #expect(!noTargets.contains("spawn_model"))
+            #expect(!noTargets.contains("spawn_batch"))
         }
     }
 
@@ -1043,6 +1047,7 @@ struct SystemPromptComposerToolResolutionTests {
         #expect(!names.contains("image"))
         #expect(!names.contains("spawn_agent"))
         #expect(!names.contains("spawn_model"))
+        #expect(!names.contains("spawn_batch"))
     }
 
     // MARK: - canonicalToolOrder

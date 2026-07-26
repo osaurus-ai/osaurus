@@ -12,6 +12,10 @@ struct DiscordSettingsView: View {
     @ObservedObject private var agentManager = AgentManager.shared
     @Environment(\.dismiss) private var dismiss
 
+    /// Set when this sheet is hosted inside the unified Add Channel picker;
+    /// shows a back chevron that returns to the catalog.
+    var onBack: (() -> Void)? = nil
+
     @State private var botToken: String = ""
     @State private var guildIdsText: String = ""
     @State private var readableChannelIdsText: String = ""
@@ -28,6 +32,7 @@ struct DiscordSettingsView: View {
     @State private var discovery: DiscordConnectionDiscovery?
     @State private var selectedGuildId: String = ""
     @State private var channelSearch = ""
+    @State private var memberSearch = ""
     @State private var inboundDispatchEnabled = false
     @State private var inboundAgentId: UUID?
     @State private var inboundRoutes: [AgentChannelDispatchRoute] = []
@@ -38,8 +43,47 @@ struct DiscordSettingsView: View {
     @State private var isSaving = false
     @State private var isVerifying = false
     @State private var activityRefreshToken = 0
+    @State private var selectedSectionId: String = AgentChannelProviderSetupSection.connect.rawValue
+    @State private var attentionSectionId: String?
+    @State private var verifySucceeded = false
+    @State private var lastSavedDraft: DraftSnapshot?
+    @State private var autosaveTask: Task<Void, Never>?
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    /// Everything the configuration save persists, as one Equatable value —
+    /// a single `onChange` on this drives autosave.
+    private struct DraftSnapshot: Equatable {
+        var guildIdsText: String
+        var readableChannelIdsText: String
+        var writableChannelIdsText: String
+        var senderAllowlistText: String
+        var writeEnabled: Bool
+        var defaultReadLimit: String
+        var inboundDispatchEnabled: Bool
+        var inboundAgentId: UUID?
+        var inboundRoutes: [AgentChannelDispatchRoute]
+        var inboundRequireMention: Bool
+        var inboundContinueThreads: Bool
+        var inboundAutoReplyEnabled: Bool
+    }
+
+    private var currentDraft: DraftSnapshot {
+        DraftSnapshot(
+            guildIdsText: guildIdsText,
+            readableChannelIdsText: readableChannelIdsText,
+            writableChannelIdsText: writableChannelIdsText,
+            senderAllowlistText: senderAllowlistText,
+            writeEnabled: writeEnabled,
+            defaultReadLimit: defaultReadLimit,
+            inboundDispatchEnabled: inboundDispatchEnabled,
+            inboundAgentId: inboundAgentId,
+            inboundRoutes: inboundRoutes,
+            inboundRequireMention: inboundRequireMention,
+            inboundContinueThreads: inboundContinueThreads,
+            inboundAutoReplyEnabled: inboundAutoReplyEnabled
+        )
+    }
 
     /// Discovered channels across every server, mapped into the shared
     /// routing editor's room shape.
@@ -56,38 +100,29 @@ struct DiscordSettingsView: View {
     }
 
     var body: some View {
-        AgentChannelSheetScaffold(
+        AgentChannelSetupScaffold(
             icon: AgentChannelKind.discord.icon,
             gradient: AgentChannelKind.discord.brandGradient,
             title: AgentChannelKind.discord.displayName,
-            subtitle: L("Read and reply in allowlisted servers")
-        ) {
+            subtitle: L("Read and reply in allowlisted servers"),
+            sections: AgentChannelProviderSetupSection.sections,
+            selection: $selectedSectionId,
+            sectionStatus: sectionStatus(for:),
+            onBack: onBack
+        ) { sectionId in
             VStack(alignment: .leading, spacing: 20) {
-                Text(
-                    "Osaurus polls Discord for new messages — no webhook or public URL is needed. Follow the numbered steps; each shows a checkmark when it is complete.",
-                    bundle: .module
-                )
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-
-                stepCreateBotSection
-                SettingsDivider()
-                stepTokenSection
-                SettingsDivider()
-                stepInviteSection
-                SettingsDivider()
-                stepAccessSection
-                SettingsDivider()
-                stepDispatchSection
-                SettingsDivider()
-                sendingSection
-                SettingsDivider()
-                stepVerifySection
-                SettingsDivider()
-                advancedSection
+                switch AgentChannelProviderSetupSection(rawValue: sectionId) {
+                case .connect:
+                    connectSectionContent
+                case .access:
+                    accessSectionContent
+                case .behavior:
+                    behaviorSectionContent
+                case .verify, nil:
+                    verifySectionContent
+                }
             }
-        } footer: {
+        } statusBar: {
             if let statusMessage {
                 AgentChannelInlineStatusMessage(
                     message: statusMessage,
@@ -96,45 +131,142 @@ struct DiscordSettingsView: View {
                     onAutoClear: { clearStatus() }
                 )
             }
-
-            HStack(spacing: 10) {
-                AgentChannelSheetActionButton(
-                    title: L("Test Connection"),
-                    busyTitle: L("Testing..."),
-                    isBusy: isTesting,
-                    action: testConnection
-                )
-                .disabled(isTesting || isSaving || (!tokenSaved && !hasPendingToken))
-
-                Spacer()
-
-                AgentChannelSheetActionButton(
-                    title: L("Save"),
-                    busyTitle: L("Saving..."),
-                    isBusy: isSaving,
-                    isPrimary: true,
-                    action: saveAndDismiss
-                )
-                .disabled(isSaving)
-            }
+        } footerLeading: {
+            AgentChannelSheetActionButton(
+                title: L("Test Connection"),
+                busyTitle: L("Testing..."),
+                isBusy: isTesting,
+                action: testConnection
+            )
+            .disabled(isTesting || isSaving || (!tokenSaved && !hasPendingToken))
+        } footerTrailing: {
+            AgentChannelSheetActionButton(
+                title: L("Done"),
+                busyTitle: L("Saving..."),
+                isBusy: isSaving,
+                isPrimary: true,
+                action: saveAndDismiss
+            )
+            .disabled(isSaving)
         }
         .onAppear {
             loadConfiguration()
+            selectedSectionId = AgentChannelSetupFlow.initialSection(
+                in: AgentChannelProviderSetupSection.sections,
+                required: AgentChannelProviderSetupSection.requiredSectionIds,
+                isComplete: { sectionCompleted($0) },
+                fallback: AgentChannelProviderSetupSection.verify.rawValue
+            )
             if tokenSaved {
                 refreshDiscovery(showStatus: false)
             }
         }
+        .onChange(of: currentDraft) { _, _ in
+            scheduleAutosave()
+        }
+        .onDisappear {
+            // Flush a pending debounce so a toggle made just before closing
+            // the sheet isn't lost.
+            autosaveTask?.cancel()
+            autosaveNow()
+        }
+    }
+
+    // MARK: - Autosave
+
+    /// Debounced autosave: changes persist and re-arm the receive runtime
+    /// without pressing Done, so Refresh/Verify always act on what's on
+    /// screen. Drafts the explicit save would reject are skipped silently —
+    /// Done still surfaces those errors.
+    private func scheduleAutosave() {
+        autosaveTask?.cancel()
+        guard lastSavedDraft != nil, currentDraft != lastSavedDraft else { return }
+        autosaveTask = Task {
+            try? await Task.sleep(for: .milliseconds(800))
+            guard !Task.isCancelled else { return }
+            autosaveNow()
+        }
+    }
+
+    private func autosaveNow() {
+        guard lastSavedDraft != nil, currentDraft != lastSavedDraft else { return }
+        guard validationFailure() == nil else { return }
+        guard (try? DiscordConnectionService.shared.saveConfiguration(currentConfiguration())) != nil
+        else { return }
+        lastSavedDraft = currentDraft
+        Task {
+            await AgentChannelTransportSupervisor.shared.refreshDiscordRuntime()
+            await MainActor.run { healthRefreshToken += 1 }
+        }
+    }
+
+    // MARK: - Section state
+
+    private func sectionCompleted(_ sectionId: String) -> Bool {
+        switch AgentChannelProviderSetupSection(rawValue: sectionId) {
+        case .connect:
+            return tokenSaved
+        case .access:
+            return !parseIds(readableChannelIdsText).isEmpty && !parseIds(senderAllowlistText).isEmpty
+        case .behavior:
+            return (inboundDispatchEnabled && (inboundAgentId != nil || !inboundRoutes.isEmpty)) || writeEnabled
+        case .verify:
+            return verifySucceeded
+        case nil:
+            return false
+        }
+    }
+
+    private func sectionStatus(for sectionId: String) -> AgentChannelSetupSectionStatus {
+        if attentionSectionId == sectionId { return .attention }
+        return sectionCompleted(sectionId) ? .complete : .pending
+    }
+
+    // MARK: - Connect section
+
+    private var connectSectionContent: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text(
+                "Osaurus polls Discord for new messages — no webhook or public URL is needed.",
+                bundle: .module
+            )
+            .font(.system(size: 12))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
+            stepCreateBotSection
+            SettingsDivider()
+            stepTokenSection
+            SettingsDivider()
+            stepInviteSection
+        }
+    }
+
+    private var accessSectionContent: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            stepAccessSection
+            SettingsDivider()
+            advancedSection
+        }
+    }
+
+    private var behaviorSectionContent: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            stepDispatchSection
+            SettingsDivider()
+            sendingSection
+        }
+    }
+
+    private var verifySectionContent: some View {
+        stepVerifySection
     }
 
     // MARK: - Guided setup steps
 
-    private func stepHeader(_ number: Int, _ title: String, done: Bool) -> some View {
-        AgentChannelSetupStepHeader(number: number, title: title, done: done)
-    }
-
     private var stepCreateBotSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            stepHeader(1, L("Create the bot app"), done: tokenSaved || hasPendingToken)
+            AgentChannelSectionHeading(L("Create the bot app"))
 
             AgentChannelSetupLink(
                 title: L("Open the Discord Developer Portal and choose “New Application”"),
@@ -153,7 +285,7 @@ struct DiscordSettingsView: View {
 
     private var stepTokenSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            stepHeader(2, L("Paste the bot token"), done: tokenSaved)
+            AgentChannelSectionHeading(L("Paste the bot token"))
 
             Text(
                 "On the same Bot page, press “Reset Token” and copy the token it shows.",
@@ -172,7 +304,10 @@ struct DiscordSettingsView: View {
                 onRemove: removeToken
             )
 
-            Text("Saved to the macOS Keychain when you press Save.", bundle: .module)
+            Text(
+                "Saved to the macOS Keychain when you press “Load from Discord”, Test Connection, or Done.",
+                bundle: .module
+            )
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
         }
@@ -180,11 +315,7 @@ struct DiscordSettingsView: View {
 
     private var stepInviteSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            stepHeader(
-                3,
-                L("Invite the bot to your server"),
-                done: discovery.map { !$0.guilds.isEmpty } ?? false
-            )
+            AgentChannelSectionHeading(L("Invite the bot to your server"))
 
             if let inviteURL = botInviteURL {
                 AgentChannelCopyableCommand(
@@ -194,7 +325,7 @@ struct DiscordSettingsView: View {
                 )
             } else {
                 Text(
-                    "Save the bot token and press “Load from Discord” below, then an invite URL appears here. (You can also use OAuth2 → URL Generator in the Developer Portal with the bot scope.)",
+                    "Paste the bot token above and press “Load from Discord” in the Access section, then an invite URL appears here. (You can also use OAuth2 → URL Generator in the Developer Portal with the bot scope.)",
                     bundle: .module
                 )
                 .font(.system(size: 11))
@@ -214,11 +345,7 @@ struct DiscordSettingsView: View {
 
     private var stepAccessSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            stepHeader(
-                4,
-                L("Choose channels and senders"),
-                done: !parseIds(readableChannelIdsText).isEmpty && !parseIds(senderAllowlistText).isEmpty
-            )
+            AgentChannelSectionHeading(L("Choose channels and senders"))
 
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
@@ -245,8 +372,6 @@ struct DiscordSettingsView: View {
                         Text(guild.name).tag(guild.id)
                     }
                 }
-                TextField(L("Search channels"), text: $channelSearch)
-                    .textFieldStyle(.roundedBorder)
                 discordChannelSelector(discovery)
                 discordMemberSelector(discovery)
                 ForEach(discovery.warnings, id: \.self) { warning in
@@ -276,7 +401,7 @@ struct DiscordSettingsView: View {
 
                 if writeEnabled, parseIds(writableChannelIdsText).isEmpty {
                     Text(
-                        "No channels are marked Write yet. Mark them in step 4 or add IDs under Advanced.",
+                        "No channels are marked Write yet. Mark them in the Access section or add IDs under its Advanced options.",
                         bundle: .module
                     )
                     .font(.system(size: 11))
@@ -290,11 +415,7 @@ struct DiscordSettingsView: View {
 
     private var stepDispatchSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            stepHeader(
-                5,
-                L("Send incoming messages to an agent"),
-                done: inboundDispatchEnabled && (inboundAgentId != nil || !inboundRoutes.isEmpty)
-            )
+            AgentChannelSectionHeading(L("Send incoming messages to an agent"))
 
             SettingsToggle(
                 title: L("Dispatch Discord Messages to an Agent"),
@@ -329,10 +450,10 @@ struct DiscordSettingsView: View {
 
     private var stepVerifySection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            stepHeader(6, L("Verify an incoming message"), done: false)
+            AgentChannelSectionHeading(L("Verify an incoming message"))
 
             Text(
-                "Receive polling starts automatically after Save once steps 2–4 are complete. The first poll only arms the cursor — it does not replay old messages. Send a fresh message mentioning the bot in a readable channel, then watch each stage appear here.",
+                "Changes save automatically, and receive polling starts once Connect and Access are complete. The first poll only arms the cursor — it does not replay old messages. Send a fresh message mentioning the bot in a readable channel, then watch each stage appear here.",
                 bundle: .module
             )
             .font(.system(size: 11))
@@ -345,7 +466,7 @@ struct DiscordSettingsView: View {
                 connectionId: DiscordConnectionService.nativeConnectionId,
                 transportId: DiscordPollingTransportRuntime.transportId,
                 title: L("Discord receive polling"),
-                notRunningHint: L("Polling is not running. Save a bot token, readable channels, and authorized sender IDs to start it."),
+                notRunningHint: L("Polling is not running. Add a bot token, readable channels, and authorized sender IDs to start it."),
                 refreshToken: healthRefreshToken
             )
 
@@ -418,86 +539,128 @@ struct DiscordSettingsView: View {
     }
 
     private func discordChannelSelector(_ discovery: DiscordConnectionDiscovery) -> some View {
-        let channels = (discovery.channelsByGuildId[selectedGuildId] ?? []).filter { channel in
-            let needle = channelSearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            return needle.isEmpty
-                || channel.displayName.lowercased().contains(needle)
-                || channel.id.contains(needle)
-        }
-        return ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(channels, id: \.id) { channel in
-                    HStack(spacing: 8) {
-                        Image(systemName: "number")
-                            .foregroundColor(theme.secondaryText)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(channel.displayName)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(theme.primaryText)
-                            Text(channel.id)
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundColor(theme.tertiaryText)
-                        }
-                        Spacer()
-                        selectionButton(
-                            L("Read"),
-                            selected: parseIds(readableChannelIdsText).contains(channel.id)
-                        ) {
-                            toggleChannel(channel.id, in: &readableChannelIdsText)
-                        }
-                        selectionButton(
-                            L("Write"),
-                            selected: parseIds(writableChannelIdsText).contains(channel.id)
-                        ) {
-                            toggleChannel(channel.id, in: &writableChannelIdsText)
-                        }
-                    }
-                    .padding(.vertical, 8)
-                    Divider().foregroundColor(theme.cardBorder)
-                }
+        let channels = discovery.channelsByGuildId[selectedGuildId] ?? []
+        let readableIds = Set(parseIds(readableChannelIdsText))
+        let writableIds = Set(parseIds(writableChannelIdsText))
+        let shaped = AgentChannelSelectorList.shape(
+            channels,
+            query: channelSearch,
+            fields: { [$0.displayName, $0.id] },
+            state: {
+                AgentChannelReadWriteSelection(
+                    read: readableIds.contains($0.id),
+                    write: writableIds.contains($0.id)
+                )
+            },
+            isSelected: { $0.isSelected }
+        )
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Channels", bundle: .module)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+                Text("\(channels.count) channels", bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+            }
+
+            AgentChannelSelectorSearchField(
+                placeholder: L("Search channels by name or ID"),
+                text: $channelSearch
+            )
+
+            AgentChannelSelectorListCard(
+                shaped: shaped,
+                emptyText: L("No matching channels")
+            ) { item in
+                discordChannelRow(item.entry, access: item.state)
             }
         }
-        .frame(maxHeight: 240)
     }
 
-    private func selectionButton(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: selected ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(selected ? theme.accentColor : theme.secondaryText)
+    private func discordChannelRow(
+        _ channel: DiscordChannel,
+        access: AgentChannelReadWriteSelection
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "number")
+                .foregroundColor(theme.secondaryText)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(channel.displayName)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                Text(channel.id)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            Spacer()
+            AgentChannelSelectorToggle(title: L("Read"), selected: access.read) {
+                toggleChannel(channel.id, in: &readableChannelIdsText)
+            }
+            AgentChannelSelectorToggle(title: L("Write"), selected: access.write) {
+                toggleChannel(channel.id, in: &writableChannelIdsText)
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
     }
 
     private func discordMemberSelector(_ discovery: DiscordConnectionDiscovery) -> some View {
         let members = discovery.membersByGuildId[selectedGuildId] ?? []
-        return VStack(alignment: .leading, spacing: 6) {
-            Text("Authorized Senders", bundle: .module)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(members) { member in
-                        let selected = parseIds(senderAllowlistText).contains(member.id)
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(member.displayName)
-                                    .font(.system(size: 11, weight: .medium))
-                                Text(member.id)
-                                    .font(.system(size: 9, design: .monospaced))
-                                    .foregroundColor(theme.tertiaryText)
-                            }
-                            Spacer()
-                            selectionButton(L("Allow"), selected: selected) {
-                                senderAllowlistText = toggledIdText(senderAllowlistText, id: member.id)
-                            }
-                        }
-                        .padding(.vertical, 6)
-                    }
-                }
+        let allowedIds = Set(parseIds(senderAllowlistText))
+        let allowedCount = members.filter { allowedIds.contains($0.id) }.count
+        let shaped = AgentChannelSelectorList.shape(
+            members,
+            query: memberSearch,
+            fields: { [$0.displayName, $0.user.username, $0.id] },
+            state: { allowedIds.contains($0.id) },
+            isSelected: { $0 }
+        )
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Authorized Senders", bundle: .module)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+                Text("\(allowedCount) allowed · \(members.count) people", bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
             }
-            .frame(maxHeight: 160)
+
+            AgentChannelSelectorSearchField(
+                placeholder: L("Search people by name or ID"),
+                text: $memberSearch
+            )
+
+            AgentChannelSelectorListCard(
+                shaped: shaped,
+                emptyText: L("No matching people"),
+                maxHeight: 200
+            ) { item in
+                discordMemberRow(item.entry, allowed: item.state)
+            }
         }
+    }
+
+    private func discordMemberRow(_ member: DiscordGuildMember, allowed: Bool) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(member.displayName)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                Text(member.id)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            Spacer()
+            AgentChannelSelectorToggle(title: L("Allow"), selected: allowed) {
+                senderAllowlistText = toggledIdText(senderAllowlistText, id: member.id)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
     }
 
     private func toggleChannel(_ id: String, in text: inout String) {
@@ -542,6 +705,9 @@ struct DiscordSettingsView: View {
         inboundContinueThreads = configuration.inboundDispatch.continueThreads
         inboundAutoReplyEnabled = configuration.inboundDispatch.autoReplyEnabled
         tokenSaved = DiscordConnectionService.shared.hasBotToken()
+        // Arm autosave only after the stored configuration has hydrated the
+        // draft, so hydration itself is never mistaken for an edit.
+        lastSavedDraft = currentDraft
     }
 
     private var hasPendingToken: Bool {
@@ -569,24 +735,33 @@ struct DiscordSettingsView: View {
         showStatus(L("Discord bot token removed"), isError: false)
     }
 
-    @discardableResult
-    private func saveConfiguration() -> Bool {
+    /// First cross-field problem the save would reject, or nil when the
+    /// draft is persistable. Shared by autosave (skip silently) and the
+    /// explicit save (show and navigate to the section).
+    private func validationFailure() -> (message: String, section: AgentChannelProviderSetupSection)? {
         if inboundDispatchEnabled && inboundAgentId == nil && inboundRoutes.isEmpty {
-            showStatus(
+            return (
                 L("Select a default agent or add a routing rule for inbound Discord messages."),
-                isError: true
+                .behavior
             )
-            return false
         }
         if inboundDispatchEnabled && parseIds(senderAllowlistText).isEmpty {
-            showStatus(L("Add at least one authorized Discord sender for inbound dispatch."), isError: true)
-            return false
+            return (
+                L("Add at least one authorized Discord sender for inbound dispatch."),
+                .access
+            )
         }
         if inboundAutoReplyEnabled && (!writeEnabled || parseIds(writableChannelIdsText).isEmpty) {
-            showStatus(L("Automatic replies require Discord sending and a writable channel."), isError: true)
-            return false
+            return (
+                L("Automatic replies require Discord sending and a writable channel."),
+                .behavior
+            )
         }
-        let configuration = DiscordConnectionConfiguration(
+        return nil
+    }
+
+    private func currentConfiguration() -> DiscordConnectionConfiguration {
+        DiscordConnectionConfiguration(
             configuredGuildIds: parseIds(guildIdsText),
             readableChannelIds: parseIds(readableChannelIdsText),
             writableChannelIds: parseIds(writableChannelIdsText),
@@ -602,8 +777,17 @@ struct DiscordSettingsView: View {
                 autoReplyEnabled: inboundAutoReplyEnabled
             )
         )
+    }
+
+    @discardableResult
+    private func saveConfiguration() -> Bool {
+        if let failure = validationFailure() {
+            showStatus(failure.message, isError: true, section: failure.section)
+            return false
+        }
         do {
-            try DiscordConnectionService.shared.saveConfiguration(configuration)
+            try DiscordConnectionService.shared.saveConfiguration(currentConfiguration())
+            lastSavedDraft = currentDraft
             return true
         } catch {
             showStatus(error.localizedDescription, isError: true)
@@ -617,6 +801,7 @@ struct DiscordSettingsView: View {
     /// run. In that case the sheet stays open with the exact blockers rather
     /// than dismissing on a superficially successful save.
     private func saveAndDismiss() {
+        autosaveTask?.cancel()
         guard persistPendingSecrets(), saveConfiguration() else { return }
         isSaving = true
         Task {
@@ -641,7 +826,8 @@ struct DiscordSettingsView: View {
                     showStatus(
                         L("Saved, but Discord receive is not ready yet"),
                         details: report.blockers + report.notes,
-                        isError: true
+                        isError: true,
+                        section: .verify
                     )
                 }
             }
@@ -651,6 +837,7 @@ struct DiscordSettingsView: View {
     /// Persist the current draft first so diagnostics always test what the
     /// user sees in the form, not a stale save.
     private func testConnection() {
+        autosaveTask?.cancel()
         guard persistPendingSecrets(), saveConfiguration() else { return }
         isTesting = true
         Task {
@@ -756,6 +943,9 @@ struct DiscordSettingsView: View {
                 L("The message stopped at this stage before the wait expired; check the recent events list above.")
             )
         }
+        if !isError {
+            verifySucceeded = true
+        }
         showStatus(label, details: details, isError: isError)
     }
 
@@ -775,10 +965,26 @@ struct DiscordSettingsView: View {
         return guidance
     }
 
-    private func showStatus(_ message: String, details: [String] = [], isError: Bool) {
+    /// Show an inline status message. Passing a `section` with an error also
+    /// flags that section in the rail and moves focus to it, so validation
+    /// failures land the user on the fields that need fixing.
+    private func showStatus(
+        _ message: String,
+        details: [String] = [],
+        isError: Bool,
+        section: AgentChannelProviderSetupSection? = nil
+    ) {
         statusMessage = message
         statusDetails = details
         statusIsError = isError
+        if isError, let section {
+            attentionSectionId = section.rawValue
+            withAnimation(.easeOut(duration: 0.15)) {
+                selectedSectionId = section.rawValue
+            }
+        } else if !isError {
+            attentionSectionId = nil
+        }
     }
 
     private func clearStatus() {

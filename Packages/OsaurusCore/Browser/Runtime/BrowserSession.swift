@@ -1051,7 +1051,7 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
         // Scheme policy applies to EVERY load — tool navigations, redirects,
         // JS-driven navigation, and clicked links (main frame and subframes).
@@ -1068,7 +1068,7 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationResponse: WKNavigationResponse,
-        decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
     ) {
         // Non-renderable responses are file downloads; unsupported for now —
         // fail with a typed reason instead of silently doing nothing.
@@ -1148,7 +1148,7 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
         _ webView: WKWebView,
         runOpenPanelWith parameters: WKOpenPanelParameters,
         initiatedByFrame frame: WKFrameInfo,
-        completionHandler: @escaping ([URL]?) -> Void
+        completionHandler: @escaping @MainActor @Sendable ([URL]?) -> Void
     ) {
         lastDialog = [
             "kind": "file_chooser",
@@ -1167,7 +1167,8 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(
         _ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
-        initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping @MainActor @Sendable () -> Void
     ) {
         lastDialog = ["kind": "alert", "message": message, "timestamp": Date().timeIntervalSince1970]
         completionHandler()
@@ -1175,7 +1176,8 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(
         _ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
-        initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping @MainActor @Sendable (Bool) -> Void
     ) {
         let accept = pendingDialogPolicy.accept
         lastDialog = [
@@ -1189,7 +1191,7 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     func webView(
         _ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
         defaultText: String?, initiatedByFrame frame: WKFrameInfo,
-        completionHandler: @escaping (String?) -> Void
+        completionHandler: @escaping @MainActor @Sendable (String?) -> Void
     ) {
         let text = pendingDialogPolicy.accept ? (pendingDialogPolicy.promptText ?? defaultText ?? "") : nil
         lastDialog = [

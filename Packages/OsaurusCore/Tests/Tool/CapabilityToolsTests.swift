@@ -788,6 +788,33 @@ struct CapabilitiesLoadToolTests {
         #expect(buffered.map(\.function.name) == ["render_chart"])
     }
 
+    /// Web Researcher must teach the existing, permission-checked dynamic-load
+    /// transition instead of silently authorizing a gated tool as a skill side
+    /// effect. This keeps the visible Web setting and manual tool selection in
+    /// control while preventing the model from narrating the next step and
+    /// stopping because the extraction schema is absent.
+    @Test @MainActor
+    func webResearcherSkillLoadTeachesExplicitSearchAndExtractLoad() async throws {
+        await SkillManager.shared.refresh()
+        _ = await CapabilityLoadBuffer.shared.drain()
+
+        let tool = CapabilitiesLoadTool()
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+            try await tool.execute(
+                argumentsJSON: #"{"ids":["skill/Web Researcher"]}"#
+            )
+        }
+
+        #expect(!ToolEnvelope.isError(result))
+        #expect(result.contains("## Skill: Web Researcher"))
+        #expect(result.contains("tool/search_and_extract"))
+        #expect(result.contains("call `search_and_extract` in this same run"))
+        #expect(!result.contains("Schema for `search_and_extract`"))
+
+        let buffered = await CapabilityLoadBuffer.shared.drain()
+        #expect(buffered.isEmpty)
+    }
+
     @Test @MainActor
     func toolLoadReportsDisabledAvailability() async throws {
         try await DynamicCatalogTestLock.shared.run {

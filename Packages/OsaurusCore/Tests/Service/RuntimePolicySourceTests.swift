@@ -766,7 +766,7 @@ struct RuntimePolicySourceTests {
         // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
         // xcworkspace Package.resolved files. Miss one and the app resolves a
         // revision nobody proved.
-        let expectedRuntimeHardenedRevision = "da2872b07c33bd138f3217eb1760385b8cda259a"
+        let expectedRuntimeHardenedRevision = "d0e1f1a9ef3115b505056b679d6b01d6861f8daa"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -1175,9 +1175,58 @@ struct RuntimePolicySourceTests {
 
         #expect(controller.contains("loadedModelRuntimeInputsRequireRefresh"))
         #expect(controller.contains("previous.cache != next.cache"))
+        #expect(controller.contains("previous.memorySafety != next.memorySafety"))
         #expect(controller.contains("previous.multimodal != next.multimodal"))
         #expect(controller.contains("previous.mtp != next.mtp"))
         #expect(controller.contains("await ModelRuntime.shared.clearAll()"))
+    }
+
+    @Test("Context and KV settings have one editable owner and report saved versus active policy")
+    func contextAndKVSettingsHaveOneTruthfulOwner() throws {
+        let chat = try Self.source("Views/Settings/ChatSettingsView.swift")
+        let cache = try Self.source(
+            "Views/Settings/ServerSettings/CacheSection.swift"
+        )
+        let memorySafety = try Self.source(
+            "Views/Settings/ServerSettings/MemorySafetySection.swift"
+        )
+        let tab = try Self.source(
+            "Views/Settings/ServerSettingsTabContent.swift"
+        )
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let http = try Self.source("Networking/HTTPHandler.swift")
+
+        #expect(!chat.contains(#"label: "Context Length""#))
+        #expect(!chat.contains("tempChatContextLength"))
+        #expect(
+            chat.contains(#"label: "Default Agent Max Output Tokens""#)
+        )
+        #expect(
+            chat.contains(
+                "This is not the model context window or KV retention."
+            )
+        )
+        #expect(
+            cache.contains(
+                #"label: "Unknown-Model Metadata Fallback (tokens)""#
+            )
+        )
+        #expect(
+            cache.contains(
+                #"label: "KV Retention Override (tokens)""#
+            )
+        )
+        #expect(cache.contains("Usable conversation budget"))
+        #expect(cache.contains("Active loaded policy"))
+        #expect(cache.contains("$draft.cache.defaultMaxKVSize"))
+        #expect(!memorySafety.contains("$draft.memorySafety.customDefaultMaxKVSize"))
+        #expect(tab.contains("requiresModelReload"))
+        #expect(tab.contains("unloadedModelCount"))
+        #expect(runtime.contains("activeCachePolicy"))
+        #expect(http.contains(#""active_cache_policy""#))
+        #expect(http.contains(#""context_policy""#))
+        #expect(http.contains(#""metadata_fallback_tokens""#))
+        #expect(http.contains(#""resolved_kv_retention_tokens""#))
     }
 
     @Test("Server settings concurrency UI does not advertise false restart or runtime wiring")

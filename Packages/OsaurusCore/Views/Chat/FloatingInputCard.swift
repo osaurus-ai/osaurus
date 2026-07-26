@@ -540,9 +540,23 @@ struct FloatingInputCard: View {
     /// Max context length for the selected model — the SAME resolution the
     /// runtime loop uses (`AgentLoopBudget`), so the chip's denominator and
     /// the trim budget never diverge.
-    private var maxContextTokens: Int? {
+    private var contextWindowResolution: AgentLoopBudget.ContextWindowResolution? {
         guard let model = selectedModel else { return nil }
-        return AgentLoopBudget.resolveContextWindowSync(modelId: model)
+        return AgentLoopBudget.resolveContextWindowResolutionSync(modelId: model)
+    }
+
+    private var maxContextTokens: Int? {
+        contextWindowResolution?.tokens
+    }
+
+    /// The denominator the compactor and overflow gate actually use. The
+    /// model maximum remains visible in the popover, but showing it as the
+    /// chip denominator made an 85%-budget warning look early and made the
+    /// Chat metadata fallback look like a competing cap.
+    private var usableContextTokens: Int? {
+        maxContextTokens.map {
+            ContextBudgetManager(contextLength: $0).effectiveBudget
+        }
     }
 
     // MARK: - Context budget gating
@@ -2703,7 +2717,7 @@ extension FloatingInputCard {
             isContextHardOverflow ? .red : (isContextNearLimit ? .orange : nil)
         let prefix = isStreaming ? "" : "~"
         let tokenText =
-            if let maxCtx = maxContextTokens {
+            if let maxCtx = usableContextTokens {
                 "\(prefix)\(formatTokenCount(displayContextTokens)) / \(formatTokenCount(maxCtx))"
             } else {
                 "\(prefix)\(formatTokenCount(displayContextTokens))"
@@ -2768,7 +2782,9 @@ extension FloatingInputCard {
         .popover(isPresented: $showContextBreakdown, arrowEdge: .top) {
             ContextBreakdownPopover(
                 breakdown: displayContextBreakdown,
-                maxTokens: maxContextTokens,
+                maxTokens: usableContextTokens,
+                modelMaxTokens: maxContextTokens,
+                modelLimitSource: contextWindowResolution?.source,
                 isStreaming: isStreaming,
                 isNearLimit: isContextNearLimit,
                 isHardOverflow: isContextHardOverflow,
@@ -2901,10 +2917,12 @@ extension FloatingInputCard {
             switch warmupController.state {
             case .warm:
                 return String(
-                    localized: "Model warm — ready for a fast first response", bundle: .module)
+                    localized: "Chat prefix warm — ready for a fast next response", bundle: .module)
             case .cold:
                 return String(
-                    localized: "Model cold — will load on next response", bundle: .module)
+                    localized:
+                        "Chat prefix not pre-warmed — the next response may restore cache or prefill",
+                    bundle: .module)
             case .warming:
                 guard let model = selectedModel, let phase = warmupProgressHub.phases[model] else {
                     return String(localized: "Warming up…", bundle: .module)
@@ -5896,7 +5914,11 @@ private struct ContextPopoverHeightKey: PreferenceKey {
 
 private struct ContextBreakdownPopover: View {
     let breakdown: ContextBreakdown
+    /// Usable conversation budget (model maximum × safety margin).
     let maxTokens: Int?
+    /// Raw maximum reported by the model bundle/provider fallback.
+    let modelMaxTokens: Int?
+    let modelLimitSource: AgentLoopBudget.ContextWindowSource?
     let isStreaming: Bool
     let isNearLimit: Bool
     let isHardOverflow: Bool
@@ -6134,7 +6156,7 @@ private struct ContextBreakdownPopover: View {
                 let maxTokens = utilization.maxTokens
             {
                 Text(
-                    "\(formatTokenCount(remaining)) remaining of \(formatTokenCount(maxTokens))",
+                    "\(formatTokenCount(remaining)) remaining of \(formatTokenCount(maxTokens)) usable",
                     bundle: .module
                 )
                 .font(.system(size: 10))
@@ -6144,6 +6166,14 @@ private struct ContextBreakdownPopover: View {
                 Text("Model context limit unavailable", bundle: .module)
                     .font(.system(size: 10))
                     .foregroundColor(theme.tertiaryText)
+            }
+            if let modelMaxTokens {
+                Text(
+                    "\(modelLimitLabel) \(formatTokenCount(modelMaxTokens)) · usable budget \(Int(ContextBudgetManager.safetyMargin * 100))%",
+                    bundle: .module
+                )
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -6159,6 +6189,21 @@ private struct ContextBreakdownPopover: View {
         )
     }
 
+    private var modelLimitLabel: String {
+        switch modelLimitSource {
+        case .foundationFixed:
+            return L("Fixed model maximum")
+        case .bundleMetadata:
+            return L("Bundle model maximum")
+        case .providerMetadata:
+            return L("Provider model maximum")
+        case .metadataFallback:
+            return L("Metadata fallback")
+        case nil:
+            return L("Model maximum")
+        }
+    }
+
     @ViewBuilder
     private var utilizationSection: some View {
         if let maxTokens = utilization.maxTokens,
@@ -6167,7 +6212,7 @@ private struct ContextBreakdownPopover: View {
         {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 6) {
-                    Text("Window usage", bundle: .module)
+                    Text("Usable budget", bundle: .module)
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundColor(theme.tertiaryText)
                         .textCase(.uppercase)

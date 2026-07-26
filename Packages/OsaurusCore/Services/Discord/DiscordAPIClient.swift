@@ -52,7 +52,7 @@ struct DiscordGuildMember: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
-struct DiscordChannel: Codable, Equatable, Sendable {
+struct DiscordChannel: Codable, Equatable, Sendable, Identifiable {
     let id: String
     let guildId: String?
     let name: String?

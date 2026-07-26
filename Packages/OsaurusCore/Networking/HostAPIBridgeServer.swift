@@ -49,6 +49,7 @@ public actor HostAPIBridgeServer {
     }
 
     public func stop() async {
+        let hadResources = channel != nil || group != nil || boundSocketPath != nil
         if let ch = channel {
             _ = try? await ch.close()
             channel = nil
@@ -63,7 +64,9 @@ public actor HostAPIBridgeServer {
             try? FileManager.default.removeItem(atPath: path)
             boundSocketPath = nil
         }
-        NSLog("[HostAPIBridge] Stopped")
+        if hadResources {
+            NSLog("[HostAPIBridge] Stopped")
+        }
     }
 }
 

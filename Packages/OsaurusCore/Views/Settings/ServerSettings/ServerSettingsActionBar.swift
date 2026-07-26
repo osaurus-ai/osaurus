@@ -14,6 +14,7 @@ import SwiftUI
 struct ServerSettingsActionBar: View {
     let hasUnsavedChanges: Bool
     let requiresRestart: Bool
+    let requiresModelReload: Bool
     let saving: Bool
     let onSave: () -> Void
     let onReset: () -> Void
@@ -26,6 +27,9 @@ struct ServerSettingsActionBar: View {
 
             if requiresRestart {
                 restartChip
+            }
+            if requiresModelReload {
+                modelReloadChip
             }
 
             Spacer(minLength: 12)
@@ -103,6 +107,31 @@ struct ServerSettingsActionBar: View {
         )
         .help(
             "Saving these changes will restart the NIO server to bind the new socket and refresh middleware."
+        )
+    }
+
+    /// Container-owned cache and Memory Safety inputs are captured at model
+    /// load. Say what Save will do instead of presenting these controls as
+    /// live mutation.
+    private var modelReloadChip: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "arrow.clockwise.circle")
+                .font(.system(size: 10, weight: .semibold))
+            Text("Models reload after Save", bundle: .module)
+                .font(.system(size: 11, weight: .medium))
+        }
+        .foregroundColor(theme.warningColor)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(theme.warningColor.opacity(0.10))
+                .overlay(
+                    Capsule().stroke(theme.warningColor.opacity(0.25), lineWidth: 0.5)
+                )
+        )
+        .help(
+            "Saving unloads resident local models whose cache or Memory Safety policy changed. The next request reloads them with the saved policy."
         )
     }
 }

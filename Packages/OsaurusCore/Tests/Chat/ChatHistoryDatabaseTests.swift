@@ -99,6 +99,23 @@ struct ChatHistoryDatabaseTests {
     }
 
     @Test
+    func modelContextExclusionRoundTripsAndInvalidatesContentHash() throws {
+        let db = try openInMemory()
+        let id = UUID()
+        var session = makeSession(id: id, turnCount: 2)
+        session.turns[1].modelContextExcluded = true
+        try db.saveSession(session)
+
+        #expect(db.loadSession(id: id)?.turns[1].modelContextExcluded == true)
+
+        // The incremental saver must rewrite the same turn when only the
+        // transcript-only marker changes.
+        session.turns[1].modelContextExcluded = false
+        try db.saveSession(session)
+        #expect(db.loadSession(id: id)?.turns[1].modelContextExcluded == false)
+    }
+
+    @Test
     func saveSession_replacesTurnsOnReSave() throws {
         let db = try openInMemory()
         let id = UUID()

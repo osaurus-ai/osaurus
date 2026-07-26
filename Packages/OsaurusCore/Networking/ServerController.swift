@@ -323,7 +323,20 @@ final class ServerController: ObservableObject {
     /// Fields that only need a runtime-config invalidate: generation and
     /// concurrency defaults consumed by `RuntimeConfig.snapshot()` on the next
     /// request.
-    func saveRuntimeSettings(_ settings: VMLXServerRuntimeSettings) async {
+    struct RuntimeSettingsApplyEffects: Equatable, Sendable {
+        let unloadedModelCount: Int
+        let restartedServer: Bool
+        let invalidatedRuntimeConfig: Bool
+    }
+
+    @discardableResult
+    func saveRuntimeSettings(
+        _ requestedSettings: VMLXServerRuntimeSettings
+    ) async -> RuntimeSettingsApplyEffects {
+        let settings =
+            ServerRuntimeSettingsStore.canonicalizedContextAndKVPolicy(
+                requestedSettings
+            )
         let previousRuntimeSettings = runtimeSettings
         let previousConfig = configuration
         let projected = ServerRuntimeSettingsStore.projectIntoLegacy(
@@ -349,21 +362,31 @@ final class ServerController: ObservableObject {
                 next: settings
             )
             || previousConfig.genTopP != projected.genTopP
+        let restartWasRequested = restartNeeded && isRunning
 
         if configChanged {
             configuration = projected
             saveConfiguration()
         }
 
+        let unloadedModelCount =
+            loadedModelRefreshNeeded
+            ? await ModelRuntime.shared.cachedModelSummaries().count
+            : 0
         if loadedModelRefreshNeeded {
             await ModelRuntime.shared.clearAll()
         }
-        if restartNeeded, isRunning {
+        if restartWasRequested {
             await restartServer()
         }
         if runtimeConfigChanged {
             await ModelRuntime.shared.invalidateConfig()
         }
+        return RuntimeSettingsApplyEffects(
+            unloadedModelCount: unloadedModelCount,
+            restartedServer: restartWasRequested,
+            invalidatedRuntimeConfig: runtimeConfigChanged
+        )
     }
 
     /// Settings that are captured by a loaded `ModelContainer` or the
@@ -376,6 +399,11 @@ final class ServerController: ObservableObject {
         previous.cache != next.cache
             || previous.multimodal != next.multimodal
             || previous.mtp != next.mtp
+            // Memory Safety resolves the live KV cap, prefix-memory budget,
+            // allocator cap, and companion-cache entry limit at model load.
+            // Persisting a new profile while retaining the old container makes
+            // the settings panel lie until a manual reload.
+            || previous.memorySafety != next.memorySafety
     }
 
     /// Settings captured by `RuntimeConfig.snapshot()` but not by a loaded

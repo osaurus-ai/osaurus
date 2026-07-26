@@ -54,6 +54,7 @@ extension ChatSession: ChatWarmupSessionContext {
             agentId: effectiveAgentId,
             executionMode: executionMode,
             model: model,
+            modelType: selectedPickerItem?.modelType,
             query: "",
             messages: priorUserMessages,
             toolsDisabled: chatCfg.disableTools,
@@ -115,26 +116,15 @@ extension ChatSession: ChatWarmupSessionContext {
         return msgs
     }
 
-    private func warmupTurnToMessage(_ turn: ChatTurn, isLastTurn: Bool) -> ChatMessage? {
+    func warmupTurnToMessage(_ turn: ChatTurn, isLastTurn: Bool) -> ChatMessage? {
         switch turn.role {
         case .assistant:
-            if isLastTurn && turn.contentIsBlank && turn.thinkingIsBlank && turn.toolCalls == nil {
-                return nil
-            }
-            if turn.contentIsBlank && turn.thinkingIsBlank && (turn.toolCalls == nil || turn.toolCalls!.isEmpty) {
-                return nil
-            }
-            let content: String? = turn.contentIsBlank ? nil : turn.content
-            let reasoning: String? = turn.thinkingIsBlank ? nil : turn.thinking
-            return ChatMessage(
-                role: "assistant",
-                content: content,
-                tool_calls: turn.toolCalls,
-                tool_call_id: nil,
-                reasoning_content: reasoning,
-                reasoning_item_id: turn.reasoningItemId,
-                reasoning_encrypted: turn.reasoningEncrypted
-            )
+            // Warm-up and the real request must serialize one identical
+            // transcript. In particular, a reasoning-only attempt abandoned
+            // by the bounded retry remains visible in the UI but carries
+            // `modelContextExcluded`; warming it would prefill poisoned
+            // history that the next real send correctly omits.
+            return Self.modelVisibleAssistantMessage(turn, isLastTurn: isLastTurn)
         case .tool:
             return ChatMessage(
                 role: "tool",

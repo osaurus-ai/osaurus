@@ -166,7 +166,8 @@ struct PromptSurfaceMatrixTests {
                 let gatedTools: Set<String> = [
                     "render_chart", "speak", "search_memory",
                     "schedule_next_run", "cancel_next_run", "notify",
-                    ComputerUseTool.toolName, "spawn_agent", "spawn_model", "image", "applescript",
+                    ComputerUseTool.toolName, "spawn_agent", "spawn_model", "spawn_batch",
+                    "image", "applescript",
                 ]
 
                 #expect(rows[0].context.tools.isEmpty)

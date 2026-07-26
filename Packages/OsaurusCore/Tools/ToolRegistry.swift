@@ -239,10 +239,12 @@ public final class ToolRegistry: ObservableObject {
             CurrentTimeTool(),
             // Text-delegation family: `spawn_agent` hands a task to a configured
             // agent (its prompt + model); `spawn_model` hands a task to a bare
-            // spawnable model id. Both gate per-agent (their pools) in
+            // spawnable model id; `spawn_batch` performs bounded fan-out over
+            // either pool. All three gate per-agent (their pools) in
             // `SystemPromptComposer.resolveTools` via `SubagentToolVisibility`.
             SpawnAgentTool(),
             SpawnModelTool(),
+            SpawnBatchTool(),
             // Native local image generation/editing (one `image` tool; source_paths
             // → edit). Tool body enforces the separate Agent Delegation permission
             // defaults and low-RAM unload policy.

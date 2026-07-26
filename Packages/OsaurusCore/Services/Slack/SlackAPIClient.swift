@@ -25,7 +25,7 @@ struct SlackAuthIdentity: Codable, Equatable, Sendable {
     }
 }
 
-struct SlackConversation: Codable, Equatable, Sendable {
+struct SlackConversation: Codable, Equatable, Sendable, Identifiable {
     let id: String
     let name: String?
     let isChannel: Bool

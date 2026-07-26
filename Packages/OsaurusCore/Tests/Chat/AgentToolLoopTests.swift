@@ -28,6 +28,8 @@ private final class ScriptedLoopSurface {
     /// When non-nil, hooks expose `pendingTodoCount` returning this value
     /// (the chat surface's session-todo plumb).
     var pendingTodos: Int?
+    var todoProgress: AgentTodoProgressSnapshot?
+    var forceMissingTodoProgressSnapshot = false
 
     // Recorded crossings
     var builtNotices: [[String]] = []
@@ -36,12 +38,21 @@ private final class ScriptedLoopSurface {
     var willProcessCallIds: [String] = []
     var batchOutcomes: [[AgentLoopToolOutcome]] = []
     var emittedFinalTexts: [String] = []
+    var incompleteContinuationPreparations = 0
+    var cancelOnIncompleteContinuation = false
+    var trackedTaskContinuationPreparations = 0
+    var cancelOnTrackedTaskContinuation = false
+    var todoProgressSnapshotCalls = 0
+    var cancelOnTodoProgressSnapshotCall: Int?
 
     init(steps: [AgentLoopModelStep]) {
         self.steps = steps
     }
 
-    func makeHooks(includeFallbackText: Bool = true) -> AgentLoopHooks {
+    func makeHooks(
+        includeFallbackText: Bool = true,
+        includeTrackedTaskContinuation: Bool = false
+    ) -> AgentLoopHooks {
         var hooks = AgentLoopHooks(
             isCancelled: { self.cancelled },
             buildMessages: { notices in
@@ -55,6 +66,20 @@ private final class ScriptedLoopSurface {
                 guard !self.steps.isEmpty else { return .finalResponse }
                 return self.steps.removeFirst()
             },
+            prepareIncompleteReasoningContinuation: {
+                self.incompleteContinuationPreparations += 1
+                if self.cancelOnIncompleteContinuation {
+                    self.cancelled = true
+                }
+            },
+            prepareTrackedTaskContinuation: includeTrackedTaskContinuation
+                ? {
+                    self.trackedTaskContinuationPreparations += 1
+                    if self.cancelOnTrackedTaskContinuation {
+                        self.cancelled = true
+                    }
+                }
+                : nil,
             willProcessCall: { _, callId in
                 self.willProcessCallIds.append(callId)
             },
@@ -68,8 +93,20 @@ private final class ScriptedLoopSurface {
             },
             onBatchComplete: { outcomes in
                 self.batchOutcomes.append(outcomes)
+                self.recordTodoProgress(from: outcomes)
             },
-            pendingTodoCount: pendingTodos.map { count in { count } }
+            pendingTodoCount: pendingTodos == nil ? nil : { self.pendingTodos ?? 0 },
+            todoProgressSnapshot: includeTrackedTaskContinuation
+                ? {
+                    self.todoProgressSnapshotCalls += 1
+                    if self.cancelOnTodoProgressSnapshotCall
+                        == self.todoProgressSnapshotCalls
+                    {
+                        self.cancelled = true
+                    }
+                    return self.forceMissingTodoProgressSnapshot ? nil : self.todoProgress
+                }
+                : nil
         )
         if includeFallbackText {
             hooks.emitFallbackText = { text in
@@ -77,6 +114,23 @@ private final class ScriptedLoopSurface {
             }
         }
         return hooks
+    }
+
+    private func recordTodoProgress(from outcomes: [AgentLoopToolOutcome]) {
+        for outcome in outcomes where outcome.invocation.toolName == "todo" {
+            guard !outcome.wasError, ToolEnvelope.isSuccess(outcome.result),
+                let data = outcome.invocation.jsonArguments.data(using: .utf8),
+                let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let markdown = dict["markdown"] as? String
+            else { continue }
+            let todo = AgentTodo.parse(markdown)
+            let snapshot = AgentTodoProgressSnapshot(
+                done: todo.doneCount,
+                total: todo.totalCount
+            )
+            todoProgress = snapshot
+            pendingTodos = snapshot.pending
+        }
     }
 }
 
@@ -118,7 +172,6 @@ private func headlessPolicy(maxIterations: Int = 30) -> AgentLoopPolicy {
 
 @MainActor
 struct AgentToolLoopTests {
-
     @Test func finalResponseOnFirstStepEndsRun() async throws {
         let surface = ScriptedLoopSurface(steps: [.finalResponse])
         let result = try await AgentToolLoop.run(
@@ -135,7 +188,8 @@ struct AgentToolLoopTests {
         let step = AgentLoopModelStep.classifyTerminal(
             contentIsBlank: true,
             thinkingIsBlank: false,
-            stopReason: "length"
+            stopReason: "length",
+            requiresVisibleFinalResponse: true
         )
         guard case .lengthExhausted = step else {
             Issue.record("reasoning-only stop=length must be lengthExhausted")
@@ -143,23 +197,230 @@ struct AgentToolLoopTests {
         }
     }
 
-    @Test func reasoningOnlyNaturalStopRemainsFinalResponse() {
+    @Test func reasoningOnlyNaturalStopRequiresVisibleAnswer() {
         let step = AgentLoopModelStep.classifyTerminal(
             contentIsBlank: true,
             thinkingIsBlank: false,
-            stopReason: "stop"
+            stopReason: "stop",
+            requiresVisibleFinalResponse: true
         )
-        guard case .finalResponse = step else {
-            Issue.record("reasoning-only natural stop must preserve existing final behavior")
+        guard case .incompleteReasoning = step else {
+            Issue.record("reasoning-only natural stop must not masquerade as a final answer")
             return
         }
+    }
+
+    @Test func intentionalReasoningOnlyDirectChatRemainsFinal() {
+        let step = AgentLoopModelStep.classifyTerminal(
+            contentIsBlank: true,
+            thinkingIsBlank: false,
+            stopReason: "stop",
+            requiresVisibleFinalResponse: false
+        )
+        guard case .finalResponse = step else {
+            Issue.record("a no-tool reasoning-only direct chat must remain a valid final response")
+            return
+        }
+    }
+
+    @Test func intentionalUnclosedReasoningOnlyDirectChatRemainsFinal() {
+        let step = AgentLoopModelStep.classifyTerminal(
+            contentIsBlank: true,
+            thinkingIsBlank: false,
+            stopReason: "stop",
+            unclosedReasoning: true,
+            requiresVisibleFinalResponse: false
+        )
+        guard case .finalResponse = step else {
+            Issue.record("a no-tool reasoning-only direct chat preserves its current product contract")
+            return
+        }
+    }
+
+    @Test func visibleResponsePolicyDoesNotConfuseAvailableSchemasWithToolWork() {
+        #expect(
+            !AgentLoopVisibleResponsePolicy.requiresVisibleFinalResponse(
+                hasStructuredToolWork: false,
+                isRemoteAgentTarget: false
+            )
+        )
+        #expect(
+            AgentLoopVisibleResponsePolicy.requiresVisibleFinalResponse(
+                hasStructuredToolWork: true,
+                isRemoteAgentTarget: false
+            )
+        )
+        #expect(
+            AgentLoopVisibleResponsePolicy.requiresVisibleFinalResponse(
+                hasStructuredToolWork: false,
+                isRemoteAgentTarget: true
+            )
+        )
+    }
+
+    @Test func unclosedReasoningWithContentEndsWithoutTransparentReplay() {
+        let step = AgentLoopModelStep.classifyTerminal(
+            contentIsBlank: false,
+            thinkingIsBlank: false,
+            stopReason: "stop",
+            unclosedReasoning: true,
+            requiresVisibleFinalResponse: true
+        )
+        guard case .incompleteVisibleResponse = step else {
+            Issue.record("visible partial content must not be concatenated with a transparent replay")
+            return
+        }
+    }
+
+    @Test func recoveryIdempotencyOrdinalDistinguishesLogicalReplayOnly() {
+        let messages = [ChatMessage(role: "user", content: "Do the task.")]
+        let first = AgentToolLoop.recoveryAwareIdempotencySuffix(
+            messages: messages,
+            incompleteReasoningRetryOrdinal: 0
+        )
+        let transportRetry = AgentToolLoop.recoveryAwareIdempotencySuffix(
+            messages: messages,
+            incompleteReasoningRetryOrdinal: 0
+        )
+        let reasoningRetry = AgentToolLoop.recoveryAwareIdempotencySuffix(
+            messages: messages,
+            incompleteReasoningRetryOrdinal: 1
+        )
+
+        #expect(first == transportRetry)
+        #expect(first != reasoningRetry)
+        #expect(first.hasPrefix("r0-"))
+        #expect(reasoningRetry.hasPrefix("r1-"))
+    }
+
+    @Test func visibleIncompleteResponseEndsWithoutRetryOrGenericFallback() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .incompleteVisibleResponse,
+            .finalResponse,
+        ])
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(
+            result
+                == AgentToolLoop.RunResult(
+                    exit: .incompleteReasoningExhausted,
+                    iterations: 1
+                )
+        )
+        #expect(surface.steps.count == 1, "visible content makes transparent replay unsafe")
+        #expect(surface.incompleteContinuationPreparations == 0)
+        #expect(surface.emittedFinalTexts.isEmpty)
+    }
+
+    @Test func reasoningOnlyTurnGetsOneBoundedContinuation() async throws {
+        let surface = ScriptedLoopSurface(steps: [.incompleteReasoning, .finalResponse])
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 1))
+        #expect(surface.builtNotices == [[], []])
+        #expect(surface.incompleteContinuationPreparations == 1)
+        #expect(surface.emittedFinalTexts.isEmpty)
+    }
+
+    @Test func repeatedReasoningOnlyTurnEndsHonestlyWithoutLooping() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .incompleteReasoning,
+            .incompleteReasoning,
+            .finalResponse,
+        ])
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(
+            result
+                == AgentToolLoop.RunResult(
+                    exit: .incompleteReasoningExhausted,
+                    iterations: 1
+                )
+        )
+        #expect(surface.steps.count == 1, "the third generation must not start")
+        #expect(surface.incompleteContinuationPreparations == 1)
+        #expect(surface.emittedFinalTexts.isEmpty)
+    }
+
+    @Test func continuationBudgetIsRunWideAcrossInterleavedToolWork() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .incompleteReasoning,
+            .toolCalls([inv("file_read", #"{"path":"notes.md"}"#)]),
+            .incompleteReasoning,
+            .finalResponse,
+        ])
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(
+            result
+                == AgentToolLoop.RunResult(
+                    exit: .incompleteReasoningExhausted,
+                    iterations: 2
+                )
+        )
+        #expect(surface.incompleteContinuationPreparations == 1)
+        #expect(surface.executedCalls.map(\.name) == ["file_read"])
+        #expect(surface.steps.count == 1, "a second reasoning-only step must end the run")
+        #expect(surface.emittedFinalTexts.isEmpty)
+    }
+
+    @Test func cancellationWinsAfterIncompleteContinuationBoundary() async throws {
+        let surface = ScriptedLoopSurface(steps: [.incompleteReasoning, .finalResponse])
+        surface.cancelOnIncompleteContinuation = true
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .cancelled, iterations: 0))
+        #expect(surface.incompleteContinuationPreparations == 1)
+        #expect(surface.steps.count == 1, "cancellation must prevent the continuation generation")
+        #expect(surface.emittedFinalTexts.isEmpty)
+    }
+
+    @Test func cancellationDuringModelStepSkipsIncompleteContinuation() async throws {
+        let surface = ScriptedLoopSurface(steps: [])
+        var hooks = surface.makeHooks()
+        hooks.modelStep = { _, _ in
+            surface.cancelled = true
+            return .incompleteReasoning
+        }
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: hooks
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .cancelled, iterations: 0))
+        #expect(surface.incompleteContinuationPreparations == 0)
+        #expect(surface.emittedFinalTexts.isEmpty)
     }
 
     @Test func visibleLengthResponseIsIncompleteButPreservedForFallback() {
         let step = AgentLoopModelStep.classifyTerminal(
             contentIsBlank: false,
             thinkingIsBlank: false,
-            stopReason: "length"
+            stopReason: "length",
+            requiresVisibleFinalResponse: true
         )
         guard case .lengthExhausted = step else {
             Issue.record("authoritative stop=length must remain incomplete")
@@ -1062,6 +1323,48 @@ struct AgentToolLoopTests {
         #expect(surface.batchOutcomes[0].map(\.wasDeduped) == [false, false, true])
     }
 
+    @Test func batchExecutorBoundsIdenticalTransientExtractionRetries() async throws {
+        let args = #"{"url":"https://example.com/slow"}"#
+        let transient = SearchAndExtractTool.extractionEnvelope(
+            payload: [
+                "mode": "direct_url",
+                "provider": "direct_url",
+                "results": [
+                    [
+                        "url": "https://example.com/slow",
+                        "extracted": false,
+                        "extract_status": "timeout",
+                    ],
+                ],
+            ]
+        )
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([
+                inv("search_and_extract", args),
+                inv("search_and_extract", args),
+                inv("search_and_extract", args),
+            ]),
+            .finalResponse,
+        ])
+        var executed = 0
+        var hooks = surface.makeHooks()
+        hooks.executeBatch = { calls in
+            executed += calls.count
+            return calls.map { _ in AgentLoopToolExecution(result: transient) }
+        }
+
+        let result = try await AgentToolLoop.run(
+            policy: headlessPolicy(),
+            state: AgentTaskState(),
+            hooks: hooks
+        )
+
+        #expect(result.exit == .finalResponse)
+        #expect(executed == 2, "initial fetch plus one retry; third call must replay")
+        #expect(surface.batchOutcomes[0].map(\.wasDeduped) == [false, false, true])
+        #expect(surface.batchOutcomes[0][2].result.contains(#""retry_exhausted":true"#))
+    }
+
     @Test func batchExecutorDuplicateSiblingReplaysHeldNotFoundError() async throws {
         // Serial parity with held-error replay: a `not_found` from
         // `file_read` is DETERMINISTIC (nothing wrote between the two
@@ -1724,6 +2027,611 @@ struct AgentLoopTodoStalenessTests {
         for notices in surface.builtNotices {
             #expect(!notices.contains(where: { $0.hasPrefix(needle) }))
         }
+    }
+}
+
+// MARK: - Current-run todo terminal completion
+
+@MainActor
+struct AgentLoopTrackedTodoCompletionTests {
+
+    @Test func progressStopWithCurrentRunTodoContinuesOnceThenFinishes() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("todo", #"{"markdown":"- [ ] inspect\n- [ ] answer"}"#)]),
+            .finalResponse,
+            .toolCalls([inv("todo", #"{"markdown":"- [x] inspect\n- [x] answer"}"#)]),
+            .finalResponse,
+        ])
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 4))
+        #expect(surface.trackedTaskContinuationPreparations == 1)
+        #expect(surface.emittedFinalTexts.isEmpty)
+        #expect(surface.steps.isEmpty)
+        #expect(surface.todoProgress == AgentTodoProgressSnapshot(done: 2, total: 2))
+    }
+
+    @Test func repeatedStopsWithPendingTodoReachConfiguredBudgetCap() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("todo", #"{"markdown":"- [ ] inspect\n- [ ] answer"}"#)]),
+            .finalResponse,
+            .finalResponse,
+            .finalResponse,
+        ])
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(maxIterations: 4),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(
+            result == AgentToolLoop.RunResult(
+                exit: .iterationCapReached,
+                iterations: 4,
+                unfinishedTodoCount: 2
+            )
+        )
+        #expect(surface.trackedTaskContinuationPreparations == 3)
+        #expect(surface.builtNotices.count == 4)
+        let pendingNotice = AgentToolLoop.todoPendingFinalNotice(pending: 2)
+        #expect(surface.builtNotices[2].contains(pendingNotice))
+        #expect(surface.builtNotices[3].contains(pendingNotice))
+        #expect(surface.emittedFinalTexts.isEmpty)
+    }
+
+    @Test func recordedCheckboxProgressStillRequiresRemainingWorkToClose() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("todo", #"{"markdown":"- [ ] inspect\n- [ ] answer"}"#)]),
+            .toolCalls([inv("todo", #"{"markdown":"- [x] inspect\n- [ ] answer"}"#)]),
+            .finalResponse,
+            .toolCalls([inv("todo", #"{"markdown":"- [x] inspect\n- [x] answer"}"#)]),
+            .finalResponse,
+        ])
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 5))
+        #expect(surface.trackedTaskContinuationPreparations == 1)
+        #expect(surface.todoProgress == AgentTodoProgressSnapshot(done: 2, total: 2))
+    }
+
+    @Test func realTodoToolStoreSnapshotDrivesZeroProgressContinuation() async throws {
+        let sessionId = "tracked-todo-test-\(UUID().uuidString)"
+        await AgentTodoStore.shared.clear(for: sessionId)
+        let todoInvocation = inv(
+            "todo",
+            #"{"markdown":"- [ ] inspect\n- [ ] answer"}"#
+        )
+        let completedTodoInvocation = inv(
+            "todo",
+            #"{"markdown":"- [x] inspect\n- [x] answer"}"#
+        )
+        let progressText = "Got the models. Now let me inspect the other repositories."
+        var history = [ChatMessage(role: "user", content: "research repositories")]
+        var continuationInput: [ChatMessage] = []
+        var continuationPreparations = 0
+
+        let hooks = AgentLoopHooks(
+            buildMessages: { _ in
+                if continuationPreparations == 1, continuationInput.isEmpty {
+                    continuationInput = history
+                }
+                return AgentLoopIterationInput(messages: history, overBudget: false)
+            },
+            modelStep: { _, iteration in
+                switch iteration {
+                case 1:
+                    return .toolCalls([todoInvocation])
+                case 2:
+                    history.append(ChatMessage(role: "assistant", content: progressText))
+                    return .finalResponse
+                case 3:
+                    return .toolCalls([completedTodoInvocation])
+                default:
+                    history.append(ChatMessage(role: "assistant", content: "Final answer."))
+                    return .finalResponse
+                }
+            },
+            prepareTrackedTaskContinuation: {
+                continuationPreparations += 1
+            },
+            executeTool: { invocation, _ in
+            do {
+                let result = try await ChatExecutionContext.$currentSessionId.withValue(
+                    sessionId
+                ) {
+                    try await TodoTool().execute(argumentsJSON: invocation.jsonArguments)
+                }
+                return AgentLoopToolExecution(
+                    result: result,
+                    isError: ToolEnvelope.isError(result)
+                )
+            } catch {
+                return AgentLoopToolExecution(
+                    result: ToolEnvelope.fromError(error, tool: invocation.toolName),
+                    isError: true
+                )
+            }
+            },
+            onBatchComplete: { outcomes in
+                for outcome in outcomes {
+                    history.append(
+                        ChatMessage(
+                            role: "assistant",
+                            content: nil,
+                            tool_calls: [
+                                SecretArgumentScrubber.recordedToolCall(
+                                    id: outcome.callId,
+                                    invocation: outcome.invocation
+                                )
+                            ],
+                            tool_call_id: nil
+                        )
+                    )
+                    history.append(
+                        ChatMessage(
+                            role: "tool",
+                            content: outcome.result,
+                            tool_calls: nil,
+                            tool_call_id: outcome.callId
+                        )
+                    )
+                }
+            },
+            todoProgressSnapshot: {
+                guard let todo = await AgentTodoStore.shared.todo(for: sessionId) else {
+                    return nil
+                }
+                return AgentTodoProgressSnapshot(done: todo.doneCount, total: todo.totalCount)
+            }
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: hooks
+        )
+        let stored = await AgentTodoStore.shared.todo(for: sessionId)
+        await AgentTodoStore.shared.clear(for: sessionId)
+
+        #expect(stored?.doneCount == 2)
+        #expect(stored?.totalCount == 2)
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 4))
+        #expect(continuationPreparations == 1)
+        #expect(continuationInput.map(\.role) == ["user", "assistant", "tool", "assistant"])
+        #expect(continuationInput.last?.content == progressText)
+        #expect(continuationInput.filter { $0.content == progressText }.count == 1)
+    }
+
+    @Test func multipleTodoUpdatesInOneBatchPreserveRecordedProgress() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([
+                inv("todo", #"{"markdown":"- [ ] inspect\n- [ ] answer"}"#),
+                inv("todo", #"{"markdown":"- [x] inspect\n- [ ] answer"}"#),
+            ]),
+            .finalResponse,
+            .toolCalls([inv("todo", #"{"markdown":"- [x] inspect\n- [x] answer"}"#)]),
+            .finalResponse,
+        ])
+        var hooks = surface.makeHooks(includeTrackedTaskContinuation: true)
+        hooks.executeBatch = { calls in
+            calls.map {
+                AgentLoopToolExecution(
+                    result: ToolEnvelope.success(tool: $0.invocation.toolName, text: "ok")
+                )
+            }
+        }
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: hooks
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 4))
+        #expect(surface.trackedTaskContinuationPreparations == 1)
+        #expect(surface.todoProgress == AgentTodoProgressSnapshot(done: 2, total: 2))
+    }
+
+    @Test func stalePendingTodoWithoutCurrentRunTodoDoesNotHijackFinal() async throws {
+        let surface = ScriptedLoopSurface(steps: [.finalResponse])
+        surface.pendingTodos = 4
+        surface.todoProgress = AgentTodoProgressSnapshot(done: 0, total: 4)
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 1))
+        #expect(surface.trackedTaskContinuationPreparations == 0)
+    }
+
+    @Test func failedTodoDoesNotArmTrackedContinuation() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("todo", #"{"markdown":"not a checklist"}"#)]),
+            .finalResponse,
+        ])
+        surface.pendingTodos = 3
+        surface.toolResults["todo"] = AgentLoopToolExecution(
+            result: ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "No checklist items found.",
+                tool: "todo"
+            ),
+            isError: true
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: headlessPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 2))
+        #expect(surface.trackedTaskContinuationPreparations == 0)
+    }
+
+    @Test func completedTodoAllowsNormalFinal() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("todo", #"{"markdown":"- [x] inspect\n- [x] answer"}"#)]),
+            .finalResponse,
+        ])
+        surface.pendingTodos = 0
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 2))
+        #expect(surface.trackedTaskContinuationPreparations == 0)
+    }
+
+    @Test func explicitCompleteStillEndsWithUncheckedCurrentRunTodo() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("todo", #"{"markdown":"- [ ] inspect\n- [ ] answer"}"#)]),
+            .toolCalls([inv("complete", #"{"summary":"Completed the requested research and verified the cited model list."}"#)]),
+        ])
+        surface.pendingTodos = 2
+        surface.toolResults["complete"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(tool: "complete", text: "Task completed."),
+            endRun: true
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .endedBySurface, iterations: 2))
+        #expect(surface.trackedTaskContinuationPreparations == 0)
+    }
+
+    @Test func explicitClarifyStillEndsWithUncheckedCurrentRunTodo() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("todo", #"{"markdown":"- [ ] inspect"}"#)]),
+            .toolCalls([inv("clarify", #"{"question":"Which repository should I inspect?"}"#)]),
+        ])
+        surface.toolResults["clarify"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(tool: "clarify", text: "Question shown."),
+            endRun: true
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .endedBySurface, iterations: 2))
+        #expect(surface.trackedTaskContinuationPreparations == 0)
+    }
+
+    @Test(arguments: ["complete", "clarify"])
+    func failedClosureIsNotTreatedAsAuthoritative(toolName: String) async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("todo", #"{"markdown":"- [ ] inspect"}"#)]),
+            .toolCalls([inv(toolName)]),
+            .finalResponse,
+            .toolCalls([inv("todo", #"{"markdown":"- [x] inspect"}"#)]),
+            .finalResponse,
+        ])
+        surface.toolResults[toolName] = AgentLoopToolExecution(
+            result: ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Invalid closure arguments.",
+                tool: toolName
+            ),
+            isError: true
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: headlessPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 5))
+        #expect(surface.trackedTaskContinuationPreparations == 1)
+    }
+
+    @Test func cancellationAfterProgressContinuationStopsBeforeNextGeneration() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("todo", #"{"markdown":"- [ ] inspect"}"#)]),
+            .finalResponse,
+        ])
+        surface.pendingTodos = 1
+        surface.cancelOnTrackedTaskContinuation = true
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .cancelled, iterations: 2))
+        #expect(surface.trackedTaskContinuationPreparations == 1)
+        #expect(surface.builtNotices.count == 2)
+    }
+
+    @Test func cancellationDuringTodoSnapshotSkipsContinuation() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("todo", #"{"markdown":"- [ ] inspect"}"#)]),
+            .finalResponse,
+        ])
+        // Invocation parsing records the successful Todo directly. The first
+        // actor-backed snapshot is therefore the final-response lookup whose
+        // suspension races with Stop.
+        surface.cancelOnTodoProgressSnapshotCall = 1
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .cancelled, iterations: 1))
+        #expect(surface.trackedTaskContinuationPreparations == 0)
+        #expect(surface.builtNotices.count == 2)
+    }
+
+    @Test func pendingTodoAtIterationCapUsesTypedCapAndFreshFinalizerTurn() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("todo", #"{"markdown":"- [ ] inspect"}"#)]),
+            .finalResponse,
+        ])
+        surface.pendingTodos = 1
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(maxIterations: 2),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(
+            result == AgentToolLoop.RunResult(
+                exit: .iterationCapReached,
+                iterations: 2,
+                unfinishedTodoCount: 1
+            )
+        )
+        #expect(surface.trackedTaskContinuationPreparations == 1)
+        #expect(surface.emittedFinalTexts.isEmpty)
+        #expect(
+            AgentToolLoop.unfinishedTodoCapFallback(pending: 1)
+                .contains("1 todo item still unfinished")
+        )
+    }
+
+    @Test func cancellationAfterProgressContinuationWinsAtIterationCap() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("todo", #"{"markdown":"- [ ] inspect"}"#)]),
+            .finalResponse,
+        ])
+        surface.pendingTodos = 1
+        surface.cancelOnTrackedTaskContinuation = true
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(maxIterations: 2),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .cancelled, iterations: 2))
+        #expect(surface.trackedTaskContinuationPreparations == 1)
+    }
+
+    @Test func missingTodoStoreSnapshotFallsBackToCurrentRunChecklist() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("todo", #"{"markdown":"- [ ] inspect"}"#)]),
+            .finalResponse,
+        ])
+        surface.forceMissingTodoProgressSnapshot = true
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(maxIterations: 2),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(
+            result == AgentToolLoop.RunResult(
+                exit: .iterationCapReached,
+                iterations: 2,
+                unfinishedTodoCount: 1
+            )
+        )
+        #expect(surface.trackedTaskContinuationPreparations == 1)
+    }
+
+    @Test func pendingTodoWithToolOnLastIterationUsesTypedCap() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("todo", #"{"markdown":"- [ ] inspect"}"#)]),
+            .toolCalls([inv("search_and_extract", #"{"url":"https://example.com"}"#)]),
+        ])
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(maxIterations: 2),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(
+            result == AgentToolLoop.RunResult(
+                exit: .iterationCapReached,
+                iterations: 2,
+                unfinishedTodoCount: 1
+            )
+        )
+        // A tool batch already creates the next assistant buffer; only a
+        // progress-only final response needs the explicit continuation hook.
+        #expect(surface.trackedTaskContinuationPreparations == 0)
+        #expect(surface.batchOutcomes.count == 2)
+        #expect(surface.emittedFinalTexts.isEmpty)
+    }
+
+    @Test func malformedDesktopRepeatCannotBypassPendingTodoAtCap() async throws {
+        let malformed = #"{"_error":"invalid_tool_arguments","_tool":"applescript","_field":"task","_message":"missing required argument: task","_expected":"required parameter"}"#
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("todo", #"{"markdown":"- [ ] inspect"}"#)]),
+            .toolCalls([inv("applescript", #"{"task":"Open TextEdit"}"#)]),
+            .toolCalls([inv("applescript", malformed)]),
+        ])
+        surface.toolResults["applescript"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(
+                tool: "applescript",
+                result: [
+                    "kind": "applescript",
+                    "status": "succeeded",
+                    "scripts_run": 1,
+                    "summary": "Ran 1 script(s) successfully.",
+                ]
+            )
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(maxIterations: 3),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(
+            result == AgentToolLoop.RunResult(
+                exit: .iterationCapReached,
+                iterations: 3,
+                unfinishedTodoCount: 1
+            )
+        )
+        #expect(surface.executedCalls.map(\.name) == ["todo", "applescript"])
+        #expect(surface.emittedFinalTexts == ["Ran 1 script(s) successfully."])
+        #expect(surface.trackedTaskContinuationPreparations == 1)
+    }
+
+    @Test func cancellationAfterMalformedDesktopContinuationWinsAtCap() async throws {
+        let malformed = #"{"_error":"invalid_tool_arguments","_tool":"applescript","_field":"task","_message":"missing required argument: task","_expected":"required parameter"}"#
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("todo", #"{"markdown":"- [ ] inspect"}"#)]),
+            .toolCalls([inv("applescript", #"{"task":"Open TextEdit"}"#)]),
+            .toolCalls([inv("applescript", malformed)]),
+        ])
+        surface.toolResults["applescript"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(
+                tool: "applescript",
+                result: ["status": "succeeded", "summary": "Ran successfully."]
+            )
+        )
+        surface.cancelOnTrackedTaskContinuation = true
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(maxIterations: 3),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .cancelled, iterations: 3))
+        #expect(surface.executedCalls.map(\.name) == ["todo", "applescript"])
+        #expect(surface.emittedFinalTexts == ["Ran successfully."])
+        #expect(surface.trackedTaskContinuationPreparations == 1)
+    }
+
+    @Test func repeatedEmptyResponsesAfterPendingTodoEndAsIncomplete() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("todo", #"{"markdown":"- [ ] inspect"}"#)]),
+            .emptyResponse,
+            .emptyResponse,
+            .emptyResponse,
+        ])
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .emptyResponseExhausted, iterations: 2))
+        #expect(surface.emittedFinalTexts == [AgentToolLoop.emptyToolTaskFallback])
+        #expect(surface.trackedTaskContinuationPreparations == 0)
+    }
+
+    @Test func cancellationDuringToolCapTodoSnapshotWins() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("todo", #"{"markdown":"- [ ] inspect"}"#)]),
+        ])
+        surface.cancelOnTodoProgressSnapshotCall = 1
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(maxIterations: 1),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeTrackedTaskContinuation: true)
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .cancelled, iterations: 1))
+        #expect(surface.trackedTaskContinuationPreparations == 0)
+    }
+
+    @Test func batchedSuccessfulTodoWithSiblingToolArmsOneContinuation() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([
+                inv("todo", #"{"markdown":"- [ ] inspect"}"#),
+                inv("search_and_extract", #"{"url":"https://example.com"}"#),
+            ]),
+            .finalResponse,
+            .toolCalls([inv("todo", #"{"markdown":"- [x] inspect"}"#)]),
+            .finalResponse,
+        ])
+        var hooks = surface.makeHooks(includeTrackedTaskContinuation: true)
+        hooks.executeBatch = { calls in
+            calls.map {
+                AgentLoopToolExecution(
+                    result: ToolEnvelope.success(tool: $0.invocation.toolName, text: "ok")
+                )
+            }
+        }
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: hooks
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 4))
+        #expect(surface.trackedTaskContinuationPreparations == 1)
+        #expect(surface.batchOutcomes.first?.map { $0.invocation.toolName } == [
+            "todo", "search_and_extract",
+        ])
+        #expect(surface.todoProgress == AgentTodoProgressSnapshot(done: 1, total: 1))
     }
 }
 

@@ -1155,6 +1155,12 @@ final class ChatSession: ObservableObject {
     func applyPickerItems(_ newOptions: [ModelPickerItem]) {
         let newOptionIds = newOptions.map { $0.id }
         let optionsChanged = pickerItems.map({ $0.id }) != newOptionIds
+        let previousSelectedFamily = selectedModel.map { modelId in
+            ModelFamilyGuidance.family(
+                for: modelId,
+                modelType: pickerItems.first(where: { $0.id == modelId })?.modelType
+            )
+        }
 
         isDiscoveringModels = false
 
@@ -1169,6 +1175,29 @@ final class ChatSession: ObservableObject {
             if pickerItems != newOptions {
                 pickerItems = newOptions
                 loadActiveModelOptions(for: selectedModel)
+
+                // A local scanner can enrich an already-listed bundle with
+                // its authoritative config.json `model_type` without changing
+                // the model id. Family guidance is part of the static prompt
+                // prefix, so a family change must drop the old preview/send
+                // context and warm claim. Otherwise the UI can remain green
+                // for a prefix composed under generic guidance while the next
+                // real send correctly switches to Qwen/Gemma guidance and
+                // cold-prefills. This is metadata-driven invalidation only;
+                // it does not alter model output, sampling, or template state.
+                let refreshedSelectedFamily = selectedModel.map { modelId in
+                    ModelFamilyGuidance.family(
+                        for: modelId,
+                        modelType: newOptions.first(where: { $0.id == modelId })?.modelType
+                    )
+                }
+                if previousSelectedFamily != refreshedSelectedFamily {
+                    cachedPreviewContext = nil
+                    cachedContext = nil
+                    warmupController.invalidateWarmState()
+                    warmupController.scheduleWarmup(session: self)
+                    objectWillChange.send()
+                }
             }
             return
         }
@@ -1628,7 +1657,8 @@ final class ChatSession: ObservableObject {
         return SystemPromptComposer.composePreviewContext(
             agentId: effectiveId,
             executionMode: estimatedChatExecutionMode(agentId: effectiveId),
-            model: selectedModel
+            model: selectedModel,
+            modelType: selectedPickerItem?.modelType
         )
     }
 
@@ -1690,6 +1720,42 @@ final class ChatSession: ObservableObject {
         }
 
         return ChatMessage(role: "user", content: messageText)
+    }
+
+    /// Render one assistant transcript turn into model-visible history.
+    /// A trailing empty turn is the live streaming buffer and must stay out of
+    /// the next request; a preserved progress turn immediately before it must
+    /// appear exactly once. Kept as a pure helper so continuation history is
+    /// testable without launching a model.
+    static func modelVisibleAssistantMessage(
+        _ turn: ChatTurn,
+        isLastTurn: Bool,
+        excludedFromRequest: Bool = false
+    ) -> ChatMessage? {
+        if excludedFromRequest || turn.modelContextExcluded { return nil }
+        if isLastTurn,
+            turn.contentIsBlank,
+            turn.thinkingIsBlank,
+            turn.toolCalls == nil
+        {
+            return nil
+        }
+        if turn.contentIsBlank,
+            turn.thinkingIsBlank,
+            (turn.toolCalls == nil || turn.toolCalls!.isEmpty)
+        {
+            return nil
+        }
+
+        return ChatMessage(
+            role: "assistant",
+            content: turn.contentIsBlank ? nil : turn.content,
+            tool_calls: turn.toolCalls,
+            tool_call_id: nil,
+            reasoning_content: turn.thinkingIsBlank ? nil : turn.thinking,
+            reasoning_item_id: turn.reasoningItemId,
+            reasoning_encrypted: turn.reasoningEncrypted
+        )
     }
 
     /// Prepend a user turn's frozen memory / screen-context prefix to its
@@ -3291,19 +3357,26 @@ final class ChatSession: ObservableObject {
         }
 
         let context = activeRunContext
+        let runCompletedCleanly = !stopRequested && lastStreamError == nil
         activeRunId = nil
         activeRunContext = nil
         completeRunCleanup()
 
         guard persistConversationArtifacts, let context else { return }
 
-        if let lastAssistant = turns.last(where: { $0.role == .assistant }),
+        if runCompletedCleanly,
+            let lastAssistant = turns.last(where: { $0.role == .assistant }),
             !lastAssistant.contentIsBlank || lastAssistant.hasRenderableThinking
         {
             lastCompletedAssistantTurnId = lastAssistant.id
         }
 
-        let assistantContent = turns.last(where: { $0.role == .assistant })?.content
+        // Keep an honest incomplete/failure fallback visible in the chat, but
+        // never index it as a completed assistant answer or feed it into
+        // long-term memory. The next clean turn can establish completion.
+        let assistantContent = runCompletedCleanly
+            ? turns.last(where: { $0.role == .assistant })?.content
+            : nil
 
         let agentUUID = UUID(uuidString: context.memoryAgentId) ?? Agent.defaultId
         let memoryOff = AgentManager.shared.effectiveMemoryDisabled(for: agentUUID)
@@ -3439,6 +3512,14 @@ final class ChatSession: ObservableObject {
         selectedModel: String?
     ) async throws -> (invocations: [ServiceToolInvocation], finalTurn: ChatTurn) {
         var currentTurn = assistantTurn
+        // A continuation or transient retry may reuse this stream processor
+        // after the prior assistant step set terminal metadata. Each model
+        // generation owns fresh terminal state; carrying `stop` or an
+        // unclosed-reasoning flag forward can falsely reclassify a valid
+        // continuation as incomplete.
+        currentTurn.terminalStopReason = nil
+        currentTurn.unclosedReasoning = false
+        currentTurn.completedAt = nil
         // On every exit — clean end, cancel, tool-invocation throw, or a
         // mid-stream error — drop a tool-call-progress placeholder if it never
         // resolved to a committed tool name, so the "Preparing tool call" card
@@ -4305,6 +4386,11 @@ final class ChatSession: ObservableObject {
             }
         }
 
+        // One stable identity for every Todo tool execution and TodoStore read
+        // in this logical run. A reset/new-chat action must not make an
+        // in-flight call write one session while terminal checks read another.
+        let todoSessionIdForRun = expectedTodoSessionId
+
         let memoryAgentId = (agentId ?? Agent.defaultId).uuidString
         let memoryConversationId = (sessionId ?? UUID()).uuidString
 
@@ -4533,6 +4619,7 @@ final class ChatSession: ObservableObject {
                         agentId: effectiveAgentId,
                         executionMode: executionMode,
                         model: selectedModel,
+                        modelType: selectedPickerItem?.modelType,
                         query: trimmed,
                         messages: priorUserMessages,
                         toolsDisabled: chatCfg.disableTools,
@@ -4677,35 +4764,28 @@ final class ChatSession: ObservableObject {
                         )
                     }()
 
+                    // Incomplete reasoning attempts remain visible in the
+                    // transcript but must not be fed back into the retry.
+                    // Bundle templates do not share a continuation contract:
+                    // Gemma drops tool-free reasoning history while Ornith
+                    // closes and rewrites it. Excluding only these captured
+                    // attempt ids makes the bounded retry an exact replay of
+                    // the pre-attempt model-visible history.
+                    var incompleteReasoningRetryOrdinal = 0
+                    // Set only after this logical run emits a parsed tool call.
+                    // Tool schemas being available is not itself agent work and
+                    // must not force an intentional reasoning-only direct answer
+                    // through the post-tool recovery path.
+                    var hasStructuredToolWorkThisRun = false
+
                     /// Convert a single turn to a ChatMessage (returns nil if should be skipped)
                     @MainActor
                     func turnToMessage(_ t: ChatTurn, isLastTurn: Bool) -> ChatMessage? {
                         switch t.role {
                         case .assistant:
-                            // Skip the last assistant turn if it's empty (it's the streaming placeholder)
-                            if isLastTurn && t.contentIsBlank && t.thinkingIsBlank && t.toolCalls == nil {
-                                return nil
-                            }
-
-                            if t.contentIsBlank && t.thinkingIsBlank && (t.toolCalls == nil || t.toolCalls!.isEmpty) {
-                                return nil
-                            }
-
-                            let content: String? = t.contentIsBlank ? nil : t.content
-                            // DeepSeek's thinking mode requires echoing the
-                            // previous `reasoning_content` on follow-ups
-                            // (issue #959). `RemoteProviderService` strips it
-                            // again for providers that don't need it.
-                            let reasoning: String? = t.thinkingIsBlank ? nil : t.thinking
-
-                            return ChatMessage(
-                                role: "assistant",
-                                content: content,
-                                tool_calls: t.toolCalls,
-                                tool_call_id: nil,
-                                reasoning_content: reasoning,
-                                reasoning_item_id: t.reasoningItemId,
-                                reasoning_encrypted: t.reasoningEncrypted
+                            return Self.modelVisibleAssistantMessage(
+                                t,
+                                isLastTurn: isLastTurn
                             )
                         case .tool:
                             return ChatMessage(
@@ -5051,15 +5131,13 @@ final class ChatSession: ObservableObject {
                             // state in their stores. Falls back to a stable
                             // string when no session has been created yet so
                             // brand-new chats still get a todo store entry.
-                            let sessionIdForTools =
-                                self.sessionId?.uuidString ?? "chatwindow-\(ObjectIdentifier(self).hashValue)"
                             // `currentAgentId` is already pinned by the
                             // outer turn-level binding; we only need to
                             // layer per-tool-call session/turn/call ids.
                             let resultText = try await ChatExecutionContext.$toolExecutionScope
                                 .withValue(toolScope) {
                                     try await ChatExecutionContext.$currentSessionId.withValue(
-                                        sessionIdForTools
+                                        todoSessionIdForRun
                                     ) {
                                         try await ChatExecutionContext.$currentAssistantTurnId
                                             .withValue(assistantTurn.id) {
@@ -5125,6 +5203,33 @@ final class ChatSession: ObservableObject {
                                 return []
                             }
                             return [execution]
+                        }
+
+                        // Todo replaces one session-scoped checklist wholesale.
+                        // Concurrent Todo calls would make the final store value
+                        // depend on completion order instead of model order.
+                        // Keep the batch framing, but execute every call in the
+                        // batch serially when it contains Todo; onBatchComplete
+                        // still persists all result turns in slot order.
+                        if calls.contains(where: { $0.invocation.toolName == "todo" }),
+                            !AgentToolLoop.containsIntercept(calls)
+                        {
+                            var serialExecutions: [AgentLoopToolExecution] = []
+                            for call in calls {
+                                guard self.isRunActive(runId) else { break }
+                                let execution = await executeSingleToolCall(
+                                    call.invocation,
+                                    callId: call.callId
+                                )
+                                if execution.result.isEmpty,
+                                    !execution.isError,
+                                    !self.isRunActive(runId)
+                                {
+                                    break
+                                }
+                                serialExecutions.append(execution)
+                            }
+                            return serialExecutions
                         }
 
                         // Serial fallback when the batch carries a loop-ending
@@ -5211,14 +5316,14 @@ final class ChatSession: ObservableObject {
                             print(
                                 "[Osaurus][Tool] Executing batch of \(approved.count) in parallel: \(approved.map { $0.invocation.toolName }.joined(separator: ", "))"
                             )
-                            let sessionIdForTools =
-                                self.sessionId?.uuidString ?? "chatwindow-\(ObjectIdentifier(self).hashValue)"
                             let turnIdForTools = assistantTurn.id
                             let results = await AgentToolLoop.runBatchInParallel(
                                 approved.map { ($0.invocation, $0.callId) }
                             ) { inv, callId in
                                 try await ChatExecutionContext.$toolExecutionScope.withValue(toolScope) {
-                                    try await ChatExecutionContext.$currentSessionId.withValue(sessionIdForTools) {
+                                    try await ChatExecutionContext.$currentSessionId.withValue(
+                                        todoSessionIdForRun
+                                    ) {
                                         try await ChatExecutionContext.$currentAssistantTurnId.withValue(turnIdForTools)
                                         {
                                             try await ChatExecutionContext.$currentToolCallId.withValue(callId) {
@@ -5486,7 +5591,11 @@ final class ChatSession: ObservableObject {
                             // retryWithoutCharge re-POSTs still dedupe.
                             req.idempotencyKey =
                                 "\(runId.uuidString):\(attempt):"
-                                + AgentToolLoop.stepIdempotencyFingerprint(messages: msgs)
+                                + AgentToolLoop.recoveryAwareIdempotencySuffix(
+                                    messages: msgs,
+                                    incompleteReasoningRetryOrdinal:
+                                        incompleteReasoningRetryOrdinal
+                                )
                             debugLog(
                                 "send: attempt=\(attempt) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.session_id ?? "nil")"
                             )
@@ -5518,7 +5627,6 @@ final class ChatSession: ObservableObject {
                                     selectedModel: self.selectedModel
                                 )
                                 assistantTurn = finalTurn
-
                                 // Stream finished naturally without a tool call — reset
                                 // the transient-retry budget so a future, unrelated
                                 // failure later in the conversation gets a fresh
@@ -5528,9 +5636,19 @@ final class ChatSession: ObservableObject {
                                     return AgentLoopModelStep.classifyTerminal(
                                         contentIsBlank: assistantTurn.contentIsBlank,
                                         thinkingIsBlank: assistantTurn.thinkingIsBlank,
-                                        stopReason: assistantTurn.terminalStopReason
+                                        stopReason: assistantTurn.terminalStopReason,
+                                        unclosedReasoning: assistantTurn.unclosedReasoning,
+                                        requiresVisibleFinalResponse:
+                                            AgentLoopVisibleResponsePolicy
+                                            .requiresVisibleFinalResponse(
+                                                hasStructuredToolWork:
+                                                    hasStructuredToolWorkThisRun,
+                                                isRemoteAgentTarget:
+                                                    self.isRemoteAgentTarget
+                                            )
                                     )
                                 }
+                                hasStructuredToolWorkThisRun = true
                                 return .toolCalls(invocations)
                             } catch let error as RemoteProviderServiceError {
                                 // Transient provider-side stream errors — most commonly
@@ -5558,6 +5676,44 @@ final class ChatSession: ObservableObject {
                                 }
                                 throw error
                             }
+                        },
+                        prepareIncompleteReasoningContinuation: {
+                            // Keep the model's real reasoning-only attempt in
+                            // the UI transcript but permanently exclude that
+                            // abandoned protocol attempt from model history.
+                            // Stream the one natural retry into a fresh turn so
+                            // a retry tool call and its result remain a valid,
+                            // uncontaminated assistant/tool pair. No prompt,
+                            // tags, or decode controls are injected here.
+                            debugLog(
+                                "send: reasoning-only agent step ended without visible answer; "
+                                    + "retrying exact pre-attempt history "
+                                    + "stop=\(assistantTurn.terminalStopReason ?? "nil") "
+                                    + "unclosed=\(assistantTurn.unclosedReasoning) "
+                                    + "reasoningChars=\(assistantTurn.thinkingLength)"
+                            )
+                            assistantTurn.modelContextExcluded = true
+                            let retryTurn = ChatTurn(role: .assistant, content: "")
+                            self.turns.append(retryTurn)
+                            assistantTurn = retryTurn
+                            incompleteReasoningRetryOrdinal += 1
+                            self.rebuildVisibleBlocks()
+                        },
+                        prepareTrackedTaskContinuation: {
+                            // The driver observed a successful current-run Todo
+                            // with structured pending items at an ordinary final.
+                            // Keep that real assistant turn in both UI and model
+                            // history, then give the bounded agent loop a fresh
+                            // assistant buffer. No prose classifier, reasoning
+                            // marker, sampler, or decode setting is involved.
+                            debugLog(
+                                "send: current-run todo still has unchecked work at model stop; "
+                                    + "continuing within the configured tool-attempt budget"
+                            )
+                            let nextAssistantTurn = ChatTurn(role: .assistant, content: "")
+                            self.turns.append(nextAssistantTurn)
+                            assistantTurn = nextAssistantTurn
+                            self.rebuildVisibleBlocks()
                         },
                         willProcessCall: { inv, callId in
                             // Recorded history uses the secret-safe view;
@@ -5648,10 +5804,20 @@ final class ChatSession: ObservableObject {
                         pendingTodoCount: {
                             // Feeds the driver's staleness nudge — todo is
                             // session-scoped, so only chat provides this.
-                            let key = self.expectedTodoSessionId
-                            guard let todo = await AgentTodoStore.shared.todo(for: key)
+                            guard let todo = await AgentTodoStore.shared.todo(
+                                for: todoSessionIdForRun
+                            )
                             else { return 0 }
                             return todo.totalCount - todo.doneCount
+                        },
+                        todoProgressSnapshot: {
+                            guard let todo = await AgentTodoStore.shared.todo(
+                                for: todoSessionIdForRun
+                            ) else { return nil }
+                            return AgentTodoProgressSnapshot(
+                                done: todo.doneCount,
+                                total: todo.totalCount
+                            )
                         },
                         emitFallbackText: { text in
                             // Empty-turn recovery exhausted: render a visible
@@ -5718,8 +5884,43 @@ final class ChatSession: ObservableObject {
                         lastStreamError = AgentToolLoop.lengthExhaustedFallback
                     }
 
+                    if runResult.exit == .emptyResponseExhausted {
+                        // The driver already emitted a visible, honest message
+                        // after repeated empty post-tool completions. Do not
+                        // warm or index that incomplete tool run as success.
+                        lastStreamError = AgentToolLoop.emptyToolTaskFallback
+                    }
+
+                    if runResult.exit == .incompleteReasoningExhausted {
+                        // The typed exit owns no cross-surface text. Append the
+                        // honest chat-native fallback here after the one
+                        // bounded retry failed (or visible partial content made
+                        // replay unsafe), then keep cleanup from warming or
+                        // announcing this as a completed task.
+                        assistantTurn.content =
+                            AgentLoopModelStep.contentWithLengthFallback(
+                                assistantTurn.content,
+                                fallback: AgentToolLoop.incompleteReasoningFallback
+                            )
+                        rebuildVisibleBlocks()
+                        lastStreamError = AgentToolLoop.incompleteReasoningFallback
+                    }
+
                     if runResult.exit == .iterationCapReached && isRunActive(runId) {
-                        do {
+                        if let pending = runResult.unfinishedTodoCount, pending > 0 {
+                            // A current-run Todo hit the hard step cap. Do not
+                            // launch the generic tool-free wrap-up stream: it
+                            // can only guess at unfinished work, and treating
+                            // it as clean would warm/index a partial task. The
+                            // driver provides the typed pending count instead.
+                            let message = AgentToolLoop.unfinishedTodoCapFallback(
+                                pending: pending
+                            )
+                            assistantTurn.content = message
+                            lastStreamError = message
+                            rebuildVisibleBlocks()
+                        } else {
+                            do {
                             var finalReq = ChatCompletionRequest(
                                 model: selectedModel ?? "default",
                                 // Same watermark-trimmed view of history the
@@ -5780,8 +5981,15 @@ final class ChatSession: ObservableObject {
                                 if !delta.isEmpty { processor.receiveDelta(delta) }
                             }
                             await processor.finalize()
-                        } catch {
-                            debugLog("send: final wrap-up call failed: \(error.localizedDescription)")
+                            } catch {
+                                let message =
+                                    "The agent reached the configured step limit, and its final wrap-up failed: "
+                                    + error.localizedDescription
+                                debugLog("send: final wrap-up call failed: \(error.localizedDescription)")
+                                assistantTurn.content = message
+                                lastStreamError = message
+                                rebuildVisibleBlocks()
+                            }
                         }
                     }
                 } catch is CancellationError {

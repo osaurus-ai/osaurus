@@ -190,12 +190,16 @@ struct AgentChannelCard: View {
     }
 }
 
-// MARK: - Sheet Scaffold
+// MARK: - Setup Scaffold
 
 /// Shared chrome for channel configuration sheets: brand-tile header with a
-/// close button, scrollable content, and a pinned footer bar. Matches the
-/// provider edit sheets in size and structure.
-struct AgentChannelSheetScaffold<Content: View, Footer: View>: View {
+/// close (and optional back) button, a persistent section rail on the left,
+/// one focused section of content at a time on the right, and a pinned
+/// footer bar with Back / Continue navigation around the caller's actions.
+///
+/// The same surface serves first-time setup (walk the sections in order with
+/// Continue) and later edits (every section is always one click away).
+struct AgentChannelSetupScaffold<Content: View, StatusBar: View, FooterLeading: View, FooterTrailing: View>: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @Environment(\.dismiss) private var dismiss
 
@@ -203,23 +207,43 @@ struct AgentChannelSheetScaffold<Content: View, Footer: View>: View {
     let gradient: [Color]
     let title: String
     let subtitle: String
-    @ViewBuilder let content: Content
-    @ViewBuilder let footer: Footer
+    let sections: [AgentChannelSetupSection]
+    @Binding var selection: String
+    let sectionStatus: (String) -> AgentChannelSetupSectionStatus
+    /// Shown as a back chevron in the header when the sheet is hosted inside
+    /// the unified Add Channel picker.
+    var onBack: (() -> Void)?
+    private let contentBuilder: (String) -> Content
+    let statusBar: StatusBar
+    let footerLeading: FooterLeading
+    let footerTrailing: FooterTrailing
 
     init(
         icon: String,
         gradient: [Color],
         title: String,
         subtitle: String,
-        @ViewBuilder content: () -> Content,
-        @ViewBuilder footer: () -> Footer
+        sections: [AgentChannelSetupSection],
+        selection: Binding<String>,
+        sectionStatus: @escaping (String) -> AgentChannelSetupSectionStatus,
+        onBack: (() -> Void)? = nil,
+        @ViewBuilder content: @escaping (String) -> Content,
+        @ViewBuilder statusBar: () -> StatusBar,
+        @ViewBuilder footerLeading: () -> FooterLeading,
+        @ViewBuilder footerTrailing: () -> FooterTrailing
     ) {
         self.icon = icon
         self.gradient = gradient
         self.title = title
         self.subtitle = subtitle
-        self.content = content()
-        self.footer = footer()
+        self.sections = sections
+        self._selection = selection
+        self.sectionStatus = sectionStatus
+        self.onBack = onBack
+        self.contentBuilder = content
+        self.statusBar = statusBar()
+        self.footerLeading = footerLeading()
+        self.footerTrailing = footerTrailing()
     }
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -228,14 +252,24 @@ struct AgentChannelSheetScaffold<Content: View, Footer: View>: View {
         VStack(spacing: 0) {
             header
 
-            ScrollView {
-                content
-                    .padding(24)
+            HStack(spacing: 0) {
+                sectionRail
+
+                Rectangle()
+                    .fill(theme.primaryBorder)
+                    .frame(width: 1)
+
+                ScrollView {
+                    contentBuilder(selection)
+                        .padding(24)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .id(selection)
+                }
             }
 
             footerBar
         }
-        .frame(width: 560, height: 640)
+        .frame(width: 800, height: 640)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
@@ -247,6 +281,18 @@ struct AgentChannelSheetScaffold<Content: View, Footer: View>: View {
 
     private var header: some View {
         HStack(spacing: 12) {
+            if let onBack {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(theme.tertiaryBackground))
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(Text("Back to channel choices", bundle: .module))
+            }
+
             ZStack {
                 RoundedRectangle(cornerRadius: 10)
                     .fill(
@@ -291,9 +337,124 @@ struct AgentChannelSheetScaffold<Content: View, Footer: View>: View {
         .background(theme.secondaryBackground)
     }
 
+    private var sectionRail: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
+                railRow(section, number: index + 1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(width: 192, alignment: .topLeading)
+        .background(theme.secondaryBackground.opacity(0.5))
+    }
+
+    private func railRow(_ section: AgentChannelSetupSection, number: Int) -> some View {
+        let status = sectionStatus(section.id)
+        let isSelected = selection == section.id
+        return Button {
+            withAnimation(.easeOut(duration: 0.15)) {
+                selection = section.id
+            }
+        } label: {
+            HStack(spacing: 9) {
+                railIndicator(status, number: number)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(section.title)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                        .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
+                        .lineLimit(1)
+
+                    if let caption = section.caption {
+                        Text(caption)
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? theme.accentColor.opacity(0.1) : Color.clear)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    @ViewBuilder
+    private func railIndicator(_ status: AgentChannelSetupSectionStatus, number: Int) -> some View {
+        ZStack {
+            Circle()
+                .fill(indicatorFill(status))
+                .frame(width: 20, height: 20)
+            switch status {
+            case .complete:
+                Image(systemName: "checkmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(theme.successColor)
+            case .attention:
+                Image(systemName: "exclamationmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(theme.warningColor)
+            case .pending:
+                Text("\(number)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+            }
+        }
+    }
+
+    private func indicatorFill(_ status: AgentChannelSetupSectionStatus) -> Color {
+        switch status {
+        case .complete: return theme.successColor.opacity(0.14)
+        case .attention: return theme.warningColor.opacity(0.16)
+        case .pending: return theme.tertiaryBackground
+        }
+    }
+
     private var footerBar: some View {
         VStack(alignment: .leading, spacing: 10) {
-            footer
+            statusBar
+
+            HStack(spacing: 10) {
+                footerLeading
+
+                Spacer()
+
+                if let previous = AgentChannelSetupFlow.previous(before: selection, in: sections) {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            selection = previous
+                        }
+                    } label: {
+                        Text("Back", bundle: .module)
+                    }
+                    .buttonStyle(SettingsButtonStyle())
+                }
+
+                if let next = AgentChannelSetupFlow.next(after: selection, in: sections) {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            selection = next
+                        }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Text("Continue", bundle: .module)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                    }
+                    .buttonStyle(SettingsButtonStyle())
+                }
+
+                footerTrailing
+            }
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
@@ -471,39 +632,34 @@ struct AgentChannelSecretField: View {
     }
 }
 
-// MARK: - Setup Step Header
+// MARK: - Section Heading
 
-/// Numbered wizard step header with a completion checkmark, shared by the
-/// provider settings sheets so every channel reads as the same guided flow.
-struct AgentChannelSetupStepHeader: View {
+/// Small bold heading for a group of fields inside a setup section, used
+/// where the rail already conveys progress so no step number is needed.
+struct AgentChannelSectionHeading: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
-    let number: Int
     let title: String
-    let done: Bool
+    /// Optional one-line explanation under the heading.
+    var detail: String?
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    init(_ title: String, detail: String? = nil) {
+        self.title = title
+        self.detail = detail
+    }
 
     var body: some View {
-        HStack(spacing: 8) {
-            ZStack {
-                Circle()
-                    .fill(done ? theme.successColor.opacity(0.14) : theme.tertiaryBackground)
-                    .frame(width: 22, height: 22)
-                if done {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(theme.successColor)
-                } else {
-                    Text("\(number)")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                }
-            }
+        VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-            Spacer(minLength: 0)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(themeManager.currentTheme.primaryText)
+
+            if let detail {
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }
@@ -710,5 +866,197 @@ struct AgentChannelInlineStatusMessage: View {
             guard !Task.isCancelled else { return }
             onAutoClear?()
         }
+    }
+}
+
+// MARK: - Discovery Selector Search Field
+
+/// Compact inline search field shown above a discovery selector list
+/// (channels, people), with a clear button once a query is typed.
+struct AgentChannelSelectorSearchField: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    /// Placeholder, already localized by the caller.
+    let placeholder: String
+    @Binding var text: String
+
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundColor(theme.primaryText)
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.inputBackground)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
+        )
+    }
+}
+
+// MARK: - Discovery Selector List Card
+
+/// Card rendering an `AgentChannelSelectorList.Shaped` result: selected
+/// entries pinned in a "Selected" group above the rest, a notice when the
+/// browse cap hid part of the unselected tail, and an empty-state hint when
+/// nothing matches. Row content is provider-specific and injected; rows
+/// receive the shaped item so selection state travels with the ForEach data
+/// and lazy cells refresh when a toggle changes only the selection.
+struct AgentChannelSelectorListCard<
+    Entry: Identifiable & Equatable, State: Equatable, RowContent: View
+>: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    let shaped: AgentChannelSelectorList.Shaped<Entry, State>
+    /// Hint shown when nothing matches, already localized by the caller.
+    let emptyText: String
+    var maxHeight: CGFloat = 220
+    @ViewBuilder let row: (AgentChannelSelectorList.Item<Entry, State>) -> RowContent
+
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    private var showsGroupLabels: Bool {
+        !shaped.selected.isEmpty && !shaped.unselected.isEmpty
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if shaped.isEmpty {
+                Text(emptyText)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
+            } else {
+                ScrollView {
+                    // Deliberately non-lazy: on macOS, LazyVStack cells inside
+                    // nested scroll views are re-used without re-invoking row
+                    // content, leaving stale selection checkmarks after a
+                    // toggle. The shaping cap bounds the row count, so eager
+                    // rendering stays cheap.
+                    VStack(spacing: 0) {
+                        if showsGroupLabels {
+                            groupLabel(Text("Selected", bundle: .module))
+                        }
+                        rows(shaped.selected, dividerAfterLast: !shaped.unselected.isEmpty)
+                        if showsGroupLabels {
+                            groupLabel(Text("Everything else", bundle: .module))
+                        }
+                        rows(shaped.unselected, dividerAfterLast: shaped.hiddenCount > 0)
+                        if shaped.hiddenCount > 0 {
+                            truncationNotice
+                        }
+                    }
+                }
+                .frame(maxHeight: maxHeight)
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.cardBackground)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.cardBorder, lineWidth: 1))
+        )
+    }
+
+    @ViewBuilder
+    private func rows(
+        _ items: [AgentChannelSelectorList.Item<Entry, State>],
+        dividerAfterLast: Bool
+    ) -> some View {
+        ForEach(items) { item in
+            row(item)
+            if dividerAfterLast || item.id != items.last?.id {
+                Divider().foregroundColor(theme.cardBorder)
+            }
+        }
+    }
+
+    private func groupLabel(_ label: Text) -> some View {
+        HStack {
+            label
+                .textCase(.uppercase)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundColor(theme.tertiaryText)
+                .tracking(0.5)
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .background(theme.tertiaryBackground.opacity(0.5))
+    }
+
+    private var truncationNotice: some View {
+        Group {
+            if shaped.isSearching {
+                Text(
+                    "\(shaped.hiddenCount) more matches — keep typing to narrow the list.",
+                    bundle: .module
+                )
+            } else {
+                Text("\(shaped.hiddenCount) more not shown — search to find them.", bundle: .module)
+            }
+        }
+        .font(.system(size: 10))
+        .foregroundColor(theme.tertiaryText)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+    }
+}
+
+// MARK: - Discovery Selector Toggle
+
+/// Capsule toggle for one grant on a selector row (Read, Write, Allow).
+/// Selected state is unmistakable: filled checkmark, accent tint, and an
+/// accent-tinted capsule instead of the neutral one.
+struct AgentChannelSelectorToggle: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    /// Title, already localized by the caller.
+    let title: String
+    let selected: Bool
+    var enabled: Bool = true
+    let action: () -> Void
+
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 10, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .foregroundColor(selected ? theme.accentColor : theme.tertiaryText)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .fill(selected ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground)
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
     }
 }

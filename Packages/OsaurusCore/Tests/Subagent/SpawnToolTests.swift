@@ -81,6 +81,15 @@ struct SpawnToolTests {
         }
         #expect(ToolEnvelope.isError(modelResult))
         #expect(modelResult.contains("cannot be called from inside"))
+
+        let batchResult = try await SubagentSession.$activeKindId.withValue("image") {
+            try await SpawnBatchTool().execute(
+                argumentsJSON:
+                    #"{"jobs":[{"id":"a","target_type":"model","target":"qwen3-4b-4bit","input":"summarize"}]}"#
+            )
+        }
+        #expect(ToolEnvelope.isError(batchResult))
+        #expect(batchResult.contains("cannot be called from inside"))
     }
 
     @Test func spawnAgentRejectsMissingArguments() async throws {
@@ -123,21 +132,116 @@ struct SpawnToolTests {
         // tools must opt out so the host owns the deadline.
         #expect(SpawnAgentTool().bypassRegistryTimeout)
         #expect(SpawnModelTool().bypassRegistryTimeout)
+        #expect(SpawnBatchTool().bypassRegistryTimeout)
     }
 
     @Test func toolNamesMatchTheRegistry() {
         // The two tools are the SSOT names from the shared `spawn` capability.
         #expect(SpawnAgentTool().name == "spawn_agent")
         #expect(SpawnModelTool().name == "spawn_model")
+        #expect(SpawnBatchTool().name == "spawn_batch")
         #expect(
-            SubagentCapabilityRegistry.spawn.toolNames == ["spawn_agent", "spawn_model"]
+            SubagentCapabilityRegistry.spawn.toolNames
+                == ["spawn_agent", "spawn_model", "spawn_batch"]
+        )
+    }
+
+    @Test func everySpawnSchemaUsesTheStandaloneInputContract() throws {
+        func inputDescription(
+            _ tool: any OsaurusTool,
+            nestedInJobs: Bool = false
+        ) throws -> String {
+            guard case .object(let root)? = tool.parameters,
+                case .object(let properties)? = root["properties"]
+            else {
+                Issue.record("Expected object tool schema with properties")
+                return ""
+            }
+            let input: [String: JSONValue]
+            if nestedInJobs {
+                guard case .object(let jobs)? = properties["jobs"],
+                    case .object(let items)? = jobs["items"],
+                    case .object(let jobProperties)? = items["properties"],
+                    case .object(let nestedInput)? = jobProperties["input"]
+                else {
+                    Issue.record("Expected nested spawn_batch input schema")
+                    return ""
+                }
+                input = nestedInput
+            } else {
+                guard case .object(let directInput)? = properties["input"] else {
+                    Issue.record("Expected direct spawn input schema")
+                    return ""
+                }
+                input = directInput
+            }
+            guard case .string(let description)? = input["description"] else {
+                Issue.record("Expected string input description")
+                return ""
+            }
+            return description
+        }
+
+        let expected = SpawnInputContract.schemaDescription
+        #expect(try inputDescription(SpawnAgentTool()) == expected)
+        #expect(try inputDescription(SpawnModelTool()) == expected)
+        #expect(try inputDescription(SpawnBatchTool(), nestedInJobs: true) == expected)
+        #expect(expected.contains("complete standalone task"))
+        #expect(expected.contains("cannot see the parent chat"))
+        #expect(expected.contains("Never refer to a previous/earlier message"))
+    }
+
+    @Test func allSpawnSurfacesRejectExplicitParentContextBeforeLoading() async throws {
+        let model = try await SpawnModelTool().execute(
+            argumentsJSON:
+                #"{"input":"Reply with the value from the previous message.","model":"not-allowed"}"#
+        )
+        #expect(ToolEnvelope.isError(model))
+        #expect(ToolEnvelope.failureMessage(model).contains("cannot see the parent transcript"))
+        #expect(model.contains(#""retryable":true"#))
+        #expect(!ToolEnvelope.failureMessage(model).contains("not spawnable"))
+
+        let agent = try await SpawnAgentTool().execute(
+            argumentsJSON:
+                #"{"input":"Summarize the message above.","agent":"not-allowed"}"#
+        )
+        #expect(ToolEnvelope.isError(agent))
+        #expect(ToolEnvelope.failureMessage(agent).contains("cannot see the parent transcript"))
+        #expect(agent.contains(#""field":"input""#))
+
+        let batch = try await SpawnBatchTool().execute(
+            argumentsJSON:
+                #"{"jobs":[{"id":"a","target_type":"model","target":"not-allowed","input":"Use the earlier instruction."}]}"#
+        )
+        #expect(ToolEnvelope.isError(batch))
+        #expect(ToolEnvelope.failureMessage(batch).contains("cannot see the parent transcript"))
+        #expect(batch.contains(#""field":"jobs[0].input""#))
+        #expect(batch.contains(#""retryable":true"#))
+        #expect(!ToolEnvelope.failureMessage(batch).contains("not spawnable"))
+    }
+
+    @Test func standaloneSpawnInputsPassTheContextContract() {
+        #expect(
+            SpawnInputContract.validationFailure(
+                input: "Reply exactly SCHEMA-ALPHA-7391 and nothing else.",
+                tool: "spawn_model"
+            ) == nil
+        )
+        #expect(
+            SpawnInputContract.validationFailure(
+                input: "Compare the previous and current values: previous=7, current=9.",
+                tool: "spawn_model"
+            ) == nil
         )
     }
 
     @Test func agentKindShape() {
         let kind = TextSubagentKind(agentName: "helper", input: "x")
         #expect(kind.capability.id == "spawn")
-        #expect(kind.capability.toolNames == ["spawn_agent", "spawn_model"])
+        #expect(
+            kind.capability.toolNames
+                == ["spawn_agent", "spawn_model", "spawn_batch"]
+        )
         // spawn runs the chosen agent's model → it may resolve a DIFFERENT
         // local model and run the residency handoff (unlike the same-model
         // image / computer_use / sandbox kinds).

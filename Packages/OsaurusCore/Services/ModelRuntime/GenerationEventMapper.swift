@@ -41,7 +41,8 @@ enum GenerationEventMapper {
         events: AsyncStream<Generation>,
         modelName: String = "",
         trace: TTFTTrace? = nil,
-        suppressProgressUI: Bool = false
+        suppressProgressUI: Bool = false,
+        onConsumerCancellation: @escaping @Sendable () -> Void = {}
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
         let task = Task {
@@ -243,8 +244,16 @@ enum GenerationEventMapper {
             reportPrefillFinished()
             continuation.finish()
         }
-        continuation.onTermination = { @Sendable _ in
+        continuation.onTermination = { @Sendable termination in
             task.cancel()
+            if case .cancelled = termination {
+                // Cancelling the mapper task alone relies on several nested
+                // AsyncStream termination handlers eventually reaching the
+                // runtime producer. The caller owns the direct per-request
+                // generation wrapper, so let it cancel that exact task now and
+                // release its ModelLease before a residency handoff restores.
+                onConsumerCancellation()
+            }
         }
         return stream
     }

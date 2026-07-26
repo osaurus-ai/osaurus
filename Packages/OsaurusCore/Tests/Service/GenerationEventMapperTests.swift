@@ -339,6 +339,47 @@ struct GenerationEventMapperTests {
         #expect(stopReason == nil)
     }
 
+    @Test("consumer cancellation directly cancels the owned runtime generation")
+    func consumerCancellationInvokesDirectGenerationCancellation() async {
+        let (events, producer) = AsyncStream<Generation>.makeStream()
+        let probe = MapperCancellationProbe()
+        let mapped = GenerationEventMapper.map(
+            events: events,
+            modelName: "cancel-owned-generation",
+            onConsumerCancellation: {
+                probe.markCancellation()
+            }
+        )
+
+        let consumer = Task {
+            do {
+                for try await _ in mapped {
+                    probe.markEvent()
+                }
+            } catch {
+                // Cancellation is the expected test exit.
+            }
+        }
+
+        producer.yield(.chunk("started"))
+        for _ in 0 ..< 100 where !probe.sawEvent {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(probe.sawEvent)
+
+        consumer.cancel()
+        await consumer.value
+        for _ in 0 ..< 100 where !probe.sawCancellation {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        producer.finish()
+
+        #expect(
+            probe.sawCancellation,
+            "dropping a cancelled consumer must directly cancel its exact ModelRuntime generation wrapper"
+        )
+    }
+
     /// ZAYA1 (Zyphra; `model_type=zaya`) is reasoning-capable. Unlike Ling,
     /// its `.reasoning` stream must stay on the reasoning channel so the UI
     /// can render the Thinking panel when the user opts in.
@@ -420,5 +461,35 @@ struct GenerationEventMapperTests {
         #expect(name == "broken")
         #expect(argsJSON.contains("\"_error\":\"argument_serialization_failed\""))
         #expect(argsJSON.contains("\"_tool\":\"broken\""))
+    }
+}
+
+private final class MapperCancellationProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var event = false
+    private var cancellation = false
+
+    func markEvent() {
+        lock.lock()
+        event = true
+        lock.unlock()
+    }
+
+    func markCancellation() {
+        lock.lock()
+        cancellation = true
+        lock.unlock()
+    }
+
+    var sawEvent: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return event
+    }
+
+    var sawCancellation: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancellation
     }
 }

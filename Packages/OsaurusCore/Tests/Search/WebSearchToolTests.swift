@@ -59,6 +59,162 @@ struct WebSearchToolTests {
         #expect(properties["urls"] != nil)
     }
 
+    @Test func allFailedExtractionsAreAnHonestToolFailure() throws {
+        let envelope = SearchAndExtractTool.extractionEnvelope(
+            payload: [
+                "mode": "direct_url",
+                "provider": "direct_url",
+                "results": [
+                    [
+                        "url": "https://huggingface.co/OsaurusAI/models",
+                        "extracted": false,
+                        "extract_status": "challenge",
+                        "extract_error": "challenge_page",
+                    ],
+                    [
+                        "url": "https://huggingface.co/dealignai/models",
+                        "extracted": false,
+                        "extract_status": "challenge",
+                        "extract_error": "challenge_page",
+                    ],
+                    [
+                        "url": "https://huggingface.co/JANGQ-AI/models",
+                        "extracted": false,
+                        "extract_status": "challenge",
+                        "extract_error": "challenge_page",
+                    ],
+                ],
+            ]
+        )
+
+        #expect(ToolEnvelope.isError(envelope))
+        #expect(envelope.contains("No page content was retrieved"))
+        #expect(envelope.contains("do not claim these pages were read"))
+
+        let data = try #require(envelope.data(using: .utf8))
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        #expect(object["retryable"] as? Bool == false)
+        #expect(object["extracted_count"] as? Int == 0)
+        #expect(object["extraction_failed_count"] as? Int == 3)
+        #expect((object["results"] as? [[String: Any]])?.count == 3)
+    }
+
+    @Test func partialExtractionSuccessPreservesCountsAndResults() throws {
+        let envelope = SearchAndExtractTool.extractionEnvelope(
+            payload: [
+                "mode": "search_and_extract",
+                "provider": "test",
+                "results": [
+                    [
+                        "url": "https://example.com/one",
+                        "extracted": true,
+                        "extract_status": "ok",
+                        "markdown": "retrieved body",
+                    ],
+                    [
+                        "url": "https://example.com/two",
+                        "extracted": false,
+                        "extract_status": "timeout",
+                    ],
+                    [
+                        "url": "https://example.com/not-attempted",
+                        "extracted": false,
+                    ],
+                ],
+            ]
+        )
+
+        #expect(ToolEnvelope.isSuccess(envelope))
+        let payload = try #require(ToolEnvelope.successPayload(envelope) as? [String: Any])
+        #expect(payload["extraction_attempted_count"] as? Int == 2)
+        #expect(payload["extracted_count"] as? Int == 1)
+        #expect(payload["extraction_failed_count"] as? Int == 1)
+        #expect((payload["results"] as? [[String: Any]])?.count == 3)
+    }
+
+    @Test func allTimeoutExtractionsRemainRetryableAndPreserveMetadata() throws {
+        let envelope = SearchAndExtractTool.extractionEnvelope(
+            payload: [
+                "mode": "search_and_extract",
+                "provider": "local",
+                "query": "models for coding",
+                "category": "web",
+                "search_source": "local",
+                "premium_fallback": true,
+                "next_offset": 5,
+                "results": [
+                    [
+                        "url": "https://example.com/slow",
+                        "extracted": false,
+                        "extract_status": "timeout",
+                    ],
+                ],
+            ],
+            warnings: ["test warning"]
+        )
+
+        let data = try #require(envelope.data(using: .utf8))
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        #expect(object["ok"] as? Bool == false)
+        #expect(object["kind"] as? String == ToolEnvelope.Kind.timeout.rawValue)
+        #expect(object["retryable"] as? Bool == true)
+        #expect(object["query"] as? String == "models for coding")
+        #expect(object["category"] as? String == "web")
+        #expect(object["search_source"] as? String == "local")
+        #expect(object["premium_fallback"] as? Bool == true)
+        #expect(object["next_offset"] as? Int == 5)
+        #expect(object["warnings"] as? [String] == ["test warning"])
+    }
+
+    @Test func fetchFailureIsRetryableButNotMislabeledAsTimeout() throws {
+        let envelope = SearchAndExtractTool.extractionEnvelope(
+            payload: [
+                "mode": "direct_url",
+                "provider": "direct_url",
+                "results": [
+                    [
+                        "url": "https://example.com/offline",
+                        "extracted": false,
+                        "extract_status": "fetch_failed",
+                    ],
+                ],
+            ]
+        )
+
+        let data = try #require(envelope.data(using: .utf8))
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        #expect(object["kind"] as? String == ToolEnvelope.Kind.executionError.rawValue)
+        #expect(object["retryable"] as? Bool == true)
+    }
+
+    @Test func cancellationIsNotPresentedAsARequestToRetry() throws {
+        let envelope = SearchAndExtractTool.extractionEnvelope(
+            payload: [
+                "mode": "direct_url",
+                "provider": "direct_url",
+                "results": [
+                    [
+                        "url": "https://example.com/cancelled",
+                        "extracted": false,
+                        "extract_status": "cancelled",
+                    ],
+                ],
+            ]
+        )
+
+        let data = try #require(envelope.data(using: .utf8))
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        #expect(object["retryable"] as? Bool == false)
+    }
+
     // MARK: - Dynamic category enum
 
     private func categoryEnum(of tool: WebSearchTool) -> [String]? {

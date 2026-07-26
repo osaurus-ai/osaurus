@@ -28,7 +28,7 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
         "properties": .object([
             "input": .object([
                 "type": .string("string"),
-                "description": .string("The task/query for the subagent."),
+                "description": .string(SpawnInputContract.schemaDescription),
             ]),
             "agent": .object([
                 "type": .string("string"),
@@ -47,6 +47,9 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
         let inputReq = requireString(args, "input", expected: "the task for the subagent", tool: name)
         guard case .value(let input) = inputReq else { return inputReq.failureEnvelope ?? "" }
+        if let failure = SpawnInputContract.validationFailure(input: input, tool: name) {
+            return failure
+        }
         let agentReq = requireString(args, "agent", expected: "a spawnable agent name", tool: name)
         guard case .value(let agentName) = agentReq else { return agentReq.failureEnvelope ?? "" }
 

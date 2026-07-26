@@ -217,19 +217,22 @@ public enum SubagentCapabilityRegistry {
     public static let spawnAgentToolName = "spawn_agent"
     /// Stable tool name for the model-only spawn (`spawn_model(input, model)`).
     public static let spawnModelToolName = "spawn_model"
+    /// Stable tool name for bounded heterogeneous fan-out. Each job explicitly
+    /// selects one allow-listed agent or model and carries a caller-stable id.
+    public static let spawnBatchToolName = "spawn_batch"
 
-    /// The text-spawn family — two sibling tools, one shared capability:
+    /// The text-spawn family — three sibling tools, one shared capability:
     /// `spawn_agent` (delegate WITH an agent's system prompt + model) and
-    /// `spawn_model` (delegate to a bare model id, no agent). Splitting into two
-    /// single-required-target tools keeps each JSON contract enforceable (no
-    /// "exactly one of agent/model" the schema can't express). Each is gated
-    /// independently by its own pool (agents vs models). No static guidance — the
-    /// composer renders one dynamic spawn block enumerating the live agents /
-    /// models, so `guidance == nil` keeps the generic guidance loop off it. Names
-    /// are the SSOT here; `ToolRegistry`'s derived sets read these for gating.
+    /// `spawn_model` (delegate to a bare model id, no agent). `spawn_batch`
+    /// accepts several explicitly typed jobs and is available when either pool
+    /// is non-empty. The single-target tools remain the compatibility surface.
+    /// No static guidance — the composer renders one dynamic spawn block
+    /// enumerating the live agents / models, so `guidance == nil` keeps the
+    /// generic guidance loop off it. Names are the SSOT here; `ToolRegistry`'s
+    /// derived sets read these for gating.
     public static let spawn = SubagentCapability(
         id: "spawn",
-        toolNames: [spawnAgentToolName, spawnModelToolName],
+        toolNames: [spawnAgentToolName, spawnModelToolName, spawnBatchToolName],
         gate: .delegation,
         perAgentFlag: .spawn,
         modelSource: .agent,
@@ -495,24 +498,28 @@ public enum SubagentToolVisibility {
     ) -> Set<String> {
         let isDefault = (agentId == Agent.defaultId)
         var names = Set<String>()
-        // The two spawn tools gate independently: each appears only when its own
-        // pool is non-empty, so an agent with only models sees `spawn_model` and
-        // not `spawn_agent` (and vice versa).
-        if spawnAgentAvailable(
+        // The two compatibility tools gate independently; the batch tool is
+        // available whenever either exact target pool is non-empty.
+        let hasAgents = spawnAgentAvailable(
             isDefault: isDefault,
             config: config,
             perAgentEnabled: snapshot.spawnDelegationEnabled,
             perAgentTargets: snapshot.spawnableAgentNames
-        ) {
-            names.insert(SubagentCapabilityRegistry.spawnAgentToolName)
-        }
-        if spawnModelAvailable(
+        )
+        let hasModels = spawnModelAvailable(
             isDefault: isDefault,
             config: config,
             perAgentEnabled: snapshot.spawnDelegationEnabled,
             perAgentModelTargets: snapshot.spawnableModelNames
-        ) {
+        )
+        if hasAgents {
+            names.insert(SubagentCapabilityRegistry.spawnAgentToolName)
+        }
+        if hasModels {
             names.insert(SubagentCapabilityRegistry.spawnModelToolName)
+        }
+        if hasAgents || hasModels {
+            names.insert(SubagentCapabilityRegistry.spawnBatchToolName)
         }
         if hasReadyImageModel,
             imageAvailable(

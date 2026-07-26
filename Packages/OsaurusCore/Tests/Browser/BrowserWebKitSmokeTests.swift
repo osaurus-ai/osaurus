@@ -100,6 +100,13 @@ private enum SmokeFixtures {
         </body></html>
         """
 
+    static let dialogsAndUpload = """
+        <!DOCTYPE html>
+        <html><head><title>Dialog Fixture</title></head><body>
+            <input type="file" id="upload">
+        </body></html>
+        """
+
     /// Write a fixture and return its file:// URL string.
     static func write(_ html: String, to dir: URL, name: String) throws -> String {
         let url = dir.appendingPathComponent("\(name).html")
@@ -362,6 +369,53 @@ struct BrowserWebKitSmokeTests {
             let arrived = await executor.execute(
                 name: "browser_wait_for", argumentsJSON: ##"{"text": "Arrived", "timeout": 10}"##)
             #expect(ToolEnvelope.isSuccess(arrived), "target=_blank must navigate the session")
+        }
+    }
+
+    @Test func webKitDelegateHandlesDialogsAndDeclinesFileUpload() async throws {
+        try await withSmokeExecutor { executor, fixtures in
+            let url = try SmokeFixtures.write(
+                SmokeFixtures.dialogsAndUpload,
+                to: fixtures,
+                name: "dialogs"
+            )
+            _ = await executor.execute(
+                name: "browser_navigate",
+                argumentsJSON: ##"{"url": "\##(url)", "detail": "none"}"##
+            )
+            let agentId = try #require(BrowserSessionManager.shared.activeAgentIds().first)
+            let session = BrowserSessionManager.shared.session(for: agentId)
+
+            let alert = await session.executeScript("alert('alert-marker'); return 'alert-done';")
+            #expect(alert.error == nil)
+            #expect(alert.result as? String == "alert-done")
+            #expect(session.lastDialog?["kind"] as? String == "alert")
+            #expect(session.lastDialog?["message"] as? String == "alert-marker")
+
+            session.setDialogPolicy(accept: false, promptText: nil)
+            let confirm = await session.executeScript("return confirm('confirm-marker');")
+            #expect(confirm.error == nil)
+            #expect(confirm.result as? Bool == false)
+            #expect(session.lastDialog?["kind"] as? String == "confirm")
+            #expect(session.lastDialog?["accepted"] as? Bool == false)
+
+            session.setDialogPolicy(accept: true, promptText: "prompt-result")
+            let prompt = await session.executeScript("return prompt('prompt-marker', 'default');")
+            #expect(prompt.error == nil)
+            #expect(prompt.result as? String == "prompt-result")
+            #expect(session.lastDialog?["kind"] as? String == "prompt")
+            #expect(session.lastDialog?["response"] as? String == "prompt-result")
+
+            _ = await executor.execute(
+                name: "browser_click",
+                argumentsJSON: ##"{"selector": "#upload", "detail": "none"}"##
+            )
+            let status = await executor.execute(
+                name: "browser_handle_dialog",
+                argumentsJSON: ##"{"action": "status"}"##
+            )
+            #expect(status.contains("file_chooser"))
+            #expect(status.contains("aren't supported"))
         }
     }
 

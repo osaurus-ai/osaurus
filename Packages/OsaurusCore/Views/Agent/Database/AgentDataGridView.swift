@@ -313,7 +313,7 @@ extension AgentDataGridRepresentable {
 
         // MARK: NSTableViewDelegate
 
-        func tableView(_ tableView: NSTableView, rowViewFor row: Int) -> NSTableRowView? {
+        func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
             let identifier = NSUserInterfaceItemIdentifier("DataGridRow")
             let rowView =
                 tableView.makeView(withIdentifier: identifier, owner: nil) as? DataGridRowView

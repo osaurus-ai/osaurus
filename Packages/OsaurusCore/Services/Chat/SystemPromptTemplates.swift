@@ -63,9 +63,9 @@ public enum SystemPromptTemplates {
     public static let agentLoopGuidance = """
         ## Agent loop
 
-        - Always answer the user in plain text — that reply is what they read and ends the turn.
-        - `todo(markdown)` — OPTIONAL, multi-step (3+) only: create it before starting, then re-send it with the next box checked after each item. Skip direct/single-step work.
-        - `complete(summary)` — OPTIONAL: close a `todo` task with a short WHAT+HOW status (not the answer) in the SAME message as your answer. Not for direct questions or other tools; no vague placeholders.
+        - Always answer the user in plain text — that reply is what they read. It ends a direct task, or a tracked task once its todo has no unchecked items.
+        - `todo(markdown)` — OPTIONAL, multi-step (3+) only: create it before starting, then re-send it with the next box checked after each item. Once created, unchecked items keep this agent run open. Skip direct/single-step work.
+        - `complete(summary)` — OPTIONAL explicit closure for a `todo`: use it with a short WHAT+HOW status (not the answer) in the SAME message as your answer when work is done or honestly blocked. Not for direct questions or other tools; no vague placeholders.
         - `clarify(question)` — pause and ask exactly one concrete question only when guessing wrong would change the result. For minor preferences pick a sensible default and proceed.
         - `share_artifact(path | content+filename)` — the only way the user sees a generated image, chart, report, code blob, or any file. **The file MUST exist before this call.** Sandbox: save under your home dir (default cwd), not `/tmp`. For inline text/markdown, pass `content`+`filename` and skip the file write.
         """
@@ -86,9 +86,9 @@ public enum SystemPromptTemplates {
     public static let agentLoopGuidanceCompact = """
         ## Agent loop
 
-        - Answer the user in plain text; that reply ends the turn.
-        - `todo(markdown)` — OPTIONAL, 3+ step work only: create first, re-send with each box checked. Skip single-step work.
-        - `complete(summary)` — OPTIONAL, only closes a `todo`: short WHAT+HOW status in the SAME message as your answer, not the answer.
+        - Answer the user in plain text; it ends direct work, or tracked work once no todo items remain unchecked.
+        - `todo(markdown)` — OPTIONAL, 3+ step work only: create first, re-send with each box checked. Once created, unchecked items keep this run open. Skip single-step work.
+        - `complete(summary)` — OPTIONAL explicit `todo` closure: short WHAT+HOW status in the SAME message as your answer when done or honestly blocked, not the answer.
         - `clarify(question)` — last resort; a fully specified task is not ambiguous, just do it. Ask ONE question only when the user asks or a required input is missing/contradictory with no sensible default.
         - `share_artifact(path | content+filename)` — the only way the user sees a file/image; it MUST exist first. Sandbox: save under home, not `/tmp`.
         """
@@ -949,7 +949,8 @@ public enum SystemPromptTemplates {
     public static func spawnGuidance(
         agents: [SpawnAgentDescriptor],
         models: [SpawnModelDescriptor],
-        toolAccess: SpawnToolAccess = .none
+        toolAccess: SpawnToolAccess = .none,
+        maxParallel: Int = 1
     ) -> String {
         var lines: [String] = ["## Delegating subtasks (spawn)", ""]
         lines.append(
@@ -978,6 +979,14 @@ public enum SystemPromptTemplates {
             )
             for model in models { lines.append("  - " + modelLine(model)) }
         }
+        lines.append(
+            "- `spawn_batch(jobs)` fans out INDEPENDENT work across the same allowed agents/models. "
+                + "Each job needs a unique `id`, `target_type` (`agent` or `model`), exact `target`, "
+                + "and complete `input`. This agent allows at most \(maxParallel) jobs in one batch; "
+                + "at most \(maxParallel) workers run concurrently, and results "
+                + "come back in input order. Use one batch instead of emitting several separate "
+                + "spawn calls when the subtasks do not depend on each other."
+        )
         switch toolAccess {
         case .readOnly:
             lines.append(
@@ -998,8 +1007,9 @@ public enum SystemPromptTemplates {
                 + "if none clearly fits, just do it yourself rather than guessing."
         )
         lines.append(
-            "- Spawns of remote/cloud targets may run in parallel (several spawn calls in one turn); "
-                + "spawns of local targets run one at a time — a second local spawn waits for the GPU."
+            "- Remote/cloud batch jobs may overlap. Local jobs for the SAME model share one load and "
+                + "may batch together; different local models are serialized so they cannot race "
+                + "GPU residency or repeatedly unload the parent."
         )
         return lines.joined(separator: "\n")
     }

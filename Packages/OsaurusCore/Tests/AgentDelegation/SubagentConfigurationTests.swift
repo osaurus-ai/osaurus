@@ -29,6 +29,7 @@ struct SubagentConfigurationTests {
         #expect(config.budgets.maxDelegateTurns == 2)
         #expect(config.budgets.maxToolCalls == 0)
         #expect(config.budgets.maxElapsedSeconds == 120)
+        #expect(config.budgets.maxParallelSpawns == 3)
         // AppleScript keeps its model warm after a run by default for the
         // back-to-back automation latency win.
         #expect(config.appleScriptLoadPolicy == .keepWarmAfterJob)
@@ -83,13 +84,15 @@ struct SubagentConfigurationTests {
             maxDelegateTokens: -10,
             maxDelegateTurns: 0,
             maxToolCalls: -1,
-            maxElapsedSeconds: 0
+            maxElapsedSeconds: 0,
+            maxParallelSpawns: 0
         )
 
         #expect(raw.normalized.maxDelegateTokens == 256)
         #expect(raw.normalized.maxDelegateTurns == 1)
         #expect(raw.normalized.maxToolCalls == 0)
         #expect(raw.normalized.maxElapsedSeconds == 15)
+        #expect(raw.normalized.maxParallelSpawns == 1)
     }
 
     @Test("budget normalization caps runaway values")
@@ -98,13 +101,15 @@ struct SubagentConfigurationTests {
             maxDelegateTokens: 1_000_000,
             maxDelegateTurns: 100,
             maxToolCalls: 100,
-            maxElapsedSeconds: 100_000
+            maxElapsedSeconds: 100_000,
+            maxParallelSpawns: 100
         )
 
         #expect(raw.normalized.maxDelegateTokens == 32_768)
         #expect(raw.normalized.maxDelegateTurns == 8)
         #expect(raw.normalized.maxToolCalls == 32)
         #expect(raw.normalized.maxElapsedSeconds == 1_800)
+        #expect(raw.normalized.maxParallelSpawns == 8)
     }
 
     @Test("configuration round trips stable raw values")
@@ -121,7 +126,8 @@ struct SubagentConfigurationTests {
                 maxDelegateTokens: 4096,
                 maxDelegateTurns: 2,
                 maxToolCalls: 3,
-                maxElapsedSeconds: 240
+                maxElapsedSeconds: 240,
+                maxParallelSpawns: 4
             )
         )
 
@@ -132,6 +138,26 @@ struct SubagentConfigurationTests {
         #expect(decoded.permissionDefaults.policy(for: "spawn").rawValue == "always_allow")
         #expect(decoded.permissionDefaults.policy(for: "image").rawValue == "deny")
         #expect(decoded.imageJobLoadPolicy.rawValue == "manual_panel_keeps_image_loaded")
+        #expect(decoded.budgets.maxParallelSpawns == 4)
+    }
+
+    @Test("legacy budgets without maxParallelSpawns decode to the bounded default")
+    func legacyBudgetsDecodeParallelDefault() throws {
+        let decoded = try JSONDecoder().decode(
+            SubagentBudgets.self,
+            from: Data(
+                """
+                {
+                  "maxDelegateTokens": 1024,
+                  "maxDelegateTurns": 1,
+                  "maxToolCalls": 2,
+                  "maxElapsedSeconds": 60
+                }
+                """.utf8
+            )
+        )
+        #expect(decoded.maxDelegateTokens == 1024)
+        #expect(decoded.maxParallelSpawns == 3)
     }
 
     @Test("legacy per-field permission keys migrate into the keyed map")

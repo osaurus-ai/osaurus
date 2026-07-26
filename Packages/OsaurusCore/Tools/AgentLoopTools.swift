@@ -33,7 +33,9 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
         + "create the list BEFORE starting, then re-send it with the new box checked IMMEDIATELY "
         + "after finishing each item — do not batch updates for the end. Every item is a line "
         + "starting with `- [ ]` (pending) or `- [x]` (done); each call replaces the entire "
-        + "list. Skip it for a direct question or single-step work — just answer."
+        + "list. Once created, unchecked items keep this agent run open until you update them or "
+        + "honestly close the tracked task with `complete`. Skip it for a direct question or "
+        + "single-step work — just answer."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -111,8 +113,10 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
             tool: name,
             text:
                 "Todo updated: \(stored.doneCount)/\(stored.totalCount) complete. "
-                + "Continue with the next pending item; when everything is done, write your "
-                + "answer to the user (you may then call `complete(summary)` to close the task)."
+                + "Unchecked items keep this agent run open, so continue with the next pending "
+                + "item and re-send the full checklist as you check items. When everything is "
+                + "done, write your answer to the user; if work is blocked, answer honestly and "
+                + "call `complete(summary)` with what remains."
         )
     }
 }

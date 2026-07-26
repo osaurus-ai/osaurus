@@ -8,7 +8,7 @@
 //
 //  Persistence is scoped to the fields this view owns. Saving does a
 //  load-modify-write on `ChatConfiguration` touching only the chat-owned
-//  fields (context length, top-P, tool attempts, clipboard, greeting
+//  fields (top-P, tool attempts, clipboard, greeting
 //  persona) so the General settings' hotkey + core-model values — which
 //  live in the same struct — are never clobbered. The default-agent
 //  persona / generation knobs persist to `DefaultAgentConfiguration`.
@@ -33,7 +33,6 @@ struct ChatSettingsView: View {
     @State private var tempSystemPrompt: String = ""
     @State private var tempChatTemperature: String = ""
     @State private var tempChatMaxTokens: String = ""
-    @State private var tempChatContextLength: String = ""
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
     @State private var tempEnableClipboardMonitoring: Bool = false
@@ -294,7 +293,9 @@ struct ChatSettingsView: View {
                 )
                 .onChange(of: activityRollupEnabled) { _, _ in
                     NotificationCenter.default.post(
-                        name: ContentBlock.activityRollupSettingChanged, object: nil)
+                        name: ContentBlock.activityRollupSettingChanged,
+                        object: nil
+                    )
                 }
 
                 SettingsToggle(
@@ -357,22 +358,14 @@ struct ChatSettingsView: View {
                     anchorId: "settings.chat.temperature"
                 )
                 SettingsStepperField(
-                    label: "Max Tokens",
-                    help: "Maximum response tokens",
+                    label: "Default Agent Max Output Tokens",
+                    help:
+                        "Optional per-response output cap for the default agent. Leave blank to inherit the active model bundle's generation_config maximum. This is not the model context window or KV retention.",
                     text: $tempChatMaxTokens,
                     range: 1 ... 65536,
                     step: 1024,
                     defaultValue: 16384,
                     anchorId: "settings.chat.maxTokens"
-                )
-                SettingsStepperField(
-                    label: "Context Length",
-                    help: "Context window for remote models",
-                    text: $tempChatContextLength,
-                    range: 2048 ... 256000,
-                    step: 1024,
-                    defaultValue: 128000,
-                    anchorId: "settings.chat.contextLength"
                 )
                 SettingsSliderField(
                     label: "Top P Override",
@@ -542,7 +535,7 @@ struct ChatSettingsView: View {
     ) {
         // The Default agent's persona and generation knobs live on
         // `DefaultAgentConfiguration` (split off from `ChatConfiguration`);
-        // the numeric generation knobs (context length, top-P, tool
+        // the numeric generation knobs (top-P and tool
         // attempts) and clipboard / greeting voice live on `ChatConfiguration`.
         // Tools and memory are intentionally NOT surfaced here: the default
         // agent's tools toggle lives in the Agents tab and the global memory
@@ -550,7 +543,6 @@ struct ChatSettingsView: View {
         tempSystemPrompt = defaultAgent.systemPrompt
         tempChatTemperature = defaultAgent.temperature.map { String($0) } ?? ""
         tempChatMaxTokens = defaultAgent.maxTokens.map(String.init) ?? ""
-        tempChatContextLength = chat.contextLength.map(String.init) ?? ""
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
         tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
@@ -579,7 +571,6 @@ struct ChatSettingsView: View {
         tempSystemPrompt = ""
         tempChatTemperature = ""
         tempChatMaxTokens = ""
-        tempChatContextLength = ""
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
         tempEnableClipboardMonitoring = chatDefaults.enableClipboardMonitoring
@@ -597,7 +588,6 @@ struct ChatSettingsView: View {
         var systemPrompt: String
         var temperature: String
         var maxTokens: String
-        var contextLength: String
         var topP: String
         var maxToolAttempts: String
         var enableClipboardMonitoring: Bool
@@ -611,7 +601,6 @@ struct ChatSettingsView: View {
             systemPrompt: tempSystemPrompt,
             temperature: tempChatTemperature,
             maxTokens: tempChatMaxTokens,
-            contextLength: tempChatContextLength,
             topP: tempChatTopP,
             maxToolAttempts: tempChatMaxToolAttempts,
             enableClipboardMonitoring: tempEnableClipboardMonitoring,
@@ -659,12 +648,6 @@ struct ChatSettingsView: View {
             return max(1, v)
         }()
 
-        let trimmedContext = tempChatContextLength.trimmingCharacters(in: .whitespacesAndNewlines)
-        let parsedContext: Int? = {
-            guard !trimmedContext.isEmpty, let v = Int(trimmedContext) else { return nil }
-            return max(2048, v)
-        }()
-
         let trimmedTopPChat = tempChatTopP.trimmingCharacters(in: .whitespacesAndNewlines)
         let parsedTopP: Float? = {
             guard !trimmedTopPChat.isEmpty, let v = Float(trimmedTopPChat) else { return nil }
@@ -685,7 +668,10 @@ struct ChatSettingsView: View {
         chatCfg.systemPrompt = ""
         chatCfg.temperature = nil
         chatCfg.maxTokens = nil
-        chatCfg.contextLength = parsedContext
+        // Unknown-model context metadata fallback is owned by
+        // Server → Cache → Context & KV Policy. Never rewrite it from the
+        // Chat form, which otherwise recreates a competing "context length"
+        // control that users can mistake for the live KV cap.
         chatCfg.topPOverride = parsedTopP
         chatCfg.maxToolAttempts = parsedMaxToolAttempts
         chatCfg.enableClipboardMonitoring = tempEnableClipboardMonitoring

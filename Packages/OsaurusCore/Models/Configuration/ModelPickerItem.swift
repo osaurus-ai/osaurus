@@ -78,6 +78,12 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// Whether this is a Vision Language Model
     let isVLM: Bool
 
+    /// Canonical local-bundle architecture from config.json. Nil for remote,
+    /// Foundation, image-generation, or legacy picker entries that do not
+    /// expose bundle metadata. Prompt-family routing must prefer this over
+    /// marketing/repository names when it is available.
+    let modelType: String?
+
     /// Whether the local bundle is in MLX format and therefore loadable by the
     /// local engine. Set from `MLXModel.isMLXFormat` for local items so the
     /// picker can grey out (and refuse to select) co-mingled non-MLX bundles
@@ -132,6 +138,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         parameterCount: String? = nil,
         quantization: String? = nil,
         isVLM: Bool = false,
+        modelType: String? = nil,
         isMLXFormat: Bool = true,
         isEmbedding: Bool = false,
         description: String? = nil,
@@ -152,6 +159,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.parameterCount = parameterCount
         self.quantization = quantization
         self.isVLM = isVLM
+        self.modelType = modelType
         self.isMLXFormat = isMLXFormat
         self.isEmbedding = isEmbedding
         self.description = description
@@ -203,6 +211,7 @@ extension ModelPickerItem {
             parameterCount: model.parameterCount,
             quantization: model.quantization,
             isVLM: model.isVLM,
+            modelType: model.modelType,
             isMLXFormat: model.isMLXFormat,
             isEmbedding: model.isEmbedding,
             description: model.description

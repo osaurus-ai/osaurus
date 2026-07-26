@@ -266,6 +266,11 @@ final class BrowserUseKind: SubagentKind, @unchecked Sendable {
                 message: "Browser Use reached its output-token limit before producing a result.",
                 retryable: false
             )
+        case .incompleteReasoningExhausted:
+            throw SubagentError.executionFailed(
+                message: "Browser Use ended in reasoning without producing a visible result.",
+                retryable: false
+            )
         }
     }
 
