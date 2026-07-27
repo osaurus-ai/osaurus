@@ -2387,6 +2387,56 @@ struct AgentLoopTodoStalenessTests {
 
 @MainActor
 struct AgentLoopAdvisoryTodoCompletionTests {
+    @Test func staleSessionTodoCompleteRejectionRecoversToOrdinaryFinal() async throws {
+        let sessionId = UUID().uuidString
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([
+                inv(
+                    "complete",
+                    #"{"summary":"STALE_TODO_FOLLOWUP_OK - verified as the requested exact follow-up."}"#
+                )
+            ]),
+            .finalResponse,
+        ])
+
+        let result = try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
+            // Persist an unchecked checklist from the prior user turn.
+            _ = try await TodoTool().execute(
+                argumentsJSON: #"{"markdown":"- [x] report result\n- [ ] optional review"}"#
+            )
+
+            var hooks = surface.makeHooks()
+            hooks.executeTool = { invocation, callId in
+                surface.executedCalls.append(
+                    (invocation.toolName, invocation.jsonArguments, callId)
+                )
+                let result =
+                    (try? await CompleteTool().execute(
+                        argumentsJSON: invocation.jsonArguments
+                    ))
+                    ?? ToolEnvelope.failure(
+                        kind: .executionError,
+                        message: "unexpected complete tool throw",
+                        tool: invocation.toolName
+                    )
+                return AgentLoopToolExecution(result: result)
+            }
+            return try await AgentToolLoop.run(
+                policy: chatPolicy(),
+                state: AgentTaskState(),
+                hooks: hooks
+            )
+        }
+        await AgentTodoStore.shared.clear(for: sessionId)
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 2))
+        #expect(surface.executedCalls.map(\.name) == ["complete"])
+        let completeResult = try #require(surface.batchOutcomes.first?.first?.result)
+        #expect(ToolEnvelope.isError(completeResult))
+        #expect(AgentToolLoop.isStaleSessionTodoCompleteResult(completeResult))
+        #expect(surface.steps.isEmpty)
+    }
+
     @Test func pendingTodoDoesNotOverrideOrdinaryFinal() async throws {
         let surface = ScriptedLoopSurface(steps: [
             .toolCalls([inv("todo", #"{"markdown":"- [ ] inspect\n- [ ] answer"}"#)]),

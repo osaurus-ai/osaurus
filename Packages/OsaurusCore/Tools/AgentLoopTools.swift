@@ -115,6 +115,11 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
             markdown: trimmed,
             for: sessionId
         )
+        // The checklist is visible for the whole session, but completion
+        // semantics are scoped to this logical run. Mark even an unchanged
+        // valid checklist: explicitly re-sending it this turn makes it the
+        // current run's task state.
+        ChatExecutionContext.agentTodoRunScope?.markTodoWritten()
         let stored = update.todo
         if !update.changed {
             return ToolEnvelope.success(
@@ -146,6 +151,7 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
 /// intercepts this call, ends the loop, and surfaces the summary to the UI.
 public final class CompleteTool: OsaurusTool, @unchecked Sendable {
     public let name = "complete"
+    static let staleSessionTodoReason = "stale_session_todo"
     public let description =
         "OPTIONAL early closure for a multi-step task tracked with `todo` that is honestly "
         + "blocked or cannot be finished. A successful task does not need this tool: first mark "
@@ -193,6 +199,29 @@ public final class CompleteTool: OsaurusTool, @unchecked Sendable {
                 field: "summary",
                 expected: "≥30 chars of meaningful prose; not a placeholder",
                 tool: name
+            )
+        }
+
+        // A session Todo is intentionally persistent UI state. It is not
+        // permission for an unrelated later turn to close as BLOCKED. Under
+        // the canonical loop, `complete` is valid only after this same run
+        // executed a valid Todo call. Bare/direct tool callers do not publish
+        // a run scope and retain their historical behavior.
+        if let runScope = ChatExecutionContext.agentTodoRunScope,
+            !runScope.hasCurrentRunTodo
+        {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message:
+                    "`complete` is only valid after this current run called `todo`. "
+                    + "A checklist from an earlier user turn does not apply. Answer the "
+                    + "current request normally and stop.",
+                tool: name,
+                retryable: true,
+                metadata: [
+                    "reason": Self.staleSessionTodoReason,
+                    "executed": false,
+                ]
             )
         }
 

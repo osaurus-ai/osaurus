@@ -1386,10 +1386,19 @@ enum AgentToolLoop {
         return object["reason"] as? String == todoNoProgressReason
     }
 
+    static func isStaleSessionTodoCompleteResult(_ result: String) -> Bool {
+        guard ToolEnvelope.isError(result),
+            let data = result.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return object["reason"] as? String == CompleteTool.staleSessionTodoReason
+    }
+
     static func isRecoverableTodoContractResult(_ result: String) -> Bool {
         isTaskTrackingRequiredResult(result)
             || isTodoProgressUpdateRequiredResult(result)
             || isTodoNoProgressResult(result)
+            || isStaleSessionTodoCompleteResult(result)
     }
 
     static func todoProgressUpdateRequiredNotice(pending: Int) -> String {
@@ -1580,6 +1589,11 @@ enum AgentToolLoop {
         // A tool call between attempts must not re-arm another potentially
         // huge reasoning cycle in the same logical run.
         var incompleteReasoningRetries = 0
+        // Session Todo state persists for the UI, while terminal semantics are
+        // per logical run. Bind this same marker around every serial or batched
+        // tool dispatch so TodoTool and CompleteTool agree even when a batch
+        // executes in child tasks.
+        let todoRunScope = AgentTodoRunScope()
         // Session Todo state persists across user turns. Arm terminal gating
         // only after THIS run successfully executes a valid `todo`; an older
         // stale checklist must never hijack an unrelated direct answer.
@@ -1887,9 +1901,14 @@ enum AgentToolLoop {
                         }
                     }
                     if !toExecute.isEmpty {
-                        let executions = await executeBatch(
-                            toExecute.map { ($0.invocation, $0.callId) }
-                        )
+                        let executions =
+                            await ChatExecutionContext.$agentTodoRunScope.withValue(
+                                todoRunScope
+                            ) {
+                                await executeBatch(
+                                    toExecute.map { ($0.invocation, $0.callId) }
+                                )
+                            }
                         // The executor may legitimately return FEWER results
                         // than calls (chat stops executing the rest of a
                         // batch after an intercept); missing slots stay nil
@@ -1957,9 +1976,18 @@ enum AgentToolLoop {
                                 } else if policy.dedupeNoticeEnabled {
                                     pendingStateNotice = Self.dedupeNotice
                                 }
-                            } else if let execution = await executeBatch(
-                                [(deferred.invocation, deferred.callId)]
-                            ).first {
+                            } else {
+                                let deferredExecutions =
+                                    await ChatExecutionContext.$agentTodoRunScope.withValue(
+                                        todoRunScope
+                                    ) {
+                                        await executeBatch(
+                                            [(deferred.invocation, deferred.callId)]
+                                        )
+                                    }
+                                guard let execution = deferredExecutions.first else {
+                                    continue
+                                }
                                 let wasError =
                                     execution.isError
                                     || Self.isTerminalDesktopSubagentFailure(
@@ -2173,7 +2201,12 @@ enum AgentToolLoop {
                             continue
                         }
 
-                        let execution = await hooks.executeTool(invocation, callId)
+                        let execution =
+                            await ChatExecutionContext.$agentTodoRunScope.withValue(
+                                todoRunScope
+                            ) {
+                                await hooks.executeTool(invocation, callId)
+                            }
                         let wasError =
                             execution.isError
                             || Self.isTerminalDesktopSubagentFailure(

@@ -9,6 +9,31 @@
 
 import Foundation
 
+/// Mutable marker shared by every tool execution in one canonical agent-loop
+/// run. The visible Todo remains session-scoped, but terminal semantics must
+/// not be: an unchecked checklist from a previous user turn cannot turn an
+/// unrelated later `complete` call into a blocked completion.
+///
+/// `AgentToolLoop` creates one scope per `run(...)` and binds it around both
+/// serial and batched tool execution. Task-group children inherit the TaskLocal
+/// reference, and the lock makes simultaneous sibling calls safe.
+final class AgentTodoRunScope: @unchecked Sendable {
+    private let lock = NSLock()
+    private var wroteTodo = false
+
+    var hasCurrentRunTodo: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return wroteTodo
+    }
+
+    func markTodoWritten() {
+        lock.lock()
+        wroteTodo = true
+        lock.unlock()
+    }
+}
+
 /// TaskLocal storage carrying the active chat session / agent / batch ids
 /// down through tool execution. The chat engine seeds these in
 /// `ChatSession.send` (and equivalent headless paths) so any tool reading
@@ -18,6 +43,10 @@ public enum ChatExecutionContext {
     /// need per-conversation state (todo store, file-op undo log, method
     /// telemetry) key off this.
     @TaskLocal public static var currentSessionId: String?
+
+    /// One logical AgentToolLoop run's Todo marker. Nil outside the canonical
+    /// loop preserves direct/bare tool-call compatibility.
+    @TaskLocal static var agentTodoRunScope: AgentTodoRunScope?
 
     /// The current batch ID for grouped operations (nil for non-batch operations).
     @TaskLocal public static var currentBatchId: UUID?
