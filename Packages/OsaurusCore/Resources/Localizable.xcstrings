@@ -851,7 +851,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "[密钥]"
+            "value" : "[机密]"
           }
         },
         "zh-Hant" : {
@@ -4748,7 +4748,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld 个项目将被编辑"
+            "value" : "%lld 个项目将被隐去"
           }
         },
         "zh-Hant" : {
@@ -6456,7 +6456,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld 次编辑"
+            "value" : "%lld 处隐去"
           }
         },
         "zh-Hant" : {
@@ -9053,7 +9053,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "~%1$@ of %2$.0f GB"
+            "value" : "~%1$@ / %2$.0f GB"
           }
         },
         "zh-Hant" : {
@@ -10135,7 +10135,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "1 个项目将被编辑"
+            "value" : "1 个项目将被脱敏"
           }
         },
         "zh-Hant" : {
@@ -10407,7 +10407,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "1 次编辑"
+            "value" : "1 次脱敏"
           }
         },
         "zh-Hant" : {
@@ -11237,7 +11237,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "6位（q6，GGUF-head奇偶校验）"
+            "value" : "6 位（q6，与 GGUF-head 持平）"
           }
         },
         "zh-Hant" : {
@@ -12311,7 +12311,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "快速浏览"
+            "value" : "快速导览"
           }
         },
         "zh-Hant" : {
@@ -24579,7 +24579,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "观众"
+            "value" : "受众"
           }
         },
         "zh-Hant" : {
@@ -29990,7 +29990,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "块"
+            "value" : "阻止"
           }
         },
         "zh-Hant" : {
@@ -63674,7 +63674,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "期间"
+            "value" : "时长"
           }
         },
         "zh-Hant" : {
@@ -63847,7 +63847,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "例如：客户"
+            "value" : "例如：CUSTOMER"
           }
         },
         "zh-Hant" : {
@@ -65145,7 +65145,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "编辑模型"
+            "value" : "图像编辑模型"
           }
         },
         "zh-Hant" : {
@@ -65767,7 +65767,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正在编辑"
+            "value" : "编辑操作"
           }
         },
         "zh-Hant" : {
@@ -65978,7 +65978,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "身份"
+            "value" : "基本信息"
           }
         },
         "zh-Hant" : {
@@ -76638,7 +76638,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "分数从0.10到1.00。"
+            "value" : "比例值范围为 0.10 到 1.00。"
           }
         },
         "zh-Hant" : {
@@ -93484,7 +93484,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "最近签署的支票"
+            "value" : "最近的签名校验"
           }
         },
         "zh-Hant" : {
@@ -96041,7 +96041,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "偏好"
+            "value" : "点赞"
           }
         },
         "zh-Hant" : {
@@ -96488,7 +96488,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "列表"
+            "value" : "条目"
           }
         },
         "zh-Hant" : {
@@ -99535,7 +99535,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "浏览并自由导航；从不编辑。"
+            "value" : "自由查看和导航；绝不编辑。"
           }
         },
         "zh-Hant" : {
@@ -100897,7 +100897,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "手册"
+            "value" : "手动"
           }
         },
         "zh-Hant" : {
@@ -103255,7 +103255,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "内存与重载"
+            "value" : "记忆与回忆"
           }
         },
         "zh-Hant" : {
@@ -103361,7 +103361,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "内存预算"
+            "value" : "记忆预算"
           }
         },
         "zh-Hant" : {
@@ -103466,7 +103466,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "内存数据库已重新打开。"
+            "value" : "记忆数据库已重新打开。"
           }
         },
         "zh-Hant" : {
@@ -103501,7 +103501,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "内存数据库已打开"
+            "value" : "记忆数据库已打开"
           }
         },
         "zh-Hant" : {
@@ -103863,7 +103863,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "内存存储重置。"
+            "value" : "记忆存储已重置。"
           }
         },
         "zh-Hant" : {
@@ -103899,7 +103899,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "内存存储重置。旧文件保存在%@。"
+            "value" : "记忆存储已重置。旧文件保留在 %@。"
           }
         },
         "zh-Hant" : {
@@ -106179,7 +106179,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "模型记忆"
+            "value" : "模型内存"
           }
         },
         "zh-Hant" : {
@@ -108049,7 +108049,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "本地的"
+            "value" : "原生"
           }
         },
         "zh-Hant" : {
@@ -108748,7 +108748,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "网络积分"
+            "value" : "净积分"
           }
         },
         "zh-Hant" : {
@@ -121715,7 +121715,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "开放身份"
+            "value" : "打开身份"
           }
         },
         "zh-Hant" : {
@@ -122954,7 +122954,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "打开网络"
+            "value" : "打开网页"
           }
         },
         "zh-Hant" : {
@@ -128057,7 +128057,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "小路"
+            "value" : "路径"
           }
         },
         "zh-Hant" : {
@@ -134282,7 +134282,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "预览受限内存上下文"
+            "value" : "预览受限记忆上下文"
           }
         },
         "zh-Hant" : {
@@ -135388,7 +135388,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "密钥"
+            "value" : "机密"
           }
         },
         "zh-Hant" : {
@@ -145231,7 +145231,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "恢复助记词"
+            "value" : "助记词"
           }
         },
         "zh-Hant" : {
@@ -145369,7 +145369,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已编辑的活动导出已复制"
+            "value" : "已脱敏的活动导出已复制"
           }
         },
         "zh-Hant" : {
@@ -146694,7 +146694,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "继电器关闭"
+            "value" : "中继已关闭"
           }
         },
         "zh-Hant" : {
@@ -147858,7 +147858,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "移除镜像"
+            "value" : "移除图片"
           }
         },
         "zh-Hant" : {
@@ -149790,7 +149790,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "复制路径"
+            "value" : "复现路径"
           }
         },
         "zh-Hant" : {
@@ -151399,7 +151399,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "重置内存存储？"
+            "value" : "重置记忆存储？"
           }
         },
         "zh-Hant" : {
@@ -152030,7 +152030,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已解决的计划"
+            "value" : "解析后的计划"
           }
         },
         "zh-Hant" : {
@@ -177147,7 +177147,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "仍然无法打开内存 — 尝试重置。"
+            "value" : "仍然无法打开记忆 — 请尝试重置。"
           }
         },
         "zh-Hant" : {
@@ -179425,7 +179425,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "支持导出"
+            "value" : "导出支持数据"
           }
         },
         "zh-Hant" : {
@@ -181663,7 +181663,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "图片生成时应避免的术语"
+            "value" : "图片生成时应避免的词语"
           }
         },
         "zh-Hant" : {
@@ -198935,7 +198935,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "用户智能体"
+            "value" : "用户代理"
           }
         },
         "zh-Hant" : {
@@ -202005,7 +202005,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "等待被赎回"
+            "value" : "等待兑换"
           }
         },
         "zh-Hant" : {
@@ -208986,7 +208986,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Zip 捆绑包"
+            "value" : "Zip 压缩包"
           }
         },
         "zh-Hant" : {
