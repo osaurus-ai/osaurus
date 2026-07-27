@@ -609,7 +609,7 @@ public enum AgentChannelEvalHarness {
         final class SendRecorder: @unchecked Sendable {
             private let lock = NSLock()
             private var _count = 0
-            var count: Int { lock.withLock { _count } }
+            var sendCount: Int { lock.withLock { _count } }
             func record() { lock.withLock { _count += 1 } }
         }
 
@@ -711,7 +711,7 @@ public enum AgentChannelEvalHarness {
             deniedCode(channelRun) == "run_source_not_allowed",
             "channel-triggered run publish denied (got \(channelRun.statusLabel))"
         )
-        expect(recorder.count == 0, "no provider writes before authorized sends (\(recorder.count))")
+        expect(recorder.sendCount == 0, "no provider writes before authorized sends (\(recorder.sendCount))")
 
         // 3. Autonomous scheduled run: own binding sends, another agent's does not.
         let ownSend = await service.publish(
@@ -742,7 +742,7 @@ public enum AgentChannelEvalHarness {
         } else {
             expect(false, "replayed intent key reported as duplicate (got \(replay.statusLabel))")
         }
-        expect(recorder.count == 1, "exactly one provider write for the repeated intent (\(recorder.count))")
+        expect(recorder.sendCount == 1, "exactly one provider write for the repeated intent (\(recorder.sendCount))")
 
         // 5. Draft and unattended confirm never silently send.
         let draft = await service.publish(
@@ -764,8 +764,8 @@ public enum AgentChannelEvalHarness {
             expect(false, "unattended confirm queued for approval (got \(queued.statusLabel))")
         }
         expect(
-            recorder.count == 1,
-            "draft/confirm modes performed no provider writes (\(recorder.count))"
+            recorder.sendCount == 1,
+            "draft/confirm modes performed no provider writes (\(recorder.sendCount))"
         )
 
         // 6. An ambiguous provider failure (the message MAY have reached the
@@ -780,7 +780,7 @@ public enum AgentChannelEvalHarness {
             resolveConnection: { _ in connection },
             killSwitchSnapshot: { ChannelWriteKillSwitchSnapshot(writeEnabled: true) },
             sender: { _, _ in
-                if failOnce.count == 0 {
+                if failOnce.sendCount == 0 {
                     failOnce.record()
                     throw URLError(.timedOut)
                 }
@@ -814,8 +814,8 @@ public enum AgentChannelEvalHarness {
             )
         }
         expect(
-            ambiguousRecorder.count == 0,
-            "no provider write after an unresolved unknown delivery (\(ambiguousRecorder.count))"
+            ambiguousRecorder.sendCount == 0,
+            "no provider write after an unresolved unknown delivery (\(ambiguousRecorder.sendCount))"
         )
         ambiguousStore.close()
 
@@ -878,8 +878,8 @@ public enum AgentChannelEvalHarness {
             expect(false, "confirm intent queued for stale-approval pin (got \(staleQueued.statusLabel))")
         }
         expect(
-            staleRecorder.count == 0,
-            "no provider write through a repointed approval (\(staleRecorder.count))"
+            staleRecorder.sendCount == 0,
+            "no provider write through a repointed approval (\(staleRecorder.sendCount))"
         )
         staleStore.close()
 
@@ -989,8 +989,8 @@ public enum AgentChannelEvalHarness {
             )
         }
         expect(
-            derivedRecorder.count == 0,
-            "no provider write through a vanished derived destination (\(derivedRecorder.count))"
+            derivedRecorder.sendCount == 0,
+            "no provider write through a vanished derived destination (\(derivedRecorder.sendCount))"
         )
         derivedStore.close()
         let customizedOff = AgentChannelAutoDestinationResolver.effectiveConfiguration(
