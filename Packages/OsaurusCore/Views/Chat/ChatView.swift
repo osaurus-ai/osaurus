@@ -4201,7 +4201,8 @@ final class ChatSession: ObservableObject {
             let prefix = SystemPromptComposer.composeInjectedUserPrefix(
                 memorySection: memorySection,
                 screenContext: screenContext,
-                automationContext: automationContext
+                automationContext: automationContext,
+                timeContext: SystemPromptTemplates.timeContext(now: Date(), timeZone: .current)
             )
         else { return }
         turn.injectedContextPrefix = prefix

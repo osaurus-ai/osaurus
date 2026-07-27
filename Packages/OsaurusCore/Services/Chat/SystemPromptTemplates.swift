@@ -93,6 +93,32 @@ public enum SystemPromptTemplates {
         - `share_artifact(path | content+filename)` — the only way the user sees a file/image; it MUST exist first. Sandbox: save under home, not `/tmp`.
         """
 
+    // MARK: - Time Context
+
+    /// Per-turn current date/time block injected into the latest user
+    /// message alongside memory — never into the system prompt, which must
+    /// stay byte-stable across turns for paged KV-cache reuse (see
+    /// `injectMemoryPrefix`). Without it, small local models burn tool
+    /// turns discovering what "today" means — or worse, hallucinate a date
+    /// — before they can fill absolute date-time tool arguments like a
+    /// reminder's `dueDate` (live-confirmed 2026-07-27: Ornith-9B passed
+    /// `2025-05-15` for "today").
+    public static func timeContext(now: Date, timeZone: TimeZone) -> String {
+        let readable = DateFormatter()
+        readable.locale = Locale(identifier: "en_US_POSIX")
+        readable.timeZone = timeZone
+        readable.dateFormat = "EEEE, MMMM d, yyyy 'at' h:mm a"
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime]
+        iso.timeZone = timeZone
+        return """
+            [Current Time]
+            \(readable.string(from: now)) — \(iso.string(from: now)) (\(timeZone.identifier))
+            Resolve relative dates ("today", "tomorrow at 8 AM") against this, and pass absolute date-times with this UTC offset in tool arguments.
+            [/Current Time]
+            """
+    }
+
     // MARK: - Grounding
 
     /// Anti-fabrication directive injected whenever tools are present

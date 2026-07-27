@@ -2965,6 +2965,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             if let recorded = SystemPromptComposer.applyFrozenMemoryPrefixes(
                 memorySection: composed.memorySection,
                 frozen: frozen,
+                timeContext: SystemPromptTemplates.timeContext(now: Date(), timeZone: .current),
                 into: &enriched.messages
             ) {
                 await SessionToolStateStore.shared.recordUserPrefix(

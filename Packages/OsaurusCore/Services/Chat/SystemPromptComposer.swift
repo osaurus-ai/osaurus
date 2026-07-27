@@ -2671,7 +2671,8 @@ public struct SystemPromptComposer: Sendable {
     static func composeInjectedUserPrefix(
         memorySection: String?,
         screenContext: String?,
-        automationContext: String? = nil
+        automationContext: String? = nil,
+        timeContext: String? = nil
     ) -> String? {
         var prefix = ""
         if let memorySection {
@@ -2684,6 +2685,10 @@ public struct SystemPromptComposer: Sendable {
         }
         if let automationContext {
             let trimmed = automationContext.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { prefix = "\(trimmed)\n\n" + prefix }
+        }
+        if let timeContext {
+            let trimmed = timeContext.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { prefix = "\(trimmed)\n\n" + prefix }
         }
         return prefix.isEmpty ? nil : prefix
@@ -2727,6 +2732,7 @@ public struct SystemPromptComposer: Sendable {
     static func applyFrozenMemoryPrefixes(
         memorySection: String?,
         frozen: [String: String],
+        timeContext: String? = nil,
         into messages: inout [ChatMessage]
     ) -> (key: String, prefix: String)? {
         guard let lastUserIdx = messages.lastIndex(where: { $0.role == "user" }) else { return nil }
@@ -2758,7 +2764,8 @@ public struct SystemPromptComposer: Sendable {
         guard messages[lastUserIdx].contentParts == nil,
             let prefix = composeInjectedUserPrefix(
                 memorySection: memorySection,
-                screenContext: nil
+                screenContext: nil,
+                timeContext: timeContext
             )
         else { return nil }
         prepend(prefix, at: lastUserIdx)
