@@ -23594,7 +23594,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "同时适用于聊天语音输入和转录模式"
+            "value" : "同时适用于聊天语音输入和转写模式"
           }
         },
         "zh-Hant" : {
@@ -26734,7 +26734,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已禁用自动停止。你必须手动停止转录。"
+            "value" : "已禁用自动停止，需手动停止转写。"
           }
         },
         "zh-Hant" : {
@@ -70849,7 +70849,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "仅英文模型。英文转录的最高召回率。"
+            "value" : "仅英文模型。英文转写的最高召回率。"
           }
         },
         "zh-Hant" : {
@@ -99047,7 +99047,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "轻量级模型，用于记忆巩固和转录清理。如未设置，则使用当前聊天模型作为备用。注意：还需在活动智能体上启用工具——请检查“智能体”→“能力”。"
+            "value" : "轻量级模型，用于记忆巩固和转写文本清理。如未设置，则使用当前聊天模型作为备用。注意：还需在活动智能体上启用工具——请前往“智能体”→“能力”查看。"
           }
         },
         "zh-Hant" : {
@@ -155500,7 +155500,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "转录所需"
+            "value" : "转写所需"
           }
         },
         "zh-Hant" : {
@@ -199436,7 +199436,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "转录"
+            "value" : "转写文本"
           }
         },
         "zh-Hant" : {
@@ -199470,7 +199470,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已忘记该转录回合。"
+            "value" : "已忘记该转写回合。"
           }
         },
         "zh-Hant" : {
@@ -199504,7 +199504,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未找到该转录回合。"
+            "value" : "未找到该转写回合。"
           }
         },
         "zh-Hant" : {
@@ -199538,7 +199538,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "转录行没有禁用状态。使用“忘记”来删除该行。"
+            "value" : "转写行没有禁用状态，请使用“忘记”删除该行。"
           }
         },
         "zh-Hant" : {
@@ -211146,7 +211146,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "启用后，按下热键即可开始转录。你的语音将被直接输入到任意应用中处于焦点的文本框内。"
+            "value" : "启用后，按下热键即可开始转写。你的语音将直接输入到任意应用中处于焦点的文本框内。"
           }
         },
         "zh-Hant" : {
