@@ -97,12 +97,17 @@ public final class OnboardingService: ObservableObject {
             return rootDeleted && legacyDeleted
         }.value
 
-        guard didDeleteAll else {
-            print("[OnboardingService] Factory reset aborted: some data could not be wiped.")
-            return
+        // Terminate even when a directory failed to delete. Bailing out here
+        // would leave the "Resetting Osaurus" spinner up forever with no error
+        // path — the app must always exit once the wipe has been attempted,
+        // since the Keychain and UserDefaults are already gone by this point.
+        if !didDeleteAll {
+            print(
+                "[OnboardingService] Factory reset incomplete: some data could not be wiped; terminating anyway."
+            )
+        } else {
+            print("[OnboardingService] Factory reset complete. Terminating via normal flow...")
         }
-
-        print("[OnboardingService] Factory reset complete. Terminating via normal flow...")
 
         // terminate the app normally so cleanup is handled correctly.
         // The synchronous termination teardown can block the main thread for a
