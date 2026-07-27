@@ -386,6 +386,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
 
+        // Pre-warm the open-panel machinery. The first NSOpenPanel init in a
+        // process loads the remote file-picker (ViewBridge) service, which can
+        // take seconds cold — reported as a hang when it happens on the user's
+        // click (folder selection, file attach). Creating one throwaway panel
+        // now moves that one-time cost to launch idle time, a few seconds in,
+        // when the user isn't mid-interaction. Must run on the main thread —
+        // NSOpenPanel is main-thread-only, so the cost can't be moved off it,
+        // only moved earlier.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            _ = NSOpenPanel()
+        }
+
         // VecturaKit inits run sequentially. Memory DB opens first because
         // MemorySearchService.initialize() needs it for reverse maps.
         // MetalGate serializes CoreML/MLX at runtime; this task is only held
