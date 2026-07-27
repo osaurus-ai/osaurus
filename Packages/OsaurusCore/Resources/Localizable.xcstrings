@@ -40248,10 +40248,72 @@
       }
     },
     "Clearing browser data" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Browserdaten werden gelöscht"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브라우저 데이터 지우는 중"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Очистка данных браузера"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在清除浏览器数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在清除瀏覽器資料"
+          }
+        }
+      }
     },
     "Clearing preferences" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einstellungen werden gelöscht"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "환경설정 지우는 중"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Очистка настроек"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在清除偏好设置"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在清除偏好設定"
+          }
+        }
+      }
     },
     "Click" : {
       "shouldTranslate" : false
@@ -57942,7 +58004,38 @@
       }
     },
     "Deleting app data" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App-Daten werden gelöscht"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "앱 데이터 삭제 중"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удаление данных приложения"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在删除应用数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在刪除 App 資料"
+          }
+        }
+      }
     },
     "Deleting data and preferences. Please wait…" : {
       "localizations" : {
@@ -73526,7 +73619,38 @@
       }
     },
     "Factory Reset Incomplete" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zurücksetzen unvollständig"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "공장 초기화 미완료"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сброс к заводским настройкам не завершён"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "恢复出厂设置未完成"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回復原廠設定未完成"
+          }
+        }
+      }
     },
     "Factory Reset Osaurus?" : {
       "localizations" : {
@@ -125277,7 +125401,38 @@
       }
     },
     "Osaurus will now quit. You can delete the listed items manually in Finder." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus wird jetzt beendet. Sie können die aufgeführten Objekte manuell im Finder löschen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus가 곧 종료됩니다. 나열된 항목은 Finder에서 직접 삭제할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus сейчас завершит работу. Перечисленные объекты можно удалить вручную в Finder."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 即将退出。您可以在“访达”中手动删除所列项目。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 即將結束。您可以在 Finder 中手動刪除所列項目。"
+          }
+        }
+      }
     },
     "Osaurus will re-encrypt your databases and attachments with SQLCipher using a key stored in your macOS Keychain. If that key is ever lost — wiping the Keychain, re-signing the app, or migrating Macs without iCloud Keychain — the encrypted data becomes unrecoverable. Keep a plaintext backup if you rely on this data." : {
       "comment" : "A message in an alert that explains the purpose of encrypting local data at rest.",
@@ -141202,7 +141357,38 @@
       }
     },
     "Quitting Osaurus" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus wird beendet"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 종료 중"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завершение Osaurus"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在退出 Osaurus"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在結束 Osaurus"
+          }
+        }
+      }
     },
     "RAM" : {
       "localizations" : {
@@ -148480,7 +148666,38 @@
       }
     },
     "Removing Keychain secrets" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schlüsselbund-Einträge werden entfernt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "키체인 비밀 정보 제거 중"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удаление секретов из Связки ключей"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在移除钥匙串密钥"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在移除鑰匙圈密鑰"
+          }
+        }
+      }
     },
     "Removing..." : {
       "localizations" : {
@@ -183285,7 +183502,38 @@
       }
     },
     "The app was reset, but a copy of your old data could not be deleted and remains at:\n%@" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die App wurde zurückgesetzt, aber eine Kopie Ihrer alten Daten konnte nicht gelöscht werden und verbleibt unter:\n%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "앱은 초기화되었지만 이전 데이터의 사본을 삭제할 수 없어 다음 위치에 남아 있습니다:\n%@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Приложение было сброшено, но копию ваших старых данных не удалось удалить, она осталась по пути:\n%@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "应用已重置，但无法删除旧数据的副本，其仍保留在：\n%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App 已重置，但無法刪除舊資料的副本，其仍保留於：\n%@"
+          }
+        }
+      }
     },
     "The AppleScript model stays loaded briefly after a run so back-to-back automations are faster." : {
       "localizations" : {
@@ -208209,7 +208457,38 @@
       }
     },
     "Your data could not be removed and remains at:\n%@" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ihre Daten konnten nicht entfernt werden und verbleiben unter:\n%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "데이터를 제거할 수 없어 다음 위치에 남아 있습니다:\n%@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось удалить ваши данные, они остались по пути:\n%@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法移除您的数据，数据仍保留在：\n%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法移除您的資料，資料仍保留於：\n%@"
+          }
+        }
+      }
     },
     "Your data is encrypted at rest. No action needed." : {
       "extractionState" : "manual",
