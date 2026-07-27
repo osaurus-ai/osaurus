@@ -59,7 +59,7 @@ find_metallib_source() {
     "${HOME}"/Library/Developer/Xcode/DerivedData/osaurus-*/Build/Products/*/osaurus.app/Contents/Resources/default.metallib
   )
   local c
-  for c in "${cands[@]}"; do
+  for c in "${cands[@]-}"; do
     [[ -f "${c}" ]] && { printf '%s' "${c}"; return 0; }
   done
   return 1

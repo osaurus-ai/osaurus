@@ -126,6 +126,31 @@ struct AgentLoopCacheProofCampaignTests {
         #expect(expectation.requirePrefillProgressAccounting == true)
     }
 
+    @Test func settingsRevisionCaseRejectsStaleWarmupAndRestoresNewestRevision() throws {
+        let suite = try EvalSuite.load(
+            from: Self.packageRoot.appendingPathComponent("Suites/CacheProof")
+        )
+        let testCase = try #require(
+            suite.cases.first {
+                $0.id == "cache_proof.settings-prompt-revision"
+            }
+        )
+        let expectation = try #require(testCase.expect.cacheProof)
+
+        #expect(expectation.startNewSessionBeforeTurns == [2, 3])
+        #expect(expectation.systemPromptsPerSession?.count == 3)
+        #expect(expectation.systemPromptsPerSession?[0] != expectation.systemPromptsPerSession?[1])
+        #expect(expectation.systemPromptsPerSession?[1] == expectation.systemPromptsPerSession?[2])
+        #expect(expectation.requireNoCacheRestoreOnTurns == [2])
+        #expect(expectation.requireDiskCacheRestoreOnTurns == [3])
+        #expect(expectation.requirePartialCacheRestoreOnTurns == [3])
+        #expect(expectation.minCacheRestoredTokens == 64)
+        #expect(expectation.requireFinalDiskCacheRestore == true)
+        #expect(expectation.requirePrefillProgressAccounting == true)
+        #expect(expectation.requireNonEmptyVisibleTurns == true)
+        #expect(expectation.requireClosedReasoning == true)
+    }
+
     @MainActor
     @Test func repeatedCacheProofTrialsReceiveDistinctButInternallyStableNamespaces() {
         let first = EvalRunner.cacheProofTrialInputs(

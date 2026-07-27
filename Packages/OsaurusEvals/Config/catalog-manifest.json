@@ -178,6 +178,7 @@
       "cache_proof.identical-query-replay",
       "cache_proof.prefix-reuse-second-turn",
       "cache_proof.prefix-reuse-three-turns",
+      "cache_proof.settings-prompt-revision",
       "cache_proof.thinking-toggle-boundary"
     ],
     "CapabilityClaims" : [

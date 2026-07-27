@@ -832,6 +832,12 @@ that explicitly target those tiers.
   monotonic completed counts, restore-to-prefill continuity, and a terminal
   `complete == total` frame on every turn.
 - `requireFinalDiskCacheRestore` pins the final turn to the SSD tier.
+- `requireNoCacheRestoreOnTurns` pins incompatible prompt/config revisions to
+  zero restored tokens instead of accepting a stale checkpoint.
+- `requireDiskCacheRestoreOnTurns` and
+  `requirePartialCacheRestoreOnTurns` identify the exact turns that must
+  restore the newest compatible SSD state and still prefill their divergent
+  tail.
 - `minFinalRestoreGainTokens` compares the final two typed restore counts so a
   test can prove the runtime chose a newly stored longer valid prefix instead
   of repeatedly restoring an older shorter candidate.

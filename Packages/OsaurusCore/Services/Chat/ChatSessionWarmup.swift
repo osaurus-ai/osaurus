@@ -220,7 +220,6 @@ extension ChatSession: ChatWarmupSessionContext {
     }
 
     func invalidateWarmupAfterContextShapeChange() {
-        warmupController.invalidateWarmState()
-        warmupController.scheduleWarmup(session: self)
+        warmupController.handleContextShapeChange(session: self)
     }
 }

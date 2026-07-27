@@ -493,7 +493,13 @@ final class ChatWindowState: ObservableObject {
         cachedSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: agentId)
         cachedActiveAgent = agents.first { $0.id == agentId } ?? .default
         cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
-        session.invalidateTokenCache()
+        // `.appConfigurationChanged` also feeds ChatSession's prompt-shape
+        // detector. Keep its old preview bytes until that detector compares
+        // them with the newly persisted Default-agent configuration. Clearing
+        // the preview here allowed the intervening SwiftUI redraw to cache
+        // the new bytes first, hiding the change and leaving a stale green
+        // warm-prefix claim for the next send.
+        session.invalidateTokenCache(preservingPromptShapeBaseline: true)
     }
 
     func refreshAll() async {
@@ -628,7 +634,11 @@ final class ChatWindowState: ObservableObject {
         if !newActive.isBuiltIn {
             cachedSystemPrompt = newActive.systemPrompt
         }
-        session.invalidateTokenCache()
+        // The matching `.agentUpdated` / prompt-shape signal must compare the
+        // old preview against this newly published agent. Preserve that
+        // baseline across the immediate window-state refresh; otherwise a
+        // view redraw can consume the new shape before the detector runs.
+        session.invalidateTokenCache(preservingPromptShapeBaseline: true)
 
         if newActive.themeId != oldActive.themeId {
             refreshTheme()

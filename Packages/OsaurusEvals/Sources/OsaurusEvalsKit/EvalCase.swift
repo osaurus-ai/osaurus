@@ -896,6 +896,17 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let minStructuredCacheRestoreTurns: Int?
         /// Require the final turn's typed restore event to identify disk.
         public let requireFinalDiskCacheRestore: Bool?
+        /// One-based turns that must not report any restored prompt tokens.
+        /// Used when a prompt/config revision diverges before the first
+        /// cacheable block: accepting an older full checkpoint is stale-state
+        /// reuse, not a speedup.
+        public let requireNoCacheRestoreOnTurns: [Int]?
+        /// One-based turns that must report a nonzero typed restore from the
+        /// disk tier.
+        public let requireDiskCacheRestoreOnTurns: [Int]?
+        /// One-based turns that must restore a nonzero compatible prefix and
+        /// still prefill a nonzero divergent tail.
+        public let requirePartialCacheRestoreOnTurns: [Int]?
         /// Minimum final-turn restore gain over the immediately preceding
         /// turn. Used by the three-session longest-match case: after both a
         /// short and a longer prefix have been persisted, the final request
@@ -933,6 +944,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             requireDiskCacheRestore: Bool? = nil,
             minStructuredCacheRestoreTurns: Int? = nil,
             requireFinalDiskCacheRestore: Bool? = nil,
+            requireNoCacheRestoreOnTurns: [Int]? = nil,
+            requireDiskCacheRestoreOnTurns: [Int]? = nil,
+            requirePartialCacheRestoreOnTurns: [Int]? = nil,
             minFinalRestoreGainTokens: Int? = nil,
             requirePrefillProgressAccounting: Bool? = nil,
             requireNonEmptyVisibleTurns: Bool? = nil,
@@ -959,6 +973,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.requireDiskCacheRestore = requireDiskCacheRestore
             self.minStructuredCacheRestoreTurns = minStructuredCacheRestoreTurns
             self.requireFinalDiskCacheRestore = requireFinalDiskCacheRestore
+            self.requireNoCacheRestoreOnTurns = requireNoCacheRestoreOnTurns
+            self.requireDiskCacheRestoreOnTurns = requireDiskCacheRestoreOnTurns
+            self.requirePartialCacheRestoreOnTurns = requirePartialCacheRestoreOnTurns
             self.minFinalRestoreGainTokens = minFinalRestoreGainTokens
             self.requirePrefillProgressAccounting = requirePrefillProgressAccounting
             self.requireNonEmptyVisibleTurns = requireNonEmptyVisibleTurns

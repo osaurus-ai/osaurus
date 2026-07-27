@@ -164,6 +164,18 @@ private struct EmptyStateContent: View, Equatable {
 
 @MainActor
 final class ChatSession: ObservableObject {
+    /// Notifications whose source data can rewrite the composed system/tool
+    /// prompt. Kept as one testable inventory so a new settings surface
+    /// cannot refresh only its display cache while leaving warm-up state on
+    /// the previous rendered bytes.
+    static let promptShapeNotificationNames: [Notification.Name] = [
+        .agentUpdated,
+        .activeAgentChanged,
+        .toolsListChanged,
+        .appConfigurationChanged,
+        .agentChannelConfigurationChanged,
+    ]
+
     @Published var turns: [ChatTurn] = []
     @Published var isStreaming: Bool = false {
         didSet {
@@ -843,14 +855,12 @@ final class ChatSession: ObservableObject {
             NotificationCenter.default.publisher(for: $0)
                 .map { _ in () }.eraseToAnyPublisher()
         }
-        let budgetSignals: [AnyPublisher<Void, Never>] = [
-            voidNotification(.agentUpdated),
-            voidNotification(.activeAgentChanged),
-            voidNotification(.toolsListChanged),
-            // Channel destination edits rewrite the channel-destinations
-            // dynamic prompt section (and can add/remove the publish tool),
-            // so a stale warm-up must be dropped and re-warmed promptly.
-            voidNotification(.agentChannelConfigurationChanged),
+        // Channel destination edits rewrite a dynamic prompt section;
+        // Default-agent and global chat settings rewrite system/tool policy.
+        // All are equality-guarded by `recomputePreviewContext`, so unrelated
+        // settings notifications remain no-ops after recomposition.
+        let budgetSignals: [AnyPublisher<Void, Never>] =
+            Self.promptShapeNotificationNames.map(voidNotification) + [
             folderState.objectWillChange
                 .map { _ in () }.eraseToAnyPublisher(),
             $selectedModel.map { _ in () }.eraseToAnyPublisher(),
@@ -1925,6 +1935,8 @@ final class ChatSession: ObservableObject {
         // starts (a warm-up that already reached generation is covered by
         // the await below and only pre-warms this send's own prefix).
         warmupController.cancelScheduledWarmup()
+        await warmupController.awaitRequiredContextWarmup()
+        guard !Task.isCancelled else { return false }
         await warmupController.awaitInFlightWarmup()
         return !Task.isCancelled
     }
@@ -2423,10 +2435,21 @@ final class ChatSession: ObservableObject {
         generativeGreetingState = .idle
     }
 
-    /// Invalidate the token cache (called when tools/skills change)
-    func invalidateTokenCache() {
+    /// Invalidate send-time token accounting (called when tools/skills or
+    /// agent configuration change).
+    ///
+    /// Prompt-shape notifications need the previous preview bytes as their
+    /// comparison baseline. When a settings observer clears that baseline,
+    /// SwiftUI can lazily compose the new preview during the intervening
+    /// redraw; the later equality detector then compares new-to-new and
+    /// leaves a stale warm-prefix claim green. Observer-driven source changes
+    /// therefore preserve the preview until `recomputePreviewContext()` has
+    /// compared it with the newly composed bytes.
+    func invalidateTokenCache(preservingPromptShapeBaseline: Bool = false) {
         cachedContext = nil
-        cachedPreviewContext = nil
+        if !preservingPromptShapeBaseline {
+            cachedPreviewContext = nil
+        }
         budgetTracker.clear()
         objectWillChange.send()
     }
@@ -2448,6 +2471,14 @@ final class ChatSession: ObservableObject {
         @discardableResult
         func resyncBudgetEstimateForTests() -> Bool {
             recomputePreviewContext()
+        }
+
+        /// Test seam for the authoritative pre-send prompt reconciliation.
+        /// Unlike the 80 ms UI-estimate debounce, this runs synchronously and
+        /// therefore covers a Settings Save -> immediate Send sequence.
+        @discardableResult
+        func reconcilePromptShapeBeforeSendForTests() -> Bool {
+            reconcilePromptShapeBeforeSend()
         }
     #endif
 
@@ -2711,11 +2742,18 @@ final class ChatSession: ObservableObject {
     /// folder / model signals that feed the pipeline, and doing the
     /// `MemoryContextAssembler` read here once per signal, multiplied across
     /// open chat windows, saturated the cooperative pool (see #1324).
-    private func refreshPreviewEstimate() {
+    @discardableResult
+    private func reconcilePromptShapeBeforeSend() -> Bool {
         if recomputePreviewContext() {
             invalidateWarmupAfterContextShapeChange()
             objectWillChange.send()
+            return true
         }
+        return false
+    }
+
+    private func refreshPreviewEstimate() {
+        reconcilePromptShapeBeforeSend()
     }
 
     /// Re-resolve every input the welcome-screen preview estimate needs —
@@ -4246,6 +4284,18 @@ final class ChatSession: ObservableObject {
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
         }
+
+        // Settings notifications intentionally debounce preview work by 80 ms
+        // to coalesce UI churn. A user can still click Send inside that
+        // window. Recompose from the authoritative stores *before* deciding
+        // whether a warm-up handshake is needed; if the rendered bytes
+        // changed, this synchronously invalidates the stale green claim and
+        // creates required rewarm work that the send below must await.
+        //
+        // This is an equality-guarded source reconciliation, not a blind
+        // delay. The later debounced notification observes the same bytes and
+        // becomes a no-op.
+        reconcilePromptShapeBeforeSend()
 
         // A scheduled-but-not-started warm-up must not fire mid-run.
         warmupController.cancelScheduledWarmup()

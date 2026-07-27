@@ -98,9 +98,13 @@ let package = Package(
         // prefill crosses it for standalone rotating/SWA cache topologies.
         // This preserves the existing fail-closed post-hoc rederive guard
         // while allowing a later compatible turn to restore the longer seed.
+        // vmlx-swift#191 preserves canonical scalar content for Gemma 4
+        // text-only system/developer turns. Real bundle templates otherwise
+        // omit prompt-affecting settings text and can accept an incompatible
+        // SSD checkpoint because distinct revisions tokenize identically.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "d2f6f98265fabe2f017a9eb4af237b962154228a"
+            revision: "5aa5f160725187d327449628709d472add127541"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

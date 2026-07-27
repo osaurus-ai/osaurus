@@ -88,6 +88,13 @@ final class ChatWarmupController: ObservableObject {
     private var scheduleTask: Task<Void, Never>?
     private var inFlightWarmup: Task<Void, Never>?
     private var inFlightWarmupID: UUID?
+    /// A prompt-shape change is different from an idle speculative warm-up:
+    /// the next real send is known to need these exact rendered bytes. Track
+    /// that rewarm separately so `send()` can keep cancelling ordinary
+    /// scheduled work without cancelling the only warm-up for a freshly
+    /// changed system prompt.
+    private var requiredContextWarmup: Task<Void, Never>?
+    private var requiredContextWarmupID: UUID?
     /// The model of the most recent user-driven selection change. A warm-up
     /// for this model may displace a resident model; all other (speculative)
     /// warm-ups may only fill an empty slot — see `performWarmup`.
@@ -126,6 +133,7 @@ final class ChatWarmupController: ObservableObject {
         scheduleTask?.cancel()
         activeModelSwitch?.cancel()
         inFlightWarmup?.cancel()
+        requiredContextWarmup?.cancel()
         retiringWork?.cancel()
     }
 
@@ -142,6 +150,7 @@ final class ChatWarmupController: ObservableObject {
         scheduleTask?.cancel()
         activeModelSwitch?.cancel()
         inFlightWarmup?.cancel()
+        requiredContextWarmup?.cancel()
 
         let previousRetiringWork = retiringWork
         let retiringSwitch = activeModelSwitch
@@ -164,6 +173,8 @@ final class ChatWarmupController: ObservableObject {
         activeModelSwitchID = nil
         inFlightWarmup = nil
         inFlightWarmupID = nil
+        requiredContextWarmup = nil
+        requiredContextWarmupID = nil
         userIntentWarmupModel = nil
         warmedFingerprint = nil
         state = .cold
@@ -174,6 +185,43 @@ final class ChatWarmupController: ObservableObject {
     func invalidateWarmState() {
         warmedFingerprint = nil
         if state == .warm { state = .cold }
+    }
+
+    /// Rewarm a newly composed prompt shape and make that work part of the
+    /// pre-send handshake. Unlike an idle `scheduleWarmup`, this task is not
+    /// cancelled by `send()` before dispatch: doing so made a settings edit
+    /// reliably fall back to a visible full cold prefill whenever the user
+    /// returned to chat inside the normal debounce window.
+    func handleContextShapeChange(session: ChatWarmupSessionContext) {
+        guard !isShutDown else { return }
+
+        invalidateWarmState()
+        cancelScheduledWarmup()
+
+        let previousRequiredWarmup = requiredContextWarmup
+        previousRequiredWarmup?.cancel()
+
+        let id = UUID()
+        requiredContextWarmupID = id
+        requiredContextWarmup = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.requiredContextWarmupID == id {
+                    self.requiredContextWarmup = nil
+                    self.requiredContextWarmupID = nil
+                }
+            }
+
+            // A prior prompt edit may already have reached generation. Let
+            // that cancellation unwind before composing the latest payload;
+            // `performWarmup` will then compare the current full-prompt
+            // fingerprint and issue a second warm-up only when necessary.
+            await previousRequiredWarmup?.value
+            guard !Task.isCancelled else { return }
+            await self.activeModelSwitch?.value
+            guard !Task.isCancelled else { return }
+            await self.performWarmup(session: session)
+        }
     }
 
     /// A load from another surface (HTTP, plugin, subagent, another window)
@@ -381,7 +429,10 @@ final class ChatWarmupController: ObservableObject {
     /// When false, sends can dispatch synchronously — preserving the
     /// "user turn is appended synchronously inside send()" contract.
     var needsPreSendHandshake: Bool {
-        retiringWork != nil || activeModelSwitch != nil || inFlightWarmup != nil
+        retiringWork != nil
+            || activeModelSwitch != nil
+            || inFlightWarmup != nil
+            || requiredContextWarmup != nil
     }
 
     /// Drop a scheduled-but-not-started warm-up so it can't fire mid-run.
@@ -399,7 +450,10 @@ final class ChatWarmupController: ObservableObject {
     /// resumes after Stop.
     func cancelPendingWorkForUserStop() {
         let hadPendingWork =
-            scheduleTask != nil || activeModelSwitch != nil || inFlightWarmup != nil
+            scheduleTask != nil
+            || activeModelSwitch != nil
+            || inFlightWarmup != nil
+            || requiredContextWarmup != nil
         guard hadPendingWork else { return }
 
         switchEpoch &+= 1
@@ -407,6 +461,7 @@ final class ChatWarmupController: ObservableObject {
         scheduleTask = nil
         activeModelSwitch?.cancel()
         inFlightWarmup?.cancel()
+        requiredContextWarmup?.cancel()
         userIntentWarmupModel = nil
         warmedFingerprint = nil
         state = .cold
@@ -418,6 +473,11 @@ final class ChatWarmupController: ObservableObject {
     /// makes the real request prefix-hit — the effective "resume".
     func awaitInFlightWarmup() async {
         await inFlightWarmup?.value
+    }
+
+    /// Wait for a prompt-shape rewarm that the next send depends on.
+    func awaitRequiredContextWarmup() async {
+        await requiredContextWarmup?.value
     }
 
     // MARK: - Private

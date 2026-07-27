@@ -264,6 +264,45 @@ extension EvalRunner {
                     + "(restore=\(restored), tier=\(tier ?? "none"))"
             )
         }
+        for turnNumber in exp.requireNoCacheRestoreOnTurns ?? [] {
+            let turn = turnMetrics.first { $0.turnNumber == turnNumber }
+            let restored = turn?.cacheRestoredTokens ?? 0
+            check(
+                turn != nil && restored == 0,
+                pass: "turn \(turnNumber) rejected incompatible cached prompt state",
+                fail: turn == nil
+                    ? "turn \(turnNumber) has no typed metrics"
+                    : "turn \(turnNumber) restored \(restored) token(s) despite an "
+                        + "incompatible prompt revision"
+            )
+        }
+        for turnNumber in exp.requireDiskCacheRestoreOnTurns ?? [] {
+            let turn = turnMetrics.first { $0.turnNumber == turnNumber }
+            let restored = turn?.cacheRestoredTokens ?? 0
+            let tier = turn?.cacheRestoreDetail?.lowercased()
+            check(
+                turn != nil && restored > 0 && tier == "disk",
+                pass: "turn \(turnNumber) restored \(restored) tokens from disk",
+                fail: turn == nil
+                    ? "turn \(turnNumber) has no typed metrics"
+                    : "turn \(turnNumber) did not restore from disk "
+                        + "(restore=\(restored), tier=\(tier ?? "none"))"
+            )
+        }
+        for turnNumber in exp.requirePartialCacheRestoreOnTurns ?? [] {
+            let turn = turnMetrics.first { $0.turnNumber == turnNumber }
+            let restored = turn?.cacheRestoredTokens ?? 0
+            let remaining = turn?.remainingPrefillTokens ?? 0
+            check(
+                turn != nil && restored > 0 && remaining > 0,
+                pass: "turn \(turnNumber) partially restored \(restored) tokens and "
+                    + "prefilled \(remaining)",
+                fail: turn == nil
+                    ? "turn \(turnNumber) has no typed metrics"
+                    : "turn \(turnNumber) lacked a partial restore "
+                        + "(restore=\(restored), remaining=\(remaining))"
+            )
+        }
         if let floor = exp.minFinalRestoreGainTokens {
             let previous = turnMetrics.dropLast().last?.cacheRestoredTokens
             let final = turnMetrics.last?.cacheRestoredTokens
