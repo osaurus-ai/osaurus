@@ -82,11 +82,23 @@ public final class OnboardingService: ObservableObject {
         let legacyRoot = supportDir.appendingPathComponent("com.dinoki.osaurus", isDirectory: true)
 
         let didDeleteAll = await Task.detached(priority: .userInitiated) { () -> Bool in
-            // helper to delete a directory with robust logging and error handling
+            // helper to delete a directory with robust logging and error handling.
+            //
+            // Rename-then-delete: live services (server, SQLite WAL writers,
+            // watchers) can still be writing into these trees. A file recreated
+            // while `removeItem` walks the directory fails the whole removal
+            // with "directory not empty". The rename is atomic, so writers
+            // can't interrupt it; deleting the renamed tree then races nobody.
             let deleteDir = { (url: URL, label: String) -> Bool in
                 do {
                     if fm.fileExists(atPath: url.path) {
-                        try fm.removeItem(at: url)
+                        let doomed = url.deletingLastPathComponent()
+                            .appendingPathComponent(
+                                ".\(url.lastPathComponent).factory-reset-\(ProcessInfo.processInfo.processIdentifier)",
+                                isDirectory: true
+                            )
+                        try fm.moveItem(at: url, to: doomed)
+                        try fm.removeItem(at: doomed)
                         print("[OnboardingService] Deleted \(label) directory: \(url.path)")
                     } else {
                         print("[OnboardingService] \(label.capitalized) directory did not exist: \(url.path)")
