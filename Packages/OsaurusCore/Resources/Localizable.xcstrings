@@ -3659,13 +3659,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允许 %1%lld 个 · %2$lld 人"
+            "value" : "允许 %1$lld 个 · %2$lld 人"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允許 %1%lld 個 · %2$lld 人"
+            "value" : "允許 %1$lld 個 · %2$lld 人"
           }
         }
       }
