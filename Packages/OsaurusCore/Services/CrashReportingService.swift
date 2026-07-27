@@ -152,11 +152,21 @@ public final class CrashReportingService {
     /// identifiers only) without instrumenting every call site twice.
     public nonisolated static func recordBreadcrumb(category: String, message: String) {
         guard SentrySDK.isEnabled else { return }
-        let crumb = Breadcrumb(level: .info, category: category)
-        crumb.message = message
-        SentrySDK.addBreadcrumb(crumb)
-        SentrySDK.logger.info(message, attributes: ["category": category])
+        // Serialize/record off the caller's thread: `addBreadcrumb` serializes
+        // the crumb (including an ICU date-format of its timestamp), which has
+        // stalled the main thread for seconds under memory pressure. The
+        // serial queue preserves breadcrumb ordering; the timestamp is stamped
+        // at `Breadcrumb` init inside the block, a few ms after the call.
+        breadcrumbQueue.async {
+            let crumb = Breadcrumb(level: .info, category: category)
+            crumb.message = message
+            SentrySDK.addBreadcrumb(crumb)
+            SentrySDK.logger.info(message, attributes: ["category": category])
+        }
     }
+
+    private nonisolated static let breadcrumbQueue = DispatchQueue(
+        label: "com.dinoki.osaurus.crash-breadcrumbs", qos: .utility)
 
     // MARK: - DSN resolution
 
