@@ -11935,7 +11935,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已配置域名允许列表，但此沙盒无法强制执行 — 网络将保持完全阻断。清除代理的允许域名以恢复出站访问。"
+            "value" : "已配置域名允许列表，但此沙盒无法强制执行 — 网络将保持完全阻断。清除智能体的允许域名以恢复出站访问。"
           }
         },
         "zh-Hant" : {
@@ -17028,7 +17028,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理通道连接 `%1$@` 不支持 `%2$@`。"
+            "value" : "智能体频道连接 `%1$@` 不支持 `%2$@`。"
           }
         },
         "zh-Hant" : {
@@ -17062,7 +17062,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理通道连接 `%@` 已禁用。"
+            "value" : "智能体频道连接 `%@` 已禁用。"
           }
         },
         "zh-Hant" : {
@@ -17096,7 +17096,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理通道连接 `%@` 未配置。"
+            "value" : "智能体频道连接 `%@` 未配置。"
           }
         },
         "zh-Hant" : {
@@ -17130,7 +17130,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理通道类型 `%@` 尚不可执行。"
+            "value" : "智能体频道类型 `%@` 尚不可执行。"
           }
         },
         "zh-Hant" : {
@@ -17305,7 +17305,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理正在使用中"
+            "value" : "智能体正在使用中"
           }
         },
         "zh-Hant" : {
@@ -17479,7 +17479,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理会话"
+            "value" : "智能体会话"
           }
         },
         "zh-Hant" : {
@@ -17767,7 +17767,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理会标记看起来过期的文档。维护者代理会在此提出修复建议供你批准——在你批准之前不会有任何更改。"
+            "value" : "智能体会标记看起来过期的文档。维护者智能体会在此提出修复建议供你批准——在你批准之前不会有任何更改。"
           }
         },
         "zh-Hant" : {
@@ -17801,7 +17801,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理可以向写入允许列表中的目标发送消息。"
+            "value" : "智能体可以向写入允许列表中的目标发送消息。"
           }
         },
         "zh-Hant" : {
@@ -19939,7 +19939,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允许代理频道诊断和工具解析此频道定义。"
+            "value" : "允许智能体频道诊断和工具解析此频道定义。"
           }
         },
         "zh-Hant" : {
@@ -32041,7 +32041,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "浏览器使用默认关闭，只能为自定义代理启用 — 内置的默认代理永远不会获得浏览器访问权限。"
+            "value" : "浏览器使用默认关闭，只能为自定义智能体启用 — 内置的默认智能体永远不会获得浏览器访问权限。"
           }
         },
         "zh-Hant" : {
@@ -35992,7 +35992,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理可以读取或搜索的频道或房间 ID。"
+            "value" : "智能体可以读取或搜索的频道或房间 ID。"
           }
         },
         "zh-Hant" : {
@@ -36026,7 +36026,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "启用写入时，代理可以写入的频道或房间 ID。"
+            "value" : "启用写入时，智能体可以写入的频道或房间 ID。"
           }
         },
         "zh-Hant" : {
@@ -36128,7 +36128,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理可以列出、读取和搜索的频道。"
+            "value" : "智能体可以列出、读取和搜索的频道。"
           }
         },
         "zh-Hant" : {
@@ -36233,7 +36233,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理可以发布的频道或线程。"
+            "value" : "智能体可以发布的频道或线程。"
           }
         },
         "zh-Hant" : {
@@ -36267,7 +36267,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理可以读取和搜索的频道或线程。"
+            "value" : "智能体可以读取和搜索的频道或线程。"
           }
         },
         "zh-Hant" : {
@@ -37128,7 +37128,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理可以发布的聊天。"
+            "value" : "智能体可以发布的聊天。"
           }
         },
         "zh-Hant" : {
@@ -39249,7 +39249,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择代理可以使用哪些工具"
+            "value" : "选择智能体可以使用哪些工具"
           }
         },
         "zh-Hant" : {
@@ -40911,7 +40911,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "关闭代理标签页"
+            "value" : "关闭智能体标签页"
           }
         },
         "zh-Hant" : {
@@ -40947,7 +40947,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "关闭代理标签页？"
+            "value" : "关闭智能体标签页？"
           }
         },
         "zh-Hant" : {
@@ -51527,7 +51527,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "创建工具或导入 JSON 配方。自定义工具在代理首次使用时会自动设置。"
+            "value" : "创建工具或导入 JSON 配方。自定义工具在智能体首次使用时会自动设置。"
           }
         },
         "zh-Hant" : {
@@ -53305,7 +53305,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理可按需查阅的精选参考资料。"
+            "value" : "智能体可按需查阅的精选参考资料。"
           }
         },
         "zh-Hant" : {
@@ -56374,7 +56374,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AI 生成问候语和快速操作的默认语音。在代理的外观选项卡中按代理开启问候语，每个代理也可以覆盖此语音。"
+            "value" : "AI 生成问候语和快速操作的默认语音。在智能体的外观选项卡中按智能体开启问候语，每个智能体也可以覆盖此语音。"
           }
         },
         "zh-Hant" : {
@@ -57924,7 +57924,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理仍可恢复的已删除行。"
+            "value" : "智能体仍可恢复的已删除行。"
           }
         },
         "zh-Hant" : {
@@ -70249,7 +70249,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每个文档都有类别，来自其前置元数据 `type:` 或从其文件夹名称推断。代理可以按类别过滤此集合。"
+            "value" : "每个文档都有类别，来自其前置元数据 `type:` 或从其文件夹名称推断。智能体可以按类别过滤此集合。"
           }
         },
         "zh-Hant" : {
@@ -70496,7 +70496,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理可以使用的所有内容，按每个工具的来源分组"
+            "value" : "智能体可以使用的所有内容，按每个工具的来源分组"
           }
         },
         "zh-Hant" : {
@@ -71272,7 +71272,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "实验性功能：从每个代理自己的基础镜像写时复制克隆启动，使系统包在每个代理之间独立保留"
+            "value" : "实验性功能：从每个智能体自己的基础镜像写时复制克隆启动，使系统包按智能体独立保留"
           }
         },
         "zh-Hant" : {
@@ -76316,7 +76316,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "供代理按需搜索和阅读的文档文件夹"
+            "value" : "供智能体按需搜索和阅读的文档文件夹"
           }
         },
         "zh-Hant" : {
@@ -81122,7 +81122,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "授予一个 macOS 文件夹的访问权限，包括通过认证的远程代理运行。写入保留在文件夹内；shell 和 git 保持禁用。"
+            "value" : "授予一个 macOS 文件夹的访问权限，包括通过认证的远程智能体运行。写入保留在文件夹内；shell 和 git 保持禁用。"
           }
         },
         "zh-Hant" : {
@@ -91958,7 +91958,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将已授权的 Telegram 更新保留在本地收件箱中，以便代理可以读取和搜索它们。"
+            "value" : "将已授权的 Telegram 更新保留在本地收件箱中，以便智能体可以读取和搜索它们。"
           }
         },
         "zh-Hant" : {
@@ -94319,7 +94319,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让代理在其自己的持久会话中浏览网页"
+            "value" : "让智能体在自己的持久会话中浏览网页"
           }
         },
         "zh-Hant" : {
@@ -94389,7 +94389,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允许代理发布到写入允许列表的 Discord 目标。频道写入也必须全局开启。"
+            "value" : "允许智能体发布到写入允许列表的 Discord 目标。频道写入也必须全局开启。"
           }
         },
         "zh-Hant" : {
@@ -94423,7 +94423,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允许代理发布到写入允许列表的 Slack 频道。频道写入也必须全局开启。"
+            "value" : "允许智能体发布到写入允许列表的 Slack 频道。频道写入也必须全局开启。"
           }
         },
         "zh-Hant" : {
@@ -94457,7 +94457,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允许代理发布到写入允许列表的 Telegram 聊天。频道写入也必须全局开启。"
+            "value" : "允许智能体发布到写入允许列表的 Telegram 聊天。频道写入也必须全局开启。"
           }
         },
         "zh-Hant" : {
@@ -94491,7 +94491,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允许代理在 Discord、Slack 和 Telegram 上读取和回复"
+            "value" : "允许智能体在 Discord、Slack 和 Telegram 上读取和回复"
           }
         },
         "zh-Hant" : {
@@ -94668,7 +94668,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让派生的工作代理自行读取文件（file_read / file_search），避免批量读取占用此代理的上下文。"
+            "value" : "让派生的工作智能体自行读取文件（file_read / file_search），避免批量读取占用此智能体的上下文。"
           }
         },
         "zh-Hant" : {
@@ -94775,7 +94775,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让代理在其自己的持久浏览器会话中浏览网页 — 登录状态在聊天之间保持。读取和导航自动运行；输入和任何重要操作会暂停等待您的批准。"
+            "value" : "让智能体在自己的持久浏览器会话中浏览网页 — 登录状态在聊天之间保持。读取和导航自动运行；输入和任何重要操作会暂停等待你的批准。"
           }
         },
         "zh-Hant" : {
@@ -95134,7 +95134,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允许代理搜索和阅读下方授权的知识集合：精选指南、模板和规范。与记忆不同，知识由你编辑，代理绝不会改写。"
+            "value" : "允许智能体搜索和阅读下方授权的知识集合：精选指南、模板和规范。与记忆不同，知识由你编辑，智能体绝不会改写。"
           }
         },
         "zh-Hant" : {
@@ -95484,7 +95484,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允许此代理将文档更新起草为待审提案（它也可以提交和处理过期工单）。在你于知识板块批准提案之前，集合不会有任何变化。"
+            "value" : "允许此智能体将文档更新起草为待审提案（它也可以提交和处理过期工单）。在你于知识板块批准提案之前，集合不会有任何变化。"
           }
         },
         "zh-Hant" : {
@@ -98982,7 +98982,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "本地编排移交已关闭（设置 → 子代理）。尝试生成/启动模型与当前对话模型不同的本地代理或模型将被拒绝 — 仅允许运行远程目标和已加载的模型。"
+            "value" : "本地编排移交已关闭（设置 → 子智能体）。尝试生成/启动模型与当前对话模型不同的本地智能体或模型将被拒绝 — 仅允许运行远程目标和已加载的模型。"
           }
         },
         "zh-Hant" : {
@@ -115225,7 +115225,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暂无运行记录。当代理按计划或自动运行时，每次运行都会显示在此处。"
+            "value" : "暂无运行记录。当智能体按计划或自动运行时，每次运行都会显示在此处。"
           }
         },
         "zh-Hant" : {
@@ -125471,7 +125471,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "出站仅限于配置代理允许的域名"
+            "value" : "出站仅限于配置智能体允许的域名"
           }
         },
         "zh-Hant" : {
@@ -129047,7 +129047,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每个代理的环境"
+            "value" : "按智能体的环境"
           }
         },
         "zh-Hant" : {
@@ -129152,7 +129152,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每个代理的根文件系统模板"
+            "value" : "每个智能体的根文件系统模板"
           }
         },
         "zh-Hant" : {
@@ -129188,7 +129188,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每个代理的热重启根文件系统"
+            "value" : "每个智能体的热重启根文件系统"
           }
         },
         "zh-Hant" : {
@@ -129548,7 +129548,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "永久删除此代理存储的每个表和行。代理本身保留。"
+            "value" : "永久删除此智能体存储的每个表和行。智能体本身保留。"
           }
         },
         "zh-Hant" : {
@@ -131178,7 +131178,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择此代理可以使用哪些工具"
+            "value" : "选择此智能体可以使用哪些工具"
           }
         },
         "zh-Hant" : {
@@ -131220,7 +131220,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择此代理可以使用哪些工具。技能来自共享库，始终可用。"
+            "value" : "选择此智能体可以使用哪些工具。技能来自共享库，始终可用。"
           }
         },
         "zh-Hant" : {
@@ -133103,7 +133103,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让 Osaurus 指向一个包含指南、模板、规范的文件夹，并授权给代理，让它们可以按需查阅。支持 Markdown、纯文本、代码、PDF、Word、Excel、PowerPoint 和 CSV 文件。"
+            "value" : "让 Osaurus 指向一个包含指南、模板、规范的文件夹，并授权给智能体，让它们可以按需查阅。支持 Markdown、纯文本、代码、PDF、Word、Excel、PowerPoint 和 CSV 文件。"
           }
         },
         "zh-Hant" : {
@@ -149011,7 +149011,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "修复将为 1 个代理派生新地址，并撤销当前主密钥下的 %lld 个过期访问密钥。持有这些密钥的现有配对和客户端将停止工作，直到重新颁发。"
+            "value" : "修复将为 1 个智能体派生新地址，并撤销当前主密钥下的 %lld 个过期访问密钥。持有这些密钥的现有配对和客户端将停止工作，直到重新颁发。"
           }
         },
         "zh-Hant" : {
@@ -149047,7 +149047,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "修复将为 1 个代理派生新地址，并撤销当前主密钥下的 1 个过期访问密钥。持有该密钥的现有配对和客户端将停止工作，直到重新颁发。"
+            "value" : "修复将为 1 个智能体派生新地址，并撤销当前主密钥下的 1 个过期访问密钥。持有该密钥的现有配对和客户端将停止工作，直到重新颁发。"
           }
         },
         "zh-Hant" : {
@@ -149130,7 +149130,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "修复将为 %lld 个代理派生新地址，并撤销当前主密钥下的 %lld 个过期访问密钥。持有这些密钥的现有配对和客户端将停止工作，直到重新颁发。"
+            "value" : "修复将为 %lld 个智能体派生新地址，并撤销当前主密钥下的 %lld 个过期访问密钥。持有这些密钥的现有配对和客户端将停止工作，直到重新颁发。"
           }
         },
         "zh-Hant" : {
@@ -149166,7 +149166,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "修复将为 %lld 个代理派生新地址，并撤销当前主密钥下的 1 个过期访问密钥。持有该密钥的现有配对和客户端将停止工作，直到重新颁发。"
+            "value" : "修复将为 %lld 个智能体派生新地址，并撤销当前主密钥下的 1 个过期访问密钥。持有该密钥的现有配对和客户端将停止工作，直到重新颁发。"
           }
         },
         "zh-Hant" : {
@@ -151893,7 +151893,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "重置将清除沙盒插件状态。主机上的代理工作区文件将保留。"
+            "value" : "重置将清除沙盒插件状态。主机上的智能体工作区文件将保留。"
           }
         },
         "zh-Hant" : {
@@ -155874,7 +155874,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在这台 Mac 上运行受限于沙盒工作区的代理命令。（macOS 26 或更高版本提供完整的 VM 隔离。）"
+            "value" : "在这台 Mac 上运行受限于沙盒工作区的智能体命令。（macOS 26 或更高版本提供完整的 VM 隔离。）"
           }
         },
         "zh-Hant" : {
@@ -162166,7 +162166,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "专为 AI 代理打造的搜索 — 最佳回答质量用于语境锚定。"
+            "value" : "专为 AI 智能体打造的搜索 — 最佳回答质量用于语境锚定。"
           }
         },
         "zh-Hant" : {
@@ -166290,7 +166290,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "发送已全局暂停。代理仍可读取已允许列表的频道。"
+            "value" : "发送已全局暂停。智能体仍可读取允许列表中的频道。"
           }
         },
         "zh-Hant" : {
@@ -179774,7 +179774,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "切换到全部并开启此代理应使用的工具。"
+            "value" : "切换到“全部”并开启此智能体应使用的工具。"
           }
         },
         "zh-Hant" : {
@@ -183116,7 +183116,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "智能体仅在您请求时运行。代理的定时API调用被拒绝。"
+            "value" : "智能体仅在你请求时运行。来自智能体的定时 API 调用会被拒绝。"
           }
         },
         "zh-Hant" : {
@@ -187120,7 +187120,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此代理声称支持加密但未包含可验证的身份，因此无法安全配对。它可能在冒充其他设备，或者对方设备可能需要更新 Osaurus。"
+            "value" : "此智能体声称支持加密，但未包含可验证的身份，因此无法安全配对。它可能在冒充其他设备，或者对方设备可能需要更新 Osaurus。"
           }
         },
         "zh-Hant" : {
@@ -187156,7 +187156,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此代理拥有其自己的隔离浏览器配置文件。在「设置」→「浏览器」中查看会话和登录状态。"
+            "value" : "此智能体拥有自己的隔离浏览器配置文件。在「设置」→「浏览器」中查看会话和登录状态。"
           }
         },
         "zh-Hant" : {
@@ -187227,7 +187227,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "该代理暂无可以分享的身份。请通过网络进行配对，或点击顶部\"分享\"按钮生成中继邀请，已连接的对等端将显示在此处。"
+            "value" : "该智能体暂无可分享的身份。请通过网络进行配对，或点击顶部“分享”按钮生成中继邀请，已连接的对等端将显示在此处。"
           }
         },
         "zh-Hant" : {
@@ -187335,7 +187335,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此代理的数据库接近存储上限。"
+            "value" : "此智能体的数据库接近存储上限。"
           }
         },
         "zh-Hant" : {
@@ -188471,7 +188471,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "这将永久删除 %@ 的浏览数据 — cookie、登录信息及历史记录。代理将以全新的配置文件重新开始。"
+            "value" : "这将永久删除 %@ 的浏览数据 — cookie、登录信息及历史记录。该智能体将以全新的配置文件重新开始。"
           }
         },
         "zh-Hant" : {
@@ -188507,7 +188507,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "这将永久删除所有代理的浏览数据 — 所有 cookie、登录信息和历史记录。"
+            "value" : "这将永久删除所有智能体的浏览数据 — 所有 cookie、登录信息和历史记录。"
           }
         },
         "zh-Hant" : {
@@ -194521,7 +194521,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "按代理逐一开启： 打开对应代理的\"子代理\"选项卡，启用\"计算机使用\"功能，然后选择\"共享屏幕上下文\"选项（默认已开启）。需要辅助功能权限。"
+            "value" : "按智能体逐一开启：打开对应智能体的“子智能体”选项卡，启用“计算机使用”，并使用“共享屏幕上下文”选项（默认已开启）。需要辅助功能权限。"
           }
         },
         "zh-Hant" : {
@@ -203896,7 +203896,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理存储内容一览。"
+            "value" : "智能体存储内容一览。"
           }
         },
         "zh-Hant" : {
@@ -203932,7 +203932,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理在沙盒内可以做什么。"
+            "value" : "智能体在沙盒内可以做什么。"
           }
         },
         "zh-Hant" : {
@@ -204002,7 +204002,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "描述该资料库的内容，会展示给代理"
+            "value" : "描述该资料库的内容，会展示给智能体"
           }
         },
         "zh-Hant" : {
@@ -205375,7 +205375,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "有了数据库，代理可以在对话之间保存笔记、列表和记录 — 以加密形式存储在此 Mac 上。你可以浏览和编辑它保存的所有内容。"
+            "value" : "有了数据库，智能体可以在对话之间保存笔记、列表和记录 — 以加密形式存储在此 Mac 上。你可以浏览和编辑它保存的所有内容。"
           }
         },
         "zh-Hant" : {
