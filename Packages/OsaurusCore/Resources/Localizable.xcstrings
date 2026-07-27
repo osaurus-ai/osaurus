@@ -14411,7 +14411,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "会更改或发送内容的操作会暂停等待您的批准，具体取决于下方的自主性级别。"
+            "value" : "会更改或发送内容的操作会暂停等待你的批准，具体取决于下方的自主性级别。"
           }
         },
         "zh-Hant" : {
@@ -16535,7 +16535,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "高级 — 定义您自己的 HTTP JSON 频道"
+            "value" : "高级 — 定义你自己的 HTTP JSON 频道"
           }
         },
         "zh-Hant" : {
@@ -17836,7 +17836,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "智能体提议，由您批准"
+            "value" : "智能体提议，由你批准"
           }
         },
         "zh-Hant" : {
@@ -23463,7 +23463,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您确定要清除所有请求日志吗？此操作无法撤销。"
+            "value" : "你确定要清除所有请求日志吗？此操作无法撤销。"
           }
         },
         "zh-Hant" : {
@@ -23497,7 +23497,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您确定要删除“%@”吗？此操作无法撤销。"
+            "value" : "你确定要删除“%@”吗？此操作无法撤销。"
           }
         },
         "zh-Hant" : {
@@ -23531,7 +23531,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您确定要删除“%@”吗？此操作无法撤销。为此智能体配置的任何沙盒资源也将被移除。"
+            "value" : "你确定要删除“%@”吗？此操作无法撤销。为此智能体配置的任何沙盒资源也将被移除。"
           }
         },
         "zh-Hant" : {
@@ -29198,7 +29198,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "更大的模型更智能，但需要更多内存——您的 Mac 有 %1$lld GB 内存和 %2$@ 可用存储空间。"
+            "value" : "更大的模型更智能，但需要更多内存——你的 Mac 有 %1$lld GB 内存和 %2$@ 可用存储空间。"
           }
         },
         "zh-Hant" : {
@@ -29234,7 +29234,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "更大的模型更智能，但需要更多内存——您的 Mac 有 %lld GB 内存。"
+            "value" : "更大的模型更智能，但需要更多内存——你的 Mac 有 %lld GB 内存。"
           }
         },
         "zh-Hant" : {
@@ -34453,7 +34453,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "限制此智能体的行动范围，即使您的全局策略允许更多权限。"
+            "value" : "限制此智能体的行动范围，即使你的全局策略允许更多权限。"
           }
         },
         "zh-Hant" : {
@@ -37998,7 +37998,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正在用真实搜索验证您的密钥…"
+            "value" : "正在用真实搜索验证你的密钥…"
           }
         },
         "zh-Hant" : {
@@ -38141,7 +38141,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "检查每个步骤——您可以随时停止它。"
+            "value" : "检查每个步骤——你可以随时停止它。"
           }
         },
         "zh-Hant" : {
@@ -38786,7 +38786,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择添加多少。您将在浏览器中完成支付。"
+            "value" : "选择添加多少。你将在浏览器中完成支付。"
           }
         },
         "zh-Hant" : {
@@ -39285,7 +39285,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择您的机器人，然后禁用 — 否则机器人无法看到群组消息。"
+            "value" : "选择你的机器人，然后禁用 — 否则机器人无法看到群组消息。"
           }
         },
         "zh-Hant" : {
@@ -39319,7 +39319,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择您的模型"
+            "value" : "选择你的模型"
           }
         },
         "zh-Hant" : {
@@ -40666,7 +40666,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "点击、键入和滚动来执行您的请求。"
+            "value" : "点击、键入和滚动来执行你的请求。"
           }
         },
         "zh-Hant" : {
@@ -42955,7 +42955,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "电脑操作默认关闭。您可以按智能体启用——只有自定义智能体才能使用它（默认智能体不可以）。"
+            "value" : "电脑操作默认关闭。你可以按智能体启用——只有自定义智能体才能使用它（默认智能体不可以）。"
           }
         },
         "zh-Hant" : {
@@ -45652,7 +45652,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "连接您的第一个频道"
+            "value" : "连接你的第一个频道"
           }
         },
         "zh-Hant" : {
@@ -46333,7 +46333,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将您的智能体连接到共享网络。"
+            "value" : "将你的智能体连接到共享网络。"
           }
         },
         "zh-Hant" : {
@@ -52534,7 +52534,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "创建您的第一个主题"
+            "value" : "创建你的第一个主题"
           }
         },
         "zh-Hant" : {
@@ -53237,7 +53237,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "积分让Osaurus代表您进行交易 - 目前用于云模型访问，未来将支持更多路由服务。"
+            "value" : "积分让Osaurus代表你进行交易 - 目前用于云模型访问，未来将支持更多路由服务。"
           }
         },
         "zh-Hant" : {
@@ -53625,7 +53625,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "自定义频道仅限出站，直到您授权传入发送者。从此处未列出的发送者发布到传入收件箱 API 的任何内容都会被拒绝。"
+            "value" : "自定义频道仅限出站，直到你授权传入发送者。从此处未列出的发送者发布到传入收件箱 API 的任何内容都会被拒绝。"
           }
         },
         "zh-Hant" : {
@@ -55541,7 +55541,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "解密 `~/.osaurus` 目录下的所有文件，并将明文副本写入您选择的目标位置。建议在重新安装 macOS 或迁移 Mac 之前执行此操作。"
+            "value" : "解密 `~/.osaurus` 目录下的所有文件，并将明文副本写入你选择的目标位置。建议在重新安装 macOS 或迁移 Mac 之前执行此操作。"
           }
         },
         "zh-Hant" : {
@@ -58524,7 +58524,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用自定义颜色、字体和背景为您的聊天设计独特的外观。"
+            "value" : "使用自定义颜色、字体和背景为你的聊天设计独特的外观。"
           }
         },
         "zh-Hant" : {
@@ -61460,7 +61460,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您希望 Osaurus 在此聊天中自动朗读每条回复吗？"
+            "value" : "你希望 Osaurus 在此聊天中自动朗读每条回复吗？"
           }
         },
         "zh-Hant" : {
@@ -64364,7 +64364,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每个智能体只能看到您在其“能力”标签页中勾选的知识库，其余内容对它完全不可见。编辑文件夹中的文件，索引会实时更新，无需重启。"
+            "value" : "每个智能体只能看到你在其“能力”标签页中勾选的知识库，其余内容对它完全不可见。编辑文件夹中的文件，索引会实时更新，无需重启。"
           }
         },
         "zh-Hant" : {
@@ -64471,7 +64471,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每行均按字面内容进行匹配——无需正则表达式。特殊字符将自动为您转义。"
+            "value" : "每行均按字面内容进行匹配——无需正则表达式。特殊字符将自动为你转义。"
           }
         },
         "zh-Hant" : {
@@ -70319,7 +70319,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "这里的每个模型都在您的 Mac 上私密运行。不确定？保留我们根据您的 Mac 配置挑选的模型即可——您可以随时切换。"
+            "value" : "这里的每个模型都在你的 Mac 上私密运行。不确定？保留我们根据你的 Mac 配置挑选的模型即可——你可以随时切换。"
           }
         },
         "zh-Hant" : {
@@ -75338,7 +75338,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "文件保险箱已打开——您的磁盘在静态时已加密，因此明文存储受到保护，是最可靠的选择。"
+            "value" : "文件保险箱已打开——你的磁盘在静态时已加密，因此明文存储受到保护，是最可靠的选择。"
           }
         },
         "zh-Hant" : {
@@ -77990,7 +77990,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每次打开空白聊天时，都会用您的核心模型生成新的 AI 问候语和快捷操作。关闭后则使用您的自定义问候语。首次生成在 Foundation 等小模型上可能感觉较慢。"
+            "value" : "每次打开空白聊天时，都会用你的核心模型生成新的 AI 问候语和快捷操作。关闭后则使用你的自定义问候语。首次生成在 Foundation 等小模型上可能感觉较慢。"
           }
         },
         "zh-Hant" : {
@@ -82545,7 +82545,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "默认隐藏。启用您希望 API 列出的远程模型。"
+            "value" : "默认隐藏。启用你希望 API 列出的远程模型。"
           }
         },
         "zh-Hant" : {
@@ -85423,7 +85423,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "如果您正在迁移Mac或擦除macOS，请先导出纯文本备份。否则无需采取任何操作——加密会自动运行。"
+            "value" : "如果你正在迁移Mac或擦除macOS，请先导出纯文本备份。否则无需采取任何操作——加密会自动运行。"
           }
         },
         "zh-Hant" : {
@@ -85525,7 +85525,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "忽略来自机器人账户的 Telegram 更新，除非您明确信任机器人发送者。"
+            "value" : "忽略来自机器人账户的 Telegram 更新，除非你明确信任机器人发送者。"
           }
         },
         "zh-Hant" : {
@@ -87716,7 +87716,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在您的 Slack 应用中，打开“安装应用”，将其安装到工作区，然后复制机器人用户 OAuth 令牌。"
+            "value" : "在你的 Slack 应用中，打开“安装应用”，将其安装到工作区，然后复制机器人用户 OAuth 令牌。"
           }
         },
         "zh-Hant" : {
@@ -91465,7 +91465,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "邀请机器人到您的服务器"
+            "value" : "邀请机器人到你的服务器"
           }
         },
         "zh-Hant" : {
@@ -94355,7 +94355,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让智能体代您操作 macOS 应用"
+            "value" : "让智能体代你操作 macOS 应用"
           }
         },
         "zh-Hant" : {
@@ -94527,7 +94527,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让智能体在您团队已经交谈的地方阅读和回复。"
+            "value" : "让智能体在你团队已经交谈的地方阅读和回复。"
           }
         },
         "zh-Hant" : {
@@ -94563,7 +94563,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让智能体在您团队已经交谈的地方阅读和回复。每个引导设置都以传入消息的实时验证结束。"
+            "value" : "让智能体在你团队已经交谈的地方阅读和回复。每个引导设置都以传入消息的实时验证结束。"
           }
         },
         "zh-Hant" : {
@@ -94811,7 +94811,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允许智能体为您控制 macOS 应用 — 点击、输入与读取屏幕内容。读取与导航操作自动执行；编辑及其它有后果的操作将暂停并等待您批准。"
+            "value" : "允许智能体为你控制 macOS 应用 — 点击、输入与读取屏幕内容。读取与导航操作自动执行；编辑及其它有后果的操作将暂停并等待你批准。"
           }
         },
         "zh-Hant" : {
@@ -94956,7 +94956,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让智能体在您选择的文件夹中读取和写入文件。"
+            "value" : "让智能体在你选择的文件夹中读取和写入文件。"
           }
         },
         "zh-Hant" : {
@@ -95450,7 +95450,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允许此智能体委托工作 — 控制您的 Mac、将任务移交给其他智能体，或生成图像。"
+            "value" : "允许此智能体委托工作 — 控制你的 Mac、将任务移交给其他智能体，或生成图像。"
           }
         },
         "zh-Hant" : {
@@ -95626,7 +95626,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让智能体读取屏幕元素，并为您点击、输入和滚动。"
+            "value" : "让智能体读取屏幕元素，并为你点击、输入和滚动。"
           }
         },
         "zh-Hant" : {
@@ -95694,7 +95694,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让Osaurus代表您进行交易 - 云模型、提供商负载均衡以及未来的路由服务；请求会消耗积分。保持开启有助于支持 Osaurus 的开发 - 感谢。"
+            "value" : "让Osaurus代表你进行交易 - 云模型、提供商负载均衡以及未来的路由服务；请求会消耗积分。保持开启有助于支持 Osaurus 的开发 - 感谢。"
           }
         },
         "zh-Hant" : {
@@ -99884,7 +99884,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "创建和完成您的提醒事项。"
+            "value" : "创建和完成你的提醒事项。"
           }
         },
         "zh-Hant" : {
@@ -100618,7 +100618,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "管理您的 Cloudflare 账户、Workers 和 DNS"
+            "value" : "管理你的 Cloudflare 账户、Workers 和 DNS"
           }
         },
         "zh-Hant" : {
@@ -101600,7 +101600,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "遮蔽功能在设备上运行，使用 OCR + 隐私过滤器（您配置的规则加上设备上的姓名/地址/日期/密钥识别模型）。检测并不完美 — 可能会遗漏 OCR 无法读取或模型无法识别的文本 — 因此「仅遮蔽敏感文本」在隐私和模型获取更多上下文之间做了权衡。截图还需要屏幕录制权限；没有该权限智能体只能使用辅助功能文本。"
+            "value" : "遮蔽功能在设备上运行，使用 OCR + 隐私过滤器（你配置的规则加上设备上的姓名/地址/日期/密钥识别模型）。检测并不完美 — 可能会遗漏 OCR 无法读取或模型无法识别的文本 — 因此「仅遮蔽敏感文本」在隐私和模型获取更多上下文之间做了权衡。截图还需要屏幕录制权限；没有该权限智能体只能使用辅助功能文本。"
           }
         },
         "zh-Hant" : {
@@ -108850,7 +108850,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "网络和中继呼叫者在您创建访问密钥之前是受限的。"
+            "value" : "网络和中继呼叫者在你创建访问密钥之前是受限的。"
           }
         },
         "zh-Hant" : {
@@ -114667,7 +114667,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未连接远程提供商。连接后，Osaurus 路由器和您自己的提供商模型将显示在这里。"
+            "value" : "未连接远程提供商。连接后，Osaurus 路由器和你自己的提供商模型将显示在这里。"
           }
         },
         "zh-Hant" : {
@@ -115155,7 +115155,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暂无规则——每个应用都使用您的默认设置。"
+            "value" : "暂无规则——每个应用都使用你的默认设置。"
           }
         },
         "zh-Hant" : {
@@ -122849,7 +122849,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在浏览器中打开此 URL 并选择您的服务器。"
+            "value" : "在浏览器中打开此 URL 并选择你的服务器。"
           }
         },
         "zh-Hant" : {
@@ -123022,7 +123022,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在 Azure AI Foundry 中打开您的 Azure OpenAI 资源"
+            "value" : "在 Azure AI Foundry 中打开你的 Azure OpenAI 资源"
           }
         },
         "zh-Hant" : {
@@ -123058,7 +123058,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "打开您的 Slack 应用设置"
+            "value" : "打开你的 Slack 应用设置"
           }
         },
         "zh-Hant" : {
@@ -125289,7 +125289,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 将使用存储在 macOS Keychain 中的密钥，用 SQLCipher 重新加密您的数据库和附件。如果该密钥丢失（例如清除 Keychain、重新签名应用程序或在不使用 iCloud Keychain 的情况下迁移 Mac），则加密数据将无法恢复。如果您依赖这些数据，请保留明文备份。"
+            "value" : "Osaurus 将使用存储在 macOS Keychain 中的密钥，用 SQLCipher 重新加密你的数据库和附件。如果该密钥丢失（例如清除 Keychain、重新签名应用程序或在不使用 iCloud Keychain 的情况下迁移 Mac），则加密数据将无法恢复。如果你依赖这些数据，请保留明文备份。"
           }
         },
         "zh-Hant" : {
@@ -127427,7 +127427,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将其粘贴在下方。它会保存在您的 macOS 钥匙串中。"
+            "value" : "将其粘贴在下方。它会保存在你的 macOS 钥匙串中。"
           }
         },
         "zh-Hant" : {
@@ -127607,7 +127607,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在上方粘贴机器人令牌并按访问部分的“从 Discord 加载”，然后邀请链接会出现在此处。（您也可以在开发者门户中使用 OAuth2 → URL 生成器，选择 bot 范围。）"
+            "value" : "在上方粘贴机器人令牌并按访问部分的“从 Discord 加载”，然后邀请链接会出现在此处。（你也可以在开发者门户中使用 OAuth2 → URL 生成器，选择 bot 范围。）"
           }
         },
         "zh-Hant" : {
@@ -127921,7 +127921,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "粘贴您的 API 密钥 — 将通过真实搜索进行验证"
+            "value" : "粘贴你的 API 密钥 — 将通过真实搜索进行验证"
           }
         },
         "zh-Hant" : {
@@ -127955,7 +127955,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "粘贴您的机器人令牌"
+            "value" : "粘贴你的机器人令牌"
           }
         },
         "zh-Hant" : {
@@ -127989,7 +127989,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "粘贴您的签名密钥"
+            "value" : "粘贴你的签名密钥"
           }
         },
         "zh-Hant" : {
@@ -129477,7 +129477,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "感知功能默认在本机运行。如果智能体使用云端模型，您可以允许其发送截图以处理屏幕文字不足的极少数情况——但前提是敏感文字已在本地完成屏蔽。"
+            "value" : "感知功能默认在本机运行。如果智能体使用云端模型，你可以允许其发送截图以处理屏幕文字不足的极少数情况——但前提是敏感文字已在本地完成屏蔽。"
           }
         },
         "zh-Hant" : {
@@ -131256,7 +131256,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "为您的 Mac 精选"
+            "value" : "为你的 Mac 精选"
           }
         },
         "zh-Hant" : {
@@ -133138,7 +133138,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将 Osaurus 指向包含团队指南、标准、规范和表格等参考资料的文件夹，您的智能体即可按需搜索和阅读。Markdown、纯文本、代码、PDF、Word、Excel、PowerPoint 和 CSV 文件都会被索引，完全在您的 Mac 上进行。"
+            "value" : "将 Osaurus 指向包含团队指南、标准、规范和表格等参考资料的文件夹，你的智能体即可按需搜索和阅读。Markdown、纯文本、代码、PDF、Word、Excel、PowerPoint 和 CSV 文件都会被索引，完全在你的 Mac 上进行。"
           }
         },
         "zh-Hant" : {
@@ -143120,7 +143120,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "阅读和常规导航自动运行，遵循您的计算机使用自主级别 — 但输入操作会暂停等待您批准，而提交、购买、发送或清除数据始终会先询问。登录操作在您直接输入的窗口中进行，智能体永远不会看到您的密码。您可以随时从信息流中停止运行。"
+            "value" : "阅读和常规导航自动运行，遵循你的计算机使用自主级别 — 但输入操作会暂停等待你批准，而提交、购买、发送或清除数据始终会先询问。登录操作在你直接输入的窗口中进行，智能体永远不会看到你的密码。你可以随时从信息流中停止运行。"
           }
         },
         "zh-Hant" : {
@@ -143156,7 +143156,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "阅读页面和常规导航自动运行，遵循您的计算机使用自主级别。"
+            "value" : "阅读页面和常规导航自动运行，遵循你的计算机使用自主级别。"
           }
         },
         "zh-Hant" : {
@@ -150633,7 +150633,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "接收消息所需。在您的 Slack 应用中，打开“基本信息” → “应用级令牌”，生成具有 connections:write 范围的令牌，然后粘贴到此处。这为 Socket Mode 提供动力 — 不涉及 webhook。"
+            "value" : "接收消息所需。在你的 Slack 应用中，打开“基本信息” → “应用级令牌”，生成具有 connections:write 范围的令牌，然后粘贴到此处。这为 Socket Mode 提供动力 — 不涉及 webhook。"
           }
         },
         "zh-Hant" : {
@@ -162132,7 +162132,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "搜索并编辑您的Canva设计"
+            "value" : "搜索并编辑你的Canva设计"
           }
         },
         "zh-Hant" : {
@@ -170407,7 +170407,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登录您的开发者帐户"
+            "value" : "登录你的开发者帐户"
           }
         },
         "zh-Hant" : {
@@ -171785,7 +171785,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "简单模式会自动构建匹配规则。正则表达式模式允许您自行编写匹配规则，保存前会经过校验。"
+            "value" : "简单模式会自动构建匹配规则。正则表达式模式允许你自行编写匹配规则，保存前会经过校验。"
           }
         },
         "zh-Hant" : {
@@ -172796,7 +172796,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Slack 选项尚未加载。您可以刷新或使用高级手动 ID。"
+            "value" : "Slack 选项尚未加载。你可以刷新或使用高级手动 ID。"
           }
         },
         "zh-Hant" : {
@@ -175284,7 +175284,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "SQLCipher 添加了第二层加密：数据库和附件使用您钥匙串中的 256 位密钥进行加密。如果您共享 Mac 账户或未使用文件保险箱，这会很有用。"
+            "value" : "SQLCipher 添加了第二层加密：数据库和附件使用你钥匙串中的 256 位密钥进行加密。如果你共享 Mac 账户或未使用文件保险箱，这会很有用。"
           }
         },
         "zh-Hant" : {
@@ -182801,7 +182801,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "256位加密密钥存储在您的macOS钥匙串中。它永远不会离开这台Mac，并且不会同步到iCloud。"
+            "value" : "256位加密密钥存储在你的macOS钥匙串中。它永远不会离开这台Mac，并且不会同步到iCloud。"
           }
         },
         "zh-Hant" : {
@@ -183356,7 +183356,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "浏览器现在是一个原生功能。此插件的工具和技能不再加载 — 在「设置」→「浏览器」中管理会话。您可以卸载此插件。"
+            "value" : "浏览器现在是一个原生功能。此插件的工具和技能不再加载 — 在「设置」→「浏览器」中管理会话。你可以卸载此插件。"
           }
         },
         "zh-Hant" : {
@@ -184131,7 +184131,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "宿主在该插件加载期间引发崩溃后将其隔离。重试会在同一宿主版本上重新运行同一个动态库（dylib），因此如果底层错误（最常见的是插件中 `osr_host_api` 镜像未对齐）未被修复，它将再次崩溃。请仅在您重新构建或重新安装插件后使用此操作。"
+            "value" : "宿主在该插件加载期间引发崩溃后将其隔离。重试会在同一宿主版本上重新运行同一个动态库（dylib），因此如果底层错误（最常见的是插件中 `osr_host_api` 镜像未对齐）未被修复，它将再次崩溃。请仅在你重新构建或重新安装插件后使用此操作。"
           }
         },
         "zh-Hant" : {
@@ -184377,7 +184377,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "清单已启用 Socket Mode 和消息事件订阅。您无需输入请求 URL — Osaurus 通过出站连接接收事件。"
+            "value" : "清单已启用 Socket Mode 和消息事件订阅。你无需输入请求 URL — Osaurus 通过出站连接接收事件。"
           }
         },
         "zh-Hant" : {
@@ -184944,7 +184944,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 智能体帮助您配置Osaurus。它不使用沙盒或工作文件夹。"
+            "value" : "Osaurus 智能体帮助你配置Osaurus。它不使用沙盒或工作文件夹。"
           }
         },
         "zh-Hant" : {
@@ -185469,7 +185469,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "路由器将您的身份主密钥用作您的计费账户。在添加积分或调用Osaurus模型之前，请创建或恢复身份。"
+            "value" : "路由器将你的身份主密钥用作你的计费账户。在添加积分或调用Osaurus模型之前，请创建或恢复身份。"
           }
         },
         "zh-Hant" : {
@@ -187764,7 +187764,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此操作将删除本地磁盘上的模型。该模型的检测功能将停止，直至您重新下载。"
+            "value" : "此操作将删除本地磁盘上的模型。该模型的检测功能将停止，直至你重新下载。"
           }
         },
         "zh-Hant" : {
@@ -188541,7 +188541,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "这将从磁盘上永久删除该插件已安装的动态库（dylib）、清单文件以及每个智能体的密钥。宿主将在每次启动时停止尝试加载该插件——这是无需手动编辑文件就能摆脱导致崩溃循环的插件的唯一方法。您稍后可以通过“工具管理器”重新安装它。"
+            "value" : "这将从磁盘上永久删除该插件已安装的动态库（dylib）、清单文件以及每个智能体的密钥。宿主将在每次启动时停止尝试加载该插件——这是无需手动编辑文件就能摆脱导致崩溃循环的插件的唯一方法。你稍后可以通过“工具管理器”重新安装它。"
           }
         },
         "zh-Hant" : {
@@ -189315,7 +189315,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此工具将在未来自动允许运行而不提示。您可以在工具设置中更改此设置。"
+            "value" : "此工具将在未来自动允许运行而不提示。你可以在工具设置中更改此设置。"
           }
         },
         "zh-Hant" : {
@@ -189419,7 +189419,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "这与您的智能体使用的搜索完全相同 — 您在这里看到的就是它们看到的。"
+            "value" : "这与你的智能体使用的搜索完全相同 — 你在这里看到的就是它们看到的。"
           }
         },
         "zh-Hant" : {
@@ -189875,7 +189875,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "这将完全停止并移除沙盒。您可以稍后重新设置。"
+            "value" : "这将完全停止并移除沙盒。你可以稍后重新设置。"
           }
         },
         "zh-Hant" : {
@@ -194871,7 +194871,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "输入会暂停等待您的批准；提交、购买、发送或清除数据始终会先询问。"
+            "value" : "输入会暂停等待你的批准；提交、购买、发送或清除数据始终会先询问。"
           }
         },
         "zh-Hant" : {
@@ -198276,7 +198276,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用来自您 LM Studio 库的 safetensors 模型。"
+            "value" : "使用来自你 LM Studio 库的 safetensors 模型。"
           }
         },
         "zh-Hant" : {
@@ -203367,7 +203367,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "网页搜索现在是原生功能。此插件的工具不再加载 — 在设置 → 搜索中配置提供商。您可以卸载此插件。"
+            "value" : "网页搜索现在是原生功能。此插件的工具不再加载 — 在设置 → 搜索中配置提供商。你可以卸载此插件。"
           }
         },
         "zh-Hant" : {
@@ -204561,7 +204561,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "为智能体开启此功能后，电脑操作即可让该智能体替您操作 macOS 应用程序——它会分步骤完成目标，并在实时动态中展示每一个动作。"
+            "value" : "为智能体开启此功能后，电脑操作即可让该智能体替你操作 macOS 应用程序——它会分步骤完成目标，并在实时动态中展示每一个动作。"
           }
         },
         "zh-Hant" : {
@@ -205018,7 +205018,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "谁可以调用您的API以及调用的频率。"
+            "value" : "谁可以调用你的API以及调用的频率。"
           }
         },
         "zh-Hant" : {
@@ -207289,7 +207289,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您可以继续使用 Osaurus Cloud 聊天。"
+            "value" : "你可以继续使用 Osaurus Cloud 聊天。"
           }
         },
         "zh-Hant" : {
@@ -207359,7 +207359,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您可以随时从聊天中的活动动态停止运行。"
+            "value" : "你可以随时从聊天中的活动动态停止运行。"
           }
         },
         "zh-Hant" : {
@@ -207616,7 +207616,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您将添加%@"
+            "value" : "你将添加%@"
           }
         },
         "zh-Hant" : {
@@ -207721,7 +207721,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您的智能体现在可以为您浏览网页 — 导航页面、阅读内容和填写表单，每一步都实时展示在信息流中。每个智能体拥有独立的持久化浏览器会话，因此 Cookie 和登录状态可在对话间延续，但绝不会与其他智能体或您常用的浏览器共享。如果您之前使用过浏览器插件，您的会话已自动迁移。"
+            "value" : "你的智能体现在可以为你浏览网页 — 导航页面、阅读内容和填写表单，每一步都实时展示在信息流中。每个智能体拥有独立的持久化浏览器会话，因此 Cookie 和登录状态可在对话间延续，但绝不会与其他智能体或你常用的浏览器共享。如果你之前使用过浏览器插件，你的会话已自动迁移。"
           }
         },
         "zh-Hant" : {
@@ -207894,7 +207894,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您的余额是%@。添加积分以继续聊天。"
+            "value" : "你的余额是%@。添加积分以继续聊天。"
           }
         },
         "zh-Hant" : {
@@ -207929,7 +207929,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您的余额现在是%@。重试您最后一条消息以继续。"
+            "value" : "你的余额现在是%@。重试你最后一条消息以继续。"
           }
         },
         "zh-Hant" : {
@@ -208276,7 +208276,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您的数据库在 macOS 钥匙串中使用 256 位密钥进行加密。"
+            "value" : "你的数据库在 macOS 钥匙串中使用 256 位密钥进行加密。"
           }
         },
         "zh-Hant" : {
@@ -208634,7 +208634,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您的私有模型需要处理"
+            "value" : "你的私有模型需要处理"
           }
         },
         "zh-Hant" : {
@@ -208704,7 +208704,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您的提供商"
+            "value" : "你的提供商"
           }
         },
         "zh-Hant" : {
