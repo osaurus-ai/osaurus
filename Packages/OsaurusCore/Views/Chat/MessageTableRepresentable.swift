@@ -223,8 +223,18 @@ struct MessageTableRepresentable: NSViewRepresentable {
             }
         }
 
-        // ensure the table column fills the (now-inset) clip view width
-        coordinator.tableView?.sizeLastColumnToFit()
+        // Ensure the table column fills the (now-inset) clip view width.
+        // Only when the clip width actually changed: `sizeLastColumnToFit`
+        // walks the table's layout direction machinery and runs on every
+        // updateNSView otherwise (per streaming token), which has shown up
+        // in app-hang reports.
+        if let tableView = coordinator.tableView {
+            let clipWidth = scrollView.contentView.bounds.width
+            if coordinator.lastFitColumnClipWidth != clipWidth {
+                coordinator.lastFitColumnClipWidth = clipWidth
+                tableView.sizeLastColumnToFit()
+            }
+        }
     }
 
     /// Break the hover closures (which capture the coordinator) and stop any
@@ -390,6 +400,9 @@ extension MessageTableRepresentable {
         /// Width last provided by SwiftUI (effectiveContentWidth, already clamped to maxContentWidth).
         /// Used by the frame-change debounce to avoid reading the clip view before tile() has run.
         var lastSwiftUIWidth: CGFloat = 100
+        /// Clip-view width the table column was last fitted to; gates
+        /// `sizeLastColumnToFit` in `updateNSView` to real width changes.
+        var lastFitColumnClipWidth: CGFloat = -1
 
         // MARK: Block State
 
