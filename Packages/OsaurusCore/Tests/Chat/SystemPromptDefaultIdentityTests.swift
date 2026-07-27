@@ -129,6 +129,12 @@ struct SystemPromptDefaultIdentityTests {
             #expect(block.contains("OPTIONAL"))
             #expect(block.contains("3+"))
             #expect(block.contains("never") && block.contains("complete(...)"))
+            #expect(block.contains("advisory"))
+            #expect(block.contains("never overrides a final response"))
+            #expect(block.contains("Never repeat"))
+            #expect(!block.contains("unchecked items keep"))
+            #expect(!block.contains("runtime may require"))
+            #expect(!block.contains("once no todo items remain unchecked"))
             #expect(!block.contains("SAME message"))
         }
     }

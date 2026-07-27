@@ -2857,6 +2857,24 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("Agent-loop evals preserve bundle-native sampling defaults")
+    func agentLoopEvalsPreserveBundleNativeSamplingDefaults() throws {
+        let evaluator = try Self.source("Services/Context/AgentLoopEvaluator.swift")
+
+        #expect(
+            evaluator.contains("temperature: nil"),
+            "Agent-loop evals must leave temperature unspecified so the active bundle config wins."
+        )
+        #expect(
+            evaluator.contains("request.samplingParametersAreImplicit = true"),
+            "Agent-loop evals must mark omitted sampling parameters as implicit, matching real chat."
+        )
+        #expect(
+            !evaluator.contains("temperature: 0.0"),
+            "The eval harness must not silently force greedy decoding for bundles tuned for sampling."
+        )
+    }
+
     @Test("Chat UI sends accumulated history and marks implicit sampling without forcing native MTP")
     func chatUISendsAccumulatedHistoryAndMarksImplicitSamplingWithoutForcingNativeMTP() throws {
         let chatView = try Self.source("Views/Chat/ChatView.swift")

@@ -30,13 +30,13 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
     public let name = "todo"
     public let description =
         "Write or replace the OPTIONAL task checklist for multi-step work (3+ steps). The "
-        + "runtime may require it before a later action in a long tool run. Create the list BEFORE "
-        + "starting, then re-send it with the new box checked IMMEDIATELY "
-        + "after finishing each item — do not batch updates for the end. Every item is a line "
+        + "checklist records progress but never decides whether the turn stays open. Create it "
+        + "before starting, then re-send it only after a task or checkbox actually changes. "
+        + "Every item is a line "
         + "starting with `- [ ]` (pending) or `- [x]` (done); each call replaces the entire "
-        + "list. Once created, unchecked items keep this agent run open until you update them or "
-        + "honestly close blocked tracked work with `complete`. Skip it for a direct question or "
-        + "single-step work unless the runtime reports that tracking is required."
+        + "list. Do not repeat an unchanged checklist. Once the requested work is complete, "
+        + "answer the user exactly once and stop even if an item was left unchecked. Skip Todo "
+        + "for a direct question or single-step task."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -109,16 +109,28 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
                 tool: name
             )
         }
-        let stored = await AgentTodoStore.shared.setTodo(markdown: trimmed, for: sessionId)
+        let update = await AgentTodoStore.shared.setTodoIfChanged(
+            markdown: trimmed,
+            for: sessionId
+        )
+        let stored = update.todo
+        if !update.changed {
+            return ToolEnvelope.success(
+                tool: name,
+                text:
+                    "Todo unchanged: \(stored.doneCount)/\(stored.totalCount) complete. "
+                    + "Do not call `todo` again until a task or checkbox changes. Execute the "
+                    + "next concrete pending action now, or answer the user once and stop if "
+                    + "the requested work is already complete."
+            )
+        }
         return ToolEnvelope.success(
             tool: name,
             text:
                 "Todo updated: \(stored.doneCount)/\(stored.totalCount) complete. "
-                + "Unchecked items keep this agent run open, so continue with the next pending "
-                + "item and re-send the full checklist as you check items. When everything is "
-                + "checked, answer the user normally and stop; no `complete` call is required. "
-                + "If work is blocked, use the structured `complete` tool with what remains. "
-                + "Never print tool-call syntax in the answer."
+                + "Continue with the next concrete pending action. Re-send the full checklist "
+                + "only after its status changes. When the requested work is complete, answer "
+                + "the user once and stop; Todo never keeps the turn open."
         )
     }
 }

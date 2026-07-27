@@ -21,9 +21,11 @@ struct AgentLoopToolsTests {
     func sharedTodoSchemaStaysOptional() {
         let description = TodoTool().description
         #expect(description.contains("OPTIONAL"))
-        #expect(description.contains("runtime may require it"))
+        #expect(description.contains("never decides whether the turn stays open"))
+        #expect(description.contains("answer the user exactly once and stop"))
         #expect(description.contains("direct question"))
         #expect(!description.contains("It is REQUIRED"))
+        #expect(!description.contains("unchecked items keep this agent run open"))
     }
 
     @Test("complete schema cannot invite literal protocol text")
@@ -60,12 +62,57 @@ struct AgentLoopToolsTests {
             #expect(ToolEnvelope.isSuccess(result))
             #expect(result.contains("Todo updated"))
             #expect(result.contains("1/3 complete"))
+            #expect(result.contains("Todo never keeps the turn open"))
+            #expect(!result.contains("Unchecked items keep this agent run open"))
 
             let stored = await AgentTodoStore.shared.todo(for: sessionId)
             #expect(stored?.totalCount == 3)
             #expect(stored?.doneCount == 1)
             #expect(stored?.items.first?.text == "Read existing config")
             #expect(stored?.items.last?.isDone == true)
+        }
+    }
+
+    @Test
+    func todo_unchangedReplayIsSuccessfulNoOp() async throws {
+        try await withSession { sessionId in
+            _ = try await TodoTool().execute(
+                argumentsJSON: #"{"markdown": "- [ ] inspect\n- [ ] fix"}"#
+            )
+            let before = try #require(await AgentTodoStore.shared.todo(for: sessionId))
+
+            let result = try await TodoTool().execute(
+                argumentsJSON: #"""
+                    {"markdown": "# Plan\n* [ ] inspect\n* [ ] fix\n\nUnchanged prose."}
+                    """#
+            )
+
+            #expect(ToolEnvelope.isSuccess(result))
+            #expect(result.contains("Todo unchanged: 0/2 complete"))
+            #expect(result.contains("Do not call `todo` again"))
+            #expect(result.contains("answer the user once and stop"))
+            let after = try #require(await AgentTodoStore.shared.todo(for: sessionId))
+            #expect(after.updatedAt == before.updatedAt)
+            #expect(after.markdown == before.markdown)
+        }
+    }
+
+    @Test
+    func todo_checkboxTransitionStillUpdatesStore() async throws {
+        try await withSession { sessionId in
+            _ = try await TodoTool().execute(
+                argumentsJSON: #"{"markdown": "- [ ] inspect\n- [ ] fix"}"#
+            )
+            let before = try #require(await AgentTodoStore.shared.todo(for: sessionId))
+
+            let result = try await TodoTool().execute(
+                argumentsJSON: #"{"markdown": "- [x] inspect\n- [ ] fix"}"#
+            )
+
+            #expect(result.contains("Todo updated: 1/2 complete"))
+            let after = try #require(await AgentTodoStore.shared.todo(for: sessionId))
+            #expect(after.updatedAt >= before.updatedAt)
+            #expect(after.doneCount == 1)
         }
     }
 

@@ -439,10 +439,15 @@ public enum AgentLoopEvaluator {
             stream: Bool,
             includeTools: Bool = true
         ) -> ChatCompletionRequest {
-            ChatCompletionRequest(
+            var request = ChatCompletionRequest(
                 model: resolvedModel,
                 messages: messages,
-                temperature: 0.0,
+                // Match the real chat surface: nil means the installed
+                // bundle's generation_config/JANG defaults win. A hidden
+                // greedy override can trap tool-capable models in a
+                // deterministic action loop that users never see with their
+                // configured sampler.
+                temperature: nil,
                 max_tokens: resolvedMaxTokens,
                 stream: stream,
                 top_p: nil,
@@ -454,6 +459,8 @@ public enum AgentLoopEvaluator {
                 tool_choice: (includeTools && !toolSpecs.isEmpty) ? .auto : nil,
                 session_id: sessionId
             )
+            request.samplingParametersAreImplicit = true
+            return request
         }
 
         /// Append the assistant turn carrying this step's tool calls.
