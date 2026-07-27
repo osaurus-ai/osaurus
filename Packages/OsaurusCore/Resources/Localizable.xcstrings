@@ -2722,7 +2722,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "路由器余额 %@。点击打开钱包。"
+            "value" : "路由余额 %@。点击打开钱包。"
           }
         },
         "zh-Hant" : {
@@ -11730,7 +11730,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "更大的起始上下文意味着更长的模型预热和更慢的首个 token。"
+            "value" : "更大的起始上下文意味着更长的模型预热和更慢的首个词元。"
           }
         },
         "zh-Hant" : {
@@ -12452,7 +12452,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "为此提供程序配置了常规或秘密的凭证标头。"
+            "value" : "为此提供商配置了常规或保密的凭证标头。"
           }
         },
         "zh-Hant" : {
@@ -12798,7 +12798,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "一个 stdio MCP 提供程序需要一条命令才能启动。"
+            "value" : "一个 stdio MCP 提供商需要一条命令才能启动。"
           }
         },
         "zh-Hant" : {
@@ -14165,7 +14165,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "行动"
+            "value" : "操作"
           }
         },
         "zh-Hant" : {
@@ -16811,7 +16811,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每次聊天后，智能体会将对话提炼成简短的摘要。情节会在此累积，以便智能体回忆起过去的会话。"
+            "value" : "每次聊天后，智能体会将对话提炼成简短的摘要。情景会在此累积，以便智能体回忆起过去的会话。"
           }
         },
         "zh-Hant" : {
@@ -17548,7 +17548,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "智能体工作空间根"
+            "value" : "智能体工作区根"
           }
         },
         "zh-Hant" : {
@@ -18431,7 +18431,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "所有缓冲的对话轮次均已提炼（或清除）。当数据片段持续增长时，表明管道运行正常。"
+            "value" : "所有缓冲的对话轮次均已提炼（或清除）。当情景持续增长时，表明管道运行正常。"
           }
         },
         "zh-Hant" : {
@@ -20855,7 +20855,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已有服务商？连接它"
+            "value" : "已有提供商？连接它"
           }
         },
         "zh-Hant" : {
@@ -22269,7 +22269,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "应用白名单"
+            "value" : "应用允许列表"
           }
         },
         "zh-Hant" : {
@@ -22341,7 +22341,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "应用名称（例如邮件）"
+            "value" : "应用名称（例如“邮件”）"
           }
         },
         "zh-Hant" : {
@@ -22513,7 +22513,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Apple 硅芯片是必需的"
+            "value" : "需要 Apple Silicon"
           }
         },
         "zh-Hant" : {
@@ -22656,7 +22656,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AppleScript 在此 Mac 上运行。当智能体首次控制某个应用时，macOS 会要求你允许 Osaurus 的自动化权限。请在「设置 → 电脑使用 → 模型」中下载 AppleScript 模型。"
+            "value" : "AppleScript 在此 Mac 上运行。当智能体首次控制某个应用时，macOS 会要求你允许 Osaurus 的自动化权限。请在「设置 → 电脑操作 → 模型」中下载 AppleScript 模型。"
           }
         },
         "zh-Hant" : {
@@ -24820,7 +24820,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "需要授权"
+            "value" : "需要身份验证"
           }
         },
         "zh-Hant" : {
@@ -27948,7 +27948,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "补全历史"
+            "value" : "回填历史"
           }
         },
         "zh-Hant" : {
@@ -28779,7 +28779,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在向客户端发送 SSE 数据块之前，先按此数量批量累积 token。"
+            "value" : "在向客户端发送 SSE 数据块之前，先按此数量批量累积词元。"
           }
         },
         "zh-Hant" : {
@@ -28813,7 +28813,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "批量引擎最大批处理大小。设为 1 可保持编译快速路径启用；大于 1 则启用连续批处理。"
+            "value" : "BatchEngine 最大批处理大小。设为 1 可保持编译快速路径启用；大于 1 则启用连续批处理。"
           }
         },
         "zh-Hant" : {
@@ -29052,7 +29052,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "基准证明在运行时阻塞问题解决之前是没有意义的。"
+            "value" : "在运行时阻塞问题解决之前，基准验证没有意义。"
           }
         },
         "zh-Hant" : {
@@ -29613,7 +29613,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "空白 = 引擎默认值"
+            "value" : "留空 = 引擎默认值"
           }
         },
         "zh-Hant" : {
@@ -29853,7 +29853,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "空白 = 模型默认值（48）"
+            "value" : "留空 = 模型默认值（48）"
           }
         },
         "zh-Hant" : {
@@ -30024,7 +30024,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "块大小（token 数）"
+            "value" : "块大小（词元数）"
           }
         },
         "zh-Hant" : {
@@ -30195,7 +30195,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正文 SHA-256"
+            "value" : "请求体 SHA-256"
           }
         },
         "zh-Hant" : {
@@ -40596,7 +40596,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "点击以将其设为密钥值"
+            "value" : "点击以将其设为保密值"
           }
         },
         "zh-Hant" : {
@@ -40701,7 +40701,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Client 密钥"
+            "value" : "客户端密钥"
           }
         },
         "zh-Hant" : {
@@ -41441,7 +41441,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "编码器"
+            "value" : "编解码器"
           }
         },
         "zh-Hant" : {
@@ -44850,7 +44850,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "连接服务商"
+            "value" : "连接提供商"
           }
         },
         "zh-Hant" : {
@@ -46367,7 +46367,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正在连接..."
+            "value" : "连接中…"
           }
         },
         "zh-Hant" : {
@@ -46899,7 +46899,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "合并间隔"
+            "value" : "整合间隔"
           }
         },
         "zh-Hant" : {
@@ -47356,7 +47356,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "上下文预算：%@ tokens"
+            "value" : "上下文预算：%@ 词元"
           }
         },
         "zh-Hant" : {
@@ -47564,7 +47564,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "远程模型的上下文长度"
+            "value" : "远程模型的上下文窗口"
           }
         },
         "zh-Hant" : {
@@ -48134,7 +48134,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "对话历史、置顶事实和会话摘要。"
+            "value" : "对话历史、置顶事实和情景摘要。"
           }
         },
         "zh-Hant" : {
@@ -49116,7 +49116,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "复制回复"
+            "value" : "复制响应"
           }
         },
         "zh-Hant" : {
@@ -49224,7 +49224,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "复制探测结果并检查提供者日志。"
+            "value" : "复制探测结果并检查提供商日志。"
           }
         },
         "zh-Hant" : {
@@ -50759,7 +50759,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "无法在 Hugging Face 上访问此模型。该存储库可能是私有的、受限的、已删除或暂时无法访问。在“目录”标签页中添加 Hugging Face 令牌有助于访问受限存储库并缓解速率限制。"
+            "value" : "无法在 Hugging Face 上访问此模型。该仓库可能是私有的、受限的、已删除或暂时无法访问。在“目录”标签页中添加 Hugging Face 令牌有助于访问受限仓库并缓解速率限制。"
           }
         },
         "zh-Hant" : {
@@ -51287,7 +51287,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "创建一个新的密钥"
+            "value" : "创建一个新的 Secret key"
           }
         },
         "zh-Hant" : {
@@ -53100,7 +53100,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "信用"
+            "value" : "积分"
           }
         },
         "zh-Hant" : {
@@ -53969,7 +53969,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "自定义 JSON 通道 `%@` 已配置，但尚未启用自定义 HTTP 执行。"
+            "value" : "自定义 JSON 频道 `%@` 已配置，但尚未启用自定义 HTTP 执行。"
           }
         },
         "zh-Hant" : {
@@ -55229,7 +55229,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "剧集在被清理前保留的天数。设为 0 则永久保留。"
+            "value" : "情景在被清理前保留的天数。设为 0 则永久保留。"
           }
         },
         "zh-Hant" : {
@@ -56166,7 +56166,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "频道/线程读取的默认最近消息数。限制在 1-100 之间。"
+            "value" : "频道/子区读取的默认最近消息数。限制在 1-100 之间。"
           }
         },
         "zh-Hant" : {
@@ -57491,7 +57491,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "删除供应商？"
+            "value" : "删除提供商？"
           }
         },
         "zh-Hant" : {
@@ -58100,7 +58100,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "去噪步骤"
+            "value" : "去噪步数"
           }
         },
         "zh-Hant" : {
@@ -59436,7 +59436,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "直接"
+            "value" : "直连"
           }
         },
         "zh-Hant" : {
@@ -61011,7 +61011,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "分发到智能体已关闭。在频道设置中启用并选择一个智能体。"
+            "value" : "分派到智能体已关闭。请在频道设置中启用并选择一个智能体。"
           }
         },
         "zh-Hant" : {
@@ -61289,7 +61289,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "蒸馏在写入片段之前失败。"
+            "value" : "蒸馏在写入情景之前失败。"
           }
         },
         "zh-Hant" : {
@@ -61357,7 +61357,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "蒸馏已运行但未产生可用片段。"
+            "value" : "蒸馏已运行但未产生可用情景。"
           }
         },
         "zh-Hant" : {
@@ -63062,7 +63062,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "草稿信息"
+            "value" : "起草消息"
           }
         },
         "zh-Hant" : {
@@ -63096,7 +63096,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每步草案 Token 数"
+            "value" : "每步草案词元数"
           }
         },
         "zh-Hant" : {
@@ -63130,7 +63130,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用快速辅助模型生成草案 token，并由主模型在单步中校验。模型支持时按请求启用。"
+            "value" : "使用快速辅助模型生成草案词元，并由主模型在单步中校验。模型支持时按请求启用。"
           }
         },
         "zh-Hant" : {
@@ -63351,7 +63351,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "丢弃概率低于（顶部 token 概率 × P）的 token。"
+            "value" : "丢弃概率低于（顶部词元概率 × P）的词元。"
           }
         },
         "zh-Hant" : {
@@ -65492,7 +65492,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "编辑提供者并输入可执行文件。"
+            "value" : "编辑提供商并输入可执行文件。"
           }
         },
         "zh-Hant" : {
@@ -65526,7 +65526,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "编辑该提供程序并保存 API 密钥或秘密的授权标头。"
+            "value" : "编辑该提供商并保存 API 密钥或机密 Authorization 标头。"
           }
         },
         "zh-Hant" : {
@@ -66227,7 +66227,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "空 — 任何应用中都允许使用计算机。"
+            "value" : "留空 — 任何应用中都允许使用计算机。"
           }
         },
         "zh-Hant" : {
@@ -67283,7 +67283,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在测试或选择其模型之前，请先启用该提供程序。"
+            "value" : "在测试或选择其模型之前，请先启用该提供商。"
           }
         },
         "zh-Hant" : {
@@ -69206,7 +69206,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "剧集已禁用。"
+            "value" : "情景已禁用。"
           }
         },
         "zh-Hant" : {
@@ -69240,7 +69240,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "剧集已遗忘。"
+            "value" : "情景已遗忘。"
           }
         },
         "zh-Hant" : {
@@ -69276,7 +69276,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "情节保留"
+            "value" : "情景保留"
           }
         },
         "zh-Hant" : {
@@ -69310,7 +69310,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未找到该集。"
+            "value" : "未找到该情景。"
           }
         },
         "zh-Hant" : {
@@ -69352,7 +69352,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "片段：%@。%@，%@"
+            "value" : "情景：%@。%@，%@"
           }
         },
         "zh-Hant" : {
@@ -69433,7 +69433,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "情节"
+            "value" : "情景"
           }
         },
         "zh-Hant" : {
@@ -74603,7 +74603,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "获取已签名的路由器 /models 端点并隐藏过时的价格。"
+            "value" : "获取路由服务已签名的 /models 端点，并隐藏过时的价格。"
           }
         },
         "zh-Hant" : {
@@ -78096,7 +78096,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "生成一个新的256位密钥，并重新加密所有文件。旧密钥将被销毁。"
+            "value" : "生成一个新的 256 位密钥，并重新加密所有制品。旧密钥将被销毁。"
           }
         },
         "zh-Hant" : {
@@ -78999,7 +78999,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "生成问候"
+            "value" : "生成式问候"
           }
         },
         "zh-Hant" : {
@@ -83261,7 +83261,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "历史、事实和片段"
+            "value" : "历史、事实与情景"
           }
         },
         "zh-Hant" : {
@@ -83995,7 +83995,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每一步预填充的提示 token 数量。"
+            "value" : "每一步预填充的提示词元数量。"
           }
         },
         "zh-Hant" : {
@@ -84063,7 +84063,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "主模型校验前，草案模型先提议的 token 数量。"
+            "value" : "主模型校验前，草案模型先提议的词元数量。"
           }
         },
         "zh-Hant" : {
@@ -84765,7 +84765,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Hugging Face 返回了 %@。对于受限或私有存储库，请在“目录”标签页中添加 Hugging Face 访问令牌；否则请稍后再试。"
+            "value" : "Hugging Face 返回了 %@。对于受限或私有仓库，请在“目录”标签页中添加 Hugging Face 访问令牌；否则请稍后再试。"
           }
         },
         "zh-Hant" : {
@@ -85805,7 +85805,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "图像生成和编辑模型位于「图像」设置中。"
+            "value" : "图片生成和编辑模型位于“图片”设置中。"
           }
         },
         "zh-Hant" : {
@@ -88285,7 +88285,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "推断"
+            "value" : "推理"
           }
         },
         "zh-Hant" : {
@@ -91215,7 +91215,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "来自提供商的无效回复"
+            "value" : "提供商返回的响应无效"
           }
         },
         "zh-Hant" : {
@@ -92703,7 +92703,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "需要Key"
+            "value" : "需要密钥"
           }
         },
         "zh-Hant" : {
@@ -92774,7 +92774,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "钥匙串钥匙：未找到"
+            "value" : "钥匙串密钥：未找到"
           }
         },
         "zh-Hant" : {
@@ -92810,7 +92810,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "钥匙串钥匙：存在"
+            "value" : "钥匙串密钥：存在"
           }
         },
         "zh-Hant" : {
@@ -93629,7 +93629,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "最新蒸馏未产生可用片段。"
+            "value" : "最新蒸馏未产生可用情景。"
           }
         },
         "zh-Hant" : {
@@ -99707,7 +99707,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "数值越低，输出越专注；数值越高，越具创造性。设为 0 则始终选取概率最高的单个 token。"
+            "value" : "数值越低，输出越专注；数值越高，越具创造性。设为 0 则始终选取概率最高的单个词元。"
           }
         },
         "zh-Hant" : {
@@ -102019,7 +102019,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每个子智能体的最大输出令牌数"
+            "value" : "每个子智能体的最大输出词元数"
           }
         },
         "zh-Hant" : {
@@ -102228,7 +102228,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "最大 Token 数"
+            "value" : "最大词元数"
           }
         },
         "zh-Hant" : {
@@ -102929,7 +102929,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "MCP Server Hub 诊断"
+            "value" : "MCP 服务器中心诊断"
           }
         },
         "zh-Hant" : {
@@ -105901,7 +105901,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "模型下载将使用您账户更高的速率限制和受限存储库访问权限。"
+            "value" : "模型下载会使用你账户更高的速率限制和受限仓库访问权限。"
           }
         },
         "zh-Hant" : {
@@ -110352,7 +110352,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暂无可授予的智能体。请先创建智能体，然后在其“特性”部分中为其启用知识。"
+            "value" : "暂无可授予的智能体。请先创建智能体，然后在其“功能”部分中为其启用知识。"
           }
         },
         "zh-Hant" : {
@@ -110735,7 +110735,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "没有缓冲的对话轮次，也没有片段——请检查每个智能体的记忆。"
+            "value" : "没有缓冲的对话轮次，也没有情景——请检查每个智能体的记忆。"
           }
         },
         "zh-Hant" : {
@@ -111814,7 +111814,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "还没有情节"
+            "value" : "还没有情景"
           }
         },
         "zh-Hant" : {
@@ -112614,7 +112614,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此特定包尚未记录实时工具调用验证。"
+            "value" : "此特定捆绑包尚未记录实时工具调用证明。"
           }
         },
         "zh-Hant" : {
@@ -114003,7 +114003,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "没有为此提供者保存OAuth令牌。"
+            "value" : "没有为此提供商保存 OAuth 令牌。"
           }
         },
         "zh-Hant" : {
@@ -114458,7 +114458,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "无提示"
+            "value" : "无提示词"
           }
         },
         "zh-Hant" : {
@@ -114526,7 +114526,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "没有可重新排序的供应商。"
+            "value" : "没有可重新排序的提供商。"
           }
         },
         "zh-Hant" : {
@@ -114770,7 +114770,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "没有捕获该行的请求"
+            "value" : "未捕获此行的请求"
           }
         },
         "zh-Hant" : {
@@ -114909,7 +114909,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "没有捕获响应体"
+            "value" : "未捕获响应正文"
           }
         },
         "zh-Hant" : {
@@ -116800,7 +116800,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "没有为此提供者保存 xAI OAuth 令牌。"
+            "value" : "没有为此提供商保存 xAI OAuth 令牌。"
           }
         },
         "zh-Hant" : {
@@ -117466,7 +117466,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "冷启动配置所需空闲磁盘空间不足"
+            "value" : "冷预配所需的可用磁盘空间不足"
           }
         },
         "zh-Hant" : {
@@ -117815,7 +117815,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未配置"
+            "value" : "未预配"
           }
         },
         "zh-Hant" : {
@@ -119179,7 +119179,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "占模型约 %1$@ token 窗口的 %2$@"
+            "value" : "占模型约 %1$@ 词元窗口的 %2$@"
           }
         },
         "zh-Hant" : {
@@ -119946,7 +119946,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "设备上"
+            "value" : "设备端"
           }
         },
         "zh-Hant" : {
@@ -120603,7 +120603,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "仅接受的 token 进入基础缓存"
+            "value" : "仅已接受的词元进入基础缓存"
           }
         },
         "zh-Hant" : {
@@ -120674,7 +120674,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每步仅考虑概率最高的 K 个 token。"
+            "value" : "每步仅考虑概率最高的 K 个词元。"
           }
         },
         "zh-Hant" : {
@@ -124394,7 +124394,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 暂时无法连接模型。请重试连接、在这台 Mac 上运行私有模型，或使用你自己的服务商。"
+            "value" : "Osaurus 暂时无法连接模型。请重试连接、在这台 Mac 上运行私有模型，或使用你自己的提供商。"
           }
         },
         "zh-Hant" : {
@@ -125072,7 +125072,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 路由器已关闭"
+            "value" : "Osaurus 路由已关闭"
           }
         },
         "zh-Hant" : {
@@ -129582,7 +129582,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "永久删除身份、固定事实、情节和对话历史。"
+            "value" : "永久删除身份、固定事实、情景和对话历史。"
           }
         },
         "zh-Hant" : {
@@ -130822,7 +130822,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从概率总和达到 P 的最小 token 集合中进行选取。"
+            "value" : "从概率总和达到 P 的最小词元集合中进行选取。"
           }
         },
         "zh-Hant" : {
@@ -143262,7 +143262,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "自述"
+            "value" : "README"
           }
         },
         "zh-Hant" : {
@@ -144317,7 +144317,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "最近的蒸馏尝试都失败了。检查近期活动以了解错误详情。"
+            "value" : "最近的蒸馏尝试都失败了。检查“最近活动”以了解错误详情。"
           }
         },
         "zh-Hant" : {
@@ -147756,7 +147756,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从白名单中移除"
+            "value" : "从允许列表中移除"
           }
         },
         "zh-Hant" : {
@@ -147926,7 +147926,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "删除模型？"
+            "value" : "移除模型？"
           }
         },
         "zh-Hant" : {
@@ -148416,7 +148416,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从列表中删除此条目。"
+            "value" : "从列表中移除此条目。"
           }
         },
         "zh-Hant" : {
@@ -148833,7 +148833,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "重新排序供应商"
+            "value" : "重新排序提供商"
           }
         },
         "zh-Hant" : {
@@ -148867,7 +148867,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "重新排序供应商"
+            "value" : "重新排序提供商"
           }
         },
         "zh-Hant" : {
@@ -149756,7 +149756,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "存储库不可用"
+            "value" : "仓库不可用"
           }
         },
         "zh-Hant" : {
@@ -152241,7 +152241,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "支持流式输出的响应端点"
+            "value" : "支持流式输出的 Responses 端点"
           }
         },
         "zh-Hant" : {
@@ -153701,7 +153701,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "通过在聊天输入框中输入 / 调用的可重复使用提示词快捷指令"
+            "value" : "在聊天输入框中输入 / 即可调用的可复用提示词快捷指令"
           }
         },
         "zh-Hant" : {
@@ -153807,7 +153807,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "跨请求重用缓存的提示前缀，以缩短首 token 生成时间 (TTFT)。关闭时，GPU 和磁盘重用也将被禁用。"
+            "value" : "跨请求重用缓存的提示前缀，以缩短首个词元生成时间（TTFT）。关闭时，GPU 和磁盘重用也将被禁用。"
           }
         },
         "zh-Hant" : {
@@ -153946,7 +153946,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在访达中显示此智能体的沙盒主目录。"
+            "value" : "在 Finder 中显示此智能体的沙盒主目录。"
           }
         },
         "zh-Hant" : {
@@ -156566,7 +156566,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在 Apple 硅芯片 Mac 上运行沙盒配置。"
+            "value" : "在搭载 Apple 芯片的 Mac 上运行沙盒配置。"
           }
         },
         "zh-Hant" : {
@@ -157086,7 +157086,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "运行控制其他应用的 AppleScript 需要 macOS 自动化权限。当智能体首次控制某个应用时，macOS 会要求你允许 Osaurus 对其进行控制。你可以现在预先授予系统事件权限。"
+            "value" : "运行控制其他应用的 AppleScript 需要 macOS 自动化权限。当智能体首次控制某个应用时，macOS 会要求你允许 Osaurus 对其进行控制。你可以现在预先授予 System Events 权限。"
           }
         },
         "zh-Hant" : {
@@ -159275,7 +159275,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "沙盒 MCP 服务器需要 macOS 26 或更高版本，在这台 Mac 上将无法启动。选择“主机”来运行此提供方 — 注意它将在没有沙盒保护的情况下运行。"
+            "value" : "沙盒 MCP 服务器需要 macOS 26 或更高版本，在这台 Mac 上将无法启动。选择“主机”来运行此提供商 — 注意它将在没有沙盒保护的情况下运行。"
           }
         },
         "zh-Hant" : {
@@ -160739,7 +160739,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "调度信息"
+            "value" : "计划信息"
           }
         },
         "zh-Hant" : {
@@ -160875,7 +160875,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已排程"
+            "value" : "已计划"
           }
         },
         "zh-Hant" : {
@@ -161051,7 +161051,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "日程"
+            "value" : "计划任务"
           }
         },
         "zh-Hant" : {
@@ -161087,7 +161087,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "调度和监视器"
+            "value" : "计划任务和监视器"
           }
         },
         "zh-Hant" : {
@@ -161189,7 +161189,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "安排"
+            "value" : "计划"
           }
         },
         "zh-Hant" : {
@@ -168681,7 +168681,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "共享工作空间"
+            "value" : "共享工作区"
           }
         },
         "zh-Hant" : {
@@ -169962,7 +169962,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "显示精确的工具暴露状态、token 估算和导出"
+            "value" : "显示精确的工具暴露状态、词元估算和导出"
           }
         },
         "zh-Hant" : {
@@ -171679,7 +171679,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "静音超时"
+            "value" : "静默超时"
           }
         },
         "zh-Hant" : {
@@ -174833,7 +174833,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "说话工具"
+            "value" : "朗读工具"
           }
         },
         "zh-Hant" : {
@@ -175386,7 +175386,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "agent_channel 工具使用的稳定 ID。本地提供者 ID 已保留。"
+            "value" : "agent_channel 工具使用的稳定 ID。原生提供商 ID 已被保留。"
           }
         },
         "zh-Hant" : {
@@ -175926,7 +175926,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "先使用免费的 Osaurus Cloud 额度——之后可随时下载模型。"
+            "value" : "先使用免费的 Osaurus Cloud 积分——之后可随时下载模型。"
           }
         },
         "zh-Hant" : {
@@ -177006,7 +177006,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Stdio 提供程序会启动本地子进程，而不是通过 URLSession 发送 HTTP 流量。"
+            "value" : "Stdio 提供商会启动本地子进程，而不是通过 URLSession 发送 HTTP 流量。"
           }
         },
         "zh-Hant" : {
@@ -177420,7 +177420,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "停止沙箱，移除%@，然后重新启动沙箱。"
+            "value" : "停止沙盒，移除 %@，然后重新启动沙盒。"
           }
         },
         "zh-Hant" : {
@@ -179808,7 +179808,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "切换到主机以使用受信任的工具或启动沙箱运行时。"
+            "value" : "切换到主机以使用受信任的工具，或启动沙盒运行时。"
           }
         },
         "zh-Hant" : {
@@ -184729,7 +184729,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "模型已运行但至少一个会话未返回可用片段。"
+            "value" : "模型已运行，但至少有一个会话未返回可用情景。"
           }
         },
         "zh-Hant" : {
@@ -185046,7 +185046,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "插件的 `osr_host_api` 镜像结构体与主机的 v6 布局不匹配——最常见的是跳过了 v5 的 `log_structured` 槽位，导致之后的每个槽位都偏移了 8 个字节。随后插件会将 `host->free_string` 分派到错误的主机跳板，`libc free()` 在一个非 malloc 指针上中止，从而导致主机崩溃。有关固定偏移量以及记录在案的 v1..v6 演进，请参阅 `docs/plugins/HOST_API.md → Mirror Struct Audit` 和 `docs/plugins/ABI_VERSIONS.md`。"
+            "value" : "插件的 `osr_host_api` 镜像结构体与宿主的 v6 布局不匹配——最常见的是跳过了 v5 的 `log_structured` 槽位，导致之后的每个槽位都偏移了 8 个字节。随后插件会将 `host->free_string` 分派到错误的宿主跳板，`libc free()` 在一个非 malloc 指针上中止，从而导致宿主崩溃。有关固定偏移量以及记录在案的 v1..v6 演进，请参阅 `docs/plugins/HOST_API.md → Mirror Struct Audit` 和 `docs/plugins/ABI_VERSIONS.md`。"
           }
         },
         "zh-Hant" : {
@@ -185186,7 +185186,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供者已配置，但尚未注册任何工具。"
+            "value" : "提供商已配置，但尚未注册任何工具。"
           }
         },
         "zh-Hant" : {
@@ -185503,7 +185503,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Apple 硅芯片支持沙盒映像和容器化运行时。"
+            "value" : "Apple 芯片支持沙盒映像和 Containerization 运行时。"
           }
         },
         "zh-Hant" : {
@@ -185711,7 +185711,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "设置完成标志为false，因此工具和智能体启动仍需要配置。"
+            "value" : "setupComplete 标志为 false，因此工具和智能体的启动仍需要完成配置。"
           }
         },
         "zh-Hant" : {
@@ -185815,7 +185815,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "stdio 提供者缺少一个命令。"
+            "value" : "stdio 提供商缺少命令。"
           }
         },
         "zh-Hant" : {
@@ -186062,7 +186062,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "令牌或密钥头存储在明文提供者配置之外。"
+            "value" : "令牌或密钥标头存储在明文提供商配置之外。"
           }
         },
         "zh-Hant" : {
@@ -189669,7 +189669,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "这将永久删除您的身份、所有固定的事实、剧集和对话历史记录。此操作无法撤销。"
+            "value" : "这将永久删除你的身份、所有固定的事实、情景和对话历史记录。此操作无法撤销。"
           }
         },
         "zh-Hant" : {
@@ -190976,7 +190976,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Token"
+            "value" : "词元"
           }
         },
         "zh-Hant" : {
@@ -191184,7 +191184,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每块令牌数"
+            "value" : "每块词元数"
           }
         },
         "zh-Hant" : {
@@ -191218,7 +191218,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每个分页块包含的 token 数。"
+            "value" : "每个分页块包含的词元数。"
           }
         },
         "zh-Hant" : {
@@ -191288,7 +191288,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "太大"
+            "value" : "过大"
           }
         },
         "zh-Hant" : {
@@ -192128,7 +192128,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已安装插件和连接提供者的工具"
+            "value" : "来自已安装插件和已连接提供商的工具"
           }
         },
         "zh-Hant" : {
@@ -192750,7 +192750,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "转录的文本将显示在此处..."
+            "value" : "转写的文本将显示在此处..."
           }
         },
         "zh-Hant" : {
@@ -192886,7 +192886,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未找到该转录记录。"
+            "value" : "未找到该转录回合。"
           }
         },
         "zh-Hant" : {
@@ -192989,7 +192989,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "转录行为"
+            "value" : "转写行为"
           }
         },
         "zh-Hant" : {
@@ -193823,7 +193823,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "尝试其他术语，如“快捷键”或“转录”。"
+            "value" : "尝试其他术语，如“快捷键”或“转写”。"
           }
         },
         "zh-Hant" : {
@@ -195583,7 +195583,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未知标签页"
+            "value" : "未知选项卡"
           }
         },
         "zh-Hant" : {
@@ -196653,7 +196653,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用维护者更新"
+            "value" : "使用策展人更新"
           }
         },
         "zh-Hant" : {
@@ -197500,7 +197500,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "URL或存储库"
+            "value" : "URL 或仓库"
           }
         },
         "zh-Hant" : {
@@ -198381,7 +198381,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用“测试”来启动 初始化/工具列表，并记录健康快照。"
+            "value" : "使用“测试”来启动 initialize/listTools，并记录健康快照。"
           }
         },
         "zh-Hant" : {
@@ -198415,7 +198415,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用测试运行 HTTP/SSE 初始化/工具列表 并记录健康快照。"
+            "value" : "使用“测试”运行 HTTP/SSE initialize/listTools 并记录健康快照。"
           }
         },
         "zh-Hant" : {
@@ -199437,7 +199437,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "仅使用正则规则"
+            "value" : "仅使用模式规则"
           }
         },
         "zh-Hant" : {
@@ -200225,7 +200225,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "查看全部 %lld 个情节"
+            "value" : "查看全部 %lld 个情景"
           }
         },
         "zh-Hant" : {
@@ -202388,7 +202388,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "热身 — 加载模型…"
+            "value" : "预热 — 正在加载模型…"
           }
         },
         "zh-Hant" : {
@@ -202499,7 +202499,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "预热中 — 预填充上下文 %lld%%（%lld/1 token）"
+            "value" : "预热中 — 预填充上下文 %1$lld%%（%2$lld/1 词元）"
           }
         },
         "zh-Hant" : {
@@ -204493,7 +204493,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "当您添加积分或使用Osaurus路由器模型时，它会连同金额显示在这里。如果这台 Mac 提出了请求，您可以跳转到聊天或 Insights。"
+            "value" : "当你添加积分或使用 Osaurus Router 模型时，它会连同金额显示在这里。如果这台 Mac 发出过请求，你可以跳转到对应聊天或 Insights。"
           }
         },
         "zh-Hant" : {
@@ -205875,7 +205875,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "工作空间"
+            "value" : "工作区"
           }
         },
         "zh-Hant" : {
@@ -206048,7 +206048,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "工作空间挂载"
+            "value" : "工作区挂载"
           }
         },
         "zh-Hant" : {
