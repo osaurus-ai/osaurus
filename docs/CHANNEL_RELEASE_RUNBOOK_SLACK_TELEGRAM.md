@@ -93,6 +93,10 @@ Record each item in the release artifact:
 | No unapproved send | `agent_channel_send_message` and `agent_channel_reply_thread` with omitted or false `confirm_send` fail before provider dispatch. |
 | Approved send | A single disposable send succeeds only when the operator explicitly sets the approval flag and the tool args include `confirm_send: true`. |
 | Kill switch | With the global channel write switch off, the same approved send is denied; toggling it back on restores the confirmed-send path. |
+| Proactive destinations | With a credential, a write-allowlisted room, and inbound dispatch enabled, a derived Ask-first destination for that room × answering agent appears in Settings → Channels → Agent Posting and in the agent's prompt destinations section. A stored customization for the same route replaces the derived row. |
+| Proactive publish (attended) | `agent_channel_publish` with the destination's `binding_id` sends only after the in-chat approval; the outbox records the intent as sent with its idempotent `intent_key`, and a repeat call with the same `intent_key` does not double-send. |
+| Proactive publish (unattended) | The same publish from a schedule/watcher run returns `queued_for_approval` with no provider dispatch; approving from the outbox delivers it. Remove the room from the write allowlist before approving and confirm the approval is refused. |
+| Proactive kill switch | With the global channel write switch off, an approved outbox publish is denied; re-enabling restores delivery. |
 | Unauthorized room/chat | Slack denied channel and Telegram denied chat return rejected/not-allowlisted results and do not write message snapshots. |
 | Unauthorized user | Slack and Telegram denied senders return `sender_not_allowlisted` before storage or dispatch. |
 | External MCP denial | Over live HTTP: `/mcp/tools` does not expose `agent_channel_*`, `/mcp/call` returns `403 tool_not_exposable`, and non-loopback dispatch binds the external-surface denial. |

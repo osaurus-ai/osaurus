@@ -259,6 +259,29 @@ the channel is ready for user testing:
   verify the action routes to the correct workspace.
 - Restart Osaurus and confirm transport health and configuration persist.
 
+### Proactive posting (outbound destinations)
+
+Proactive posting needs no separate setup. Once a channel has a saved
+credential, write access to at least one room (`writeEnabled` plus a
+write-allowlisted room id), and inbound dispatch enabled, Osaurus derives an
+automatic **Ask first** posting destination for each writable room × answering
+agent. They appear under Settings → Channels → Agent Posting (and per agent
+under Channel Posting) with an "Automatic" badge.
+
+Outbound spot check, after the inbound checklist above passes:
+
+- Confirm the derived destination is listed for the answering agent.
+- Ask the agent in chat to post to the room; approve the queued message from
+  the outbox (Ask first is the default — nothing sends without approval).
+- Confirm the message arrives in the room, and that the outbox row moves to
+  sent.
+- Remove the room from the write allowlist and confirm the destination
+  disappears and any still-queued approval for it is refused.
+
+Auto-send is opt-in per destination and never the derived default; see
+[AGENT_CHANNEL_SECURITY.md](AGENT_CHANNEL_SECURITY.md) for the write gates and
+[AGENT_CHANNELS.md](AGENT_CHANNELS.md) for the full outbound flow.
+
 Webhook setup is advanced/future. When it is used, set a random webhook secret
 token and verify the `X-Telegram-Bot-Api-Secret-Token` header before decoding
 message text.
