@@ -12379,7 +12379,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "发送时，%@ 的只读快照将与此聊天共享。可在电脑操作设置中管理。"
+            "value" : "发送时，%@ 的只读快照将与此聊天共享。可在电脑操控设置中管理。"
           }
         },
         "zh-Hant" : {
@@ -22692,7 +22692,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AppleScript 模型专用于 Mac 自动化，因此位于「电脑操作」而非聊天目录中。"
+            "value" : "AppleScript 模型专用于 Mac 自动化，因此位于「电脑操控」而非聊天目录中。"
           }
         },
         "zh-Hant" : {
@@ -22727,7 +22727,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AppleScript 在此 Mac 上运行。当智能体首次控制某个应用时，macOS 会要求你允许 Osaurus 的自动化权限。请在「设置 → 电脑操作 → 模型」中下载 AppleScript 模型。"
+            "value" : "AppleScript 在此 Mac 上运行。当智能体首次控制某个应用时，macOS 会要求你允许 Osaurus 的自动化权限。请在「设置 → 电脑操控 → 模型」中下载 AppleScript 模型。"
           }
         },
         "zh-Hant" : {
@@ -43069,7 +43069,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "电脑操作"
+            "value" : "电脑操控"
           }
         },
         "zh-Hant" : {
@@ -43105,7 +43105,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "为智能体启用电脑操作后，它可以控制应用程序。"
+            "value" : "为智能体启用电脑操控后，它即可控制应用程序。"
           }
         },
         "zh-Hant" : {
@@ -43141,7 +43141,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "电脑操作默认关闭。你可以按智能体启用——只有自定义智能体才能使用它（默认智能体不可以）。"
+            "value" : "电脑操控默认关闭，需为每个智能体单独启用——且仅自定义智能体可用，默认智能体不可用。"
           }
         },
         "zh-Hant" : {
@@ -56588,7 +56588,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AI 生成问候语和快速操作的默认语音。在智能体的外观选项卡中按智能体开启问候语，每个智能体也可以覆盖此语音。"
+            "value" : "AI 生成问候语与快捷操作的默认风格。在智能体的外观选项卡中为每个智能体单独开启问候语，各智能体也可覆盖此风格。"
           }
         },
         "zh-Hant" : {
@@ -56623,7 +56623,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AI生成问候语和快捷操作的默认语音。在智能体的\"功能\"标签下为每个智能体开启问候语；每个智能体也可以在\"自定义\"标签中覆盖此语音。"
+            "value" : "AI 生成问候语与快捷操作的默认风格。在智能体的\"功能\"标签下为每个智能体单独开启问候语；各智能体也可在\"自定义\"标签中覆盖此风格。"
           }
         },
         "zh-Hant" : {
@@ -66494,7 +66494,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "留空 — 任何应用中都允许使用计算机。"
+            "value" : "留空表示所有应用中均允许电脑操控。"
           }
         },
         "zh-Hant" : {
@@ -80233,7 +80233,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "玻璃"
+            "value" : "毛玻璃"
           }
         },
         "zh-Hant" : {
@@ -80618,7 +80618,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "前往功能并开启电脑使用。"
+            "value" : "前往功能并开启电脑操控。"
           }
         },
         "zh-Hant" : {
@@ -82304,7 +82304,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "标题"
+            "value" : "小标题"
           }
         },
         "zh-Hant" : {
@@ -94268,7 +94268,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "留空则允许在任何应用中使用电脑操作。添加应用则限制为仅允许这些——其他所有应用在执行任何操作前都会被阻止。"
+            "value" : "留空则允许在所有应用中使用电脑操控；添加应用后则仅允许所添加的应用——其余应用在执行任何操作前都会被阻止。"
           }
         },
         "zh-Hant" : {
@@ -96098,7 +96098,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "库健康"
+            "value" : "主题库状况"
           }
         },
         "zh-Hant" : {
@@ -110849,7 +110849,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "尚未安装 AppleScript 模型。请在「设置 → 电脑使用 → 模型」中下载。"
+            "value" : "尚未安装 AppleScript 模型。请在「设置 → 电脑操控 → 模型」中下载。"
           }
         },
         "zh-Hant" : {
@@ -120592,7 +120592,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "用于 Mac 自动化的本地模型位于「电脑操作」设置中。"
+            "value" : "用于 Mac 自动化的本地模型位于「电脑操控」设置中。"
           }
         },
         "zh-Hant" : {
@@ -121809,7 +121809,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "打开电脑操作"
+            "value" : "打开电脑操控"
           }
         },
         "zh-Hant" : {
@@ -121843,7 +121843,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "打开电脑操作模型"
+            "value" : "打开电脑操控模型"
           }
         },
         "zh-Hant" : {
@@ -143594,7 +143594,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "阅读和常规导航自动运行，遵循你的计算机使用自主级别 — 但输入操作会暂停等待你批准，而提交、购买、发送或清除数据始终会先询问。登录操作在你直接输入的窗口中进行，智能体永远不会看到你的密码。你可以随时从信息流中停止运行。"
+            "value" : "阅读与常规导航自动运行，遵循你设定的电脑操控自主级别——但输入操作会暂停并等待你批准，提交、购买、发送或清除数据则始终会先行询问。登录在你直接输入的窗口中完成，智能体不会看到你的密码。你可随时从信息流中停止运行。"
           }
         },
         "zh-Hant" : {
@@ -143630,7 +143630,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "阅读页面和常规导航自动运行，遵循你的计算机使用自主级别。"
+            "value" : "阅读页面与常规导航自动运行，遵循你设定的电脑操控自主级别。"
           }
         },
         "zh-Hant" : {
@@ -151257,7 +151257,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "需要辅助功能权限。请授予该权限，并在“设置 > 电脑操作”中查看状态。"
+            "value" : "需要辅助功能权限。请授予该权限，并在“设置 > 电脑操控”中查看状态。"
           }
         },
         "zh-Hant" : {
@@ -155092,7 +155092,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "回滚到默认"
+            "value" : "恢复默认"
           }
         },
         "zh-Hant" : {
@@ -168907,7 +168907,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "分享它"
+            "value" : "分享"
           }
         },
         "zh-Hant" : {
@@ -195208,7 +195208,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "按智能体逐一开启：打开对应智能体的“子智能体”选项卡，启用“计算机使用”，并使用“共享屏幕上下文”选项（默认已开启）。需要辅助功能权限。"
+            "value" : "按智能体逐一开启：打开对应智能体的“子智能体”选项卡，启用“电脑操控”，并使用“共享屏幕上下文”选项（默认已开启）。需要辅助功能权限。"
           }
         },
         "zh-Hant" : {
@@ -205268,7 +205268,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "为智能体开启此功能后，电脑操作即可让该智能体替你操作 macOS 应用程序——它会分步骤完成目标，并在实时动态中展示每一个动作。"
+            "value" : "为智能体开启此功能后，电脑操控即可让该智能体替你操作 macOS 应用程序——它会分步骤完成目标，并在实时动态中展示每一个动作。"
           }
         },
         "zh-Hant" : {
