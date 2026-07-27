@@ -175,12 +175,28 @@ enum ExternalModelLocator {
         return url
     }
 
+    /// Memoized result of `models()` for the registry generation it was built
+    /// from. `models()` is on the 2s RAM-feasibility tick's call path (via
+    /// `ModelManager.localModelsSnapshotNonBlocking`), and rebuilding it reads
+    /// each bundle's `config.json` for `model_type` and re-parses every
+    /// friendly name — repeated main-thread work that shows up in app-hang
+    /// reports under memory pressure.
+    nonisolated(unsafe) private static var modelsMemo: [MLXModel]?
+    nonisolated(unsafe) private static var modelsMemoGen: UInt64 = .max
+
     /// Catalog entries for every registered external model.
     static func models() -> [MLXModel] {
         lock.lock()
+        // Load first: the lazy first-load inside `loadedLocked()` bumps
+        // `registryGen`, so the gen must be captured after it.
         let entries = Array(loadedLocked().values)
+        let gen = registryGen
+        if modelsMemoGen == gen, let memo = modelsMemo {
+            lock.unlock()
+            return memo
+        }
         lock.unlock()
-        return entries.map { entry in
+        let built = entries.map { entry in
             let bundleDirectory = URL(fileURLWithPath: entry.bundlePath, isDirectory: true)
             return MLXModel(
                 id: entry.id,
@@ -199,6 +215,16 @@ enum ExternalModelLocator {
                 externalSource: entry.source
             )
         }
+        lock.lock()
+        // Store only if the registry didn't move while we were building
+        // (the build reads disk outside the lock); a stale build is simply
+        // not cached and the next caller rebuilds against the newer gen.
+        if registryGen == gen {
+            modelsMemo = built
+            modelsMemoGen = gen
+        }
+        lock.unlock()
+        return built
     }
 
     /// Most recent external-model scan report, including skipped candidates.
