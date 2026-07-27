@@ -83,6 +83,14 @@ enum Keychain {
         }
     }
 
+    /// Run an arbitrary batch of keychain mutations on the serial write queue.
+    /// For callers that need several dependent operations (e.g. save one item,
+    /// delete another) to stay ordered relative to `writeInBackground` writes
+    /// while keeping the blocking SecItem calls off the main thread.
+    static func performInBackground(_ work: @escaping @Sendable () -> Void) {
+        writeQueue.async(execute: work)
+    }
+
     /// Read (`service`, `account`). Returns `nil` when the item is absent or
     /// the read would require interactive authorization.
     static func read(

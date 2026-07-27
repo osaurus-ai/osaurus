@@ -186,22 +186,26 @@ public final class RemoteProviderManager: ObservableObject {
             FeatureTelemetry.remoteProviderAdded(providerType: provider.providerType.rawValue)
         }
 
-        // Save API key to Keychain if provided
-        if let apiKey = apiKey, !apiKey.isEmpty {
-            RemoteProviderKeychain.saveAPIKey(apiKey, for: provider.id)
-        }
-        if let oauthTokens {
-            RemoteProviderKeychain.saveOAuthTokens(oauthTokens, for: provider.id)
-            RemoteProviderKeychain.deleteAPIKey(for: provider.id)
-        }
-
         // Initialize state
         providerStates[provider.id] = RemoteProviderState(providerId: provider.id)
 
-        // Auto-connect if enabled
-        if provider.enabled {
-            Task {
-                try? await connect(providerId: provider.id)
+        // Save credentials off the main thread — SecItemAdd/SecItemUpdate can
+        // block for seconds under securityd contention — then auto-connect
+        // once the write has landed so connect() reads the fresh key.
+        let providerId = provider.id
+        let shouldConnect = provider.enabled
+        Keychain.performInBackground {
+            if let apiKey = apiKey, !apiKey.isEmpty {
+                RemoteProviderKeychain.saveAPIKey(apiKey, for: providerId)
+            }
+            if let oauthTokens {
+                RemoteProviderKeychain.saveOAuthTokens(oauthTokens, for: providerId)
+                RemoteProviderKeychain.deleteAPIKey(for: providerId)
+            }
+            if shouldConnect {
+                Task { @MainActor in
+                    try? await RemoteProviderManager.shared.connect(providerId: providerId)
+                }
             }
         }
 
@@ -224,23 +228,29 @@ public final class RemoteProviderManager: ObservableObject {
         configuration.update(provider)
         saveUserProviderConfiguration()
 
-        // Update API key if provided (nil means no change, empty string means clear)
-        if let apiKey = apiKey {
-            if apiKey.isEmpty {
-                RemoteProviderKeychain.deleteAPIKey(for: provider.id)
-            } else {
-                RemoteProviderKeychain.saveAPIKey(apiKey, for: provider.id)
+        // Update credentials off the main thread (nil apiKey means no change,
+        // empty string means clear). SecItemUpdate can block for seconds under
+        // securityd contention — a recurring app-hang source on the save
+        // button. Reconnect only after the write lands so connect() reads the
+        // fresh key.
+        let providerId = provider.id
+        let shouldReconnect = wasConnected && provider.enabled
+        Keychain.performInBackground {
+            if let apiKey = apiKey {
+                if apiKey.isEmpty {
+                    RemoteProviderKeychain.deleteAPIKey(for: providerId)
+                } else {
+                    RemoteProviderKeychain.saveAPIKey(apiKey, for: providerId)
+                }
             }
-        }
-        if let oauthTokens {
-            RemoteProviderKeychain.saveOAuthTokens(oauthTokens, for: provider.id)
-            RemoteProviderKeychain.deleteAPIKey(for: provider.id)
-        }
-
-        // Reconnect if was connected and still enabled
-        if wasConnected && provider.enabled {
-            Task {
-                try? await connect(providerId: provider.id)
+            if let oauthTokens {
+                RemoteProviderKeychain.saveOAuthTokens(oauthTokens, for: providerId)
+                RemoteProviderKeychain.deleteAPIKey(for: providerId)
+            }
+            if shouldReconnect {
+                Task { @MainActor in
+                    try? await RemoteProviderManager.shared.connect(providerId: providerId)
+                }
             }
         }
 
