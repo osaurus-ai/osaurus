@@ -3812,7 +3812,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在配置之前，必须修复%lld阻塞发现。"
+            "value" : "在配置之前，必须修复 %lld 阻塞发现。"
           }
         },
         "zh-Hant" : {
@@ -4792,7 +4792,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld项将被删除"
+            "value" : "%lld 项将被删除"
           }
         },
         "zh-Hant" : {
@@ -6186,7 +6186,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$lld 个插件%2$@需要系统权限"
+            "value" : "%1$lld 个插件 %2$@ 需要系统权限"
           }
         },
         "zh-Hant" : {
@@ -6831,7 +6831,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在工具完全准备就绪之前，需要注意%lld设置发现。"
+            "value" : "在工具完全准备就绪之前，需要注意 %lld 设置发现。"
           }
         },
         "zh-Hant" : {
@@ -7183,7 +7183,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld个存储转换失败。"
+            "value" : "%lld 个存储转换失败。"
           }
         },
         "zh-Hant" : {
@@ -7612,7 +7612,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "启用%1$lld工具和%2$lld技能·%3$@"
+            "value" : "启用 %1$lld 工具和 %2$lld 技能·%3$@"
           }
         },
         "zh-Hant" : {
@@ -15758,7 +15758,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "添加积分并查看每个Osaurus路由器请求的成本。"
+            "value" : "添加积分并查看每个 Osaurus 路由器请求的成本。"
           }
         },
         "zh-Hant" : {
@@ -21408,7 +21408,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已经有一个喜欢的AI了吗？轻点一下即可连接。"
+            "value" : "已经有一个喜欢的 AI 了吗？轻点一下即可连接。"
           }
         },
         "zh-Hant" : {
@@ -28788,7 +28788,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "回填完成: %1$lld 个会话已缓冲 (%2$lld 轮), %3$lld 个已跳过。蒸馏完成。"
+            "value" : "回填完成：%1$lld 个会话已缓冲 (%2$lld 轮), %3$lld 个已跳过。蒸馏完成。"
           }
         },
         "zh-Hant" : {
@@ -47784,7 +47784,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正在连接到%@…"
+            "value" : "正在连接到 %@…"
           }
         },
         "zh-Hant" : {
@@ -54973,7 +54973,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "积分让Osaurus代表你进行交易 - 目前用于云模型访问，未来将支持更多路由服务。"
+            "value" : "积分让 Osaurus 代表你进行交易 - 目前用于云模型访问，未来将支持更多路由服务。"
           }
         },
         "zh-Hant" : {
@@ -70179,7 +70179,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "静态加密%lld存储。"
+            "value" : "静态加密 %lld 存储。"
           }
         },
         "zh-Hant" : {
@@ -85228,7 +85228,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "HF缓存路径"
+            "value" : "HF 缓存路径"
           }
         },
         "zh-Hant" : {
@@ -88244,7 +88244,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "如果你正在迁移Mac或擦除macOS，请先导出纯文本备份。否则无需采取任何操作——加密会自动运行。"
+            "value" : "如果你正在迁移 Mac 或擦除 macOS，请先导出纯文本备份。否则无需采取任何操作——加密会自动运行。"
           }
         },
         "zh-Hant" : {
@@ -98734,7 +98734,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让Osaurus代表你进行交易 - 云模型、提供商负载均衡以及未来的路由服务；请求会消耗积分。保持开启有助于支持 Osaurus 的开发 - 感谢。"
+            "value" : "让 Osaurus 代表你进行交易 - 云模型、提供商负载均衡以及未来的路由服务；请求会消耗积分。保持开启有助于支持 Osaurus 的开发 - 感谢。"
           }
         },
         "zh-Hant" : {
@@ -106648,7 +106648,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "内存数据库无法打开。请检查控制台中的SQLCipher错误和存储迁移日志。"
+            "value" : "内存数据库无法打开。请检查控制台中的 SQLCipher 错误和存储迁移日志。"
           }
         },
         "zh-Hant" : {
@@ -127943,7 +127943,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus云"
+            "value" : "Osaurus 云"
           }
         },
         "zh-Hant" : {
@@ -132377,7 +132377,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "按需付费。无需API密钥，无需单独注册。"
+            "value" : "按需付费。无需 API 密钥，无需单独注册。"
           }
         },
         "zh-Hant" : {
@@ -133166,7 +133166,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每会话KV限制（Token 数）"
+            "value" : "每会话 KV 限制（Token 数）"
           }
         },
         "zh-Hant" : {
@@ -135912,7 +135912,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "默认明文 — 选择启用SQLCipher静态加密"
+            "value" : "默认明文 — 选择启用 SQLCipher 静态加密"
           }
         },
         "zh-Hant" : {
@@ -155182,7 +155182,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "通过Osaurus路由的请求，按最新排序。当此Mac有匹配的副本时，打开聊天或洞察。"
+            "value" : "通过 Osaurus 路由的请求，按最新排序。当此 Mac 有匹配的副本时，打开聊天或洞察。"
           }
         },
         "zh-Hant" : {
@@ -164885,7 +164885,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存Discord设置"
+            "value" : "保存 Discord 设置"
           }
         },
         "zh-Hant" : {
@@ -167396,7 +167396,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "搜索并编辑你的Canva设计"
+            "value" : "搜索并编辑你的 Canva 设计"
           }
         },
         "zh-Hant" : {
@@ -186872,7 +186872,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Telegram 分发不支持提及限制。请关闭 Telegram 的“需要 @提及”。"
+            "value" : "Telegram 分发不支持提及限制。请关闭 Telegram 的“需要 @ 提及”。"
           }
         },
         "zh-Hant" : {
@@ -188631,7 +188631,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "256位加密密钥存储在你的macOS钥匙串中。它永远不会离开这台Mac，并且不会同步到iCloud。"
+            "value" : "256 位加密密钥存储在你的 macOS 钥匙串中。它永远不会离开这台 Mac，并且不会同步到 iCloud。"
           }
         },
         "zh-Hant" : {
@@ -191136,7 +191136,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 智能体帮助你配置Osaurus。它不使用沙盒或工作文件夹。"
+            "value" : "Osaurus 智能体帮助你配置 Osaurus。它不使用沙盒或工作文件夹。"
           }
         },
         "zh-Hant" : {
@@ -191697,7 +191697,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "路由器将你的身份主密钥用作你的计费账户。在添加积分或调用Osaurus模型之前，请创建或恢复身份。"
+            "value" : "路由器将你的身份主密钥用作你的计费账户。在添加积分或调用 Osaurus 模型之前，请创建或恢复身份。"
           }
         },
         "zh-Hant" : {
@@ -211531,7 +211531,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "当您使用Osaurus路由器模型时，每个请求都会显示在其成本和令牌上。如果这台 Mac 提出了请求，您可以跳转到聊天或 Insights。"
+            "value" : "当您使用 Osaurus 路由器模型时，每个请求都会显示在其成本和令牌上。如果这台 Mac 提出了请求，您可以跳转到聊天或 Insights。"
           }
         },
         "zh-Hant" : {
@@ -212060,7 +212060,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "谁可以调用你的API以及调用的频率。"
+            "value" : "谁可以调用你的 API 以及调用的频率。"
           }
         },
         "zh-Hant" : {
@@ -214766,7 +214766,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "你将添加%@"
+            "value" : "你将添加 %@"
           }
         },
         "zh-Hant" : {
@@ -215044,7 +215044,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "你的余额是%@。添加积分以继续聊天。"
+            "value" : "你的余额是 %@。添加积分以继续聊天。"
           }
         },
         "zh-Hant" : {
@@ -215079,7 +215079,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "你的余额现在是%@。重试你最后一条消息以继续。"
+            "value" : "你的余额现在是 %@。重试你最后一条消息以继续。"
           }
         },
         "zh-Hant" : {
@@ -215115,7 +215115,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您的余额。本会话已花费%@。点击添加积分。"
+            "value" : "您的余额。本会话已花费 %@。点击添加积分。"
           }
         },
         "zh-Hant" : {
