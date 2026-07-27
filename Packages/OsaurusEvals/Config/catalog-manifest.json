@@ -169,6 +169,7 @@
       "browseruse.stale-ref-recovery"
     ],
     "CacheProof" : [
+      "cache_proof.cross-session-longest-disk-prefix",
       "cache_proof.cross-session-partial-disk-restore",
       "cache_proof.disk-l2-lane-persists",
       "cache_proof.five-turn-footprint-growth",

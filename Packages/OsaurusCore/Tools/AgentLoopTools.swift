@@ -34,9 +34,11 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
         + "before starting, then re-send it only after a task or checkbox actually changes. "
         + "Every item is a line "
         + "starting with `- [ ]` (pending) or `- [x]` (done); each call replaces the entire "
-        + "list. Do not repeat an unchanged checklist. Once the requested work is complete, "
-        + "answer the user exactly once and stop even if an item was left unchecked. Skip Todo "
-        + "for a direct question or single-step task."
+        + "list. Do not repeat an unchanged checklist or mark verification done before running "
+        + "it. Before the final answer, if task status changed since the last call, re-send the "
+        + "full checklist once with every actually finished item checked through this tool, not "
+        + "as prose. Then answer the user exactly once and stop even if an item remains "
+        + "unchecked. Skip Todo for a direct question or single-step task."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -120,8 +122,9 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
                 text:
                     "Todo unchanged: \(stored.doneCount)/\(stored.totalCount) complete. "
                     + "Do not call `todo` again until a task or checkbox changes. Execute the "
-                    + "next concrete pending action now, or answer the user once and stop if "
-                    + "the requested work is already complete."
+                    + "next concrete pending action now. Before the final answer, send one last "
+                    + "tool update only if status changed; never print the checklist as prose. "
+                    + "Then answer once and stop."
             )
         }
         return ToolEnvelope.success(
@@ -129,8 +132,10 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
             text:
                 "Todo updated: \(stored.doneCount)/\(stored.totalCount) complete. "
                 + "Continue with the next concrete pending action. Re-send the full checklist "
-                + "only after its status changes. When the requested work is complete, answer "
-                + "the user once and stop; Todo never keeps the turn open."
+                + "only after its status changes. Before the final answer, send one last tool "
+                + "update if status changed, with every actually finished item checked; never "
+                + "print the checklist as prose. Then answer once and stop; Todo never keeps "
+                + "the turn open."
         )
     }
 }

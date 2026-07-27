@@ -790,6 +790,8 @@ Field notes:
 - `expect.agentLoop.contextWindowOverride` — build the loop's budget manager against this window instead of the model's real one. The compaction-stress lever: long tool outputs on a tight override force the sticky-watermark trimming path mid-run. Size it so the protected tail still fits the history budget — an override that can't even fit the tail ends the run with the `overBudget` exit before compaction fires (which is its own case).
 - `expect.agentLoop.stopOnToolRejection` — loop policy: `true` runs the chat surface's policy (first error envelope ends the run with `toolRejected`); default `false` keeps the headless policy (the model gets the error and keeps looping). Lets cases pin BOTH behaviours.
 - `expect.agentLoop.todoUpdatedBeforeComplete` — todo discipline: some `todo` call with at least one checked (`[x]`) box must appear before the first `complete` call (or before the run ends). A single list creation with all boxes unchecked does not pass.
+- `expect.agentLoop.todoCompletedBeforeFinal` — stronger opt-in Todo outcome: the last successful parseable checklist before `complete`/run end must be non-empty and fully checked. This does **not** change runtime termination; Todo remains advisory so an incomplete list cannot reopen a final response.
+- `expect.agentLoop.enableThinking` — optional explicit mirror of the chat model dropdown's Thinking choice, copied to every model step. Omit it to exercise the production unspecified-agent default; use `true`/`false` only when the row intentionally tests that visible user choice.
 - `expect.agentLoop.finalTextContains` / `rubric` — cheap substring checks vs. LLM-judge grading of the final answer (same `JUDGE_MODEL` override as `capability_claims`).
 - `expect.agentLoop.scoredMaxPromptTokens` / `scoredMaxTotalTokens` — optional context-cost ceilings for the "saving context" lane. `scoredMaxPromptTokens` **fails the case** when `promptTokensTotal` (input summed across steps, including the frozen tool schema) exceeds the budget, so a later prompt/tool regression that re-bloats context can't pass while silently burning tokens; `scoredMaxTotalTokens` gates input + output. Both are omitted by default (reported via telemetry, not scored), and only bite a live model — scripted/deterministic runs spend `0`.
 
@@ -813,6 +815,26 @@ scripts/evals/agent-loop-regression-lab.sh \
   --suite Packages/OsaurusEvals/Suites/AgentLoopFrontier \
   --model <prefix>/<model-id>
 ```
+
+### `cache_proof` domain
+
+`cache_proof` drives the real local chat stream and scores typed vMLX
+prefill-progress events plus runtime cache counters. The structured gates are
+tier-neutral: they work when paged RAM is off and disk L2 is the only prefix
+tier, while topology-specific raw RAM/SSM counters remain available for cases
+that explicitly target those tiers.
+
+- `systemPromptsPerSession` must contain one prompt per configured session and
+  enables short-prefix → extended-prefix → longest-match three-chat proofs.
+- `minStructuredCacheRestoreTurns` counts post-first turns with a nonzero typed
+  restore event; it does not infer reuse from aggregate counters or UI color.
+- `requirePrefillProgressAccounting` requires a stable prompt total, bounded and
+  monotonic completed counts, restore-to-prefill continuity, and a terminal
+  `complete == total` frame on every turn.
+- `requireFinalDiskCacheRestore` pins the final turn to the SSD tier.
+- `minFinalRestoreGainTokens` compares the final two typed restore counts so a
+  test can prove the runtime chose a newly stored longer valid prefix instead
+  of repeatedly restoring an older shorter candidate.
 
 ### `computer_use_loop` domain
 
