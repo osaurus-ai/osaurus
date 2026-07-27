@@ -1009,19 +1009,25 @@ private func expectCustomJSONError<T>(
 private func withIsolatedAgentChannelConfiguration(
     body: @Sendable () async throws -> Void
 ) async throws {
+    // BOTH process-wide locks (in this fixed order everywhere):
+    // `AgentChannelConfigurationStore.overrideDirectory` is also mutated by
+    // suites that hold only `AgentChannelConfigurationTestLock` (native
+    // coexistence), so holding only `StoragePathsTestLock` races them.
     try await StoragePathsTestLock.shared.run {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "osaurus-agent-channel-\(UUID().uuidString)",
-            isDirectory: true
-        )
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let previousDirectory = AgentChannelConfigurationStore.overrideDirectory
-        AgentChannelConfigurationStore.overrideDirectory = directory
-        defer {
-            AgentChannelConfigurationStore.overrideDirectory = previousDirectory
-            try? FileManager.default.removeItem(at: directory)
+        try await AgentChannelConfigurationTestLock.shared.run {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-agent-channel-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let previousDirectory = AgentChannelConfigurationStore.overrideDirectory
+            AgentChannelConfigurationStore.overrideDirectory = directory
+            defer {
+                AgentChannelConfigurationStore.overrideDirectory = previousDirectory
+                try? FileManager.default.removeItem(at: directory)
+            }
+            try await body()
         }
-        try await body()
     }
 }
 

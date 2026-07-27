@@ -16,6 +16,7 @@ import SwiftUI
 private enum AgentChannelsPage {
     case connections
     case activity
+    case outbox
 }
 
 /// Which channel's configuration sheet is open.
@@ -23,18 +24,23 @@ private enum AgentChannelSheetTarget: Identifiable {
     case addChannel
     case native(AgentChannelKind)
     case editCustom(AgentChannelConnection)
+    case addDestination
+    case editDestination(AgentChannelBinding)
 
     var id: String {
         switch self {
         case .addChannel: return "add-channel"
         case .native(let kind): return "native-\(kind.rawValue)"
         case .editCustom(let connection): return "custom-\(connection.id)"
+        case .addDestination: return "destination-new"
+        case .editDestination(let binding): return "destination-\(binding.id)"
         }
     }
 }
 
 struct AgentChannelConnectionCenterView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.settingsLandingPending) private var landingPending
 
     @State private var hasAppeared = false
     @State private var page: AgentChannelsPage = .connections
@@ -44,6 +50,13 @@ struct AgentChannelConnectionCenterView: View {
     @State private var nativeConfigured: [AgentChannelKind: Bool] = [:]
     @State private var anyNativeConfigured = false
     @State private var connections: [AgentChannelConnection] = []
+    /// Effective posting rooms: stored bindings plus automatic ones derived
+    /// from the channel setup (writable rooms × assigned agents).
+    @State private var destinationBindings: [AgentChannelBinding] = []
+    @State private var storedDestinationIds: Set<String> = []
+    /// Rows needing operator attention (pending approvals + unconfirmed
+    /// deliveries), surfaced as a count on the Outbox header button.
+    @State private var pendingOutboxCount = 0
 
     @State private var auditScopeId: String?
     @State private var auditSnapshot: AgentChannelAuditWorkbenchSnapshot?
@@ -70,6 +83,8 @@ struct AgentChannelConnectionCenterView: View {
                     connectionsPage
                 case .activity:
                     activityTab
+                case .outbox:
+                    AgentChannelOutboxView()
                 }
             }
             .opacity(hasAppeared ? 1 : 0)
@@ -89,9 +104,22 @@ struct AgentChannelConnectionCenterView: View {
         .onChange(of: page) {
             if page == .connections {
                 refreshNativeBadges()
-            } else {
+            } else if page == .activity {
                 reloadAuditWorkbench()
             }
+        }
+        .onChange(of: landingPending) { _, pending in
+            routeForLandingTarget(pending)
+        }
+        .onReceive(
+            NotificationCenter.default
+                .publisher(for: .agentChannelOutboundIntentsChanged)
+                .receive(on: DispatchQueue.main)
+        ) { _ in
+            reloadPendingOutboxCount()
+        }
+        .task {
+            routeForLandingTarget(landingPending)
         }
         .sheet(item: $activeSheet, onDismiss: handleSheetDismiss) { target in
             switch target {
@@ -110,6 +138,14 @@ struct AgentChannelConnectionCenterView: View {
                 EmptyView()
             case .editCustom(let connection):
                 AgentChannelCustomConnectionSheet(connection: connection) {
+                    reloadConnections()
+                }
+            case .addDestination:
+                AgentChannelDestinationEditorSheet(binding: nil) {
+                    reloadConnections()
+                }
+            case .editDestination(let binding):
+                AgentChannelDestinationEditorSheet(binding: binding) {
                     reloadConnections()
                 }
             }
@@ -136,6 +172,8 @@ struct AgentChannelConnectionCenterView: View {
         switch page {
         case .activity:
             return L("Incoming messages and receive decisions across your channels")
+        case .outbox:
+            return L("Posts agents want to send, plus what already went out")
         case .connections:
             if !globalWritesEnabled {
                 return L("Sending is paused — every channel is read-only")
@@ -152,6 +190,14 @@ struct AgentChannelConnectionCenterView: View {
         ) {
             switch page {
             case .connections:
+                HeaderSecondaryButton(
+                    pendingOutboxCount > 0 ? L("Outbox (\(pendingOutboxCount))") : L("Outbox"),
+                    icon: "paperplane"
+                ) {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        page = .outbox
+                    }
+                }
                 HeaderSecondaryButton(L("Activity"), icon: "clock.arrow.circlepath") {
                     withAnimation(.easeOut(duration: 0.2)) {
                         page = .activity
@@ -160,7 +206,7 @@ struct AgentChannelConnectionCenterView: View {
                 HeaderPrimaryButton(L("Add Channel"), icon: "plus") {
                     activeSheet = .addChannel
                 }
-            case .activity:
+            case .activity, .outbox:
                 HeaderSecondaryButton(L("Back to Channels"), icon: "chevron.left") {
                     withAnimation(.easeOut(duration: 0.2)) {
                         page = .connections
@@ -191,6 +237,16 @@ struct AgentChannelConnectionCenterView: View {
 
                 if !availableNativeKinds.isEmpty {
                     availableSection
+                }
+
+                if !isFirstRun || !destinationBindings.isEmpty {
+                    AgentChannelDestinationsSection(
+                        bindings: destinationBindings,
+                        storedBindingIds: storedDestinationIds,
+                        onAdd: { activeSheet = .addDestination },
+                        onEdit: { activeSheet = .editDestination($0) },
+                        onChanged: { reloadConnections() }
+                    )
                 }
 
                 writeGateRow
@@ -712,6 +768,36 @@ struct AgentChannelConnectionCenterView: View {
 
     private func reloadConnections() {
         connections = manager.editableConnections()
+        storedDestinationIds = Set(manager.bindings().map(\.id))
+        destinationBindings = AgentChannelAutoDestinationResolver.effectiveConfiguration()
+            .bindings
+            .sorted { lhs, rhs in
+                lhs.displayLabel.localizedCaseInsensitiveCompare(rhs.displayLabel)
+                    == .orderedAscending
+            }
+        reloadPendingOutboxCount()
+    }
+
+    private func reloadPendingOutboxCount() {
+        let store = AgentChannelMessageStore.shared
+        guard (try? store.openIfNeeded()) != nil else {
+            pendingOutboxCount = 0
+            return
+        }
+        let pending = (try? store.outboundIntentCount(status: .pending)) ?? 0
+        let unknown = (try? store.outboundIntentCount(status: .deliveryUnknown)) ?? 0
+        pendingOutboxCount = pending + unknown
+    }
+
+    /// Settings-search landing targets that live on a secondary page need the
+    /// page switched before the anchor can scroll/glow.
+    private func routeForLandingTarget(_ pending: String?) {
+        guard let pending else { return }
+        if pending == "agentChannels.outbox", page != .outbox {
+            page = .outbox
+        } else if pending == "agentChannels.destinations", page != .connections {
+            page = .connections
+        }
     }
 
     private func reloadWriteGate() {

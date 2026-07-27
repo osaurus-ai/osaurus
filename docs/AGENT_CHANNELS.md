@@ -205,6 +205,119 @@ tools. Each configured action must map to a standard Agent Channel action, and
 the runner enforces the same read/write gates as native adapters before it
 builds an HTTP request.
 
+## Proactive Publishing (Agent Destinations)
+
+Schema v2 of `agent-channels.json` adds a top-level `bindings` array: provider-
+neutral agent→destination routes that let an agent publish to a channel during
+a normal run (chat, schedule, watcher, or self-scheduled wake-up) without an
+inbound message trigger. A v1 file decodes with empty bindings, so existing
+installs stay proactive-off by default.
+
+```json
+{
+  "schemaVersion": 2,
+  "connections": ["..."],
+  "bindings": [
+    {
+      "id": "daily-report",
+      "agentId": "00000000-0000-0000-0000-000000000001",
+      "connectionId": "slack",
+      "roomId": "C0123456789",
+      "threadId": null,
+      "label": "Team standup channel",
+      "guidance": "Post the daily summary at the end of the scheduled run.",
+      "allowedSources": ["schedule", "self_schedule"],
+      "outboundMode": "confirm",
+      "ratePolicy": { "maxSendsPerHour": 10, "minSecondsBetweenSends": 30 },
+      "enabled": true
+    }
+  ]
+}
+```
+
+Key properties of the model:
+
+- **Zero-config automatic destinations.** Connecting a native channel already
+  provides everything a proactive destination needs: the write allowlist says
+  which rooms the bot may post to, and inbound dispatch says which agent
+  answers there. `AgentChannelAutoDestinationResolver` derives an automatic
+  binding for every (answering agent, writable room) pair on an enabled native
+  connection with a saved credential, write access on, and dispatch enabled —
+  id `auto-<connection>-<room>-<agent prefix>`, always `confirm` mode, all run
+  sources, default rate policy. Automatic destinations grant no new write
+  capability (they exist only where the operator already allowlisted write
+  access) and can never send without a human: `confirm` is structural, not a
+  default. Every proactive read point — tool exposure, the system prompt
+  section, the publish tool's contextual `.ask` resolution, and the publish
+  service's authorization (including approval-time re-checks) — uses the
+  effective configuration (stored + derived), so removing a room from the
+  allowlist or disabling write access makes the automatic destination vanish
+  everywhere at once and refuses already-queued approvals with
+  `binding_removed`.
+- **Customization precedence.** A stored binding for the same (agent,
+  connection, room) suppresses the derived one — changing a room's mode in the
+  UI (including "Off") materializes a stored binding, and deleting that
+  customization reverts the room to automatic ask-first behavior. A stored
+  binding that reuses an automatic id also wins. Derived rows are labeled
+  "Automatic" in the UI; switching one to auto-send goes through the same
+  explicit acknowledgement as any autonomous binding.
+- Bindings are managed in two synchronized surfaces backed by the same store
+  and editor: per agent under the agent's own settings (Agents → agent →
+  Automation → Channel Posting, with the agent pinned in the editor) and
+  across all agents in Settings → Channels → Agent Posting. Each binding
+  names a single agent, a connection (native or custom), a room, an optional
+  thread, operator-facing "when to use" guidance, the run sources it may be
+  used from, an outbound mode, and a rate policy. New bindings get an
+  auto-generated slug id; rooms are picked from live discovery, and run
+  sources, rate limits, and thread pinning live behind Advanced with safe
+  defaults.
+- `outboundMode` decides what `agent_channel_publish` does: `off` refuses,
+  `draft` records a local draft with no provider I/O, `confirm` shows an
+  interactive approval card on attended runs and queues a pending outbox item
+  on unattended runs, and `autonomous` sends directly while still passing
+  every host gate (write allowlists, rate policy, kill switch).
+- When an agent has at least one usable binding, its system prompt gains a
+  dynamic "Channel Destinations" section listing binding ids, labels, modes,
+  and guidance for the current run source, and the narrow
+  `agent_channel_publish(binding_id, content, intent_key, thread_id?)` tool is
+  exposed. The model never supplies a raw connection or room for proactive
+  sends; an optional `thread_id` is honored only when the binding does not pin
+  a thread itself, and a conflicting thread is refused.
+- Every publish flows through a durable outbound-intent ledger keyed by
+  (agent, binding, `intent_key`). Replaying an intent key returns the prior
+  result instead of sending again. Provider failures are classified:
+  deterministic rejections (auth, permissions, unreachable host) park as
+  retryable `failed` rows that a retry re-claims via compare-and-set, while
+  ambiguous failures (timeout after dispatch, 5xx, undecodable success) park
+  as `delivery_unknown` — never auto-retried, resolvable only by the operator
+  (mark sent, discard, or explicitly resend). Interrupted `sending` rows from
+  a crashed run are reconciled to `delivery_unknown` at startup.
+- Policy checks and the provider write for one binding are serialized by a
+  per-binding lock inside the publish actor, so two concurrent sends can never
+  double-spend the binding's hourly or min-gap rate headroom.
+- If the user configures a global `.ask` policy on `agent_channel_publish`,
+  unattended runs (schedule/watcher/self-schedule) queue the message for
+  operator approval instead of stalling on a card nobody can answer — even for
+  `autonomous` bindings (strictest wins).
+- The Outbox page (Settings → Channels → Outbox) shows unresolved work first
+  (pending approvals, unknown deliveries, drafts) with paginated terminal
+  history below; terminal rows are pruned after 30 days while unresolved rows
+  are retained indefinitely. Approving, sending a draft, or retrying an
+  unknown delivery opens an exact-payload review sheet and re-runs the full
+  authorization matrix against current settings; an item whose binding route
+  (connection/room/thread) or allowed run sources changed since it was queued
+  is refused instead of silently rerouted.
+- Lifecycle safety: saving a binding validates that its agent and connection
+  exist; deleting a connection cascade-disables its bindings (recreating the
+  same connection id never silently reactivates them); deleting an agent
+  removes its bindings; imported configurations arrive with autonomous or
+  unresolvable bindings disabled until the local operator re-acknowledges
+  them, and materially repointing a binding resets its autonomous
+  acknowledgement.
+
+See `AGENT_CHANNEL_SECURITY.md` for the authorization matrix and the
+distinction between proactive publishing and reactive reply tokens.
+
 ## Safe Custom JSON Runner
 
 Custom JSON channels are bounded HTTP adapters for services that expose simple

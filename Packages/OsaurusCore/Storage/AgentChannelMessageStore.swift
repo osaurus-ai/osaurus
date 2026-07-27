@@ -306,6 +306,126 @@ public enum AgentChannelAuditRedactor {
     }
 }
 
+// MARK: - Outbound intents (proactive publishing ledger)
+
+/// Lifecycle of one proactive outbound intent.
+///
+/// `draft` never performs provider I/O; `pending` awaits an operator
+/// approval (unattended confirm-mode runs); `sending` is a short-lived
+/// claim that serializes concurrent sends for the same intent; `sent` and
+/// `failed` are terminal (a failed intent may be retried by moving back to
+/// `sending` under the service's policy re-check); `cancelled` is the
+/// operator discarding a draft/pending item.
+///
+/// `deliveryUnknown` records an AMBIGUOUS provider failure: the write may
+/// or may not have reached the provider (timeout after dispatch, undecodable
+/// success response, interrupted process). It is never auto-retried — the
+/// providers have no server-side idempotency for these sends, so a blind
+/// retry could duplicate a message a human already saw. Only an explicit
+/// operator resolution (mark sent / retry / discard) moves it forward.
+public enum AgentChannelOutboundIntentStatus: String, Codable, Sendable, Equatable, CaseIterable {
+    case draft
+    case pending
+    case sending
+    case sent
+    case failed
+    case cancelled
+    case deliveryUnknown = "delivery_unknown"
+
+    /// Statuses that still need operator or agent attention: they must
+    /// never be pruned and the outbox surfaces them unconditionally.
+    public var isUnresolved: Bool {
+        switch self {
+        case .draft, .pending, .sending, .deliveryUnknown: return true
+        case .sent, .failed, .cancelled: return false
+        }
+    }
+}
+
+public struct AgentChannelOutboundIntent: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let agentId: UUID
+    public let bindingId: String
+    public let connectionId: String
+    public let roomId: String
+    public let threadId: String?
+    /// Caller-stable idempotency key. Unique per (agent, binding) so a
+    /// replayed tool call can never produce a second provider write.
+    public let intentKey: String
+    public let content: String
+    public let status: AgentChannelOutboundIntentStatus
+    public let providerMessageId: String?
+    public let failureCode: String?
+    public let failureMessage: String?
+    public let runSource: String?
+    public let sessionId: String?
+    public let createdAt: Date
+    public let updatedAt: Date
+
+    public init(
+        id: String = UUID().uuidString,
+        agentId: UUID,
+        bindingId: String,
+        connectionId: String,
+        roomId: String,
+        threadId: String? = nil,
+        intentKey: String,
+        content: String,
+        status: AgentChannelOutboundIntentStatus,
+        providerMessageId: String? = nil,
+        failureCode: String? = nil,
+        failureMessage: String? = nil,
+        runSource: String? = nil,
+        sessionId: String? = nil,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.agentId = agentId
+        self.bindingId = bindingId
+        self.connectionId = connectionId
+        self.roomId = roomId
+        self.threadId = threadId
+        self.intentKey = intentKey
+        self.content = content
+        self.status = status
+        self.providerMessageId = providerMessageId
+        self.failureCode = failureCode
+        self.failureMessage = failureMessage
+        self.runSource = runSource
+        self.sessionId = sessionId
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    public func with(
+        status: AgentChannelOutboundIntentStatus,
+        providerMessageId: String? = nil,
+        failureCode: String? = nil,
+        failureMessage: String? = nil,
+        updatedAt: Date = Date()
+    ) -> AgentChannelOutboundIntent {
+        AgentChannelOutboundIntent(
+            id: id,
+            agentId: agentId,
+            bindingId: bindingId,
+            connectionId: connectionId,
+            roomId: roomId,
+            threadId: threadId,
+            intentKey: intentKey,
+            content: content,
+            status: status,
+            providerMessageId: providerMessageId ?? self.providerMessageId,
+            failureCode: failureCode,
+            failureMessage: failureMessage,
+            runSource: runSource,
+            sessionId: sessionId,
+            createdAt: createdAt,
+            updatedAt: updatedAt
+        )
+    }
+}
+
 public struct AgentChannelReceiveResult: Codable, Sendable, Equatable {
     public let connectionId: String
     public let providerEventId: String?
@@ -342,7 +462,7 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
     public static let maxMessagesPerRoom = 1_000
     public static let maxAuditEventsPerConnection = 10_000
 
-    private static let latestSchemaVersion = 3
+    private static let latestSchemaVersion = 4
 
     private var db: OpaquePointer?
     private var registeredMaintenanceHandle = false
@@ -434,6 +554,7 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
             if currentVersion < 1 { try migrateToV1() }
             if currentVersion < 2 { try migrateToV2() }
             if currentVersion < 3 { try migrateToV3() }
+            if currentVersion < 4 { try migrateToV4() }
         } catch {
             throw AgentChannelMessageStoreError.migrationFailed(error.localizedDescription)
         }
@@ -558,6 +679,45 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
             "ALTER TABLE channel_messages ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]'"
         )
         try setSchemaVersion(3)
+    }
+
+    private func migrateToV4() throws {
+        try executeRaw(
+            """
+            CREATE TABLE IF NOT EXISTS channel_outbound_intents (
+                id                  TEXT PRIMARY KEY,
+                agent_id            TEXT NOT NULL,
+                binding_id          TEXT NOT NULL,
+                connection_id       TEXT NOT NULL,
+                room_id             TEXT NOT NULL,
+                thread_id           TEXT,
+                intent_key          TEXT NOT NULL,
+                content             TEXT NOT NULL DEFAULT '',
+                status              TEXT NOT NULL,
+                provider_message_id TEXT,
+                failure_code        TEXT,
+                failure_message     TEXT,
+                run_source          TEXT,
+                session_id          TEXT,
+                created_at          REAL NOT NULL,
+                updated_at          REAL NOT NULL,
+                UNIQUE (agent_id, binding_id, intent_key)
+            )
+            """
+        )
+        try executeRaw(
+            """
+            CREATE INDEX IF NOT EXISTS idx_channel_outbound_intents_status_time
+            ON channel_outbound_intents(status, updated_at DESC)
+            """
+        )
+        try executeRaw(
+            """
+            CREATE INDEX IF NOT EXISTS idx_channel_outbound_intents_binding_time
+            ON channel_outbound_intents(binding_id, updated_at DESC)
+            """
+        )
+        try setSchemaVersion(4)
     }
 
     @discardableResult
@@ -887,6 +1047,362 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
             }
         )
         return rows
+    }
+
+    // MARK: - Outbound intents
+
+    /// Insert a new outbound intent unless one already exists for the same
+    /// (agent, binding, intent_key). Returns the durable row: the freshly
+    /// inserted intent, or the pre-existing one when the key replayed —
+    /// callers use the returned status to decide between "proceed" and
+    /// "idempotent replay".
+    public func upsertOutboundIntentIfNew(
+        _ intent: AgentChannelOutboundIntent
+    ) throws -> (intent: AgentChannelOutboundIntent, inserted: Bool) {
+        try queue.sync {
+            guard db != nil else { throw AgentChannelMessageStoreError.notOpen }
+            let inserted = try executeUpdateOnQueue(
+                """
+                INSERT OR IGNORE INTO channel_outbound_intents (
+                    id, agent_id, binding_id, connection_id, room_id, thread_id,
+                    intent_key, content, status, provider_message_id,
+                    failure_code, failure_message, run_source, session_id,
+                    created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                """
+            ) { stmt in
+                Self.bindText(stmt, index: 1, value: intent.id)
+                Self.bindText(stmt, index: 2, value: intent.agentId.uuidString)
+                Self.bindText(stmt, index: 3, value: Self.normalizedId(intent.bindingId))
+                Self.bindText(stmt, index: 4, value: Self.normalizedId(intent.connectionId))
+                Self.bindText(stmt, index: 5, value: Self.normalizedId(intent.roomId))
+                Self.bindText(stmt, index: 6, value: Self.normalizedOptionalId(intent.threadId))
+                Self.bindText(stmt, index: 7, value: Self.normalizedId(intent.intentKey))
+                Self.bindText(stmt, index: 8, value: intent.content)
+                Self.bindText(stmt, index: 9, value: intent.status.rawValue)
+                Self.bindText(stmt, index: 10, value: Self.normalizedOptionalId(intent.providerMessageId))
+                Self.bindText(stmt, index: 11, value: Self.normalizedOptionalId(intent.failureCode))
+                Self.bindText(
+                    stmt,
+                    index: 12,
+                    value: intent.failureMessage.flatMap {
+                        AgentChannelAuditRedactor.redactedPreview($0, maxLength: 160)
+                    }
+                )
+                Self.bindText(stmt, index: 13, value: Self.normalizedOptionalId(intent.runSource))
+                Self.bindText(stmt, index: 14, value: Self.normalizedOptionalId(intent.sessionId))
+                sqlite3_bind_double(stmt, 15, intent.createdAt.timeIntervalSince1970)
+                sqlite3_bind_double(stmt, 16, intent.updatedAt.timeIntervalSince1970)
+            } > 0
+            if inserted {
+                return (intent, true)
+            }
+            guard let existing = try outboundIntentOnQueue(
+                agentId: intent.agentId,
+                bindingId: intent.bindingId,
+                intentKey: intent.intentKey
+            ) else {
+                throw AgentChannelMessageStoreError.failedToExecute(
+                    "outbound intent insert conflicted but existing row not found"
+                )
+            }
+            return (existing, false)
+        }
+    }
+
+    public func outboundIntent(id: String) throws -> AgentChannelOutboundIntent? {
+        var row: AgentChannelOutboundIntent?
+        try prepareAndExecute(
+            """
+            SELECT \(Self.outboundIntentColumns)
+            FROM channel_outbound_intents
+            WHERE id = ?1
+            LIMIT 1
+            """,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: id)
+            },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    row = Self.readOutboundIntent(from: stmt)
+                }
+            }
+        )
+        return row
+    }
+
+    public func outboundIntent(
+        agentId: UUID,
+        bindingId: String,
+        intentKey: String
+    ) throws -> AgentChannelOutboundIntent? {
+        try queue.sync {
+            guard db != nil else { throw AgentChannelMessageStoreError.notOpen }
+            return try outboundIntentOnQueue(
+                agentId: agentId,
+                bindingId: bindingId,
+                intentKey: intentKey
+            )
+        }
+    }
+
+    /// Compare-and-set status transition. The update only applies when the
+    /// row is currently in `expectedStatus`, which is what serializes two
+    /// concurrent sends of the same intent down to one provider write.
+    /// Returns true when this caller won the transition.
+    @discardableResult
+    public func transitionOutboundIntent(
+        id: String,
+        from expectedStatus: AgentChannelOutboundIntentStatus,
+        to status: AgentChannelOutboundIntentStatus,
+        providerMessageId: String? = nil,
+        failureCode: String? = nil,
+        failureMessage: String? = nil,
+        updatedAt: Date = Date()
+    ) throws -> Bool {
+        try executeUpdate(
+            """
+            UPDATE channel_outbound_intents
+            SET status = ?1,
+                provider_message_id = COALESCE(?2, provider_message_id),
+                failure_code = ?3,
+                failure_message = ?4,
+                updated_at = ?5
+            WHERE id = ?6 AND status = ?7
+            """
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: status.rawValue)
+            Self.bindText(stmt, index: 2, value: Self.normalizedOptionalId(providerMessageId))
+            Self.bindText(stmt, index: 3, value: Self.normalizedOptionalId(failureCode))
+            Self.bindText(
+                stmt,
+                index: 4,
+                value: failureMessage.flatMap {
+                    AgentChannelAuditRedactor.redactedPreview($0, maxLength: 160)
+                }
+            )
+            sqlite3_bind_double(stmt, 5, updatedAt.timeIntervalSince1970)
+            Self.bindText(stmt, index: 6, value: id)
+            Self.bindText(stmt, index: 7, value: expectedStatus.rawValue)
+        } > 0
+    }
+
+    public func recentOutboundIntents(
+        agentId: UUID? = nil,
+        bindingId: String? = nil,
+        statuses: [AgentChannelOutboundIntentStatus] = [],
+        limit: Int
+    ) throws -> [AgentChannelOutboundIntent] {
+        let safeLimit = max(1, min(limit, 200))
+        var clauses: [String] = []
+        if agentId != nil { clauses.append("agent_id = ?") }
+        if bindingId != nil { clauses.append("binding_id = ?") }
+        if !statuses.isEmpty {
+            let placeholders = Array(repeating: "?", count: statuses.count)
+                .joined(separator: ", ")
+            clauses.append("status IN (\(placeholders))")
+        }
+        let whereClause = clauses.isEmpty ? "" : "WHERE \(clauses.joined(separator: " AND "))"
+        var rows: [AgentChannelOutboundIntent] = []
+        try prepareAndExecute(
+            """
+            SELECT \(Self.outboundIntentColumns)
+            FROM channel_outbound_intents
+            \(whereClause)
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            bind: { stmt in
+                var index: Int32 = 1
+                if let agentId {
+                    Self.bindText(stmt, index: index, value: agentId.uuidString)
+                    index += 1
+                }
+                if let bindingId {
+                    Self.bindText(stmt, index: index, value: Self.normalizedId(bindingId))
+                    index += 1
+                }
+                for status in statuses {
+                    Self.bindText(stmt, index: index, value: status.rawValue)
+                    index += 1
+                }
+                sqlite3_bind_int(stmt, index, Int32(safeLimit))
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    rows.append(Self.readOutboundIntent(from: stmt))
+                }
+            }
+        )
+        return rows
+    }
+
+    /// Number of intents that reached `sent` for a binding since `cutoff`.
+    /// Feeds the per-binding hourly rate policy.
+    public func sentOutboundIntentCount(bindingId: String, since cutoff: Date) throws -> Int {
+        var count = 0
+        try prepareAndExecute(
+            """
+            SELECT COUNT(*)
+            FROM channel_outbound_intents
+            WHERE binding_id = ?1 AND status = 'sent' AND updated_at >= ?2
+            """,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: Self.normalizedId(bindingId))
+                sqlite3_bind_double(stmt, 2, cutoff.timeIntervalSince1970)
+            },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    count = Int(sqlite3_column_int(stmt, 0))
+                }
+            }
+        )
+        return count
+    }
+
+    /// Timestamp of the most recent successful send for a binding, if any.
+    /// Feeds the per-binding minimum-gap rate policy.
+    public func lastSentOutboundIntentAt(bindingId: String) throws -> Date? {
+        var last: Date?
+        try prepareAndExecute(
+            """
+            SELECT MAX(updated_at)
+            FROM channel_outbound_intents
+            WHERE binding_id = ?1 AND status = 'sent'
+            """,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: Self.normalizedId(bindingId))
+            },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW,
+                    sqlite3_column_type(stmt, 0) != SQLITE_NULL {
+                    last = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0))
+                }
+            }
+        )
+        return last
+    }
+
+    /// Crash / interruption recovery: every `sending` row last touched
+    /// before `cutoff` was claimed by a process that never finished its
+    /// provider write. The write may or may not have happened, so the rows
+    /// move to `delivery_unknown` (never back to a retryable state) and
+    /// await explicit operator resolution. Returns the number of rows moved.
+    @discardableResult
+    public func reconcileInterruptedOutboundIntents(
+        before cutoff: Date,
+        failureCode: String = "interrupted_send",
+        updatedAt: Date = Date()
+    ) throws -> Int {
+        try executeUpdate(
+            """
+            UPDATE channel_outbound_intents
+            SET status = ?1,
+                failure_code = ?2,
+                failure_message = 'The app stopped while this message was being sent; delivery is unconfirmed.',
+                updated_at = ?3
+            WHERE status = ?4 AND updated_at < ?5
+            """
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: AgentChannelOutboundIntentStatus.deliveryUnknown.rawValue)
+            Self.bindText(stmt, index: 2, value: failureCode)
+            sqlite3_bind_double(stmt, 3, updatedAt.timeIntervalSince1970)
+            Self.bindText(stmt, index: 4, value: AgentChannelOutboundIntentStatus.sending.rawValue)
+            sqlite3_bind_double(stmt, 5, cutoff.timeIntervalSince1970)
+        }
+    }
+
+    /// Retention pruning for the outbound ledger. Only TERMINAL rows
+    /// (`sent` / `failed` / `cancelled`) older than `cutoff` are deleted —
+    /// unresolved rows (drafts, pending approvals, in-flight claims, and
+    /// unknown deliveries) are kept regardless of age so operator-actionable
+    /// state can never silently disappear. Returns the number of rows pruned.
+    @discardableResult
+    public func pruneTerminalOutboundIntents(olderThan cutoff: Date) throws -> Int {
+        try executeUpdate(
+            """
+            DELETE FROM channel_outbound_intents
+            WHERE status IN ('sent', 'failed', 'cancelled') AND updated_at < ?1
+            """
+        ) { stmt in
+            sqlite3_bind_double(stmt, 1, cutoff.timeIntervalSince1970)
+        }
+    }
+
+    /// Count of rows currently in `status`. Feeds the outbox pending badge.
+    public func outboundIntentCount(status: AgentChannelOutboundIntentStatus) throws -> Int {
+        var count = 0
+        try prepareAndExecute(
+            """
+            SELECT COUNT(*)
+            FROM channel_outbound_intents
+            WHERE status = ?1
+            """,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: status.rawValue)
+            },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    count = Int(sqlite3_column_int(stmt, 0))
+                }
+            }
+        )
+        return count
+    }
+
+    private func outboundIntentOnQueue(
+        agentId: UUID,
+        bindingId: String,
+        intentKey: String
+    ) throws -> AgentChannelOutboundIntent? {
+        guard let connection = db else { throw AgentChannelMessageStoreError.notOpen }
+        var stmt: OpaquePointer?
+        let sql =
+            """
+            SELECT \(Self.outboundIntentColumns)
+            FROM channel_outbound_intents
+            WHERE agent_id = ?1 AND binding_id = ?2 AND intent_key = ?3
+            LIMIT 1
+            """
+        let prepareResult = sqlite3_prepare_v2(connection, sql, -1, &stmt, nil)
+        guard prepareResult == SQLITE_OK, let statement = stmt else {
+            throw AgentChannelMessageStoreError.failedToPrepare(String(cString: sqlite3_errmsg(connection)))
+        }
+        defer { sqlite3_finalize(statement) }
+        Self.bindText(statement, index: 1, value: agentId.uuidString)
+        Self.bindText(statement, index: 2, value: Self.normalizedId(bindingId))
+        Self.bindText(statement, index: 3, value: Self.normalizedId(intentKey))
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return Self.readOutboundIntent(from: statement)
+    }
+
+    private static let outboundIntentColumns =
+        """
+        id, agent_id, binding_id, connection_id, room_id, thread_id,
+        intent_key, content, status, provider_message_id, failure_code,
+        failure_message, run_source, session_id, created_at, updated_at
+        """
+
+    private static func readOutboundIntent(from stmt: OpaquePointer) -> AgentChannelOutboundIntent {
+        AgentChannelOutboundIntent(
+            id: columnText(stmt, 0) ?? "",
+            agentId: columnText(stmt, 1).flatMap(UUID.init(uuidString:)) ?? UUID(),
+            bindingId: columnText(stmt, 2) ?? "",
+            connectionId: columnText(stmt, 3) ?? "",
+            roomId: columnText(stmt, 4) ?? "",
+            threadId: columnText(stmt, 5),
+            intentKey: columnText(stmt, 6) ?? "",
+            content: columnText(stmt, 7) ?? "",
+            status: columnText(stmt, 8)
+                .flatMap(AgentChannelOutboundIntentStatus.init(rawValue:)) ?? .failed,
+            providerMessageId: columnText(stmt, 9),
+            failureCode: columnText(stmt, 10),
+            failureMessage: columnText(stmt, 11),
+            runSource: columnText(stmt, 12),
+            sessionId: columnText(stmt, 13),
+            createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 14)),
+            updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 15))
+        )
     }
 
     @discardableResult

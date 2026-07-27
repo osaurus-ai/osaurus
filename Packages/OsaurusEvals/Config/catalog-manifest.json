@@ -4,6 +4,7 @@
     "AgentChannels" : [
       "agent_channels.external-mcp-denial",
       "agent_channels.no-unapproved-send",
+      "agent_channels.proactive-publish-policy",
       "agent_channels.unauthorized-room-read",
       "agent_channels.unauthorized-sender-denied"
     ],

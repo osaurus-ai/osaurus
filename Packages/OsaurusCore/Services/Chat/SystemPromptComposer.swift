@@ -1367,6 +1367,123 @@ public struct SystemPromptComposer: Sendable {
             trace?.set("sandboxUnavailable", reason.kind.rawValue)
         }
 
+        // Channel destinations: the redacted list of operator-approved
+        // proactive publish routes for THIS agent and THIS run source.
+        // Dynamic on purpose — destination settings are mid-session-mutable
+        // (mode/rate/guidance edits, new bindings), so the section re-reads
+        // the store each turn without rewriting the cached static prefix.
+        // Gated on the publish tool actually being in the schema so the
+        // prompt never advertises a capability the model can't invoke.
+        if !effectiveToolsOff,
+            resolvedNames.contains(AgentChannelPublishTool.toolName),
+            let destinationsSection = Self.channelDestinationsSection(
+                bindings: AgentChannelAutoDestinationResolver.effectiveConfiguration()
+                    .usableBindings(agentId: agentId),
+                source: ChatExecutionContext.currentSessionSource
+            )
+        {
+            composer.append(
+                .dynamic(
+                    id: "channelDestinations",
+                    label: L("Channel Destinations"),
+                    content: destinationsSection
+                )
+            )
+        }
+
+    }
+
+    /// True when any Agent Channel surface is configured: an enabled custom
+    /// JSON connection, a native provider (Discord/Slack/Telegram) with
+    /// configured rooms, or any outbound destination binding. The old check
+    /// only saw enabled CUSTOM connections, so agents using only the native
+    /// providers never got the `agent_channel_*` family into their enabled
+    /// manifest.
+    @MainActor
+    static func hasAnyConfiguredAgentChannel(
+        configuration: AgentChannelConfiguration
+    ) -> Bool {
+        if configuration.connections.contains(where: \.enabled) { return true }
+        if !configuration.bindings.isEmpty { return true }
+        let discord = DiscordConnectionService.shared.configuration()
+        if !discord.readableChannelIds.isEmpty || !discord.writableChannelIds.isEmpty {
+            return true
+        }
+        let slack = SlackConnectionService.shared.configuration()
+        if !slack.readableChannelIds.isEmpty || !slack.writableChannelIds.isEmpty
+            || !slack.workspaceAccounts.isEmpty
+        {
+            return true
+        }
+        let telegram = TelegramConnectionService.shared.configuration()
+        if !telegram.readableChatIds.isEmpty || !telegram.writableChatIds.isEmpty {
+            return true
+        }
+        return false
+    }
+
+    /// Render the redacted, deterministic "Channel Destinations" section for
+    /// one agent + run source. Lists ONLY this agent's usable bindings that
+    /// allow the current run source — stable binding ids, labels,
+    /// connection/room display ids, outbound mode, and operator guidance.
+    /// Never secrets, credentials, sender identities, or another agent's
+    /// destinations. Returns nil when nothing is publishable from this run
+    /// (including unmappable/absent sources — plugin, HTTP, and inbound
+    /// channel runs must not be told they can publish).
+    static func channelDestinationsSection(
+        bindings: [AgentChannelBinding],
+        source: SessionSource?
+    ) -> String? {
+        guard let source,
+            let runSource = AgentChannelBindingRunSource(sessionSource: source)
+        else { return nil }
+        let visible =
+            bindings
+            .filter { $0.isUsable && $0.allows(source: runSource) }
+            .sorted { $0.id < $1.id }
+        guard !visible.isEmpty else { return nil }
+
+        var lines: [String] = []
+        lines.append(
+            "You may proactively publish messages to these operator-approved destinations "
+                + "with the `agent_channel_publish` tool. Reference destinations ONLY by "
+                + "`binding_id`; never invent destinations or raw room ids. Use a stable "
+                + "`intent_key` per logical message so retries never double-send."
+        )
+        lines.append("")
+        for binding in visible {
+            let modeNote: String
+            switch binding.outboundMode {
+            case .off:
+                continue
+            case .draft:
+                modeNote = "records a local draft for the operator; nothing is sent"
+            case .confirm:
+                modeNote = "requires operator confirmation before sending"
+            case .autonomous:
+                modeNote = "sends directly (host-enforced rate limits apply)"
+            }
+            var row =
+                "- binding_id: `\(binding.id)` — \(binding.displayLabel) "
+                + "(\(binding.connectionId) room \(binding.roomId)"
+            if let threadId = binding.threadId, !threadId.isEmpty {
+                row += ", thread \(threadId)"
+            }
+            row += "; mode: \(binding.outboundMode.rawValue) — \(modeNote))"
+            lines.append(row)
+            if !binding.guidance.isEmpty {
+                lines.append("  When to use: \(binding.guidance)")
+            }
+        }
+        lines.append("")
+        lines.append(
+            "Only publish when the destination's \"when to use\" guidance applies. "
+                + "A `queued_for_approval`, `draft_recorded`, or `delivery_unknown` result "
+                + "is final for this run — do not retry it. An optional `thread_id` may "
+                + "target a thread inside the destination's room only when the destination "
+                + "does not already pin a thread."
+        )
+        return lines.joined(separator: "\n")
     }
 
     /// Build the **complete** enabled-capabilities manifest: every tool the
@@ -1409,9 +1526,9 @@ public struct SystemPromptComposer: Sendable {
         // no enabled-minus-loaded subtraction, so the manifest stays constant
         // as the agent loads tools mid-session.
         var toolsByGroup: [String: [SystemPromptTemplates.ManifestCapability]] = [:]
-        let hasEnabledAgentChannel = AgentChannelConfigurationStore.load()
-            .connections
-            .contains(where: \.enabled)
+        let hasEnabledAgentChannel = Self.hasAnyConfiguredAgentChannel(
+            configuration: AgentChannelConfigurationStore.load()
+        )
         for entry in ToolRegistry.shared.listDynamicTools() {
             guard allowedTools?.contains(entry.name) ?? true,
                 hasEnabledAgentChannel
@@ -2231,6 +2348,17 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
+        // Proactive channel publishing: expose the ONE narrow, binding-scoped
+        // publish tool whenever this agent has usable outbound destination
+        // bindings. The broad `agent_channel_*` catalog stays deferred behind
+        // `capabilities_load` — the publish tool cannot address raw
+        // connections/rooms, only operator-approved bindings, so surfacing it
+        // directly is safe and lets scheduled/self-scheduled runs publish
+        // without a discovery round-trip.
+        if !isManual, snapshot.hasChannelPublishDestinations {
+            add(ToolRegistry.shared.specs(forTools: [AgentChannelPublishTool.toolName]))
+        }
+
         // Per-agent built-in tool gates. These tools are registered as
         // built-ins (so direct execution + ChatView interception still
         // work) but stripped from the auto-mode schema unless the agent
@@ -2354,6 +2482,11 @@ public struct SystemPromptComposer: Sendable {
             // when its pool is non-empty, image when the global switch is on).
             // The first actual call prompts for permission + spawn-model choice.
             allowed.formUnion(visibleDelegation)
+            // The Default agent may own destination bindings too; the narrow
+            // publish tool follows them (never the broad channel catalog).
+            if snapshot.hasChannelPublishDestinations {
+                allowed.insert(AgentChannelPublishTool.toolName)
+            }
             // Browser Use is a custom-agent capability (like `computer_use`):
             // the Default agent never gets it, so it stays off this allowlist
             // even if a stray snapshot carries the flag.

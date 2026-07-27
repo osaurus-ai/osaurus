@@ -2488,6 +2488,23 @@ struct AgentDetailView: View {
         tabHelperText(DetailTab.automation.helperText)
         schedulesSection
         watchersSection
+        channelDestinationsSummarySection
+    }
+
+    /// This agent's proactive posting rooms — automatic ones derived from
+    /// the channel setup plus any customized rooms — embedded here so the
+    /// agent's configuration lives in one place. The Channels pane shows
+    /// the same rows across all agents (same store, same editor). Surfaced
+    /// under Automation because proactive posting is what schedules and
+    /// watchers use to reach a channel unprompted.
+    private var channelDestinationsSummarySection: some View {
+        AgentDetailSection(
+            title: L("Channel Posting"),
+            icon: "paperplane",
+            subtitle: L("Rooms this agent can post to on its own — it asks you first unless you change a room's setting.")
+        ) {
+            AgentChannelAgentDestinationsSection(agentId: agent.id)
+        }
     }
 
     @ViewBuilder

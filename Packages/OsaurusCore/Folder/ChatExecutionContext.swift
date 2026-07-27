@@ -198,6 +198,20 @@ public enum ChatExecutionContext {
     /// so out-of-module callers cannot bind it.
     @TaskLocal static var authenticatedHostFolderRoot: URL?
 
+    /// Typed provenance of the session driving the current execution —
+    /// chat UI, plugin, HTTP, inbound channel dispatch, recurring schedule,
+    /// watcher, or self-scheduled wake-up. Bound by
+    /// `BackgroundTaskManager.dispatchChat` (from the dispatch request) and
+    /// re-bound by `ChatSession.send` (from the session's own persisted
+    /// source), so tools that make source-scoped authorization decisions
+    /// (e.g. proactive channel publishing) read a typed value instead of
+    /// inferring provenance from `isExternalSurface` / `isUnattendedDispatch`
+    /// alone. `nil` means no surface published a source; source-gated
+    /// capabilities must treat that as "not authorized" rather than
+    /// defaulting to a permissive value. Module-internal so out-of-module
+    /// callers cannot rebind provenance.
+    @TaskLocal static var currentSessionSource: SessionSource?
+
     /// True when the current execution is an UNATTENDED, app-authored
     /// background dispatch — a recurring schedule, a self-scheduled
     /// wake-up, or a file-system watcher trigger — fired with no

@@ -531,6 +531,26 @@ public enum SettingsSearchIndex {
             title: "Custom HTTP Connections",
             keywords: ["custom json channels", "webhook", "agent-channels.json", "secret references"]
         ),
+        .init(
+            id: "agentChannels.destinations",
+            tab: .agentChannels,
+            section: "Agent Destinations",
+            title: "Agent Destinations",
+            keywords: [
+                "proactive", "publish", "destination", "binding", "outbound",
+                "autonomous", "draft", "confirm", "agent destinations",
+            ]
+        ),
+        .init(
+            id: "agentChannels.outbox",
+            tab: .agentChannels,
+            section: "Outbox",
+            title: "Channel Outbox",
+            keywords: [
+                "outbox", "pending approval", "approve message", "queued messages",
+                "outbound activity", "drafts",
+            ]
+        ),
 
         // MARK: Image Generation tab (subTab values are ImageGenerationTab raw values)
         .init(

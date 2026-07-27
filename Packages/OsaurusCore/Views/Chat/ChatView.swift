@@ -847,6 +847,10 @@ final class ChatSession: ObservableObject {
             voidNotification(.agentUpdated),
             voidNotification(.activeAgentChanged),
             voidNotification(.toolsListChanged),
+            // Channel destination edits rewrite the channel-destinations
+            // dynamic prompt section (and can add/remove the publish tool),
+            // so a stale warm-up must be dropped and re-warmed promptly.
+            voidNotification(.agentChannelConfigurationChanged),
             folderState.objectWillChange
                 .map { _ in () }.eraseToAnyPublisher(),
             $selectedModel.map { _ in () }.eraseToAnyPublisher(),
@@ -2651,9 +2655,15 @@ final class ChatSession: ObservableObject {
     /// sandbox / tool / folder / model state, store it in
     /// `cachedPreviewContext`, and report whether the displayed budget shape
     /// changed. The shape is compared via `cacheHint` (the static-prefix hash
-    /// that folds prompt sections + tool schemas) plus `toolTokens`, so a
+    /// that folds prompt sections + tool schemas) plus `toolTokens` plus the
+    /// full rendered prompt bytes — the last one catches edits that only
+    /// rewrite a DYNAMIC section (e.g. a channel-destination mode change),
+    /// which leave `cacheHint` untouched but must still invalidate the
+    /// warm-up so the send doesn't diverge against a stale warmed prefix.
+    /// Consecutive previews of unchanged state are byte-identical, so a
     /// burst of redundant signals (e.g. a sandbox toggle firing both
-    /// `.agentUpdated` and `.toolsListChanged`) collapses to no re-render.
+    /// `.agentUpdated` and `.toolsListChanged`) still collapses to no
+    /// re-render.
     ///
     /// The preview is recomposed even while a real send context is cached so
     /// consecutive previews stay a reliable config-change detector. That send
@@ -2681,6 +2691,7 @@ final class ChatSession: ObservableObject {
         let shapeChanged =
             previous?.cacheHint != preview.cacheHint
             || previous?.toolTokens != preview.toolTokens
+            || previous?.prompt != preview.prompt
 
         // No send context yet → the preview drives the popover directly.
         guard cachedContext != nil else { return shapeChanged }
@@ -4463,6 +4474,13 @@ final class ChatSession: ObservableObject {
             // root and the composed prompt always agree.
             let turnFolderRoot = self.activeFolderContext(for: turnAgentId)?.rootPath
             await ChatExecutionContext.$currentFolderRoot.withValue(turnFolderRoot) { [self] in
+            // Typed run provenance for the whole turn. The session's own
+            // persisted `source` is authoritative here (a dispatched
+            // schedule/watcher/self-schedule run re-binds the same value the
+            // dispatcher already bound; a UI chat turn binds `.chat`).
+            // Source-scoped capabilities (proactive channel publishing) read
+            // this instead of inferring provenance from surface flags.
+            await ChatExecutionContext.$currentSessionSource.withValue(source) { [self] in
             await ChatExecutionContext.$currentAgentId.withValue(turnAgentId) { [self] in
             await ChatExecutionContext.$currentUserRequest.withValue(
                 trimmed.isEmpty ? nil : trimmed
@@ -6118,6 +6136,7 @@ final class ChatSession: ObservableObject {
             }  // ChatExecutionContext.$currentEnableThinking.withValue
             }  // ChatExecutionContext.$currentUserRequest.withValue
             }  // ChatExecutionContext.$currentAgentId.withValue
+            }  // ChatExecutionContext.$currentSessionSource.withValue
             }  // ChatExecutionContext.$currentFolderRoot.withValue
         }
     }

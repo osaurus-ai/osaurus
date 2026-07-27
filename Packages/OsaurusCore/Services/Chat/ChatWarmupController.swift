@@ -29,8 +29,12 @@ struct ChatWarmupPayload: Sendable {
     /// mismatch on either side makes every cache lookup miss.
     let modelOptions: [String: ModelOptionValue]?
     /// Identity of what this payload warms: model + static prefix hash +
-    /// history shape + options. A fingerprint match means the KV prefix is
-    /// already hot.
+    /// full rendered-prompt hash + history shape + options. The rendered
+    /// hash matters: dynamic prompt sections (channel destinations, agent DB
+    /// schema, sandbox state) are outside the static prefix hash, and a
+    /// stale warm claim over changed dynamic bytes makes the real send
+    /// cold-re-prefill the whole conversation. A fingerprint match means
+    /// the KV prefix is already hot.
     let fingerprint: String
 }
 
