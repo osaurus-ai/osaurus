@@ -8,10 +8,50 @@
 import AppKit
 import Foundation
 
+/// Ordered, observable progress of a factory reset, mirroring the sandbox
+/// provisioning journey: one row per wipe phase with a live status icon.
+public struct FactoryResetJourney: Equatable, Sendable {
+    public enum StepID: String, CaseIterable, Sendable {
+        case browser
+        case keychain
+        case preferences
+        case data
+        case quit
+    }
+
+    public enum Status: Equatable, Sendable {
+        case pending
+        case inProgress
+        case completed
+        case failed
+    }
+
+    public struct Step: Identifiable, Equatable, Sendable {
+        public let id: StepID
+        public var status: Status
+    }
+
+    public var steps: [Step] = StepID.allCases.map { Step(id: $0, status: .pending) }
+
+    public subscript(_ id: StepID) -> Status {
+        get { steps.first(where: { $0.id == id })?.status ?? .pending }
+        set {
+            if let index = steps.firstIndex(where: { $0.id == id }) {
+                steps[index].status = newValue
+            }
+        }
+    }
+}
+
 /// Service managing onboarding state and first-launch detection
 @MainActor
 public final class OnboardingService: ObservableObject {
     public static let shared = OnboardingService()
+
+    /// Non-nil while a factory reset is running; drives the journey UI in
+    /// the settings overlay. Never reset to nil — the app terminates at the
+    /// end of the flow.
+    @Published public private(set) var resetJourney: FactoryResetJourney?
 
     private let hasCompletedOnboardingKey = "hasCompletedOnboarding"
     private let onboardingVersionKey = "onboardingVersion"
@@ -49,6 +89,7 @@ public final class OnboardingService: ObservableObject {
     /// This will terminate the application.
     public func performFactoryReset() async {
         print("[OnboardingService] Initiating factory reset...")
+        resetJourney = FactoryResetJourney()
 
         // Wipe every native browser profile FIRST, while the session catalog
         // (in ~/.osaurus) still holds the WebKit profile UUIDs needed to open
@@ -60,20 +101,29 @@ public final class OnboardingService: ObservableObject {
         // UUIDs, wedged networking XPC). An unbounded await here pins the
         // "Resetting Osaurus" spinner forever; on timeout we proceed — the
         // root-directory deletion below removes the catalog regardless.
+        setStep(.browser, .inProgress)
         let browserWipeCompleted = await runWithDeadline(seconds: 10) {
             await BrowserSessionManager.shared.resetAllSessions()
         }
         if !browserWipeCompleted {
             print("[OnboardingService] Browser session wipe timed out; continuing reset.")
         }
+        setStep(.browser, browserWipeCompleted ? .completed : .failed)
 
         // wipe all Osaurus items from the Keychain
+        setStep(.keychain, .inProgress)
+        await journeyBeat()
         wipeKeychain()
+        setStep(.keychain, .completed)
 
         // clear all UserDefaults keys
+        setStep(.preferences, .inProgress)
+        await journeyBeat()
         if let bundleID = Bundle.main.bundleIdentifier {
             UserDefaults.standard.removePersistentDomain(forName: bundleID)
         }
+        setStep(.preferences, .completed)
+        setStep(.data, .inProgress)
 
         // delete the ~/.osaurus root directory AND legacy App Support directory
         let root = OsaurusPaths.root()
@@ -132,6 +182,7 @@ public final class OnboardingService: ObservableObject {
         // failed wipe means user data (chats, memory, identity keys) survives
         // a reset the user believes completed, so block on a critical alert
         // telling them exactly what was left behind before quitting.
+        setStep(.data, wipeFailures.isEmpty ? .completed : .failed)
         if !wipeFailures.isEmpty {
             print(
                 "[OnboardingService] Factory reset incomplete: some data could not be wiped; notifying user."
@@ -140,6 +191,8 @@ public final class OnboardingService: ObservableObject {
         } else {
             print("[OnboardingService] Factory reset complete. Terminating via normal flow...")
         }
+        setStep(.quit, .inProgress)
+        await journeyBeat()
 
         // terminate the app normally so cleanup is handled correctly.
         // The synchronous termination teardown can block the main thread for a
@@ -151,6 +204,17 @@ public final class OnboardingService: ObservableObject {
                 NSApplication.shared.terminate(nil)
             }
         }
+    }
+
+    /// Update one journey step's status (animated by the observing view).
+    private func setStep(_ id: FactoryResetJourney.StepID, _ status: FactoryResetJourney.Status) {
+        resetJourney?[id] = status
+    }
+
+    /// Brief pause so near-instant steps (Keychain, UserDefaults) are
+    /// visible as distinct rows in the journey UI instead of flashing by.
+    private func journeyBeat() async {
+        try? await Task.sleep(nanoseconds: 300_000_000)
     }
 
     /// A directory the factory reset could not fully remove.
