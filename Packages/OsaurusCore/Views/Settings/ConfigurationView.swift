@@ -527,6 +527,20 @@ struct ConfigurationView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
+        // Wipe-failure notice: `.contained` so it layers above the reset
+        // overlay in this view rather than routing to the window host. The
+        // binding's setter fires on dismiss and resumes `performFactoryReset`,
+        // which then terminates the app.
+        .themedAlert(
+            "Factory Reset Incomplete",
+            isPresented: Binding(
+                get: { onboardingService.wipeFailureMessage != nil },
+                set: { if !$0 { OnboardingService.shared.acknowledgeWipeFailure() } }
+            ),
+            message: onboardingService.wipeFailureMessage,
+            buttons: [.destructive(L("Quit")) {}],
+            presentationStyle: .contained
+        )
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             loadConfiguration()

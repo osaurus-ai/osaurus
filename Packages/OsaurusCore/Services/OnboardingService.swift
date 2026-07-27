@@ -53,6 +53,12 @@ public final class OnboardingService: ObservableObject {
     /// end of the flow.
     @Published public private(set) var resetJourney: FactoryResetJourney?
 
+    /// Non-nil when the wipe left data behind and the user must acknowledge
+    /// before the app quits. Presented as a `themedAlert` by the settings
+    /// overlay; cleared by `acknowledgeWipeFailure()`.
+    @Published public private(set) var wipeFailureMessage: String?
+    private var wipeFailureAcknowledgment: CheckedContinuation<Void, Never>?
+
     private let hasCompletedOnboardingKey = "hasCompletedOnboarding"
     private let onboardingVersionKey = "onboardingVersion"
 
@@ -187,7 +193,7 @@ public final class OnboardingService: ObservableObject {
             print(
                 "[OnboardingService] Factory reset incomplete: some data could not be wiped; notifying user."
             )
-            presentWipeFailureAlert(wipeFailures)
+            await awaitWipeFailureAcknowledgment(wipeFailures)
         } else {
             print("[OnboardingService] Factory reset complete. Terminating via normal flow...")
         }
@@ -226,14 +232,26 @@ public final class OnboardingService: ObservableObject {
         let dataRemains: Bool
     }
 
-    /// Blocking critical alert shown when the wipe left data behind, so the
-    /// user knows the reset was incomplete before the app quits. Runs modal
-    /// on the main actor; termination proceeds once dismissed.
-    private func presentWipeFailureAlert(_ failures: [WipeFailure]) {
-        let alert = NSAlert()
-        alert.alertStyle = .critical
-        alert.messageText = L("Factory Reset Incomplete")
+    /// Suspends until the user acknowledges the wipe-failure notice. The
+    /// message is published for the settings overlay to present as a
+    /// `themedAlert`; `acknowledgeWipeFailure()` resumes us so termination
+    /// proceeds only after the user has seen what was left behind.
+    private func awaitWipeFailureAcknowledgment(_ failures: [WipeFailure]) async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            wipeFailureAcknowledgment = cont
+            wipeFailureMessage = Self.wipeFailureMessage(for: failures)
+        }
+    }
 
+    /// Resume `performFactoryReset` after the wipe-failure alert is
+    /// dismissed. Safe to call when no notice is pending (preview flow).
+    public func acknowledgeWipeFailure() {
+        wipeFailureMessage = nil
+        wipeFailureAcknowledgment?.resume()
+        wipeFailureAcknowledgment = nil
+    }
+
+    private static func wipeFailureMessage(for failures: [WipeFailure]) -> String {
         var lines: [String] = []
         for failure in failures {
             if failure.dataRemains {
@@ -257,9 +275,7 @@ public final class OnboardingService: ObservableObject {
         lines.append(
             L("Osaurus will now quit. You can delete the listed items manually in Finder.")
         )
-        alert.informativeText = lines.joined(separator: "\n\n")
-        alert.addButton(withTitle: L("Quit"))
-        alert.runModal()
+        return lines.joined(separator: "\n\n")
     }
 
     /// Clear all known Osaurus Keychain services
