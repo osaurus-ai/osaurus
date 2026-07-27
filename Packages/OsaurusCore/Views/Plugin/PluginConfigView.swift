@@ -31,6 +31,12 @@ struct PluginConfigView: View {
     /// changed. The host-side `lastDeliveredConfig` lock would short-circuit
     /// these anyway; this just avoids building the change array.
     @State private var lastDeliveredHash: Int?
+    /// Keychain-backed template inputs, loaded once in `loadConfig`. Readonly
+    /// fields resolve their `value_template` on every body evaluation, and a
+    /// synchronous `SecItemCopyMatching` per render can stall for seconds
+    /// under securityd contention (a recurring app-hang source).
+    @State private var cachedTunnelURL: String = ""
+    @State private var cachedServerPort: Int = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -590,6 +596,9 @@ struct PluginConfigView: View {
     }
 
     private func loadConfig() {
+        cachedTunnelURL =
+            ToolSecretsKeychain.getSecret(id: "tunnel_url", for: pluginId, agentId: agentId) ?? ""
+        cachedServerPort = Self.loadServerPort()
         values = ToolSecretsKeychain.getAllSecrets(for: pluginId, agentId: agentId)
 
         for section in configSpec.sections {
@@ -723,8 +732,10 @@ struct PluginConfigView: View {
     }
 
     private func resolveTemplate(_ template: String, pluginId: String) -> String {
-        let baseURL = Self.resolveBaseURL(for: pluginId, agentId: agentId)
-        let tunnelURL = ToolSecretsKeychain.getSecret(id: "tunnel_url", for: pluginId, agentId: agentId) ?? ""
+        // Runs per body evaluation (readonly fields) — use the state cached in
+        // `loadConfig` instead of touching the keychain or disk per render.
+        let tunnelURL = cachedTunnelURL
+        let baseURL = tunnelURL.isEmpty ? "http://127.0.0.1:\(cachedServerPort)" : tunnelURL
 
         var result = template
         result = result.replacingOccurrences(of: "{{plugin_url}}", with: "\(baseURL)/plugins/\(pluginId)")
