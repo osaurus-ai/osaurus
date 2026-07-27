@@ -1059,10 +1059,24 @@ enum AgentChannelConfigurationStore {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(configuration.normalized).write(to: url, options: [.atomic])
-        NotificationCenter.default.post(
-            name: .agentChannelConfigurationChanged,
-            object: nil
-        )
+        // Deliver on main: subscribers (ChatSession's budget-signal pipeline)
+        // attach MainActor-isolated closures that Combine invokes synchronously
+        // on the posting thread, and runtime isolation checks SIGTRAP the
+        // process when a background save (publish service, tests) posts
+        // directly. Every other signal in that pipeline is main-posted.
+        if Thread.isMainThread {
+            NotificationCenter.default.post(
+                name: .agentChannelConfigurationChanged,
+                object: nil
+            )
+        } else {
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .agentChannelConfigurationChanged,
+                    object: nil
+                )
+            }
+        }
     }
 
     static func configurationFileURL() -> URL {
