@@ -512,6 +512,7 @@ struct PromptSectionOrderingTests {
                 model: "gpt-5",
                 query: "now refactor the networking layer",
                 frozenAlwaysLoadedNames: turn1.alwaysLoadedNames,
+                frozenToolSpecs: turn1.initialToolSpecs,
                 frozenManifest: turn1.enabledManifest
             )
             #expect(steady.prompt == turn1.prompt)
@@ -529,6 +530,7 @@ struct PromptSectionOrderingTests {
                 query: "and render a chart of the results",
                 additionalToolNames: ["render_chart"],
                 frozenAlwaysLoadedNames: turn1.alwaysLoadedNames,
+                frozenToolSpecs: turn1.initialToolSpecs,
                 frozenManifest: turn1.enabledManifest
             )
             #expect(afterLoad.prompt == turn1.prompt)
@@ -612,6 +614,7 @@ struct PromptSectionOrderingTests {
                 model: "gpt-5",
                 query: "now add a route",
                 frozenAlwaysLoadedNames: turn1.alwaysLoadedNames,
+                frozenToolSpecs: turn1.initialToolSpecs,
                 frozenManifest: turn1.enabledManifest,
                 frozenSoul: turn1.soul
             )

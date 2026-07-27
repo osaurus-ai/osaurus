@@ -100,6 +100,7 @@ public struct SystemPromptComposer: Sendable {
         toolsDisabled: Bool = false,
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
+        frozenToolSpecs: [Tool]? = nil,
         frozenManifest: String? = nil,
         frozenSoul: String? = nil,
         trace: TTFTTrace? = nil
@@ -115,6 +116,7 @@ public struct SystemPromptComposer: Sendable {
                 toolsDisabled: toolsDisabled,
                 additionalToolNames: additionalToolNames,
                 frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
+                frozenToolSpecs: frozenToolSpecs,
                 frozenManifest: frozenManifest,
                 frozenSoul: frozenSoul,
                 trace: trace
@@ -158,6 +160,7 @@ public struct SystemPromptComposer: Sendable {
             messages: request.messages,
             additionalToolNames: request.additionalToolNames,
             frozenAlwaysLoadedNames: request.frozenAlwaysLoadedNames,
+            frozenToolSpecs: request.frozenToolSpecs,
             frozenManifest: request.frozenManifest,
             frozenSoul: request.frozenSoul,
             trace: trace
@@ -230,6 +233,7 @@ public struct SystemPromptComposer: Sendable {
         messages: [ChatMessage],
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
+        frozenToolSpecs: [Tool]? = nil,
         frozenManifest: String? = nil,
         frozenSoul: String? = nil,
         trace: TTFTTrace? = nil
@@ -261,6 +265,7 @@ public struct SystemPromptComposer: Sendable {
             messages: messages,
             additionalToolNames: additionalToolNames,
             frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
+            frozenToolSpecs: frozenToolSpecs,
             frozenManifest: frozenManifest,
             trace: trace
         )
@@ -304,6 +309,14 @@ public struct SystemPromptComposer: Sendable {
             {
                 PrefillDebugLog.shared.log("---- ENABLED-MANIFEST (rendered)\n\(manifestText)")
             }
+            for tool in toolset.tools {
+                let signature = PromptPrefixHasher.hash(systemContent: "", tools: [tool])
+                let tokens = ToolRegistry.shared.totalEstimatedTokens(for: [tool])
+                PrefillDebugLog.shared.log(
+                    "---- TOOL-SCHEMA name=\(tool.function.name) "
+                        + "hash=\(signature) tokens≈\(tokens)"
+                )
+            }
         }
 
         emitToolDiagnostics(
@@ -324,6 +337,7 @@ public struct SystemPromptComposer: Sendable {
             toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: toolset.tools),
             memorySection: memorySection,
             alwaysLoadedNames: toolset.alwaysLoadedNames,
+            initialToolSpecs: toolset.sessionBaselineTools,
             cacheHint: manifest.staticPrefixHash(tools: toolset.tools),
             staticPrefix: manifest.staticPrefixContent,
             contextDisable: toolset.contextDisable,
@@ -515,6 +529,7 @@ public struct SystemPromptComposer: Sendable {
         messages: [ChatMessage],
         additionalToolNames: LoadedTools,
         frozenAlwaysLoadedNames: LoadedTools?,
+        frozenToolSpecs: [Tool]?,
         frozenManifest: String? = nil,
         trace: TTFTTrace?
     ) async -> ResolvedToolset {
@@ -549,7 +564,8 @@ public struct SystemPromptComposer: Sendable {
             executionMode: executionMode,
             toolsDisabled: effectiveToolsOff,
             additionalToolNames: additionalToolNames,
-            frozenAlwaysLoadedNames: frozenAlwaysLoadedNames
+            frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
+            frozenToolSpecs: frozenToolSpecs
         )
         trace?.mark("resolve_tools_done")
         let suppressTrivialToolSchema = shouldSuppressTrivialToolSchema(
@@ -586,6 +602,7 @@ public struct SystemPromptComposer: Sendable {
 
         return ResolvedToolset(
             tools: tools,
+            sessionBaselineTools: resolvedTools,
             enabledManifest: enabledManifest,
             alwaysLoadedNames: alwaysLoadedNames,
             contextDisable: contextDisable,
@@ -1861,6 +1878,7 @@ public struct SystemPromptComposer: Sendable {
             toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: toolset.tools),
             memorySection: nil,
             alwaysLoadedNames: toolset.alwaysLoadedNames,
+            initialToolSpecs: toolset.sessionBaselineTools,
             cacheHint: manifest.staticPrefixHash(tools: toolset.tools),
             staticPrefix: manifest.staticPrefixContent,
             contextDisable: toolset.contextDisable
@@ -1921,6 +1939,7 @@ public struct SystemPromptComposer: Sendable {
         )
         return ResolvedToolset(
             tools: tools,
+            sessionBaselineTools: tools,
             enabledManifest: enabledManifest,
             alwaysLoadedNames: alwaysLoadedNames,
             contextDisable: contextDisable,
@@ -2103,7 +2122,8 @@ public struct SystemPromptComposer: Sendable {
         executionMode: ExecutionMode,
         toolsDisabled: Bool = false,
         additionalToolNames: LoadedTools = [],
-        frozenAlwaysLoadedNames: LoadedTools? = nil
+        frozenAlwaysLoadedNames: LoadedTools? = nil,
+        frozenToolSpecs: [Tool]? = nil
     ) -> [Tool] {
         let snapshot = AgentConfigSnapshot.capture(
             agentId: agentId,
@@ -2114,7 +2134,8 @@ public struct SystemPromptComposer: Sendable {
             executionMode: executionMode,
             toolsDisabled: toolsDisabled,
             additionalToolNames: additionalToolNames,
-            frozenAlwaysLoadedNames: frozenAlwaysLoadedNames
+            frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
+            frozenToolSpecs: frozenToolSpecs
         )
     }
 
@@ -2124,7 +2145,8 @@ public struct SystemPromptComposer: Sendable {
         executionMode: ExecutionMode,
         toolsDisabled: Bool = false,
         additionalToolNames: LoadedTools = [],
-        frozenAlwaysLoadedNames: LoadedTools? = nil
+        frozenAlwaysLoadedNames: LoadedTools? = nil,
+        frozenToolSpecs: [Tool]? = nil
     ) -> [Tool] {
         guard !toolsDisabled else { return [] }
 
@@ -2467,6 +2489,29 @@ public struct SystemPromptComposer: Sendable {
                 || (isManual && (snapshot.manualToolNames?.contains("image") ?? false))
             let genOnly = ImageTool.generationOnlySpec()
             byName["image"] = imageLoadedExplicitly ? genOnly : compactBootstrapSpec(genOnly)
+        }
+
+        // Freeze the exact first-compose payload for every baseline tool that
+        // remains visible after the current permission/feature gates. Names
+        // alone are not sufficient: a computed schema can change while its
+        // registration and name remain identical (web_search categories are
+        // populated asynchronously after keychain/provider discovery). Such a
+        // change rewrites the tokenizer prefix and defeats disk-L2 reuse.
+        //
+        // A tool explicitly loaded this session is the intentional exception:
+        // `capabilities_load` must still be able to upgrade a compact
+        // bootstrap schema to the live full contract. Newly registered tools
+        // absent from the frozen baseline likewise remain live.
+        if let frozenToolSpecs {
+            let frozenByName = Dictionary(
+                uniqueKeysWithValues: frozenToolSpecs.map { ($0.function.name, $0) }
+            )
+            for name in Array(byName.keys)
+            where !additionalToolNames.contains(name) {
+                if let frozen = frozenByName[name] {
+                    byName[name] = frozen
+                }
+            }
         }
 
         // Eval-scoped ablation hook (nil in production): strip deferred

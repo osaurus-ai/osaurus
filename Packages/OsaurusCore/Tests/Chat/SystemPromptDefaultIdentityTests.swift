@@ -120,6 +120,19 @@ struct SystemPromptDefaultIdentityTests {
         #expect(block.contains("share_artifact"))
     }
 
+    @Test("shared agent-loop guidance preserves optional todo and structured complete")
+    func sharedAgentLoopGuidancePreservesFamilyScope() {
+        for block in [
+            SystemPromptTemplates.agentLoopGuidance,
+            SystemPromptTemplates.agentLoopGuidanceCompact,
+        ] {
+            #expect(block.contains("OPTIONAL"))
+            #expect(block.contains("3+"))
+            #expect(block.contains("never") && block.contains("complete(...)"))
+            #expect(!block.contains("SAME message"))
+        }
+    }
+
     /// Same sanity for the capability-discovery nudge — still names
     /// `capabilities_discover` / `capabilities_load` because that block is
     /// gated on `capabilities_discover` actually being in the tools[] array.

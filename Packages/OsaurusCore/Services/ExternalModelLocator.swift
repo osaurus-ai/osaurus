@@ -181,12 +181,21 @@ enum ExternalModelLocator {
         let entries = Array(loadedLocked().values)
         lock.unlock()
         return entries.map { entry in
-            MLXModel(
+            let bundleDirectory = URL(fileURLWithPath: entry.bundlePath, isDirectory: true)
+            return MLXModel(
                 id: entry.id,
                 name: ModelMetadataParser.friendlyName(from: entry.id),
                 description: "Found in \(entry.source).",
                 downloadURL: "https://huggingface.co/\(entry.id)",
-                bundleDirectory: URL(fileURLWithPath: entry.bundlePath, isDirectory: true),
+                // The persisted external registry intentionally stores only
+                // identity/path/provenance. Rehydrate architecture from the
+                // authoritative bundle here; otherwise an external model is
+                // local and loadable but loses `model_type` in the picker.
+                // Chat-family routing and structural agent contracts would
+                // then silently differ from the same bundle installed under
+                // Osaurus's managed model directory.
+                modelType: VLMDetection.readModelType(at: bundleDirectory),
+                bundleDirectory: bundleDirectory,
                 externalSource: entry.source
             )
         }

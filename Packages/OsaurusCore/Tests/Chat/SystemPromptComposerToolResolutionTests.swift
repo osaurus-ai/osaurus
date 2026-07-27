@@ -183,6 +183,65 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
+    @Test("session schema freeze preserves canonical payload across async provider discovery")
+    func sessionSchemaFreeze_preservesComputedWebSearchPayload() async {
+        let originalCategories = SearchToolSchemaState.availableCategories()
+        defer { SearchToolSchemaState.update(categories: originalCategories) }
+
+        await withSandboxAgent(autonomous: false) { agentId in
+            SearchToolSchemaState.update(categories: ["web"])
+            let first = SystemPromptComposer.resolveTools(
+                agentId: agentId,
+                executionMode: .none
+            )
+            let firstWeb = first.first { $0.function.name == "web_search" }
+            #expect(firstWeb != nil)
+            guard let firstWeb else { return }
+
+            // Simulate the asynchronous keychain/provider refresh that used
+            // to mutate the same named tool after turn one.
+            SearchToolSchemaState.update(categories: ["web", "news", "images"])
+            let liveSecond = SystemPromptComposer.resolveTools(
+                agentId: agentId,
+                executionMode: .none,
+                frozenAlwaysLoadedNames: Set(first.map(\.function.name))
+            )
+            let liveWeb = liveSecond.first { $0.function.name == "web_search" }
+            #expect(liveWeb != nil)
+            guard let liveWeb else { return }
+            #expect(liveWeb.canonicalHashPayload() != firstWeb.canonicalHashPayload())
+
+            let frozenSecond = SystemPromptComposer.resolveTools(
+                agentId: agentId,
+                executionMode: .none,
+                frozenAlwaysLoadedNames: Set(first.map(\.function.name)),
+                frozenToolSpecs: first
+            )
+            let frozenWeb = frozenSecond.first { $0.function.name == "web_search" }
+            #expect(frozenWeb != nil)
+            guard let frozenWeb else { return }
+            #expect(frozenWeb.canonicalHashPayload() == firstWeb.canonicalHashPayload())
+            #expect(
+                PromptPrefixHasher.hash(systemContent: "prefix", tools: frozenSecond)
+                    == PromptPrefixHasher.hash(systemContent: "prefix", tools: first)
+            )
+
+            // Explicit loading remains an intentional schema upgrade: it may
+            // replace the compact baseline with the current full contract.
+            let explicitlyLoaded = SystemPromptComposer.resolveTools(
+                agentId: agentId,
+                executionMode: .none,
+                additionalToolNames: ["web_search"],
+                frozenAlwaysLoadedNames: Set(first.map(\.function.name)),
+                frozenToolSpecs: first
+            )
+            let loadedWeb = explicitlyLoaded.first { $0.function.name == "web_search" }
+            #expect(loadedWeb != nil)
+            guard let loadedWeb else { return }
+            #expect(loadedWeb.canonicalHashPayload() != firstWeb.canonicalHashPayload())
+        }
+    }
+
     // MARK: - Manual mode (pragmatic)
 
     @Test

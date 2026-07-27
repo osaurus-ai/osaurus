@@ -413,6 +413,10 @@ final class ChatSession: ObservableObject {
     /// the engine intercepts `complete` and breaks the loop. The chat
     /// view renders it as a "Completed" banner inline.
     @Published var lastCompletionSummary: String?
+    /// True when the completion tool closed an honestly blocked tracked task
+    /// with unchecked Todo items. Kept separate from the summary so legacy
+    /// session persistence remains unchanged while the live banner is honest.
+    @Published var lastCompletionWasBlocked = false
 
     /// Per-task state machine the harness holds so the (small) model doesn't
     /// have to. Session-scoped here so a listing produced by one user message
@@ -1758,6 +1762,18 @@ final class ChatSession: ObservableObject {
         )
     }
 
+    /// Mark a model-authored terminal response as an abandoned protocol
+    /// attempt when structured Todo work from this run remains unchecked.
+    /// The response stays in the visible transcript, but feeding it back before
+    /// a fresh assistant tool call creates two adjacent assistant messages.
+    /// Qwen-family templates render that malformed history differently and a
+    /// hybrid disk restore can then resume unrelated state. This is the same
+    /// persistence-backed exclusion contract used for incomplete reasoning;
+    /// no model text, tags, sampling, or stop behavior is synthesized.
+    static func excludeAbandonedTrackedTaskResponse(_ turn: ChatTurn) {
+        turn.modelContextExcluded = true
+    }
+
     /// Prepend a user turn's frozen memory / screen-context prefix to its
     /// rendered message. The prefix already carries its trailing separator
     /// (`SystemPromptComposer.composeInjectedUserPrefix`), so this is a pure
@@ -2205,6 +2221,7 @@ final class ChatSession: ObservableObject {
         // Reset agent-loop UI state.
         currentTodo = nil
         lastCompletionSummary = nil
+        lastCompletionWasBlocked = false
         promptQueue.drainAll()
         let oldSid = expectedTodoSessionId
         Task { await AgentTodoStore.shared.clear(for: oldSid) }
@@ -4337,6 +4354,7 @@ final class ChatSession: ObservableObject {
         // somehow still queued, dismiss it before sending so the new
         // turn doesn't race a stale overlay resolution.
         lastCompletionSummary = nil
+        lastCompletionWasBlocked = false
         if promptQueue.current != nil {
             promptQueue.drainAll()
         }
@@ -4626,6 +4644,7 @@ final class ChatSession: ObservableObject {
                         additionalToolNames: (cachedSession?.loadedToolNames ?? [])
                             .union(skillReferencedTools),
                         frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
+                        frozenToolSpecs: cachedSession?.initialToolSpecs,
                         frozenManifest: cachedSession?.frozenManifest,
                         frozenSoul: cachedSession?.frozenSoul,
                         trace: ttftTrace
@@ -4692,10 +4711,11 @@ final class ChatSession: ObservableObject {
                     // names already accumulated this session. Stamp the live
                     // fingerprint so the invalidation rule above can detect
                     // a flip on the next turn.
-                    if let sid = sessionId, cachedSession == nil {
+                    if let sid = sessionId {
                         await SessionToolStateStore.shared.setInitial(
                             sessionStateKey(sid),
                             alwaysLoadedNames: context.alwaysLoadedNames,
+                            toolSpecs: context.initialToolSpecs,
                             fingerprint: liveFingerprint,
                             manifest: context.enabledManifest,
                             soul: context.soul
@@ -4929,6 +4949,14 @@ final class ChatSession: ObservableObject {
                         // retries with a real summary.
                         if inv.toolName == "complete" {
                             if !ToolEnvelope.isError(resultText) {
+                                if let todo = await AgentTodoStore.shared.todo(
+                                    for: todoSessionIdForRun
+                                ) {
+                                    self.lastCompletionWasBlocked =
+                                        todo.doneCount < todo.totalCount
+                                } else {
+                                    self.lastCompletionWasBlocked = false
+                                }
                                 self.lastCompletionSummary =
                                     Self.parseCompleteSummary(from: inv.jsonArguments) ?? resultText
                                 // Drain any pending prompts so a stale
@@ -5702,14 +5730,20 @@ final class ChatSession: ObservableObject {
                         prepareTrackedTaskContinuation: {
                             // The driver observed a successful current-run Todo
                             // with structured pending items at an ordinary final.
-                            // Keep that real assistant turn in both UI and model
-                            // history, then give the bounded agent loop a fresh
-                            // assistant buffer. No prose classifier, reasoning
-                            // marker, sampler, or decode setting is involved.
+                            // Keep the real response visible, but exclude that
+                            // abandoned terminal attempt from model history
+                            // before giving the bounded loop a fresh assistant
+                            // buffer. Otherwise the next persisted tool call is
+                            // adjacent to an assistant final after the transient
+                            // Todo notice disappears. No prose classifier,
+                            // reasoning marker, sampler, or decode setting is
+                            // involved.
                             debugLog(
                                 "send: current-run todo still has unchecked work at model stop; "
-                                    + "continuing within the configured tool-attempt budget"
+                                    + "excluding abandoned final and continuing within the "
+                                    + "configured tool-attempt budget"
                             )
+                            Self.excludeAbandonedTrackedTaskResponse(assistantTurn)
                             let nextAssistantTurn = ChatTurn(role: .assistant, content: "")
                             self.turns.append(nextAssistantTurn)
                             assistantTurn = nextAssistantTurn
@@ -5847,7 +5881,26 @@ final class ChatSession: ObservableObject {
                             maxIterations: maxAttempts,
                             stopOnToolRejection: true,
                             dedupeNoticeEnabled: true,
-                            maxDataMovementSteps: min(16, maxAttempts)
+                            maxDataMovementSteps: min(16, maxAttempts),
+                            // Only the locally proven Gemma/Qwen-family rows
+                            // receive the third-action Todo precondition.
+                            // Bundle model_type is authoritative, so renamed
+                            // Ornith/Bonsai bundles do not depend on display
+                            // names. Remote and unrelated local families keep
+                            // their existing behavior.
+                            todoRequiredBeforeToolCallCount:
+                                AgentToolLoop.chatTodoPreconditionThreshold(
+                                    hasTodoTool: toolSpecs.contains {
+                                        $0.function.name == "todo"
+                                    },
+                                    // Catalog lookup remains authoritative
+                                    // even while picker rows are refreshing.
+                                    // It also covers externally registered
+                                    // bundles reconstructed from the persisted
+                                    // id -> path registry.
+                                    isLocalModel: selectedModelIsLocal,
+                                    modelType: selectedPickerItem?.modelType
+                                )
                         ),
                         state: taskState,
                         hooks: loopHooks
@@ -7618,8 +7671,10 @@ struct ChatView: View {
         if let summary = session.lastCompletionSummary {
             InlineCompleteBlock(
                 summary: summary,
+                isBlocked: session.lastCompletionWasBlocked,
                 onDismiss: { [weak session] in
                     session?.lastCompletionSummary = nil
+                    session?.lastCompletionWasBlocked = false
                 }
             )
             // Asymmetric transition: appear with a soft slide+scale so
@@ -8144,6 +8199,7 @@ extension ChatView {
                 // closes the window.
                 if session.lastCompletionSummary != nil {
                     session.lastCompletionSummary = nil
+                    session.lastCompletionWasBlocked = false
                     return nil
                 }
 

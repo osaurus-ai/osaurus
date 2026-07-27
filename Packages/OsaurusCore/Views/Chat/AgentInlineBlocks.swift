@@ -267,20 +267,25 @@ struct InlineTodoBlock: View {
 /// dismiss it to read what's underneath.
 struct InlineCompleteBlock: View {
     let summary: String
+    let isBlocked: Bool
     var onDismiss: () -> Void
 
     @Environment(\.theme) private var theme
 
+    private var statusColor: Color {
+        isBlocked ? theme.warningColor : theme.successColor
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: Layout.bannerIconSpacing) {
-            Image(systemName: "checkmark.seal.fill")
-                .foregroundColor(theme.successColor)
+            Image(systemName: isBlocked ? "exclamationmark.triangle.fill" : "checkmark.seal.fill")
+                .foregroundColor(statusColor)
                 .padding(.top, Layout.bannerIconTopOffset)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(localized: "Done")
+                Text(localized: isBlocked ? "Blocked" : "Done")
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-                    .foregroundColor(theme.successColor)
+                    .foregroundColor(statusColor)
                     .textCase(.uppercase)
 
                 Text(summary)
@@ -298,8 +303,8 @@ struct InlineCompleteBlock: View {
         .padding(.vertical, Layout.bannerPaddingV)
         .background(
             FloatingGlassSurface(
-                tint: theme.successColor.opacity(0.10),
-                borderColor: theme.successColor.opacity(0.30)
+                tint: statusColor.opacity(0.10),
+                borderColor: statusColor.opacity(0.30)
             )
         )
         .padding(.horizontal, Layout.outerHorizontalMargin)

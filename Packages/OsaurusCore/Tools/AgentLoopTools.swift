@@ -29,13 +29,14 @@ import Foundation
 public final class TodoTool: OsaurusTool, @unchecked Sendable {
     public let name = "todo"
     public let description =
-        "Write or replace the OPTIONAL task checklist. Use it for multi-step work (3+ steps): "
-        + "create the list BEFORE starting, then re-send it with the new box checked IMMEDIATELY "
+        "Write or replace the OPTIONAL task checklist for multi-step work (3+ steps). The "
+        + "runtime may require it before a later action in a long tool run. Create the list BEFORE "
+        + "starting, then re-send it with the new box checked IMMEDIATELY "
         + "after finishing each item — do not batch updates for the end. Every item is a line "
         + "starting with `- [ ]` (pending) or `- [x]` (done); each call replaces the entire "
         + "list. Once created, unchecked items keep this agent run open until you update them or "
-        + "honestly close the tracked task with `complete`. Skip it for a direct question or "
-        + "single-step work — just answer."
+        + "honestly close blocked tracked work with `complete`. Skip it for a direct question or "
+        + "single-step work unless the runtime reports that tracking is required."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -115,8 +116,9 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
                 "Todo updated: \(stored.doneCount)/\(stored.totalCount) complete. "
                 + "Unchecked items keep this agent run open, so continue with the next pending "
                 + "item and re-send the full checklist as you check items. When everything is "
-                + "done, write your answer to the user; if work is blocked, answer honestly and "
-                + "call `complete(summary)` with what remains."
+                + "checked, answer the user normally and stop; no `complete` call is required. "
+                + "If work is blocked, use the structured `complete` tool with what remains. "
+                + "Never print tool-call syntax in the answer."
         )
     }
 }
@@ -128,14 +130,13 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
 public final class CompleteTool: OsaurusTool, @unchecked Sendable {
     public let name = "complete"
     public let description =
-        "OPTIONAL closure for a multi-step task you tracked with a `todo` list. Write your "
-        + "actual answer/result to the user as a normal message FIRST; this summary is a short "
-        + "status of WHAT you did + HOW you verified it (the command you ran, the file you "
-        + "checked, the URL you opened), NOT the answer itself. Call it in the same message as "
-        + "that final answer and not alongside other tool calls; for a direct question, just "
-        + "answer and do not call complete. Vague summaries (`done`, `looks good`, `complete`) "
-        + "are rejected. If you couldn't finish, say so honestly in the summary instead of "
-        + "pretending — that's fine; the user understands partial work."
+        "OPTIONAL early closure for a multi-step task tracked with `todo` that is honestly "
+        + "blocked or cannot be finished. A successful task does not need this tool: first mark "
+        + "every todo item checked, then answer the user normally and stop. For blocked work, "
+        + "the summary must state WHAT was done, HOW it was verified, and what remains. Invoke "
+        + "this through the structured tool protocol only, never by typing `complete(...)` into "
+        + "the answer, and never alongside another tool call. Vague summaries (`done`, `looks "
+        + "good`, `complete`) are rejected."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -178,10 +179,11 @@ public final class CompleteTool: OsaurusTool, @unchecked Sendable {
             )
         }
 
-        // Soft warning, never a rejection (rejecting here loops small
-        // models): completing with unchecked todo boxes is allowed, but
-        // the discrepancy is flagged in the envelope so it lands in the
-        // transcript the user reads.
+        // Pending items mean this is an honest blocked terminal, not success.
+        // The canonical loop separately requires a fresh Todo update after
+        // the latest action before this tool may execute. Keep the remaining
+        // items visible and return typed outcome data so headless/API callers
+        // receive the same truth as Chat's blocked completion banner.
         if let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty,
             let todo = await AgentTodoStore.shared.todo(for: sessionId)
         {
@@ -189,14 +191,27 @@ public final class CompleteTool: OsaurusTool, @unchecked Sendable {
             if pending > 0 {
                 return ToolEnvelope.success(
                     tool: name,
-                    text: "Task completed.",
+                    result: [
+                        "text": "Tracked task closed with \(pending) todo item"
+                            + (pending == 1 ? "" : "s") + " still pending.",
+                        "outcome": "blocked",
+                        "pending_todo_items": pending,
+                    ],
                     warnings: [
-                        "todo list has \(pending) unchecked item\(pending == 1 ? "" : "s") — update it, or state honestly in the summary that they were not done"
+                        "the task is incomplete; the remaining todo item"
+                            + (pending == 1 ? " is" : "s are") + " still unchecked"
                     ]
                 )
             }
         }
-        return ToolEnvelope.success(tool: name, text: "Task completed.")
+        return ToolEnvelope.success(
+            tool: name,
+            result: [
+                "text": "Task completed.",
+                "outcome": "completed",
+                "pending_todo_items": 0,
+            ]
+        )
     }
 
     /// Returns nil when the summary is acceptable, or a human-readable

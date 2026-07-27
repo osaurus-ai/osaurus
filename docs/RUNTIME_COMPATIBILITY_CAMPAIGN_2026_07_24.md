@@ -1276,3 +1276,269 @@ Chat has no new global watchdog in this diff.
 The scoped post-tool completion regression is `VERIFIED-LIVE` for the rows
 above. Arbitrary lazy-capability discovery and the broader cache/family matrix
 remain `PARTIAL` and must not be represented as closed by this emergency PR.
+
+### 2026-07-26 current-main untracked multi-tool regression
+
+Status: `OPEN` before the next fixing round.
+
+The exact merged source `cc08980260584790484ad948aa7e064e92999a20` was
+rebuilt in Release configuration as
+`com.dinoki.osaurus.gemmaqwencompletionproof20260726` with exact vMLX pin
+`d0e1f1a9ef3115b505056b679d6b01d6861f8daa`. In the isolated live app,
+`dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK` received the three-organization
+Hugging Face recommendation prompt with Thinking visibly on.
+
+The visible lifecycle contained closed reasoning and three completed
+`web_search` cards (two successful, one structured failure). The fourth model
+step then emitted 2,275 reasoning characters and 258 normal content
+characters promising to inspect the repositories, followed by authoritative
+terminal reason `stop`. The UI treated that promise as final, removed Stop,
+and unlocked input at displayed TTFT 1.63 s, 42.7 tok/s, and 716 tokens. The
+persisted turn confirms `content_len=258`, `thinking_len=2275`, and
+`terminal_stop_reason=stop`; it was neither an empty response, an output-token
+limit, an unclosed reasoning envelope, a malformed tool call, nor a dropped
+content delta.
+
+The current owning-layer contradiction is structural: the loop can continue
+ordinary progress prose only after a successful current-run Todo, while the
+agent-loop guidance tells a model to skip Todo for a “direct question.” This
+prompt is phrased as a direct question but requires multiple source-retrieval
+steps, so Gemma performed multi-tool work without arming the only structured
+completion contract. No phrase matcher, forced reasoning marker, sampler/EOS
+override, parser masking, or cache change is acceptable as a fix. The next
+round must make the multi-step tracking contract unambiguous, then re-run this
+exact prompt plus Ornith/Qwen controls in a fresh isolated Release app.
+
+### 2026-07-26 candidate structural contract
+
+Status: **SOURCE-PASS / FINAL RELEASE-UI PROOF OPEN**.
+
+A prompt-only correction was not sufficient. One fresh Release-app attempt
+completed, but an identical new-chat repeat reproduced the current-main
+failure after multiple ordinary tool actions. The candidate therefore makes
+the existing Todo state machine an explicit precondition before the third
+ordinary action, but only for local bundles whose authoritative
+`config.json:model_type` contains `gemma` or `qwen`. This includes renamed
+Qwen-backbone bundles such as Ornith and Bonsai without matching their display
+names. It excludes remote models, GLM, Laguna, LFM, DeepSeek, missing metadata,
+and every headless/API policy unless that surface explicitly opts in later.
+
+The rejected third action does not execute. It returns one structured,
+retryable `task_tracking_required` envelope telling the model to create a
+current-run Todo and retry the exact call, or to answer completely if no more
+tools are needed. Control tools do not consume the action count; stale session
+Todos and malformed Todo arguments cannot unlock it. The serial and batch
+paths share this contract, and ordinary tool rejection semantics remain
+unchanged. Focused tests cover the third-action boundary, successful retry,
+same-batch Todo, stale-Todo rejection, headless preservation, and the exact
+positive/negative bundle-type scope.
+
+The first candidate live round found a second independent instruction defect:
+the successful checked-Todo path told models to emit a normal final answer and
+also call `complete` “in the same message.” Gemma rendered literal
+`complete(summary: ...)` protocol text in visible content. The candidate now
+reserves structured `complete` for honestly blocked tracked work. A successful
+checked Todo ends with a normal answer and no `complete` call; both prompt and
+tool schema explicitly prohibit printing tool-call syntax. This is an owning
+schema correction, not a content scrubber or parser repair.
+
+The final isolated Release binary must still prove, for both Gemma and Ornith:
+closed reasoning, the third-action precondition, Todo creation and retry,
+finished tool cards, a coherent protocol-free final, Stop disappearance,
+input unlock, a completing follow-up, and compatible disk-L2 partial restore.
+No merge or `VERIFIED-LIVE` classification is allowed before those rows.
+
+### 2026-07-26 external-bundle and schema/cache live finding
+
+Status: **SOURCE FIX / REBUILT RELEASE-UI PROOF OPEN**.
+
+The first Release candidate was launched as the isolated app
+`com.dinoki.osaurus.gemmaqwenschemafreezeproof20260726` against vMLX
+`d0e1f1a9ef3115b505056b679d6b01d6861f8daa`. Through Settings, the custom
+model folder was set to `/Users/eric/models`; Server → Cache visibly showed
+prefix and disk L2 on, paged RAM off, and the engine-selected codec. The exact
+external bundle
+`/Users/eric/models/dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK` was selected
+with Thinking on.
+
+The long Hugging Face research turn completed several closed reasoning/tool
+cycles, recovered from structured search and capability-load failures, emitted
+a qualified final, removed Stop, and unlocked input. The UI reported TTFT
+2.07 s, 87.3 tok/s, and 964 generated tokens. However, the third-action Todo
+precondition did not fire. Source trace found the exact metadata loss:
+`ExternalModelLocator.models()` reconstructed persisted external entries with
+their id/path/provenance but omitted the authoritative bundle `model_type`.
+The bundle itself declares `gemma4`; the picker therefore handed the chat
+policy `nil` and selected threshold zero. The candidate now rehydrates
+`model_type` from the registered bundle's `config.json` and uses the catalog's
+local-model resolution rather than requiring a momentarily populated picker
+row. A focused test invalidates the in-memory registry before asserting the
+rehydrated `gemma4` value, exercising the app-relaunch path.
+
+This live round also distinguishes a valid cache invalidation from the
+reported persistent cold-prefill defect. Explicitly loading
+`search_and_extract` changed the callable schema from eight to nine tools;
+the token LCP with the previous request fell to 996 and the immediately
+following turn correctly missed disk because the configured prompt inventory
+had changed. After that nine-tool schema stabilized, the next visible
+follow-up restored 7,267 of 7,295 prompt tokens from disk with paged RAM still
+off, prefilling only 28. It closed its reasoning, answered “Three plus three
+is six,” removed Stop, and unlocked input at UI TTFT 0.49 s (41.3 tok/s,
+81 generated tokens). This is current-source evidence for same-session Gemma
+rotating-cache disk reuse; new chat, app restart, the patched Todo contract,
+and the Ornith hybrid row remain required before release classification.
+
+### 2026-07-26 Todo continuation history and disk-L2 A/B
+
+Status: **VERIFIED-LIVE FOR THE REPRODUCED ORNITH/GEMMA TODO CONTINUATION ROW**.
+
+The stale Release candidate
+`com.dinoki.osaurus.gemmaqwentodoproof20260726` reproduced a narrower
+continuation defect with the exact Ornith 1.0 35B MXFP8 bundle. With prefix
+and disk L2 on and paged RAM off, session
+`DCB5997B-8BCE-4135-961B-167F57BF0EA2` rejected an unchanged duplicate Todo,
+visibly reached Todo 1/1, and then emitted unrelated answer text from the
+preceding user turn. Its persisted sequence was user -> assistant Todo call ->
+tool result -> assistant duplicate Todo call -> structured
+`todo_no_progress` result -> assistant premature final -> assistant checked
+Todo call -> tool result -> stale final. The live trace contained Ornith disk
+restores with all 60 hybrid SSM companion states.
+
+The same stale binary was changed through Settings to disk L2 off while
+leaving prefix on and paged RAM off. A fresh new-chat repetition in session
+`1E7B9BDD-47A8-45BC-8748-5092D96D73E3` reached Todo 1/1 and the correct final,
+`Task complete — the duplicate todo call was rejected as expected.`, at TTFT
+3.33 s, 62.7 tok/s, and 124 generated tokens. Stop disappeared and the
+composer unlocked. Cache tracing reported misses at every tier and no disk
+stores. This A/B is diagnostic only: turning disk off is not a fix and the
+successful row still persisted an invalid adjacent-assistant history before
+the checked Todo call.
+
+Source trace found the owning contradiction in the chat surface. When
+`AgentToolLoop` rejected a premature final because a current-run Todo remained
+pending, `prepareTrackedTaskContinuation` appended a fresh assistant turn but
+left the abandoned final model-visible. After its transient notice was
+removed, Qwen/Ornith received assistant(final) -> assistant(tool call) -> tool
+history. The bundle template's `last_query_index` handling makes that history
+structurally different from the intended tool-result continuation; restoring
+hybrid state from the earlier valid boundary exposed the stale continuation.
+
+The candidate keeps the premature response visible in chat but marks that
+turn `modelContextExcluded` before appending the fresh assistant buffer. The
+preceding tool result remains the model-visible continuation anchor. This does
+not inject reasoning tags, alter EOS, change sampling, disable cache, rewrite
+model content, or apply a family-wide output guard. Tests now require the
+model-visible continuation roles to end user -> assistant(tool call) -> tool.
+
+The checkout was fast-forwarded without overlap to Osaurus main
+`c820eb1d7c6c0ff183198c236b4efb5657580196` with exact vMLX pin
+`d0e1f1a9ef3115b505056b679d6b01d6861f8daa`. The focused current-head result
+`/private/tmp/osaurus-gemma-qwen-schema-freeze-release-derived-20260726/Logs/Test/Test-OsaurusCoreTests-2026.07.26_17-41-48--0700.xcresult`
+contains 42 passes, zero failures, and zero skips. A separate serial stress
+result at
+`/private/tmp/osaurus-gemma-qwen-schema-freeze-release-derived-20260726/Logs/Test/Test-OsaurusCoreTests-2026.07.26_17-37-19--0700.xcresult`
+contains 95 successful runs of the 19 stop/session tests. The stress round
+also exposed and corrected a test-only defect: raw `JSONEncoder` bytes were
+compared without sorted keys, so semantically identical message arrays could
+fail on object-key order. Production encoding and requests were not changed.
+
+The exact current-head source was then rebuilt in Release, copied to
+`/private/tmp/osaurus-gemma-qwen-todo-history-fix-proof-20260726-1749.app`,
+ad-hoc signed under isolated bundle id
+`com.dinoki.osaurus.gemmaqwentodohistoryfixproof20260726`, and launched with a
+fresh isolated test root. Its executable SHA-256 is
+`200ace6064e0d3d930f228aec174ef6f43b6db258c77ea28bf20b6f4e070d1d7`.
+Through the real Settings UI, the external model root was set to
+`/Users/eric/models` and rescanned, prefix and disk L2 were enabled, paged RAM
+was disabled, the on-the-fly cache codec was explicitly set to `None`, and
+SSM re-derivation remained enabled. The UI confirmed that the saved runtime
+policy unloaded the resident model for reload; no TurboQuant cache mode was
+enabled.
+
+Two fresh-chat Ornith 1.0 35B MXFP8 trials then ran the exact duplicate-Todo
+contract with Thinking visibly on. Both rejected the unchanged call as
+`todo_no_progress`, reached Todo 1/1, emitted a coherent short final, removed
+Stop, unlocked the composer, and completed a subsequent arithmetic turn.
+Trial one finalized at 0.62-second TTFT and 65.3 tok/s; its follow-up finalized
+at 0.80-second TTFT and 62.1 tok/s. Trial two finalized at 0.41-second TTFT and
+64.7 tok/s; its follow-up finalized at 0.83-second TTFT and 48.7 tok/s. The
+Thinking UI opened and closed separately from content, and no protocol debris
+or inline `<think>` text appeared.
+
+The corresponding persisted sessions are
+`35ABAFFE-AA0D-4758-9327-ADCA812052EB` and
+`F477E925-B702-4E61-A534-FCAA04FB483E`. In the first, both premature assistant
+finals at sequence 5 and 6 have `model_context_excluded=1`; in the second, the
+single premature final at sequence 5 has `model_context_excluded=1`. The next
+model-visible turn in each case is the checked Todo call, followed by its tool
+result and the terminal final. The UI intentionally preserves the abandoned
+text for auditability, but it cannot contaminate a later model request.
+
+Disk L2 remained active with paged RAM disabled throughout both trials. The
+second new-chat request restored 3,226 of 3,231 prompt tokens from disk, and
+the subsequent tool continuations restored the best compatible 3,336, 3,516,
+3,501, and 3,629-token boundaries with only five tokens remaining at each
+matching boundary. Every restore included all 60 Ornith SSM companion states.
+Paged-store telemetry reported zero effective KV layers, zero blocks, and no
+RAM payload, so these were disk-backed hybrid restores rather than hidden
+paged-RAM hits.
+
+The same binary and cache policy then loaded
+`/Users/eric/models/dealign.ai/Gemma-4-26B-A4B-it-JANG_4M-CRACK`, with Thinking
+visibly enabled, in a fresh chat. Gemma called Todo pending, received the
+structured duplicate rejection, called Todo complete, reached Todo 1/1, and
+finalized `The duplicate call was rejected.` at 0.42-second TTFT and
+80.2 tok/s. A direct follow-up finalized `Two plus two is four.` at
+0.59-second TTFT and 77.1 tok/s. Stop disappeared and input unlocked after
+both turns. Session `6F2A5AC5-6403-4A90-A164-9697D76270C9` contains the exact
+user -> assistant(tool) -> tool sequence for all three calls with no abandoned
+final. Gemma's disk restores carried the required rotating-SWA companion state:
+the new-chat path restored 1,107 prompt tokens with four remaining, followed by
+valid partial boundaries of 1,111, 1,201, 1,323, and 1,605 tokens while paged
+RAM remained empty.
+
+This verifies the reproduced malformed-history root cause and its current-head
+fix for the tested Ornith hybrid-Qwen and Gemma rotating-SWA rows. It does not
+claim family-wide compatibility for every Qwen/Gemma bundle, parser,
+quantization, modality, cache codec, or task; those broader matrix rows remain
+separately open below.
+
+## Follow-on live issue ledger after the emergency merge
+
+These are deliberately not bundled into the Gemma/Qwen completion patch. Each
+remains open until its owning source and fresh Release-app UI lifecycle are
+proved.
+
+1. **PDF content-based batch rename — OPEN.** Reproduce Ornith 9B on a copied
+   folder: inspect first pages, handle text PDFs and OCR fallback, derive exact
+   author/title names, perform reversible rename/move into the configured
+   folder only, continue after a missing `pdftotext`/OCR command, and report
+   every per-file result. Prove repeated files, name collisions, Unicode,
+   encrypted/image-only PDFs, cancellation, and a follow-up turn. Evaluate
+   same-model bounded subagent batching only after the single-file contract is
+   correct.
+2. **Todo terminal UI — OPEN.** A pinned checklist must not remain “in
+   progress” after final answer, Stop, cancellation, failure, session change,
+   or app restart. Stale Todos must not arm later turns. Prove normal success,
+   blocked closure, malformed Todo, cancellation, and chat deletion.
+3. **Computer Use / AppleScript exact-scope handoff — OPEN.** Re-run the 16B
+   rows for open-only, new blank document, replace existing text once, no
+   unsolicited save, no placeholder text, wrong-dialog recovery, malformed
+   `verb`, repeated-action detection, success recognition, and terminal UI.
+   The orchestrator must pass only the user's literal requested content and
+   current task; the worker must not inherit stale job history.
+4. **Batched delegation and residency — PARTIAL.** Existing same-model
+   `handoff:false` evidence remains current, but PDF fan-out still needs
+   bounded same-local batching, failure isolation, cancellation, RAM
+   accounting once per resident model, and cache reuse per child. Different
+   local parent/child work must unload and restore once per grouped handoff;
+   mixed local/remote jobs must honor the saved allow-list and ordered result
+   envelope. Generation defaults, Thinking, max-output limits, context budget,
+   and RAM-safety settings must propagate to every child.
+5. **Context and cache truthfulness — PARTIAL.** Continue separating model
+   maximum context, 85% conversation budget, bundle maximum output, active KV
+   retention, paged-RAM capacity, and disk-L2 quota. Prove paged RAM off plus
+   disk partial-prefix restore across new chats/reloads/restarts, then paged
+   RAM eviction followed by disk restore. UI warm/prefill counters and TTFT/
+   token-rate telemetry must agree with exact restored and remaining token
+   counts; no arbitrary suffix or unrelated block concatenation is allowed.

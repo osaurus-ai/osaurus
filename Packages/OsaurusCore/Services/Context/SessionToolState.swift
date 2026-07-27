@@ -28,6 +28,16 @@ struct SessionToolState: Sendable {
     /// `capabilities_load` path (which writes loadedToolNames).
     /// `nil` means "no snapshot yet" — the next compose will record one.
     var initialAlwaysLoadedNames: LoadedTools?
+    /// Exact canonical tool specifications exposed by the first compose of
+    /// this session. Freezing names alone is insufficient: some registered
+    /// tools derive their JSON schema from asynchronously discovered runtime
+    /// state (for example, the available web-search categories). A name can
+    /// therefore remain stable while its parameters change, invalidating the
+    /// tokenizer prefix and forcing a full prefill. Subsequent composes reuse
+    /// these payloads for tools that remain visible; an explicit
+    /// `capabilities_load` is still allowed to replace a compact bootstrap
+    /// spec with the live full contract.
+    var initialToolSpecs: [Tool]?
     /// Compact signature of the (executionMode, toolSelectionMode) that
     /// captured this state. The send path compares the live signature on
     /// every turn and invalidates on a flip, so dynamically-loaded tools
@@ -61,6 +71,7 @@ struct SessionToolState: Sendable {
     init(
         loadedToolNames: LoadedTools = [],
         initialAlwaysLoadedNames: LoadedTools? = nil,
+        initialToolSpecs: [Tool]? = nil,
         sessionFingerprint: String? = nil,
         frozenManifest: String? = nil,
         frozenSoul: String? = nil,
@@ -68,6 +79,7 @@ struct SessionToolState: Sendable {
     ) {
         self.loadedToolNames = loadedToolNames
         self.initialAlwaysLoadedNames = initialAlwaysLoadedNames
+        self.initialToolSpecs = initialToolSpecs
         self.sessionFingerprint = sessionFingerprint
         self.frozenManifest = frozenManifest
         self.frozenSoul = frozenSoul

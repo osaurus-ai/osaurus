@@ -60,6 +60,7 @@ extension ChatSession: ChatWarmupSessionContext {
             toolsDisabled: chatCfg.disableTools,
             additionalToolNames: cachedSession?.loadedToolNames ?? [],
             frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
+            frozenToolSpecs: cachedSession?.initialToolSpecs,
             frozenManifest: cachedSession?.frozenManifest,
             frozenSoul: cachedSession?.frozenSoul,
             trace: nil

@@ -27,6 +27,11 @@ struct ComposeRequest: Sendable {
     let toolsDisabled: Bool
     let additionalToolNames: LoadedTools
     let frozenAlwaysLoadedNames: LoadedTools?
+    /// Exact first-compose tool payloads. Names are still resolved through
+    /// the live permission/feature gates; surviving baseline names reuse these
+    /// canonical schemas so async registry metadata cannot rewrite a session's
+    /// tokenizer prefix between turns.
+    let frozenToolSpecs: [Tool]?
     /// Turn-1 rendered enabled-capabilities manifest echoed back on turn 2+
     /// so the static system-prompt prefix stays byte-identical across the
     /// session (mirrors `frozenAlwaysLoadedNames`). `nil` = render fresh;
@@ -48,6 +53,7 @@ struct ComposeRequest: Sendable {
         toolsDisabled: Bool = false,
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
+        frozenToolSpecs: [Tool]? = nil,
         frozenManifest: String? = nil,
         frozenSoul: String? = nil,
         trace: TTFTTrace? = nil
@@ -61,6 +67,7 @@ struct ComposeRequest: Sendable {
         self.toolsDisabled = toolsDisabled
         self.additionalToolNames = additionalToolNames
         self.frozenAlwaysLoadedNames = frozenAlwaysLoadedNames
+        self.frozenToolSpecs = frozenToolSpecs
         self.frozenManifest = frozenManifest
         self.frozenSoul = frozenSoul
         self.trace = trace

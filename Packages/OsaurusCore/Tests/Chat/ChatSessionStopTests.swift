@@ -73,12 +73,13 @@ struct ChatSessionStopTests {
     }
 
     @Test
-    func trackedTodoContinuationHistoryKeepsProgressOnceAndDropsEmptyBuffer() {
+    func trackedTodoContinuationKeepsPrematureResponseVisibleButOutOfModelHistory() {
         let user = ChatTurn(role: .user, content: "research these repositories")
         let progress = ChatTurn(
             role: .assistant,
             content: "Got the Osaurus models. Now let me check the other two orgs."
         )
+        ChatSession.excludeAbandonedTrackedTaskResponse(progress)
         let emptyContinuationBuffer = ChatTurn(role: .assistant, content: "")
         let turns = [user, progress, emptyContinuationBuffer]
 
@@ -92,16 +93,11 @@ struct ChatSessionStopTests {
             }
         }
 
-        #expect(messages.map(\.role) == ["user", "assistant"])
-        #expect(messages.map(\.content) == [
-            "research these repositories",
-            "Got the Osaurus models. Now let me check the other two orgs.",
-        ])
-        #expect(
-            messages.filter {
-                $0.content == "Got the Osaurus models. Now let me check the other two orgs."
-            }.count == 1
-        )
+        #expect(progress.content == "Got the Osaurus models. Now let me check the other two orgs.")
+        #expect(progress.modelContextExcluded)
+        #expect(messages.map(\.role) == ["user"])
+        #expect(messages.map(\.content) == ["research these repositories"])
+        #expect(ChatSession.modelVisibleAssistantMessage(progress, isLastTurn: false) == nil)
     }
 
     @Test
@@ -796,9 +792,11 @@ private actor ReasoningRetryChatEngine: ChatEngineProtocol {
     private(set) var requestSnapshots: [ChatRequestSnapshot] = []
 
     func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
+        let messageEncoder = JSONEncoder()
+        messageEncoder.outputFormatting = [.sortedKeys]
         requestSnapshots.append(
             ChatRequestSnapshot(
-                encodedMessages: (try? JSONEncoder().encode(request.messages)) ?? Data(),
+                encodedMessages: (try? messageEncoder.encode(request.messages)) ?? Data(),
                 toolNames: request.tools?.map(\.function.name) ?? [],
                 idempotencyKey: request.idempotencyKey
             )

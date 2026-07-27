@@ -72,13 +72,22 @@ struct AgentLoopPolicy: Sendable {
     /// because only they can land a successful `db_*` bulk call.
     var maxDataMovementSteps: Int = 0
 
+    /// Chat-only structural fallback for models that ignore the proactive
+    /// `todo` guidance. When greater than zero, the Nth ordinary action tool
+    /// is not executed until this run has produced a valid Todo. The rejected
+    /// call remains model-visible and retryable, so the model can create the
+    /// checklist and retry the exact action. Headless surfaces leave this at
+    /// zero and retain their existing semantics.
+    var todoRequiredBeforeToolCallCount: Int = 0
+
     init(
         maxIterations: Int,
         budgetWarningThreshold: Int = 3,
         stopOnToolRejection: Bool,
         dedupeNoticeEnabled: Bool,
         todoStalenessThreshold: Int = 4,
-        maxDataMovementSteps: Int = 0
+        maxDataMovementSteps: Int = 0,
+        todoRequiredBeforeToolCallCount: Int = 0
     ) {
         self.maxIterations = max(1, maxIterations)
         self.budgetWarningThreshold = budgetWarningThreshold
@@ -86,6 +95,7 @@ struct AgentLoopPolicy: Sendable {
         self.dedupeNoticeEnabled = dedupeNoticeEnabled
         self.todoStalenessThreshold = max(1, todoStalenessThreshold)
         self.maxDataMovementSteps = max(0, maxDataMovementSteps)
+        self.todoRequiredBeforeToolCallCount = max(0, todoRequiredBeforeToolCallCount)
     }
 }
 
@@ -235,6 +245,21 @@ struct AgentTodoProgressSnapshot: Equatable, Sendable {
     var pending: Int { max(0, total - done) }
 }
 
+/// Semantic checklist identity for one parsed `todo` invocation. Markdown
+/// headings, bullet choice, whitespace, and other presentation-only text are
+/// intentionally excluded: progress means that at least one parsed task or
+/// checkbox state changed. This snapshot is scoped to one `run` invocation;
+/// an identical checklist in a later user turn is still a legitimate first
+/// update and must not be rejected because of stale session state.
+struct AgentTodoSemanticSnapshot: Equatable, Sendable {
+    struct Item: Equatable, Sendable {
+        let text: String
+        let isDone: Bool
+    }
+
+    let items: [Item]
+}
+
 // MARK: - Hooks
 
 /// Surface-specific behavior, injected as async closures. All closures
@@ -270,12 +295,16 @@ struct AgentLoopHooks {
     /// reasoning tag, sampler override, EOS override, or other coercion.
     var prepareIncompleteReasoningContinuation: (() async -> Void)?
 
-    /// Preserve an ordinary assistant response from a run that successfully
-    /// created/updated a todo list while structured unchecked work remains,
-    /// then prepare a fresh output buffer for the next model step. Unlike
-    /// incomplete-reasoning recovery, the response MUST remain model-visible:
-    /// it is real work/progress emitted by the model. Only chat opts into this
-    /// boundary; headless surfaces keep their existing terminal behavior.
+    /// Preserve an ordinary assistant response visibly when a run that
+    /// successfully created/updated a todo list stops while structured work
+    /// remains, then prepare a fresh output buffer for the next model step.
+    /// The premature response MUST be excluded from the next model request:
+    /// otherwise chat persists `assistant(final), assistant(tool_call)` after
+    /// the transient continuation notice disappears. That invalid role shape
+    /// changes Qwen-family template rendering and can restore stale hybrid
+    /// state from disk. The preceding tool result remains the authoritative
+    /// continuation anchor. Only chat opts into this boundary; headless
+    /// surfaces keep their existing terminal behavior.
     var prepareTrackedTaskContinuation: (() async -> Void)?
 
     /// Called for every parsed invocation before the dedupe check, so the
@@ -1232,6 +1261,164 @@ enum AgentToolLoop {
     /// the serial path stops immediately.
     static let interceptToolNames: Set<String> = ["complete", "clarify"]
 
+    /// Agent-loop control calls are not user-task actions and therefore do
+    /// not consume the structural tracking threshold. `share_artifact` is an
+    /// action because it performs the requested delivery.
+    static let taskTrackingControlToolNames: Set<String> = ["todo", "complete", "clarify"]
+
+    static let taskTrackingRequiredReason = "task_tracking_required"
+    static let todoProgressUpdateRequiredReason = "todo_progress_update_required"
+    static let todoNoProgressReason = "todo_no_progress"
+
+    /// The premature post-tool stop has current live proof only for local
+    /// Gemma and Qwen-backbone bundles (including Ornith/Bonsai). Keep the
+    /// structural Todo precondition off for remote providers and unrelated
+    /// local families until those rows independently prove they need it.
+    static func chatTodoPreconditionThreshold(
+        hasTodoTool: Bool,
+        isLocalModel: Bool,
+        modelType: String?
+    ) -> Int {
+        guard hasTodoTool, isLocalModel else { return 0 }
+        guard let normalized = modelType?.lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !normalized.isEmpty
+        else { return 0 }
+        return normalized.contains("gemma") || normalized.contains("qwen") ? 3 : 0
+    }
+
+    static func isTaskTrackingAction(toolName: String) -> Bool {
+        !taskTrackingControlToolNames.contains(toolName)
+    }
+
+    /// Honest, structured precondition failure used only by a surface that
+    /// explicitly enables Todo enforcement. The requested tool did not run;
+    /// the model can either create the required checklist and retry, or stop
+    /// using tools and give the user a complete answer from evidence already
+    /// collected.
+    static func taskTrackingRequiredResult(toolName: String, threshold: Int) -> String {
+        ToolEnvelope.failure(
+            kind: .rejected,
+            message:
+                "This tool call was not executed because this run reached \(threshold) ordinary "
+                + "tool actions without a current-run todo. Call `todo(markdown)` with the "
+                + "remaining checklist, then retry this exact tool call. If no more tools are "
+                + "needed, answer the user completely now.",
+            tool: toolName,
+            retryable: true,
+            metadata: [
+                "reason": taskTrackingRequiredReason,
+                "executed": false,
+                "required_before_tool_call": threshold,
+            ]
+        )
+    }
+
+    static func isTaskTrackingRequiredResult(_ result: String) -> Bool {
+        guard ToolEnvelope.isError(result),
+            let data = result.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return object["reason"] as? String == taskTrackingRequiredReason
+    }
+
+    /// A tracked task must not terminate from a stale checklist after new
+    /// actions have run. The model owns the semantic mapping from results to
+    /// checklist items; the runtime only requires one fresh, structured Todo
+    /// snapshot before accepting `complete`. This avoids guessing which work
+    /// succeeded while preventing a green completion banner beside a stale
+    /// `0/N` list.
+    static func todoProgressUpdateRequiredResult(toolName: String, pending: Int) -> String {
+        ToolEnvelope.failure(
+            kind: .rejected,
+            message:
+                "This completion was not accepted because \(pending) todo item"
+                + (pending == 1 ? " is" : "s are")
+                + " still unchecked and ordinary tool actions ran after the last todo update. "
+                + "Call `todo(markdown)` with the full current checklist now, checking every "
+                + "item actually finished and leaving blocked work unchecked. Then answer "
+                + "normally if no items remain, or call `complete` again with an honest blocked "
+                + "summary if unfinished work remains.",
+            tool: toolName,
+            retryable: true,
+            metadata: [
+                "reason": todoProgressUpdateRequiredReason,
+                "executed": false,
+                "pending_todo_items": pending,
+            ]
+        )
+    }
+
+    static func isTodoProgressUpdateRequiredResult(_ result: String) -> Bool {
+        guard ToolEnvelope.isError(result),
+            let data = result.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return object["reason"] as? String == todoProgressUpdateRequiredReason
+    }
+
+    /// Reject an exact semantic replay of the current run's latest successful
+    /// checklist. Rewriting the same `0/N` Todo is not task progress and, in a
+    /// live Gemma run, kept a completed answer spinning until the step cap.
+    /// The call is not executed, so the session store and UI timestamp do not
+    /// churn and the model receives an explicit choice: do work, record a real
+    /// checkbox/task change, or close honestly as blocked.
+    static func todoNoProgressResult(pending: Int) -> String {
+        ToolEnvelope.failure(
+            kind: .rejected,
+            message:
+                "This todo call was not executed because it exactly repeats the current "
+                + "checklist with no task or checkbox change. Do not submit the same todo "
+                + "again. Continue a concrete pending step, then re-send the full checklist "
+                + "with real progress checked. If the remaining work cannot continue, call "
+                + "`complete(summary)` with an honest blocked result.",
+            tool: "todo",
+            retryable: true,
+            metadata: [
+                "reason": todoNoProgressReason,
+                "executed": false,
+                "pending_todo_items": pending,
+            ]
+        )
+    }
+
+    static func isTodoNoProgressResult(_ result: String) -> Bool {
+        guard ToolEnvelope.isError(result),
+            let data = result.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return object["reason"] as? String == todoNoProgressReason
+    }
+
+    static func isRecoverableTodoContractResult(_ result: String) -> Bool {
+        isTaskTrackingRequiredResult(result)
+            || isTodoProgressUpdateRequiredResult(result)
+            || isTodoNoProgressResult(result)
+    }
+
+    static func todoProgressUpdateRequiredNotice(pending: Int) -> String {
+        "[System Notice] Your completion was rejected because \(pending) todo item"
+            + (pending == 1 ? " is" : "s are")
+            + " still unchecked and tools ran after the last checklist update. Re-send the full "
+            + "todo now with completed work checked. If work remains blocked after that update, "
+            + "call `complete` again with an honest blocked summary."
+    }
+
+    static func taskTrackingRequiredNotice(threshold: Int) -> String {
+        "[System Notice] This run reached \(threshold) ordinary tool actions without the "
+            + "required current-run todo. The rejected tool was not executed. Call "
+            + "`todo(markdown)` now and retry it, or give the user a complete final answer "
+            + "without another tool call."
+    }
+
+    static func todoNoProgressNotice(pending: Int) -> String {
+        "[System Notice] Your todo update was rejected because it exactly repeated the "
+            + "current checklist with \(pending) unchecked item\(pending == 1 ? "" : "s"). "
+            + "Do not call todo unchanged again. Continue a concrete step and then record a "
+            + "real checkbox/task change, or call `complete(summary)` with an honest blocked "
+            + "result if the remaining work cannot continue."
+    }
+
     /// Whether a batch carries a loop-ending intercept tool.
     static func containsIntercept(
         _ calls: [(invocation: ServiceToolInvocation, callId: String)]
@@ -1269,6 +1456,26 @@ enum AgentToolLoop {
         let todo = AgentTodo.parse(markdown)
         guard todo.totalCount > 0 else { return nil }
         return AgentTodoProgressSnapshot(done: todo.doneCount, total: todo.totalCount)
+    }
+
+    /// Read the parsed task texts + checkbox states from a Todo invocation.
+    /// This deliberately ignores non-checklist prose/formatting so cosmetic
+    /// rewrites cannot masquerade as progress.
+    static func todoSemanticSnapshot(
+        from invocation: ServiceToolInvocation
+    ) -> AgentTodoSemanticSnapshot? {
+        guard invocation.toolName == "todo",
+            let data = invocation.jsonArguments.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let markdown = dict["markdown"] as? String
+        else { return nil }
+        let todo = AgentTodo.parse(markdown)
+        guard !todo.items.isEmpty else { return nil }
+        return AgentTodoSemanticSnapshot(
+            items: todo.items.map {
+                AgentTodoSemanticSnapshot.Item(text: $0.text, isDone: $0.isDone)
+            }
+        )
     }
 
     // Capability schemas loaded mid-run are delivered append-only in the
@@ -1386,6 +1593,11 @@ enum AgentToolLoop {
         // transient missing lookup must not turn known unchecked work into a
         // clean final response.
         var lastSuccessfulCurrentRunTodoProgress: AgentTodoProgressSnapshot?
+        // Semantic identity of the latest Todo that actually succeeded during
+        // THIS run. Never seed this from the session store: the same checklist
+        // is valid as the first update of a later user turn, but not as
+        // repeated pseudo-progress within one agent loop.
+        var lastSuccessfulCurrentRunTodoSemanticSnapshot: AgentTodoSemanticSnapshot?
         // Last iteration that carried a `todo` call (0 = run start), for
         // the staleness check below.
         var lastTodoIteration = 0
@@ -1395,6 +1607,75 @@ enum AgentToolLoop {
         var dataMovementStepsUsed = 0
         var announcedDataMovementRelief = false
         var completedToolWork = false
+        // Counts attempted ordinary action calls in this logical run. Failed,
+        // rejected, and deduped calls still count because the threshold
+        // describes task complexity, not successful side effects. Control
+        // tools (`todo` / `complete` / `clarify`) never count.
+        var currentRunActionToolCallCount = 0
+        // Action-call count captured at the latest successful current-run Todo
+        // update. If more actions run while items remain pending, `complete`
+        // must not terminate until the model refreshes the checklist. Keeping
+        // this structural (rather than inferring progress from prose/tool
+        // names) preserves family and task neutrality.
+        var lastSuccessfulCurrentRunTodoActionToolCallCount: Int?
+
+        func taskTrackingPreconditionResult(
+            for invocation: ServiceToolInvocation,
+            batchContainsParseableTodo: Bool
+        ) -> String? {
+            guard Self.isTaskTrackingAction(toolName: invocation.toolName) else {
+                return nil
+            }
+            currentRunActionToolCallCount += 1
+            let threshold = policy.todoRequiredBeforeToolCallCount
+            guard threshold > 0,
+                !hasSuccessfulCurrentRunTodo,
+                !batchContainsParseableTodo,
+                currentRunActionToolCallCount >= threshold
+            else { return nil }
+            return Self.taskTrackingRequiredResult(
+                toolName: invocation.toolName,
+                threshold: threshold
+            )
+        }
+
+        func todoProgressUpdatePreconditionResult(
+            for invocation: ServiceToolInvocation,
+            batchContainsPrecedingParseableTodo: Bool
+        ) -> String? {
+            guard invocation.toolName == "complete",
+                hasSuccessfulCurrentRunTodo,
+                let progress = lastSuccessfulCurrentRunTodoProgress,
+                progress.pending > 0,
+                let actionCountAtTodo = lastSuccessfulCurrentRunTodoActionToolCallCount,
+                currentRunActionToolCallCount > actionCountAtTodo,
+                !batchContainsPrecedingParseableTodo
+            else { return nil }
+            return Self.todoProgressUpdateRequiredResult(
+                toolName: invocation.toolName,
+                pending: progress.pending
+            )
+        }
+
+        func todoNoProgressPreconditionResult(
+            for invocation: ServiceToolInvocation
+        ) -> String? {
+            guard let candidate = Self.todoSemanticSnapshot(from: invocation),
+                let latest = lastSuccessfulCurrentRunTodoSemanticSnapshot,
+                candidate == latest
+            else { return nil }
+            // Although this is not progress and must not churn the store, the
+            // model did re-affirm the current structured state after any
+            // intervening actions. Let a subsequent `complete` close the task
+            // honestly as blocked; otherwise a failed action with no checkbox
+            // transition would create an impossible contract (unchanged Todo
+            // rejected, but blocked completion forever demanding an update).
+            lastSuccessfulCurrentRunTodoActionToolCallCount =
+                currentRunActionToolCallCount
+            return Self.todoNoProgressResult(
+                pending: lastSuccessfulCurrentRunTodoProgress?.pending ?? 0
+            )
+        }
 
         while iteration < policy.maxIterations {
             if await hooks.isCancelled() {
@@ -1448,11 +1729,15 @@ enum AgentToolLoop {
                         return RunResult(exit: .cancelled, iterations: iteration - 1)
                     }
                     if let progress, progress.pending > 0 {
-                        // Preserve the model's real response in visible/model
-                        // history and start the next attempt in a fresh
-                        // assistant turn. This boundary also runs at the hard
-                        // cap so Chat's existing tool-free finalizer does not
-                        // concatenate its wrap-up onto progress prose.
+                        // Preserve the model's real response in the visible
+                        // transcript but exclude this abandoned terminal
+                        // attempt from model history, then start the next
+                        // attempt in a fresh assistant turn. This prevents an
+                        // adjacent assistant(final) -> assistant(tool_call)
+                        // history after the transient Todo notice disappears.
+                        // The boundary also runs at the hard cap so Chat's
+                        // existing tool-free finalizer does not concatenate its
+                        // wrap-up onto progress prose.
                         await prepareContinuation()
                         if await hooks.isCancelled() {
                             return RunResult(exit: .cancelled, iterations: iteration)
@@ -1601,6 +1886,18 @@ enum AgentToolLoop {
 
                 var outcomes: [AgentLoopToolOutcome] = []
                 outcomes.reserveCapacity(invocations.count)
+                // A valid Todo in the same model-emitted batch satisfies the
+                // precondition for its sibling actions. The actual successful
+                // outcome still arms terminal tracking below; malformed Todo
+                // arguments cannot bypass this gate.
+                let batchContainsParseableTodo = invocations.contains {
+                    Self.todoProgressSnapshot(from: $0) != nil
+                }
+                // Captures how many ordinary actions had been attempted when
+                // each Todo call appeared in model order. This is more exact
+                // than assigning the batch's final count to every Todo when a
+                // model emits Todo + action calls together.
+                var todoActionToolCallCountByCallId: [String: Int] = [:]
 
                 if let executeBatch = hooks.executeBatch {
                     // Slotting mode (HTTP semantics): dedupe pass over the
@@ -1623,9 +1920,58 @@ enum AgentToolLoop {
                     // the live state decides replay vs. execute.
                     var deferredDuplicates: [Int: (invocation: ServiceToolInvocation, callId: String)] = [:]
                     var seenSignatures: Set<CallSignature> = []
+                    var batchHasPrecedingParseableTodo = false
                     for (slot, invocation) in invocations.enumerated() {
                         let callId = Self.callId(for: invocation)
                         await hooks.willProcessCall(invocation, callId)
+                        let invocationHasParseableTodo =
+                            Self.todoProgressSnapshot(from: invocation) != nil
+                        if let trackingRequired = taskTrackingPreconditionResult(
+                            for: invocation,
+                            batchContainsParseableTodo: batchContainsParseableTodo
+                        ) {
+                            slotted[slot] = AgentLoopToolOutcome(
+                                invocation: invocation,
+                                callId: callId,
+                                result: trackingRequired,
+                                wasDeduped: false,
+                                wasError: true
+                            )
+                            continue
+                        }
+                        if let noProgress = todoNoProgressPreconditionResult(
+                            for: invocation
+                        ) {
+                            slotted[slot] = AgentLoopToolOutcome(
+                                invocation: invocation,
+                                callId: callId,
+                                result: noProgress,
+                                wasDeduped: false,
+                                wasError: true
+                            )
+                            continue
+                        }
+                        if invocationHasParseableTodo {
+                            todoActionToolCallCountByCallId[callId] =
+                                currentRunActionToolCallCount
+                        }
+                        if let progressUpdateRequired = todoProgressUpdatePreconditionResult(
+                            for: invocation,
+                            batchContainsPrecedingParseableTodo:
+                                batchHasPrecedingParseableTodo
+                        ) {
+                            slotted[slot] = AgentLoopToolOutcome(
+                                invocation: invocation,
+                                callId: callId,
+                                result: progressUpdateRequired,
+                                wasDeduped: false,
+                                wasError: true
+                            )
+                            continue
+                        }
+                        if invocationHasParseableTodo {
+                            batchHasPrecedingParseableTodo = true
+                        }
                         if let guarded = state.guardedResult(name: invocation.toolName) {
                             slotted[slot] = AgentLoopToolOutcome(
                                 invocation: invocation,
@@ -1777,6 +2123,35 @@ enum AgentToolLoop {
                         pendingStateNotice = "[System Notice] " + bias
                     }
                     outcomes = slotted.compactMap { $0 }
+                    if outcomes.contains(where: {
+                        Self.isTaskTrackingRequiredResult($0.result)
+                    }) {
+                        pendingStateNotice = Self.taskTrackingRequiredNotice(
+                            threshold: policy.todoRequiredBeforeToolCallCount
+                        )
+                    }
+                    if let pending = outcomes.compactMap({ outcome -> Int? in
+                        guard Self.isTodoProgressUpdateRequiredResult(outcome.result),
+                            let data = outcome.result.data(using: .utf8),
+                            let object = try? JSONSerialization.jsonObject(with: data)
+                                as? [String: Any]
+                        else { return nil }
+                        return object["pending_todo_items"] as? Int
+                    }).last {
+                        pendingTodoNotice = Self.todoProgressUpdateRequiredNotice(
+                            pending: pending
+                        )
+                    }
+                    if let pending = outcomes.compactMap({ outcome -> Int? in
+                        guard Self.isTodoNoProgressResult(outcome.result),
+                            let data = outcome.result.data(using: .utf8),
+                            let object = try? JSONSerialization.jsonObject(with: data)
+                                as? [String: Any]
+                        else { return nil }
+                        return object["pending_todo_items"] as? Int
+                    }).last {
+                        pendingTodoNotice = Self.todoNoProgressNotice(pending: pending)
+                    }
                     // Cancellation is honored only AFTER the executed batch
                     // is recorded — the surface history already contains
                     // these tool turns, so skipping `state.record` would
@@ -1784,18 +2159,104 @@ enum AgentToolLoop {
                     if await hooks.isCancelled() {
                         return await finishBatch(.cancelled)
                     }
-                    if policy.stopOnToolRejection, outcomes.contains(where: { $0.wasError }) {
+                    if policy.stopOnToolRejection,
+                        outcomes.contains(where: {
+                            $0.wasError && !Self.isRecoverableTodoContractResult($0.result)
+                        })
+                    {
                         return await finishBatch(.toolRejected)
                     }
                 } else {
                     // Serial mode (chat/plugin semantics): interleaved dedupe
                     // and execution, per-call policy checks.
+                    var batchHasPrecedingParseableTodo = false
                     for invocation in invocations {
                         if await hooks.isCancelled() {
                             return RunResult(exit: .cancelled, iterations: iteration)
                         }
                         let callId = Self.callId(for: invocation)
                         await hooks.willProcessCall(invocation, callId)
+                        let invocationHasParseableTodo =
+                            Self.todoProgressSnapshot(from: invocation) != nil
+
+                        if let trackingRequired = taskTrackingPreconditionResult(
+                            for: invocation,
+                            batchContainsParseableTodo: batchContainsParseableTodo
+                        ) {
+                            state.record(
+                                name: invocation.toolName,
+                                argsJSON: invocation.jsonArguments,
+                                result: trackingRequired
+                            )
+                            outcomes.append(
+                                AgentLoopToolOutcome(
+                                    invocation: invocation,
+                                    callId: callId,
+                                    result: trackingRequired,
+                                    wasDeduped: false,
+                                    wasError: true
+                                )
+                            )
+                            pendingStateNotice = Self.taskTrackingRequiredNotice(
+                                threshold: policy.todoRequiredBeforeToolCallCount
+                            )
+                            continue
+                        }
+                        if let noProgress = todoNoProgressPreconditionResult(
+                            for: invocation
+                        ) {
+                            state.record(
+                                name: invocation.toolName,
+                                argsJSON: invocation.jsonArguments,
+                                result: noProgress
+                            )
+                            outcomes.append(
+                                AgentLoopToolOutcome(
+                                    invocation: invocation,
+                                    callId: callId,
+                                    result: noProgress,
+                                    wasDeduped: false,
+                                    wasError: true
+                                )
+                            )
+                            pendingTodoNotice = Self.todoNoProgressNotice(
+                                pending: lastSuccessfulCurrentRunTodoProgress?.pending ?? 0
+                            )
+                            continue
+                        }
+                        if invocationHasParseableTodo {
+                            todoActionToolCallCountByCallId[callId] =
+                                currentRunActionToolCallCount
+                        }
+                        if let progressUpdateRequired = todoProgressUpdatePreconditionResult(
+                            for: invocation,
+                            batchContainsPrecedingParseableTodo:
+                                batchHasPrecedingParseableTodo
+                        ) {
+                            state.record(
+                                name: invocation.toolName,
+                                argsJSON: invocation.jsonArguments,
+                                result: progressUpdateRequired
+                            )
+                            outcomes.append(
+                                AgentLoopToolOutcome(
+                                    invocation: invocation,
+                                    callId: callId,
+                                    result: progressUpdateRequired,
+                                    wasDeduped: false,
+                                    wasError: true
+                                )
+                            )
+                            if let pending = lastSuccessfulCurrentRunTodoProgress?.pending {
+                                pendingTodoNotice = Self.todoProgressUpdateRequiredNotice(
+                                    pending: pending
+                                )
+                            }
+                            continue
+                        }
+                        if invocationHasParseableTodo {
+                            batchHasPrecedingParseableTodo = true
+                        }
 
                         // Bounded discovery guard: once the state machine has
                         // enough ranked sources, synthesize a structured
@@ -1887,14 +2348,18 @@ enum AgentToolLoop {
                         if await hooks.isCancelled() {
                             return RunResult(exit: .cancelled, iterations: iteration)
                         }
-                        if wasError, policy.stopOnToolRejection {
+                        if wasError, policy.stopOnToolRejection,
+                            !Self.isRecoverableTodoContractResult(execution.result)
+                        {
                             return RunResult(exit: .toolRejected, iterations: iteration)
                         }
                     }
                 }
 
                 await hooks.onBatchComplete(outcomes)
-                if !outcomes.isEmpty {
+                if outcomes.contains(where: {
+                    !Self.isRecoverableTodoContractResult($0.result)
+                }) {
                     completedToolWork = true
                 }
                 let successfulTodoOutcomes = outcomes.filter { outcome in
@@ -1914,6 +2379,13 @@ enum AgentToolLoop {
                     }).last {
                         hasSuccessfulCurrentRunTodo = true
                         lastSuccessfulCurrentRunTodoProgress = latestProgress
+                        if let latestTodoOutcome = successfulTodoOutcomes.last {
+                            lastSuccessfulCurrentRunTodoSemanticSnapshot =
+                                Self.todoSemanticSnapshot(from: latestTodoOutcome.invocation)
+                            lastSuccessfulCurrentRunTodoActionToolCallCount =
+                                todoActionToolCallCountByCallId[latestTodoOutcome.callId]
+                                ?? currentRunActionToolCallCount
+                        }
                     }
                 }
 

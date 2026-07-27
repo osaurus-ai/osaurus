@@ -41,9 +41,21 @@ struct SessionPreflightCacheTests {
             fallbackAlwaysLoadedNames: nil
         )
 
+        let baselineSpecs = ToolRegistry.shared.specs(forTools: ["capabilities_load"])
+        await SessionToolStateStore.shared.setInitial(
+            sessionId,
+            alwaysLoadedNames: ["capabilities_load"],
+            toolSpecs: baselineSpecs,
+            fingerprint: "none/auto",
+            manifest: "frozen manifest"
+        )
+
         let state = await SessionToolStateStore.shared.get(sessionId)
         #expect(state?.loadedToolNames == ["miyo_search", "calendar_lookup"])
         #expect(state?.initialAlwaysLoadedNames == ["capabilities_load"])
+        #expect(state?.initialToolSpecs?.map(\.function.name) == ["capabilities_load"])
+        #expect(state?.sessionFingerprint == "none/auto")
+        #expect(state?.frozenManifest == "frozen manifest")
 
         await SessionToolStateStore.shared.invalidate(sessionId)
     }

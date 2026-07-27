@@ -17,6 +17,24 @@ import Testing
 @Suite(.serialized)
 struct AgentLoopToolsTests {
 
+    @Test("shared todo schema stays optional outside targeted family policy")
+    func sharedTodoSchemaStaysOptional() {
+        let description = TodoTool().description
+        #expect(description.contains("OPTIONAL"))
+        #expect(description.contains("runtime may require it"))
+        #expect(description.contains("direct question"))
+        #expect(!description.contains("It is REQUIRED"))
+    }
+
+    @Test("complete schema cannot invite literal protocol text")
+    func completeSchemaRequiresStructuredInvocationOnly() {
+        let description = CompleteTool().description
+        #expect(description.contains("structured tool protocol only"))
+        #expect(description.contains("never by typing `complete(...)`"))
+        #expect(description.contains("successful task does not need this tool"))
+        #expect(!description.contains("same message as"))
+    }
+
     // MARK: - Helpers
 
     private func withSession<T>(
@@ -151,7 +169,7 @@ struct AgentLoopToolsTests {
     }
 
     @Test
-    func complete_warnsOnUncheckedTodoBoxes() async throws {
+    func complete_reportsBlockedOutcomeWhenTodoIsUnchecked() async throws {
         try await withSession { _ in
             _ = try await TodoTool().execute(
                 argumentsJSON: #"{"markdown": "- [x] done step\n- [ ] left one\n- [ ] left two"}"#
@@ -161,9 +179,10 @@ struct AgentLoopToolsTests {
                     {"summary": "Finished the first step; verified by re-reading the file contents."}
                     """#
             )
-            // Soft warning, NOT a rejection — rejecting loops small models.
             #expect(ToolEnvelope.isSuccess(result))
-            #expect(result.contains("2 unchecked item"))
+            #expect(result.contains("\"outcome\":\"blocked\""))
+            #expect(result.contains("\"pending_todo_items\":2"))
+            #expect(result.contains("still pending"))
         }
     }
 
@@ -180,6 +199,8 @@ struct AgentLoopToolsTests {
             )
             #expect(ToolEnvelope.isSuccess(result))
             #expect(!result.contains("unchecked"))
+            #expect(result.contains("\"outcome\":\"completed\""))
+            #expect(result.contains("\"pending_todo_items\":0"))
         }
     }
 

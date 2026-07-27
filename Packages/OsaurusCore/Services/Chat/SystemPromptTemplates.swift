@@ -64,16 +64,16 @@ public enum SystemPromptTemplates {
         ## Agent loop
 
         - Always answer the user in plain text — that reply is what they read. It ends a direct task, or a tracked task once its todo has no unchecked items.
-        - `todo(markdown)` — OPTIONAL, multi-step (3+) only: create it before starting, then re-send it with the next box checked after each item. Once created, unchecked items keep this agent run open. Skip direct/single-step work.
-        - `complete(summary)` — OPTIONAL explicit closure for a `todo`: use it with a short WHAT+HOW status (not the answer) in the SAME message as your answer when work is done or honestly blocked. Not for direct questions or other tools; no vague placeholders.
+        - `todo(markdown)` — OPTIONAL, multi-step (3+) only: create it before starting, then re-send it with the next box checked after each item. Once created, unchecked items keep this agent run open. Skip direct/single-step work. The runtime may require it before a later action in a long tool run.
+        - `complete(summary)` — OPTIONAL early closure for honestly blocked `todo` work. A fully checked todo needs no complete call: answer the user normally and stop. Invoke complete only as a structured tool call; never type `complete(...)` into the answer.
         - `clarify(question)` — pause and ask exactly one concrete question only when guessing wrong would change the result. For minor preferences pick a sensible default and proceed.
         - `share_artifact(path | content+filename)` — the only way the user sees a generated image, chart, report, code blob, or any file. **The file MUST exist before this call.** Sandbox: save under your home dir (default cwd), not `/tmp`. For inline text/markdown, pass `content`+`filename` and skip the file write.
         """
 
     /// Compact agent-loop cheat-sheet for small-context / small local models
     /// (`prefersCompactPrompt`). Same four tools and the load-bearing rules
-    /// (always answer in plain text, OPTIONAL 3+ step todo, OPTIONAL complete
-    /// that only closes a todo alongside the answer, last-resort one-question
+    /// (always answer in plain text, OPTIONAL 3+ step todo, OPTIONAL blocked
+    /// closure that must remain a real tool call, last-resort one-question
     /// clarify with the anti-punt rule, file-exists artifact), one line each.
     ///
     /// The clarify line keeps the false-clarify discipline from the W4 eval
@@ -87,8 +87,8 @@ public enum SystemPromptTemplates {
         ## Agent loop
 
         - Answer the user in plain text; it ends direct work, or tracked work once no todo items remain unchecked.
-        - `todo(markdown)` — OPTIONAL, 3+ step work only: create first, re-send with each box checked. Once created, unchecked items keep this run open. Skip single-step work.
-        - `complete(summary)` — OPTIONAL explicit `todo` closure: short WHAT+HOW status in the SAME message as your answer when done or honestly blocked, not the answer.
+        - `todo(markdown)` — OPTIONAL, 3+ step work only: create first, re-send with each box checked. Once created, unchecked items keep this run open. Skip direct/single-step work. The runtime may require it before a later action in a long tool run.
+        - `complete(summary)` — OPTIONAL early closure for blocked `todo` work. For success, check every box, answer normally, and stop. Invoke it as a tool only; never print `complete(...)` in the answer.
         - `clarify(question)` — last resort; a fully specified task is not ambiguous, just do it. Ask ONE question only when the user asks or a required input is missing/contradictory with no sensible default.
         - `share_artifact(path | content+filename)` — the only way the user sees a file/image; it MUST exist first. Sandbox: save under home, not `/tmp`.
         """

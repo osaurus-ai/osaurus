@@ -978,13 +978,15 @@ final class PluginHostContext: @unchecked Sendable {
             messages: messages,
             additionalToolNames: cachedSession?.loadedToolNames ?? [],
             frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
+            frozenToolSpecs: cachedSession?.initialToolSpecs,
             frozenManifest: cachedSession?.frozenManifest,
             frozenSoul: cachedSession?.frozenSoul
         )
-        if let sid = sessionId, cachedSession == nil {
+        if let sid = sessionId {
             await SessionToolStateStore.shared.setInitial(
                 sid,
                 alwaysLoadedNames: composed.alwaysLoadedNames,
+                toolSpecs: composed.initialToolSpecs,
                 fingerprint: SessionToolState.fingerprint(executionMode: execMode, toolMode: toolMode),
                 manifest: composed.enabledManifest,
                 soul: composed.soul
@@ -1193,10 +1195,31 @@ final class PluginHostContext: @unchecked Sendable {
                     }
                     return live
                 }
+                await SessionToolStateStore.shared.setInitial(
+                    sid,
+                    alwaysLoadedNames: Set(builtInTools.map { $0.function.name }),
+                    toolSpecs: builtInTools,
+                    fingerprint: liveFp
+                )
+                let stable = await SessionToolStateStore.shared.get(sid) ?? cached
                 let extraSpecs = await MainActor.run {
-                    ToolRegistry.shared.specs(forTools: Array(cached.loadedToolNames))
+                    ToolRegistry.shared.specs(forTools: Array(stable.loadedToolNames))
                 }
-                return await applyResolvedTools(builtInTools + extraSpecs, to: inference)
+                var byName = Dictionary(
+                    uniqueKeysWithValues: (builtInTools + extraSpecs).map {
+                        ($0.function.name, $0)
+                    }
+                )
+                if let frozen = stable.initialToolSpecs {
+                    let frozenByName = Dictionary(
+                        uniqueKeysWithValues: frozen.map { ($0.function.name, $0) }
+                    )
+                    for name in Array(byName.keys)
+                    where !stable.loadedToolNames.contains(name) {
+                        if let spec = frozenByName[name] { byName[name] = spec }
+                    }
+                }
+                return await applyResolvedTools(Array(byName.values), to: inference)
             }
         }
 
@@ -1216,6 +1239,7 @@ final class PluginHostContext: @unchecked Sendable {
             await SessionToolStateStore.shared.setInitial(
                 sid,
                 alwaysLoadedNames: builtInNames,
+                toolSpecs: builtInTools,
                 fingerprint: fp
             )
         }
