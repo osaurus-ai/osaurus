@@ -39648,6 +39648,9 @@
         }
       }
     },
+    "Clear shared token" : {
+
+    },
     "Clear All" : {
       "localizations" : {
         "de" : {
@@ -110712,6 +110715,9 @@
         }
       }
     },
+    "No saved token" : {
+
+    },
     "No buffered turns and no episodes — check per-agent memory." : {
       "localizations" : {
         "de" : {
@@ -118556,6 +118562,9 @@
           }
         }
       }
+    },
+    "Nothing to save." : {
+
     },
     "Nothing to show here" : {
       "localizations" : {
@@ -159950,6 +159959,9 @@
         }
       }
     },
+    "Saved." : {
+
+    },
     "Saved a secret in sandbox" : {
       "localizations" : {
         "de" : {
@@ -160159,6 +160171,9 @@
           }
         }
       }
+    },
+    "Saved token configured" : {
+
     },
     "Saved today; the request pipeline will start enforcing these in a follow-up." : {
       "extractionState" : "manual",
@@ -168588,6 +168603,9 @@
           }
         }
       }
+    },
+    "Shared GitHub token removed from imports and plugin updates." : {
+
     },
     "Shared a file" : {
       "localizations" : {
@@ -185722,6 +185740,9 @@
         }
       }
     },
+    "The shared GitHub token is used by imports and plugin updates." : {
+
+    },
     "The signing key for \"%@\" has changed. Uninstall the plugin and reinstall it to accept the new key." : {
       "localizations" : {
         "de" : {
@@ -190878,6 +190899,9 @@
           }
         }
       }
+    },
+    "Token contains unsupported control characters." : {
+
     },
     "Token usage" : {
       "localizations" : {

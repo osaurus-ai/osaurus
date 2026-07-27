@@ -59,6 +59,11 @@ struct GitHubImportSheet: View {
     @State private var lastAutoSelectedPlugins: [String] = []
     @State private var hasAppeared = false
     @State private var isInputFocused = false
+    @State private var isAdvancedAuthExpanded = false
+    @State private var gitHubTokenInput: String = ""
+    @State private var hasSavedGitHubToken = false
+    @State private var gitHubTokenStatusMessage: String?
+    @State private var gitHubTokenStatusIsError = false
     @State private var activeTask: Task<Void, Never>?
     @State private var dependencyResolverTask: Task<Void, Never>?
 
@@ -82,6 +87,7 @@ struct GitHubImportSheet: View {
         .scaleEffect(hasAppeared ? 1 : 0.96)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hasAppeared)
         .onAppear {
+            refreshSavedGitHubTokenStatus()
             withAnimation { hasAppeared = true }
         }
         .onDisappear {
@@ -293,11 +299,121 @@ struct GitHubImportSheet: View {
                         )
                 )
                 .frame(maxWidth: 360)
+
+                VStack(spacing: 8) {
+                    gitHubAuthStatusView
+                    gitHubAdvancedAuthView
+                }
             }
 
             Spacer()
         }
         .padding(24)
+    }
+
+    private var gitHubAuthStatusView: some View {
+        let hasToken = gitHubService.hasGitHubAuthToken
+        return HStack(alignment: .top, spacing: 8) {
+            Image(systemName: hasToken ? "key.fill" : "key.slash")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(hasToken ? theme.accentColor : theme.tertiaryText)
+                .padding(.top, 1)
+
+            Text(
+                hasToken
+                    ? "GitHub token detected for higher API limits."
+                    : "No GitHub token detected. Public imports use GitHub's 60/hour unauthenticated API limit.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: 360, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.tertiaryBackground.opacity(0.65))
+        )
+    }
+
+    private var gitHubAdvancedAuthView: some View {
+        DisclosureGroup(isExpanded: $isAdvancedAuthExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                SecureField("", text: $gitHubTokenInput)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.primaryText)
+                    .placeholder(when: gitHubTokenInput.isEmpty) {
+                        Text("Paste GitHub token", bundle: .module)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.placeholderText)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(theme.inputBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7)
+                                    .stroke(theme.inputBorder, lineWidth: 1)
+                            )
+                    )
+
+                HStack(spacing: 8) {
+                    Label(
+                        hasSavedGitHubToken ? L("Saved token configured") : L("No saved token"),
+                        systemImage: hasSavedGitHubToken ? "key.fill" : "key"
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(hasSavedGitHubToken ? theme.accentColor : theme.secondaryText)
+
+                    Spacer()
+
+                    Button(action: saveGitHubImportToken) {
+                        Text("Save", bundle: .module)
+                    }
+                    .buttonStyle(GitHubSecondaryButtonStyle())
+                    .disabled(gitHubTokenInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                    Button(action: clearGitHubImportToken) {
+                        Text("Clear shared token", bundle: .module)
+                    }
+                    .buttonStyle(GitHubSecondaryButtonStyle())
+                    .disabled(!hasSavedGitHubToken && gitHubTokenInput.isEmpty)
+                }
+
+                Text("The shared GitHub token is used by imports and plugin updates.", bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let message = gitHubTokenStatusMessage {
+                    Text(message)
+                        .font(.system(size: 10))
+                        .foregroundColor(gitHubTokenStatusIsError ? theme.errorColor : theme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.top, 8)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                Text("Advanced", bundle: .module)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            }
+        }
+        .frame(maxWidth: 360, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.tertiaryBackground.opacity(0.45))
+        )
     }
 
     // MARK: - Loading View
@@ -313,6 +429,15 @@ struct GitHubImportSheet: View {
             Text("Fetching skills...", bundle: .module)
                 .font(.system(size: 13))
                 .foregroundColor(theme.secondaryText)
+
+            if let progress = gitHubService.importProgress, progress.total > 0 {
+                Text(
+                    "\(progress.completed) of \(progress.total) plugin manifests\(progress.resumedFromCheckpoint ? " (resumed)" : "")",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+            }
 
             Spacer()
         }
@@ -483,6 +608,8 @@ struct GitHubImportSheet: View {
             .padding(.top, 12)
             .padding(.bottom, 8)
 
+            importTrustNotice(repo: result.repo)
+
             // Select-all header + options.
             HStack(spacing: 12) {
                 Button(action: {
@@ -570,6 +697,25 @@ struct GitHubImportSheet: View {
                 .padding(.bottom, 8)
             }
         }
+    }
+
+    private func importTrustNotice(repo: GitHubRepo) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "shield.lefthalf.filled")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.accentColor)
+                .padding(.top, 1)
+            Text(
+                "Review this source before installing: github.com/\(repo.owner)/\(repo.name). Plugins can add skills, commands, assets, and disabled MCP providers.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.secondaryText)
+            .lineLimit(2)
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 6)
     }
 
     /// Toggle a plugin's selection and, if turning it ON, also auto-check
@@ -788,6 +934,15 @@ struct GitHubImportSheet: View {
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
+
+                if let suggestion = error.recoverySuggestion {
+                    Text(suggestion)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 36)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             Button(action: { importState = .urlInput }) {
@@ -885,6 +1040,42 @@ struct GitHubImportSheet: View {
     }
 
     // MARK: - Actions
+
+    private func refreshSavedGitHubTokenStatus() {
+        hasSavedGitHubToken = GitHubAuth.hasToken
+    }
+
+    private func saveGitHubImportToken() {
+        let trimmed = gitHubTokenInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            gitHubTokenInput = ""
+            refreshSavedGitHubTokenStatus()
+            gitHubTokenStatusIsError = false
+            gitHubTokenStatusMessage = L("Nothing to save.")
+            return
+        }
+        guard let token = GitHubSkillService.normalizedAuthToken(gitHubTokenInput) else {
+            gitHubTokenStatusIsError = true
+            gitHubTokenStatusMessage = L("Token contains unsupported control characters.")
+            return
+        }
+
+        GitHubAuth.setToken(token)
+        gitHubService.reloadAuthentication()
+        gitHubTokenInput = ""
+        refreshSavedGitHubTokenStatus()
+        gitHubTokenStatusIsError = false
+        gitHubTokenStatusMessage = L("Saved.")
+    }
+
+    private func clearGitHubImportToken() {
+        GitHubAuth.setToken(nil)
+        gitHubService.reloadAuthentication()
+        gitHubTokenInput = ""
+        refreshSavedGitHubTokenStatus()
+        gitHubTokenStatusIsError = false
+        gitHubTokenStatusMessage = L("Shared GitHub token removed from imports and plugin updates.")
+    }
 
     private func cancel() {
         activeTask?.cancel()

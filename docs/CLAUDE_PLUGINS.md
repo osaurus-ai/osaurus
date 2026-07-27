@@ -298,7 +298,7 @@ Unauthenticated GitHub requests are subject to a 60-per-hour limit shared across
 
 > GitHub rate-limited this app. Try again in ~45 minutes.
 
-The relative time is parsed from `X-RateLimit-Reset`. Wait for the reset (or sign in to the GitHub CLI / set up a token in a future release) before retrying.
+The relative time is parsed from `X-RateLimit-Reset`. To use a higher authenticated quota, open **Advanced** in the import sheet, paste a GitHub token into the secure field, and click **Save**. The token uses Osaurus's shared GitHub Keychain entry and is also used for plugin browsing and updates. The sheet reports only whether a token is saved; it never displays the saved value. **Clear shared token** removes that shared credential from imports and plugin updates. Launches with `GITHUB_TOKEN` or `GH_TOKEN` in their environment can still use those variables when no saved token is available.
 
 ### Marketplace Not Found
 

@@ -6,14 +6,14 @@
 //  Supports repositories with .claude-plugin/marketplace.json format.
 //
 
+import CryptoKit
 import Foundation
 import OsaurusRepository
-import os
 
 // MARK: - Models
 
 /// Represents a GitHub repository reference
-public struct GitHubRepo: Sendable {
+public struct GitHubRepo: Codable, Hashable, Sendable {
     public let owner: String
     public let name: String
     public let branch: String
@@ -25,6 +25,7 @@ public struct GitHubRepo: Sendable {
     }
 
     /// Raw content URL base
+    @available(*, deprecated, message: "Use GitHub API request helpers so auth and rate-limit handling stay centralized.")
     public var rawBaseURL: String {
         "https://raw.githubusercontent.com/\(owner)/\(name)/\(branch)"
     }
@@ -32,6 +33,231 @@ public struct GitHubRepo: Sendable {
     /// GitHub API URL for repo info
     public var apiURL: String {
         "https://api.github.com/repos/\(owner)/\(name)"
+    }
+
+    public var slug: String {
+        "\(owner)/\(name)"
+    }
+}
+
+/// Source of the token used for GitHub API requests.
+public enum GitHubAuthTokenSource: String, Codable, Sendable {
+    case explicit
+    case environment
+}
+
+/// A GitHub API token plus its coarse source. The raw token is intentionally
+/// not Codable and must never be persisted by the importer.
+public struct GitHubAuthToken: Sendable {
+    public let value: String
+    public let source: GitHubAuthTokenSource
+
+    public init(value: String, source: GitHubAuthTokenSource) {
+        self.value = value
+        self.source = source
+    }
+}
+
+public protocol GitHubAuthTokenProviding: Sendable {
+    func token() -> GitHubAuthToken?
+}
+
+/// Narrow adapter from the shared GitHub credential to the plugin/skill importer.
+///
+/// Preference order:
+/// 1. The shared in-app token, or an explicitly supplied token closure in tests.
+/// 2. `GITHUB_TOKEN`.
+/// 3. `GH_TOKEN`.
+public struct GitHubImportTokenProvider: GitHubAuthTokenProviding {
+    private let explicitToken: @Sendable () -> String?
+    private let environment: @Sendable () -> [String: String]
+
+    public init(
+        explicitToken: (@Sendable () -> String?)? = nil,
+        environment: @escaping @Sendable () -> [String: String] = {
+            ProcessInfo.processInfo.environment
+        }
+    ) {
+        self.explicitToken = explicitToken ?? { GitHubAuth.token }
+        self.environment = environment
+    }
+
+    public func token() -> GitHubAuthToken? {
+        if let token = GitHubSkillService.normalizedAuthToken(explicitToken()) {
+            return GitHubAuthToken(value: token, source: .explicit)
+        }
+        if let token = GitHubSkillService.gitHubToken(from: environment()) {
+            return GitHubAuthToken(value: token, source: .environment)
+        }
+        return nil
+    }
+}
+
+/// Import bounds applied before materialising repo content. These limits are
+/// intentionally scoped to GitHub plugin/skill import.
+public struct GitHubImportLimits: Sendable {
+    public let maxTreeEntries: Int
+    public let maxImportFilesPerPlugin: Int
+    public let maxFileBytes: Int
+    public let maxTotalBytesPerPlugin: Int
+    public let maxDepthBelowPluginRoot: Int
+
+    public init(
+        maxTreeEntries: Int = 100_000,
+        maxImportFilesPerPlugin: Int = 5_000,
+        maxFileBytes: Int = 10 * 1024 * 1024,
+        maxTotalBytesPerPlugin: Int = 250 * 1024 * 1024,
+        maxDepthBelowPluginRoot: Int = 12
+    ) {
+        self.maxTreeEntries = max(1, maxTreeEntries)
+        self.maxImportFilesPerPlugin = max(1, maxImportFilesPerPlugin)
+        self.maxFileBytes = max(1, maxFileBytes)
+        self.maxTotalBytesPerPlugin = max(1, maxTotalBytesPerPlugin)
+        self.maxDepthBelowPluginRoot = max(1, maxDepthBelowPluginRoot)
+    }
+
+    public static let `default` = GitHubImportLimits()
+}
+
+/// Redacts GitHub tokens and common secret-bearing URL parameters before
+/// surfacing importer diagnostics.
+public enum GitHubSecretRedactor {
+    public static func redact(_ input: String) -> String {
+        var output = input
+        let patterns: [(String, String)] = [
+            (#"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,;\]\)"]+"#, "$1[REDACTED]"),
+            (#"(?i)(bearer\s+)(gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)"#, "$1[REDACTED]"),
+            (#"(?i)(bearer\s+)[0-9a-f]{40}\b"#, "$1[REDACTED]"),
+            (#"\bgh[pousr]_[A-Za-z0-9_]{16,}\b"#, "[REDACTED]"),
+            (#"\bgithub_pat_[A-Za-z0-9_]{16,}\b"#, "[REDACTED]"),
+            (#"(?i)([?&](?:access_token|token|client_secret|authorization)=)[^&#\s]+"#, "$1[REDACTED]"),
+        ]
+        for (pattern, replacement) in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(output.startIndex..<output.endIndex, in: output)
+            output = regex.stringByReplacingMatches(
+                in: output,
+                range: range,
+                withTemplate: replacement
+            )
+        }
+        return output
+    }
+}
+
+private enum GitHubImportInputValidator {
+    private static let repoComponentAllowed = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+    )
+
+    static func parseRepoURL(_ urlOrSlug: String) -> GitHubRepo? {
+        var s = urlOrSlug.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasSuffix(".git") { s = String(s.dropLast(4)) }
+        while s.hasSuffix("/") { s = String(s.dropLast()) }
+        guard !s.isEmpty, !s.contains("\0") else { return nil }
+
+        if s.lowercased().hasPrefix("github.com/") {
+            let normalizedURL = "https://\(s)"
+            return parseRepoURL(normalizedURL)
+        }
+
+        if let url = URL(string: s), let scheme = url.scheme?.lowercased() {
+            guard scheme == "https",
+                url.host?.lowercased() == "github.com",
+                url.user == nil,
+                url.password == nil,
+                url.query == nil,
+                url.fragment == nil
+            else {
+                return nil
+            }
+            let components = url.pathComponents.filter { $0 != "/" }
+            return repo(fromPathComponents: components)
+        }
+
+        guard !s.contains("://"), !s.contains("?"), !s.contains("#"), !s.contains("@") else {
+            return nil
+        }
+        let components = s.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard components.count == 2 else { return nil }
+        return repo(fromPathComponents: components)
+    }
+
+    static func validateRepo(_ repo: GitHubRepo) -> Bool {
+        isValidRepoComponent(repo.owner) && isValidRepoComponent(repo.name)
+    }
+
+    static func normalizedSourcePath(_ source: String) throws -> String {
+        var s = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        while s.hasPrefix("./") { s = String(s.dropFirst(2)) }
+        s = s.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if s == "." { return "" }
+        guard !s.contains("\0"), !s.contains("\\") else {
+            throw GitHubSkillError.invalidURL(source)
+        }
+        guard !s.isEmpty else { return "" }
+        let components = s.split(separator: "/", omittingEmptySubsequences: false)
+        guard components.allSatisfy({ component in
+            !component.isEmpty && component != "." && component != ".."
+        }) else {
+            throw GitHubSkillError.invalidURL(source)
+        }
+        return components.map(String.init).joined(separator: "/")
+    }
+
+    static func normalizedGitRef(_ ref: String) -> String? {
+        let s = ref.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty,
+            !s.contains("\0"),
+            !s.hasPrefix("/"),
+            !s.hasSuffix("/"),
+            !s.contains("//"),
+            !s.contains(".."),
+            !s.contains("@{"),
+            s != "@",
+            !s.hasSuffix(".")
+        else {
+            return nil
+        }
+        let invalid = CharacterSet.controlCharacters.union(
+            CharacterSet(charactersIn: " ~^:?*[\\")
+        )
+        guard s.unicodeScalars.allSatisfy({ !invalid.contains($0) }) else {
+            return nil
+        }
+        guard s.split(separator: "/").allSatisfy({ !$0.hasSuffix(".lock") }) else {
+            return nil
+        }
+        return s
+    }
+
+    static func encodedGitRefPathComponent(_ ref: String) -> String? {
+        let allowed = CharacterSet.urlPathAllowed.subtracting(
+            CharacterSet(charactersIn: "/?#%")
+        )
+        return normalizedGitRef(ref)?.addingPercentEncoding(withAllowedCharacters: allowed)
+    }
+
+    static func encodedGitRefQueryValue(_ ref: String) -> String? {
+        let allowed = CharacterSet.urlQueryAllowed.subtracting(
+            CharacterSet(charactersIn: "/&=?#%")
+        )
+        return normalizedGitRef(ref)?.addingPercentEncoding(withAllowedCharacters: allowed)
+    }
+
+    private static func repo(fromPathComponents components: [String]) -> GitHubRepo? {
+        guard components.count == 2 else { return nil }
+        let owner = components[0]
+        var repo = components[1]
+        if repo.hasSuffix(".git") { repo = String(repo.dropLast(4)) }
+        guard isValidRepoComponent(owner), isValidRepoComponent(repo) else { return nil }
+        return GitHubRepo(owner: owner, name: repo, branch: "main")
+    }
+
+    private static func isValidRepoComponent(_ value: String) -> Bool {
+        guard !value.isEmpty, value != ".", value != ".." else { return false }
+        guard !value.contains("\0") else { return false }
+        return value.unicodeScalars.allSatisfy { repoComponentAllowed.contains($0) }
     }
 }
 
@@ -103,7 +329,7 @@ public enum MarketplaceSource: Sendable {
         let path = try? container.decode(String.self, forKey: .path)
         // Prefer a pinned sha over a moving ref for reproducibility.
         let pinned = sha ?? ref
-        guard let parsed = Self.parseRepoURL(urlOrSlug) else {
+        guard let parsed = GitHubImportInputValidator.parseRepoURL(urlOrSlug) else {
             throw DecodingError.dataCorruptedError(
                 forKey: .url,
                 in: container,
@@ -155,32 +381,6 @@ public enum MarketplaceSource: Sendable {
         }
     }
 
-    /// Parse an `https://github.com/owner/repo.git` URL or a bare `owner/repo`
-    /// slug into a `GitHubRepo` with branch defaulting to `main`.
-    private static func parseRepoURL(_ urlOrSlug: String) -> GitHubRepo? {
-        var s = urlOrSlug.trimmingCharacters(in: .whitespacesAndNewlines)
-        if s.hasSuffix(".git") { s = String(s.dropLast(4)) }
-        while s.hasSuffix("/") { s = String(s.dropLast()) }
-
-        var components: [String] = []
-        if s.contains("github.com") {
-            if let url = URL(string: s.hasPrefix("http") ? s : "https://\(s)") {
-                components = url.pathComponents.filter { $0 != "/" }
-            } else {
-                let parts = s.components(separatedBy: "github.com/")
-                if parts.count == 2 {
-                    components = parts[1].components(separatedBy: "/")
-                }
-            }
-        } else if s.contains("/") {
-            components = s.components(separatedBy: "/")
-        }
-
-        guard components.count >= 2, !components[0].isEmpty, !components[1].isEmpty else {
-            return nil
-        }
-        return GitHubRepo(owner: components[0], name: components[1], branch: "main")
-    }
 }
 
 extension MarketplaceSource: Codable {}
@@ -334,7 +534,7 @@ public struct GitHubSkillsResult: Sendable {
 // MARK: - Claude Plugin Manifest
 
 /// A discovered SKILL.md path inside a plugin.
-public struct ClaudeSkillEntry: Sendable, Hashable {
+public struct ClaudeSkillEntry: Codable, Sendable, Hashable {
     public let path: String  // path to the skill directory (e.g. "commercial-legal/skills/review")
     public let displayName: String
 
@@ -353,7 +553,7 @@ public struct ClaudeSkillEntry: Sendable, Hashable {
 }
 
 /// A discovered scheduled-agent markdown file inside a plugin.
-public struct ClaudeAgentEntry: Sendable, Hashable {
+public struct ClaudeAgentEntry: Codable, Sendable, Hashable {
     public let path: String  // path to the .md file
     public let displayName: String
 
@@ -370,7 +570,7 @@ public struct ClaudeAgentEntry: Sendable, Hashable {
 }
 
 /// A discovered slash-command markdown file inside a plugin.
-public struct ClaudeCommandEntry: Sendable, Hashable {
+public struct ClaudeCommandEntry: Codable, Sendable, Hashable {
     public let path: String  // path to the .md file
     public let displayName: String
 
@@ -383,7 +583,7 @@ public struct ClaudeCommandEntry: Sendable, Hashable {
 }
 
 /// A manifest of every importable artifact discovered for a single plugin.
-public struct ClaudePluginManifest: Sendable {
+public struct ClaudePluginManifest: Codable, Sendable {
     public let name: String
     public let description: String?
     public let source: String  // root path inside `sourceRepo` (e.g. "commercial-legal")
@@ -727,6 +927,27 @@ public struct GitHubPluginsResult: Sendable {
     }
 }
 
+/// Progress for plugin-manifest discovery. This is separate from installer
+/// progress because it tracks resumable GitHub import checkpoint state.
+public struct GitHubImportProgress: Sendable {
+    public let repoSlug: String
+    public let completed: Int
+    public let total: Int
+    public let resumedFromCheckpoint: Bool
+
+    public init(
+        repoSlug: String,
+        completed: Int,
+        total: Int,
+        resumedFromCheckpoint: Bool
+    ) {
+        self.repoSlug = repoSlug
+        self.completed = completed
+        self.total = total
+        self.resumedFromCheckpoint = resumedFromCheckpoint
+    }
+}
+
 /// Lightweight result of fetching just a repo's `marketplace.json` without
 /// resolving each plugin's full manifest. Used by the browse/discovery grid
 /// where rendering 200+ entries should cost a single network request — the
@@ -773,18 +994,54 @@ public struct PluginDependencyGraph: Sendable {
 }
 
 /// Minimal `contents` API entry. We only need name / path / type / size.
-public struct GitHubTreeEntry: Decodable, Sendable {
+public struct GitHubTreeEntry: Codable, Sendable {
     public let name: String
     public let path: String
     public let type: String  // "dir" or "file"
     /// File size in bytes (GitHub contents API). `nil` / 0 for directories.
     public let size: Int?
+    /// Git object SHA when decoded from the Trees API.
+    public let sha: String?
 
-    public init(name: String, path: String, type: String, size: Int? = nil) {
+    public init(name: String, path: String, type: String, size: Int? = nil, sha: String? = nil) {
         self.name = name
         self.path = path
-        self.type = type
+        self.type = Self.normalizedType(type)
         self.size = size
+        self.sha = sha
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, path, type, size, sha
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let path = try container.decode(String.self, forKey: .path)
+        let decodedName = try container.decodeIfPresent(String.self, forKey: .name)
+        let rawType = try container.decode(String.self, forKey: .type)
+        self.path = path
+        self.name = decodedName ?? (path as NSString).lastPathComponent
+        self.type = Self.normalizedType(rawType)
+        self.size = try container.decodeIfPresent(Int.self, forKey: .size)
+        self.sha = try container.decodeIfPresent(String.self, forKey: .sha)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(path, forKey: .path)
+        try container.encode(type, forKey: .type)
+        try container.encodeIfPresent(size, forKey: .size)
+        try container.encodeIfPresent(sha, forKey: .sha)
+    }
+
+    private static func normalizedType(_ raw: String) -> String {
+        switch raw {
+        case "tree": return "dir"
+        case "blob": return "file"
+        default: return raw
+        }
     }
 }
 
@@ -803,6 +1060,292 @@ public struct GitHubSkillAsset: Sendable {
     }
 }
 
+/// Persisted progress for a GitHub plugin import discovery run. We checkpoint
+/// resolved manifests so a cancellation or rate-limit hit can resume without
+/// re-resolving already completed plugins.
+public struct GitHubImportCheckpoint: Codable, Sendable {
+    public let repo: GitHubRepo
+    public let marketplacePluginNames: [String]
+    public let marketplaceFingerprint: String?
+    public var sourceFingerprints: [String: String]
+    public var manifestFingerprints: [String: String]
+    public var manifests: [ClaudePluginManifest]
+    public var updatedAt: Date
+
+    private enum CodingKeys: String, CodingKey {
+        case repo
+        case marketplacePluginNames
+        case marketplaceFingerprint
+        case sourceFingerprints
+        case manifestFingerprints
+        case manifests
+        case updatedAt
+    }
+
+    public init(
+        repo: GitHubRepo,
+        marketplacePluginNames: [String],
+        marketplaceFingerprint: String? = nil,
+        sourceFingerprints: [String: String] = [:],
+        manifestFingerprints: [String: String]? = nil,
+        manifests: [ClaudePluginManifest],
+        updatedAt: Date = Date()
+    ) {
+        self.repo = repo
+        self.marketplacePluginNames = marketplacePluginNames
+        self.marketplaceFingerprint = marketplaceFingerprint
+        self.sourceFingerprints = sourceFingerprints
+        if let manifestFingerprints {
+            self.manifestFingerprints = manifestFingerprints
+        } else {
+            var derivedFingerprints: [String: String] = [:]
+            for manifest in manifests {
+                guard let sourceFingerprint = sourceFingerprints[manifest.name],
+                    let fingerprint = Self.manifestFingerprint(
+                        for: manifest,
+                        sourceFingerprint: sourceFingerprint
+                    )
+                else {
+                    continue
+                }
+                derivedFingerprints[manifest.name] = fingerprint
+            }
+            self.manifestFingerprints = derivedFingerprints
+        }
+        self.manifests = manifests
+        self.updatedAt = updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.repo = try container.decode(GitHubRepo.self, forKey: .repo)
+        self.marketplacePluginNames = try container.decode(
+            [String].self,
+            forKey: .marketplacePluginNames
+        )
+        self.marketplaceFingerprint = try container.decodeIfPresent(
+            String.self,
+            forKey: .marketplaceFingerprint
+        )
+        self.sourceFingerprints =
+            (try? container.decode([String: String].self, forKey: .sourceFingerprints)) ?? [:]
+        self.manifestFingerprints =
+            (try? container.decode([String: String].self, forKey: .manifestFingerprints)) ?? [:]
+        self.manifests = try container.decode([ClaudePluginManifest].self, forKey: .manifests)
+        self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+    }
+
+    public func isCompatible(repo: GitHubRepo, marketplace: GitHubMarketplace) -> Bool {
+        self.repo == repo
+            && marketplacePluginNames == marketplace.plugins.map(\.name)
+            && marketplaceFingerprint == Self.fingerprint(for: marketplace)
+    }
+
+    public static func fingerprint(for marketplace: GitHubMarketplace) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(marketplace.plugins),
+            let encoded = String(data: data, encoding: .utf8)
+        else {
+            return marketplace.plugins.map(\.name).joined(separator: "\u{1F}")
+        }
+        return encoded
+    }
+
+    public func manifest(named name: String, sourceFingerprint: String?) -> ClaudePluginManifest? {
+        guard let sourceFingerprint,
+            sourceFingerprints[name] == sourceFingerprint,
+            let manifest = manifests.first(where: { $0.name == name }),
+            let expected = manifestFingerprints[name],
+            expected == Self.manifestFingerprint(
+                for: manifest,
+                sourceFingerprint: sourceFingerprint
+            )
+        else {
+            return nil
+        }
+        return manifest
+    }
+
+    public static func manifestFingerprint(
+        for manifest: ClaudePluginManifest,
+        sourceFingerprint: String
+    ) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let manifestData = try? encoder.encode(manifest) else { return nil }
+
+        var material = Data("github-import-manifest-v1\0".utf8)
+        material.append(contentsOf: sourceFingerprint.utf8)
+        material.append(0)
+        material.append(manifestData)
+        return sha256Hex(material)
+    }
+
+    static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+public final class GitHubImportCheckpointStore: @unchecked Sendable {
+    public static let `default` = GitHubImportCheckpointStore()
+
+    private let directory: URL
+    private let fileManager: FileManager
+
+    public init(
+        directory: URL? = nil,
+        fileManager: FileManager = .default
+    ) {
+        self.directory =
+            directory
+            ?? OsaurusPaths.config().appendingPathComponent(
+                "github-import-checkpoints",
+                isDirectory: true
+            )
+        self.fileManager = fileManager
+    }
+
+    public func load(repo: GitHubRepo) -> GitHubImportCheckpoint? {
+        let url = fileURL(for: repo)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(GitHubImportCheckpoint.self, from: data)
+    }
+
+    public func save(_ checkpoint: GitHubImportCheckpoint) {
+        do {
+            try fileManager.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            let data = try JSONEncoder().encode(checkpoint)
+            try data.write(to: fileURL(for: checkpoint.repo), options: .atomic)
+        } catch {
+            // Checkpoints are resumability hints. Failing to persist one should
+            // not block the current import attempt.
+        }
+    }
+
+    public func delete(repo: GitHubRepo) {
+        try? fileManager.removeItem(at: fileURL(for: repo))
+    }
+
+    static func fileName(for repo: GitHubRepo) -> String {
+        let identity = [repo.owner, repo.name, repo.branch]
+        let data = (try? JSONEncoder().encode(identity)) ?? Data(identity.joined(separator: "\0").utf8)
+        return "github-import-\(GitHubImportCheckpoint.sha256Hex(data)).json"
+    }
+
+    private func fileURL(for repo: GitHubRepo) -> URL {
+        directory.appendingPathComponent(Self.fileName(for: repo))
+    }
+}
+
+private struct GitHubTreeAPIResponse: Decodable, Sendable {
+    let sha: String?
+    let truncated: Bool?
+    let tree: [GitHubTreeEntry]
+}
+
+private struct GitHubTreeSnapshot: Sendable {
+    let repo: GitHubRepo
+    let rootSHA: String?
+    let entries: [GitHubTreeEntry]
+    let entriesByPath: [String: GitHubTreeEntry]
+
+    init(repo: GitHubRepo, rootSHA: String?, entries: [GitHubTreeEntry]) throws {
+        self.repo = repo
+        self.rootSHA = rootSHA
+        self.entries = entries
+        var entriesByPath: [String: GitHubTreeEntry] = [:]
+        for entry in entries {
+            guard entriesByPath[entry.path] == nil else {
+                throw GitHubSkillError.importTooLarge(
+                    "\(repo.slug) returned duplicate tree path '\(entry.path)'"
+                )
+            }
+            entriesByPath[entry.path] = entry
+        }
+        self.entriesByPath = entriesByPath
+    }
+
+    func containsFile(_ path: String) -> Bool {
+        entriesByPath[path]?.type == "file"
+    }
+
+    func sha(forPath path: String) -> String? {
+        entriesByPath[path]?.sha
+    }
+
+    func entries(under source: String) -> [GitHubTreeEntry] {
+        let clean = GitHubSkillService.normalizedSourceStatic(source)
+        guard !clean.isEmpty else { return entries }
+        return entries.filter { $0.path == clean || $0.path.hasPrefix("\(clean)/") }
+    }
+
+    func fileEntries(immediatelyUnder directory: String, suffix: String? = nil) -> [GitHubTreeEntry] {
+        let clean = GitHubSkillService.normalizedSourceStatic(directory)
+        let prefix = clean.isEmpty ? "" : "\(clean)/"
+        return entries.filter { entry in
+            guard entry.type == "file", entry.path.hasPrefix(prefix) else { return false }
+            let relative = String(entry.path.dropFirst(prefix.count))
+            guard !relative.isEmpty, !relative.contains("/") else { return false }
+            if let suffix { return entry.name.hasSuffix(suffix) }
+            return true
+        }
+    }
+
+    func skillDirectories(source: String) -> [ClaudeSkillEntry] {
+        let sourceClean = GitHubSkillService.normalizedSourceStatic(source)
+        let skillsDir = sourceClean.isEmpty ? "skills" : "\(sourceClean)/skills"
+        let prefix = "\(skillsDir)/"
+        var directories = Set<String>()
+        for entry in entries where entry.type == "file" && entry.name == "SKILL.md" {
+            guard entry.path.hasPrefix(prefix) else { continue }
+            let relative = String(entry.path.dropFirst(prefix.count))
+            let components = relative.split(separator: "/")
+            guard components.count == 2, components.last == "SKILL.md" else { continue }
+            directories.insert("\(skillsDir)/\(components[0])")
+        }
+        return directories.map { ClaudeSkillEntry(path: $0) }
+            .sorted { $0.displayName < $1.displayName }
+    }
+
+    func relativeDepth(path: String, below source: String) -> Int {
+        let clean = GitHubSkillService.normalizedSourceStatic(source)
+        let relative: String
+        if clean.isEmpty {
+            relative = path
+        } else if path == clean {
+            relative = ""
+        } else if path.hasPrefix("\(clean)/") {
+            relative = String(path.dropFirst(clean.count + 1))
+        } else {
+            relative = path
+        }
+        return relative.split(separator: "/").count
+    }
+}
+
+private actor GitHubRecursiveTreeCache {
+    private var snapshots: [String: GitHubTreeSnapshot] = [:]
+
+    func clear() {
+        snapshots.removeAll(keepingCapacity: true)
+    }
+
+    func snapshot(
+        for repo: GitHubRepo,
+        load: @Sendable () async throws -> GitHubTreeSnapshot
+    ) async throws -> GitHubTreeSnapshot {
+        let key = "\(repo.owner)/\(repo.name)#\(repo.branch)"
+        if let cached = snapshots[key] { return cached }
+        let loaded = try await load()
+        snapshots[key] = loaded
+        return loaded
+    }
+}
+
 // MARK: - Errors
 
 public enum GitHubSkillError: Error, LocalizedError {
@@ -817,7 +1360,13 @@ public enum GitHubSkillError: Error, LocalizedError {
     /// Hit GitHub's unauthenticated rate limit (60 req/hour per IP). The
     /// optional date carries the `X-RateLimit-Reset` value so the UI can
     /// tell the user when to try again.
-    case rateLimited(resetAt: Date?)
+    case rateLimited(resetAt: Date?, retryAfter: TimeInterval?, authenticated: Bool)
+    /// GitHub marked a recursive tree response as truncated. Continuing would
+    /// silently import only part of the repo, so callers must retry later or
+    /// use a narrower source.
+    case treeTruncated(repo: String)
+    /// The candidate plugin source exceeds importer safety bounds.
+    case importTooLarge(String)
     /// The plugin resolved cleanly but ships nothing Osaurus can import
     /// (only hooks / output styles / monitors / etc.). Carries the plugin
     /// name so the UI can name it in the message.
@@ -826,9 +1375,9 @@ public enum GitHubSkillError: Error, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .invalidURL(let url):
-            return "Invalid GitHub URL: \(url)"
+            return "Invalid GitHub URL: \(GitHubSecretRedactor.redact(url))"
         case .networkError(let error):
-            return "Network error: \(error.localizedDescription)"
+            return "Network error: \(GitHubSecretRedactor.redact(error.localizedDescription))"
         case .notFound:
             return "Repository not found"
         case .noMarketplaceFile:
@@ -838,27 +1387,50 @@ public enum GitHubSkillError: Error, LocalizedError {
         case .noSkillsFound:
             return "No skills found in the repository"
         case .skillFetchFailed(let name, let error):
-            return "Failed to fetch skill '\(name)': \(error.localizedDescription)"
+            return
+                "Failed to fetch skill '\(GitHubSecretRedactor.redact(name))': \(GitHubSecretRedactor.redact(error.localizedDescription))"
         case .branchNotFound:
             return "Could not determine the default branch"
-        case .rateLimited(let resetAt):
-            // #1719: when no token is configured we're on the 60/hr anonymous
-            // limit; tell the user how to raise it instead of only "wait an hour"
-            // (which, for a large repo, never finishes anyway).
-            let tokenHint =
-                GitHubSkillService.gitHubToken() == nil
-                ? " Add a GitHub token in the Plugins tab to raise the limit to 5,000/hr."
-                : ""
+        case .rateLimited(let resetAt, let retryAfter, let authenticated):
+            let mode = authenticated ? "Authenticated GitHub API" : "Unauthenticated GitHub API"
+            if let retryAfter, retryAfter > 0 {
+                return "\(mode) rate limit reached. Try again in \(Int(retryAfter)) seconds."
+            }
             if let resetAt {
                 let formatter = RelativeDateTimeFormatter()
                 formatter.unitsStyle = .short
                 let when = formatter.localizedString(for: resetAt, relativeTo: Date())
-                return "GitHub rate-limited this app. Try again \(when).\(tokenHint)"
+                return "\(mode) rate limit reached. Try again \(when)."
             }
-            return "GitHub rate-limited this app. Wait an hour to retry.\(tokenHint)"
+            return "\(mode) rate limit reached. Sign in or wait before retrying."
+        case .treeTruncated(let repo):
+            return
+                "GitHub truncated the repository tree for \(repo). Osaurus stopped before importing a partial plugin."
+        case .importTooLarge(let reason):
+            return "GitHub import is too large: \(reason)"
         case .noImportableComponents(let pluginName):
             return
                 "\(pluginName) has no components Osaurus can import (it only ships hooks, output styles, or other unsupported parts)."
+        }
+    }
+
+    public var recoverySuggestion: String? {
+        switch self {
+        case .rateLimited(_, _, let authenticated):
+            if authenticated {
+                return
+                    "Retry after the reset time. If this keeps happening, use a token with a higher GitHub API quota."
+            }
+            return
+                "Open Advanced in the import sheet to save a GitHub token, or retry after GitHub resets the unauthenticated 60/hour quota."
+        case .treeTruncated:
+            return
+                "Retry with a repository/source that has fewer files, or split the plugin source so the GitHub Trees API can return a complete tree."
+        case .importTooLarge:
+            return
+                "Import only plugins from repositories you trust and keep plugin sources bounded to the files needed by the skill/plugin."
+        default:
+            return nil
         }
     }
 }
@@ -871,66 +1443,47 @@ public final class GitHubSkillService: ObservableObject {
 
     @Published public var isLoading = false
     @Published public var error: GitHubSkillError?
+    @Published public private(set) var importProgress: GitHubImportProgress?
 
-    /// The token is baked into the session's headers at build time, so a
-    /// freshly-added in-app token requires rebuilding the session. Hold it
-    /// behind a lock so `reloadAuthentication()` can swap it in place while the
-    /// nonisolated fetch paths read it concurrently.
-    private let sessionHolder: OSAllocatedUnfairLock<URLSession>
+    private let session: URLSession
+    private let tokenProvider: any GitHubAuthTokenProviding
+    private let checkpointStore: GitHubImportCheckpointStore
+    private let limits: GitHubImportLimits
+    private let treeCache = GitHubRecursiveTreeCache()
 
-    /// The session used for every GitHub request. Reads the current value
-    /// under the lock, so it reflects the latest configured token.
-    private nonisolated var session: URLSession { sessionHolder.withLock { $0 } }
-
-    private init() {
-        self.sessionHolder = OSAllocatedUnfairLock(initialState: Self.makeSession())
+    public init(
+        session: URLSession? = nil,
+        tokenProvider: any GitHubAuthTokenProviding = GitHubImportTokenProvider(),
+        checkpointStore: GitHubImportCheckpointStore = .default,
+        limits: GitHubImportLimits = .default
+    ) {
+        self.session = session ?? Self.makeSession()
+        self.tokenProvider = tokenProvider
+        self.checkpointStore = checkpointStore
+        self.limits = limits
     }
 
-    /// Rebuild the session so a token added (or removed) through the in-app
-    /// GitHub-token flow takes effect immediately — no app restart. Called by
-    /// the token card after saving or clearing the token.
-    public func reloadAuthentication() {
-        sessionHolder.withLock { $0 = Self.makeSession() }
+    public var hasGitHubAuthToken: Bool {
+        tokenProvider.token() != nil
     }
+
+    /// Tokens are resolved for each request, so saving or clearing the shared
+    /// in-app GitHub credential takes effect without rebuilding the session.
+    public func reloadAuthentication() {}
 
     nonisolated static func makeSession() -> URLSession {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 60
-        // Optional GitHub auth (#1719): unauthenticated GitHub is capped at
-        // 60 req/hr per IP, so importing a large plugin/skill repo (e.g.
-        // anthropics/knowledge-work-plugins, ~200 SKILL.md across ~22 plugins)
-        // fans out enough Contents-API calls to trip a 403 mid-enumeration and
-        // never completes. Attach a token — added in-app (Keychain) or via
-        // GITHUB_TOKEN / GH_TOKEN — to raise the limit to 5,000/hr. Absent ⇒
-        // byte-identical prior behavior.
-        // This session is dedicated to GitHubSkillService and only contacts
-        // GitHub-controlled hosts (api.github.com / *.githubusercontent.com), so
-        // the header stays on GitHub. The token is never logged or surfaced in
-        // any error string.
-        if let token = Self.gitHubToken() {
-            var headers = config.httpAdditionalHeaders ?? [:]
-            headers["Authorization"] = "Bearer \(token)"
-            config.httpAdditionalHeaders = headers
-        }
         return GlobalProxySettings.makeSession(base: config)
     }
 
-    /// The GitHub API token to authenticate with, if any. Never logged. A
-    /// token added through the in-app flow (Keychain) wins over the
-    /// GITHUB_TOKEN / GH_TOKEN environment variables, so an app user isn't
-    /// stuck on the 60/hr anonymous limit just because they launched from
-    /// Finder without an env var.
+    /// Resolve the shared in-app credential before environment fallbacks.
     nonisolated static func gitHubToken() -> String? {
-        resolveToken(stored: GitHubAuth.token, environment: ProcessInfo.processInfo.environment)
-    }
-
-    /// Pure precedence resolution so the "in-app token wins over env vars" rule
-    /// is unit-testable without the keychain or process env. A non-blank stored
-    /// token wins; otherwise fall back to GITHUB_TOKEN / GH_TOKEN.
-    nonisolated static func resolveToken(stored: String?, environment: [String: String]) -> String? {
-        if let stored = GitHubAuth.normalize(stored) { return stored }
-        return gitHubToken(from: environment)
+        resolveToken(
+            stored: GitHubAuth.token,
+            environment: ProcessInfo.processInfo.environment
+        )
     }
 
     /// Pure token resolution over an explicit environment, so the precedence
@@ -939,11 +1492,125 @@ public final class GitHubSkillService: ObservableObject {
     /// whitespace-only values are treated as absent.
     nonisolated static func gitHubToken(from env: [String: String]) -> String? {
         for key in ["GITHUB_TOKEN", "GH_TOKEN"] {
-            if let v = env[key]?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty {
-                return v
+            if let token = normalizedAuthToken(env[key]) {
+                return token
             }
         }
         return nil
+    }
+
+    /// Trim user input while rejecting embedded controls before constructing
+    /// an HTTP Authorization header.
+    nonisolated static func normalizedAuthToken(_ raw: String?) -> String? {
+        guard let token = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !token.isEmpty,
+            token.rangeOfCharacter(from: .controlCharacters) == nil
+        else {
+            return nil
+        }
+        return token
+    }
+
+    /// Resolve the shared in-app token before process-environment fallbacks.
+    nonisolated static func resolveToken(
+        stored: String?,
+        environment: [String: String]
+    ) -> String? {
+        normalizedAuthToken(stored) ?? gitHubToken(from: environment)
+    }
+
+    private nonisolated func githubRequest(
+        url: URL,
+        method: String = "GET",
+        accept: String = "application/vnd.github+json"
+    ) -> (request: URLRequest, authenticated: Bool) {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue(accept, forHTTPHeaderField: "Accept")
+        request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+        request.setValue("Osaurus-GitHubImporter", forHTTPHeaderField: "User-Agent")
+        guard let token = tokenProvider.token() else {
+            return (request, false)
+        }
+        request.setValue("Bearer \(token.value)", forHTTPHeaderField: "Authorization")
+        return (request, true)
+    }
+
+    private nonisolated func githubData(
+        for request: URLRequest,
+        authenticated: Bool
+    ) async throws -> (Data, HTTPURLResponse) {
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw GitHubSkillError.networkError(NSError(domain: "HTTPError", code: -1))
+        }
+        if let rateLimit = rateLimitError(from: http, authenticated: authenticated) {
+            throw rateLimit
+        }
+        return (data, http)
+    }
+
+    private nonisolated func repoAPIURL(_ repo: GitHubRepo) throws -> URL {
+        guard GitHubImportInputValidator.validateRepo(repo) else {
+            throw GitHubSkillError.invalidURL(repo.slug)
+        }
+        guard let url = URL(string: repo.apiURL) else {
+            throw GitHubSkillError.invalidURL(repo.apiURL)
+        }
+        return url
+    }
+
+    private nonisolated func contentsAPIURL(repo: GitHubRepo, path: String) throws -> URL {
+        guard GitHubImportInputValidator.validateRepo(repo),
+            let ref = GitHubImportInputValidator.normalizedGitRef(repo.branch)
+        else {
+            throw GitHubSkillError.invalidURL(repo.slug)
+        }
+        let clean = try GitHubImportInputValidator.normalizedSourcePath(path)
+        let allowed = CharacterSet.urlPathAllowed.subtracting(
+            CharacterSet(charactersIn: "/?#%")
+        )
+        let encodedPath = clean.split(separator: "/")
+            .map { component in
+                String(component).addingPercentEncoding(withAllowedCharacters: allowed)
+                    ?? String(component)
+            }
+            .joined(separator: "/")
+        let base = "https://api.github.com/repos/\(repo.owner)/\(repo.name)/contents"
+        let urlString = encodedPath.isEmpty ? base : "\(base)/\(encodedPath)"
+        guard var components = URLComponents(string: urlString) else {
+            throw GitHubSkillError.invalidURL(urlString)
+        }
+        components.queryItems = [URLQueryItem(name: "ref", value: ref)]
+        guard let url = components.url else {
+            throw GitHubSkillError.invalidURL(components.string ?? urlString)
+        }
+        return url
+    }
+
+    private nonisolated func treeAPIURL(repo: GitHubRepo) throws -> URL {
+        guard GitHubImportInputValidator.validateRepo(repo),
+            let encodedRef = GitHubImportInputValidator.encodedGitRefPathComponent(repo.branch)
+        else {
+            throw GitHubSkillError.invalidURL(repo.slug)
+        }
+        let urlString =
+            "https://api.github.com/repos/\(repo.owner)/\(repo.name)/git/trees/\(encodedRef)"
+        guard var components = URLComponents(string: urlString) else {
+            throw GitHubSkillError.invalidURL(urlString)
+        }
+        components.queryItems = [URLQueryItem(name: "recursive", value: "1")]
+        guard let url = components.url else {
+            throw GitHubSkillError.invalidURL(components.string ?? urlString)
+        }
+        return url
+    }
+
+    nonisolated static func normalizedSourceStatic(_ source: String) -> String {
+        var s = source
+        if s.hasPrefix("./") { s = String(s.dropFirst(2)) }
+        s = s.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return s
     }
 
     // MARK: - URL Parsing
@@ -956,50 +1623,10 @@ public final class GitHubSkillService: ObservableObject {
     /// - `github.com/owner/repo`
     /// - `owner/repo`
     public func parseGitHubURL(_ urlString: String) throws -> GitHubRepo {
-        var cleaned = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Remove .git suffix if present
-        if cleaned.hasSuffix(".git") {
-            cleaned = String(cleaned.dropLast(4))
-        }
-
-        // Remove trailing slashes
-        while cleaned.hasSuffix("/") {
-            cleaned = String(cleaned.dropLast())
-        }
-
-        // Handle different URL formats
-        var pathComponents: [String] = []
-
-        if cleaned.contains("github.com") {
-            // Full URL format
-            if let url = URL(string: cleaned.hasPrefix("http") ? cleaned : "https://\(cleaned)") {
-                pathComponents = url.pathComponents.filter { $0 != "/" }
-            } else {
-                // Try parsing as path
-                let parts = cleaned.components(separatedBy: "github.com/")
-                if parts.count == 2 {
-                    pathComponents = parts[1].components(separatedBy: "/")
-                }
-            }
-        } else if cleaned.contains("/") {
-            // owner/repo format
-            pathComponents = cleaned.components(separatedBy: "/")
-        }
-
-        // We need at least owner and repo
-        guard pathComponents.count >= 2 else {
+        guard let repo = GitHubImportInputValidator.parseRepoURL(urlString) else {
             throw GitHubSkillError.invalidURL(urlString)
         }
-
-        let owner = pathComponents[0]
-        let repo = pathComponents[1]
-
-        guard !owner.isEmpty, !repo.isEmpty else {
-            throw GitHubSkillError.invalidURL(urlString)
-        }
-
-        return GitHubRepo(owner: owner, name: repo)
+        return repo
     }
 
     // MARK: - Fetching
@@ -1011,6 +1638,8 @@ public final class GitHubSkillService: ObservableObject {
     public func fetchSkills(from urlString: String) async throws -> GitHubSkillsResult {
         isLoading = true
         error = nil
+        importProgress = nil
+        await treeCache.clear()
 
         defer { isLoading = false }
 
@@ -1089,6 +1718,8 @@ public final class GitHubSkillService: ObservableObject {
     public func fetchPlugins(from urlString: String) async throws -> GitHubPluginsResult {
         isLoading = true
         error = nil
+        importProgress = nil
+        await treeCache.clear()
 
         defer { isLoading = false }
 
@@ -1098,34 +1729,66 @@ public final class GitHubSkillService: ObservableObject {
 
             let marketplace = try await fetchMarketplace(repo)
 
-            // Capture the data we need explicitly so the closure body is
-            // free of any MainActor-isolated captures. `buildManifest` is
-            // `nonisolated` and its inputs are `Sendable`.
-            let repoForTasks = repo
-            let plugins = marketplace.plugins
-            let manifests = try await withThrowingTaskGroup(
-                of: (Int, ClaudePluginManifest).self
-            ) { [weak self] group -> [ClaudePluginManifest] in
-                guard let self else { return [] }
-                for (index, plugin) in plugins.enumerated() {
-                    let pluginCopy = plugin
-                    let repoCopy = repoForTasks
-                    group.addTask {
-                        let manifest = try await self.buildManifest(
-                            rootRepo: repoCopy,
-                            plugin: pluginCopy
-                        )
-                        return (index, manifest)
-                    }
-                }
-                var collected: [(Int, ClaudePluginManifest)] = []
-                for try await pair in group {
-                    collected.append(pair)
-                }
-                // Preserve marketplace.json declaration order so the UI is
-                // deterministic regardless of which fetch finished first.
-                return collected.sorted { $0.0 < $1.0 }.map { $0.1 }
+            var checkpoint = checkpointStore.load(repo: repo)
+            if checkpoint?.isCompatible(repo: repo, marketplace: marketplace) != true {
+                checkpoint = GitHubImportCheckpoint(
+                    repo: repo,
+                    marketplacePluginNames: marketplace.plugins.map(\.name),
+                    marketplaceFingerprint: GitHubImportCheckpoint.fingerprint(for: marketplace),
+                    manifests: []
+                )
             }
+
+            var manifests: [ClaudePluginManifest] = []
+            var resumedFromCheckpoint = false
+            importProgress = GitHubImportProgress(
+                repoSlug: repo.slug,
+                completed: 0,
+                total: marketplace.plugins.count,
+                resumedFromCheckpoint: false
+            )
+            for plugin in marketplace.plugins {
+                let sourceFingerprint = try? await pluginSourceFingerprint(
+                    rootRepo: repo,
+                    plugin: plugin
+                )
+                if let cached = checkpoint?.manifest(
+                    named: plugin.name,
+                    sourceFingerprint: sourceFingerprint
+                ) {
+                    manifests.append(cached)
+                    resumedFromCheckpoint = true
+                    importProgress = GitHubImportProgress(
+                        repoSlug: repo.slug,
+                        completed: manifests.count,
+                        total: marketplace.plugins.count,
+                        resumedFromCheckpoint: resumedFromCheckpoint
+                    )
+                    continue
+                }
+                let manifest = try await buildManifest(rootRepo: repo, plugin: plugin)
+                manifests.append(manifest)
+                checkpoint?.manifests = manifests
+                if let sourceFingerprint {
+                    checkpoint?.sourceFingerprints[plugin.name] = sourceFingerprint
+                    checkpoint?.manifestFingerprints[plugin.name] =
+                        GitHubImportCheckpoint.manifestFingerprint(
+                            for: manifest,
+                            sourceFingerprint: sourceFingerprint
+                        )
+                }
+                checkpoint?.updatedAt = Date()
+                if let checkpoint {
+                    checkpointStore.save(checkpoint)
+                }
+                importProgress = GitHubImportProgress(
+                    repoSlug: repo.slug,
+                    completed: manifests.count,
+                    total: marketplace.plugins.count,
+                    resumedFromCheckpoint: resumedFromCheckpoint
+                )
+            }
+            checkpointStore.delete(repo: repo)
 
             let hasAnything = manifests.contains { !$0.skills.isEmpty || $0.hasNonSkillArtifacts }
             guard hasAnything else {
@@ -1200,20 +1863,12 @@ public final class GitHubSkillService: ObservableObject {
             cleanPath = String(cleanPath.dropFirst(2))
         }
 
-        let fileURL = "\(repo.rawBaseURL)/\(cleanPath)"
-        guard let url = URL(string: fileURL) else {
-            throw GitHubSkillError.invalidURL(fileURL)
-        }
-
-        let (data, response) = try await session.data(from: url)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw GitHubSkillError.networkError(NSError(domain: "HTTPError", code: -1))
-        }
-
-        if let rateLimit = rateLimitError(from: httpResponse) {
-            throw rateLimit
-        }
+        let url = try contentsAPIURL(repo: repo, path: cleanPath)
+        let prepared = githubRequest(url: url, accept: "application/vnd.github.raw+json")
+        let (data, httpResponse) = try await githubData(
+            for: prepared.request,
+            authenticated: prepared.authenticated
+        )
 
         guard httpResponse.statusCode == 200 else {
             if httpResponse.statusCode == 404 {
@@ -1232,6 +1887,12 @@ public final class GitHubSkillService: ObservableObject {
                     code: httpResponse.statusCode,
                     userInfo: [NSLocalizedDescriptionKey: "HTTP \(httpResponse.statusCode)"]
                 )
+            )
+        }
+
+        guard data.count <= limits.maxFileBytes else {
+            throw GitHubSkillError.importTooLarge(
+                "\(cleanPath) is \(data.count) bytes; limit is \(limits.maxFileBytes) bytes"
             )
         }
 
@@ -1300,31 +1961,12 @@ public final class GitHubSkillService: ObservableObject {
         if clean.hasPrefix("./") { clean = String(clean.dropFirst(2)) }
         clean = clean.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 
-        guard
-            var components = URLComponents(
-                string: "https://api.github.com/repos/\(repo.owner)/\(repo.name)/contents/\(clean)"
-            )
-        else {
-            throw GitHubSkillError.invalidURL(clean)
-        }
-        components.queryItems = [URLQueryItem(name: "ref", value: repo.branch)]
-
-        guard let url = components.url else {
-            throw GitHubSkillError.invalidURL(components.string ?? clean)
-        }
-
-        var request = URLRequest(url: url)
-        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
-
-        let (data, response) = try await session.data(for: request)
-
-        guard let http = response as? HTTPURLResponse else {
-            throw GitHubSkillError.networkError(NSError(domain: "HTTPError", code: -1))
-        }
-
-        if let rateLimit = rateLimitError(from: http) {
-            throw rateLimit
-        }
+        let url = try contentsAPIURL(repo: repo, path: clean)
+        let prepared = githubRequest(url: url)
+        let (data, http) = try await githubData(
+            for: prepared.request,
+            authenticated: prepared.authenticated
+        )
 
         switch http.statusCode {
         case 200:
@@ -1551,6 +2193,114 @@ public final class GitHubSkillService: ObservableObject {
         "scripts", "references", "assets", "templates",
     ]
 
+    private nonisolated func recursiveTreeSnapshot(repo: GitHubRepo) async throws
+        -> GitHubTreeSnapshot
+    {
+        try await treeCache.snapshot(for: repo) { [self] in
+            try await fetchRecursiveTree(repo: repo)
+        }
+    }
+
+    private nonisolated func fetchRecursiveTree(repo: GitHubRepo) async throws
+        -> GitHubTreeSnapshot
+    {
+        let url = try treeAPIURL(repo: repo)
+        let prepared = githubRequest(url: url)
+        let (data, http) = try await githubData(
+            for: prepared.request,
+            authenticated: prepared.authenticated
+        )
+
+        switch http.statusCode {
+        case 200:
+            break
+        case 404:
+            throw GitHubSkillError.branchNotFound
+        default:
+            throw GitHubSkillError.networkError(
+                NSError(
+                    domain: "HTTPError",
+                    code: http.statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"]
+                )
+            )
+        }
+
+        let decoded: GitHubTreeAPIResponse
+        do {
+            decoded = try JSONDecoder().decode(GitHubTreeAPIResponse.self, from: data)
+        } catch {
+            throw GitHubSkillError.networkError(error)
+        }
+
+        if decoded.truncated == true {
+            throw GitHubSkillError.treeTruncated(repo: repo.slug)
+        }
+        guard decoded.tree.count <= limits.maxTreeEntries else {
+            throw GitHubSkillError.importTooLarge(
+                "\(repo.slug) returned \(decoded.tree.count) tree entries; limit is \(limits.maxTreeEntries)"
+            )
+        }
+
+        return try GitHubTreeSnapshot(
+            repo: repo,
+            rootSHA: decoded.sha,
+            entries: decoded.tree
+        )
+    }
+
+    private nonisolated func validateImportBounds(
+        snapshot: GitHubTreeSnapshot,
+        source: String
+    ) throws {
+        let entries = snapshot.entries(under: source)
+        let files = entries.filter { $0.type == "file" }
+        guard files.count <= limits.maxImportFilesPerPlugin else {
+            throw GitHubSkillError.importTooLarge(
+                "\(snapshot.repo.slug)/\(source) has \(files.count) files; limit is \(limits.maxImportFilesPerPlugin)"
+            )
+        }
+
+        guard files.allSatisfy({ ($0.size ?? -1) >= 0 }) else {
+            throw GitHubSkillError.importTooLarge(
+                "\(snapshot.repo.slug)/\(source) has files with unknown sizes"
+            )
+        }
+
+        let totalBytes = files.reduce(0) { $0 + ($1.size ?? 0) }
+        guard totalBytes <= limits.maxTotalBytesPerPlugin else {
+            throw GitHubSkillError.importTooLarge(
+                "\(snapshot.repo.slug)/\(source) declares \(totalBytes) bytes; limit is \(limits.maxTotalBytesPerPlugin) bytes"
+            )
+        }
+
+        let deepest = entries.map { snapshot.relativeDepth(path: $0.path, below: source) }.max() ?? 0
+        guard deepest <= limits.maxDepthBelowPluginRoot else {
+            throw GitHubSkillError.importTooLarge(
+                "\(snapshot.repo.slug)/\(source) is \(deepest) levels deep; limit is \(limits.maxDepthBelowPluginRoot)"
+            )
+        }
+    }
+
+    private nonisolated func pluginSourceFingerprint(
+        rootRepo: GitHubRepo,
+        plugin: MarketplacePlugin
+    ) async throws -> String? {
+        let resolved = try await resolveSource(
+            rootRepo: rootRepo,
+            source: plugin.source,
+            pluginName: plugin.name
+        )
+        let snapshot = try await recursiveTreeSnapshot(repo: resolved.repo)
+        let sourceSHA =
+            (resolved.basePath.isEmpty ? snapshot.rootSHA : snapshot.sha(forPath: resolved.basePath))
+            ?? snapshot.rootSHA
+        guard let sourceSHA, !sourceSHA.isEmpty else {
+            return nil
+        }
+        return "\(resolved.repo.slug)@\(resolved.repo.branch):\(resolved.basePath):\(sourceSHA)"
+    }
+
     /// Build the full manifest of importable artifacts for one plugin.
     ///
     /// `nonisolated` so a `TaskGroup` in `fetchPlugins(from:)` can drive
@@ -1562,7 +2312,7 @@ public final class GitHubSkillService: ObservableObject {
     ) async throws -> ClaudePluginManifest {
         // Resolve where this plugin's files actually live (could be the
         // marketplace repo, or an external repo entirely).
-        let resolved = await resolveSource(
+        let resolved = try await resolveSource(
             rootRepo: rootRepo,
             source: plugin.source,
             pluginName: plugin.name
@@ -1575,8 +2325,8 @@ public final class GitHubSkillService: ObservableObject {
         // resolved sourceRepo so external-source legacy plugins (if anyone
         // ever ships them) keep working.
         if let declared = plugin.skills, !declared.isEmpty {
-            let entries = declared.map { decl -> ClaudeSkillEntry in
-                let p = normalizedSource(decl)
+            let entries = try declared.map { decl -> ClaudeSkillEntry in
+                let p = try GitHubImportInputValidator.normalizedSourcePath(decl)
                 let rebased: String
                 if source.isEmpty || p.hasPrefix("\(source)/") || p == source {
                     rebased = p
@@ -1596,55 +2346,35 @@ public final class GitHubSkillService: ObservableObject {
             )
         }
 
-        // New-style plugins: discover from the source directory. Empty
-        // `source` (external repo at root) probes top-level `skills`/`agents`.
+        // New-style plugins: discover from one recursive Trees API snapshot
+        // instead of probing every conventional directory/file separately.
+        let snapshot = try await recursiveTreeSnapshot(repo: sourceRepo)
+        try validateImportBounds(snapshot: snapshot, source: source)
+
         let prefix = source.isEmpty ? "" : "\(source)/"
-
-        // Probe concurrently — serializing these round-trips was the main
-        // cause of the ~10s picker wait for repos with ~13 plugins.
-        async let skillsTask: [ClaudeSkillEntry] =
-            discoverSkillDirectoriesTolerant(repo: sourceRepo, source: source)
-        async let agentsListing: [GitHubTreeEntry]? =
-            listDirectoryTolerant(repo: sourceRepo, path: "\(prefix)agents")
-        async let commandsListing: [GitHubTreeEntry]? =
-            listDirectoryTolerant(repo: sourceRepo, path: "\(prefix)commands")
-        async let hasClaudeMd: Bool = fileExists(repo: sourceRepo, path: "\(prefix)CLAUDE.md")
-        async let hasConnectorsMd: Bool = fileExists(
-            repo: sourceRepo,
-            path: "\(prefix)CONNECTORS.md"
-        )
-        async let hasReadmeMd: Bool = fileExists(repo: sourceRepo, path: "\(prefix)README.md")
-        async let hasMCPJson: Bool = fileExists(repo: sourceRepo, path: "\(prefix).mcp.json")
-        async let pluginJSONRaw: String? = fetchOptionalFileContent(
-            from: sourceRepo,
-            path: "\(prefix).claude-plugin/plugin.json"
-        )
-        async let sha: String? = fetchSourceSHA(
-            repo: sourceRepo,
-            path: source.isEmpty ? nil : source
-        )
-
-        let skills = try await skillsTask
-        let agents: [ClaudeAgentEntry] =
-            (try await agentsListing).map { entries in
-                entries
-                    .filter { $0.type == "file" && $0.name.hasSuffix(".md") }
-                    .map { ClaudeAgentEntry(path: $0.path) }
-                    .sorted { $0.displayName < $1.displayName }
-            } ?? []
-        let commands: [ClaudeCommandEntry] =
-            (try await commandsListing).map { entries in
-                entries
-                    .filter { $0.type == "file" && $0.name.hasSuffix(".md") }
-                    .map { ClaudeCommandEntry(path: $0.path) }
-                    .sorted { $0.displayName < $1.displayName }
-            } ?? []
-        let claudeMdPath = await hasClaudeMd ? "\(prefix)CLAUDE.md" : nil
+        let skills = snapshot.skillDirectories(source: source)
+        let agents = snapshot.fileEntries(immediatelyUnder: "\(prefix)agents", suffix: ".md")
+            .map { ClaudeAgentEntry(path: $0.path) }
+            .sorted { $0.displayName < $1.displayName }
+        let commands = snapshot.fileEntries(immediatelyUnder: "\(prefix)commands", suffix: ".md")
+            .map { ClaudeCommandEntry(path: $0.path) }
+            .sorted { $0.displayName < $1.displayName }
+        let claudeMdPath = snapshot.containsFile("\(prefix)CLAUDE.md")
+            ? "\(prefix)CLAUDE.md" : nil
         var auxPaths: [String] = []
         if let claudeMdPath { auxPaths.append(claudeMdPath) }
-        if await hasConnectorsMd { auxPaths.append("\(prefix)CONNECTORS.md") }
-        if await hasReadmeMd { auxPaths.append("\(prefix)README.md") }
-        let mcpJsonPath = await hasMCPJson ? "\(prefix).mcp.json" : nil
+        if snapshot.containsFile("\(prefix)CONNECTORS.md") {
+            auxPaths.append("\(prefix)CONNECTORS.md")
+        }
+        if snapshot.containsFile("\(prefix)README.md") {
+            auxPaths.append("\(prefix)README.md")
+        }
+        let mcpJsonPath = snapshot.containsFile("\(prefix).mcp.json")
+            ? "\(prefix).mcp.json" : nil
+        let pluginJSONPath = "\(prefix).claude-plugin/plugin.json"
+        let pluginJSONString = snapshot.containsFile(pluginJSONPath)
+            ? await fetchOptionalFileContent(from: sourceRepo, path: pluginJSONPath)
+            : nil
 
         // Merge per-plugin `plugin.json` metadata on top of marketplace
         // entry fields. Spec precedence:
@@ -1653,9 +2383,10 @@ public final class GitHubSkillService: ObservableObject {
         //   description: plugin.json > marketplace entry.
         //   keywords/license/homepage/repository: plugin.json > marketplace entry.
         //   author.{name,email,url}: plugin.json author block > marketplace `author.name`.
-        let pluginJSONString = await pluginJSONRaw
         let parsedJSON = pluginJSONString.flatMap { ClaudePluginJSON.parse($0) }
-        let sourceSHA = await sha
+        let sourceSHA =
+            (source.isEmpty ? snapshot.rootSHA : snapshot.sha(forPath: source))
+            ?? snapshot.rootSHA
 
         let resolvedDescription = parsedJSON?.description ?? plugin.description
         let resolvedAuthorName = parsedJSON?.authorName ?? plugin.author?.name
@@ -1786,26 +2517,35 @@ public final class GitHubSkillService: ObservableObject {
         repo: GitHubRepo,
         path: String?
     ) async -> String? {
+        guard GitHubImportInputValidator.validateRepo(repo),
+            let encodedRef = GitHubImportInputValidator.encodedGitRefQueryValue(repo.branch)
+        else {
+            return nil
+        }
         var urlString = "https://api.github.com/repos/\(repo.owner)/\(repo.name)/commits"
-        var queryItems: [String] = ["per_page=1", "sha=\(repo.branch)"]
+        let queryAllowed = CharacterSet.urlQueryAllowed.subtracting(
+            CharacterSet(charactersIn: "&=?#%")
+        )
+        var queryItems: [String] = ["per_page=1", "sha=\(encodedRef)"]
         if let path, !path.isEmpty {
+            guard let cleanPath = try? GitHubImportInputValidator.normalizedSourcePath(path) else {
+                return nil
+            }
             // Percent-encode the path so directories with characters like
             // `+` / spaces round-trip safely through GitHub's query parser.
-            let allowed = CharacterSet.urlQueryAllowed.subtracting(
-                CharacterSet(charactersIn: "&=?")
-            )
-            let encoded = path.addingPercentEncoding(withAllowedCharacters: allowed) ?? path
+            let encoded = cleanPath.addingPercentEncoding(withAllowedCharacters: queryAllowed)
+                ?? cleanPath
             queryItems.append("path=\(encoded)")
         }
         urlString += "?" + queryItems.joined(separator: "&")
         guard let url = URL(string: urlString) else { return nil }
-        var request = URLRequest(url: url)
-        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+        let prepared = githubRequest(url: url)
         do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse,
-                http.statusCode == 200
-            else {
+            let (data, http) = try await githubData(
+                for: prepared.request,
+                authenticated: prepared.authenticated
+            )
+            guard http.statusCode == 200 else {
                 return nil
             }
             guard let arr = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
@@ -1827,22 +2567,22 @@ public final class GitHubSkillService: ObservableObject {
         rootRepo: GitHubRepo,
         source: MarketplaceSource?,
         pluginName: String
-    ) async -> (repo: GitHubRepo, basePath: String) {
+    ) async throws -> (repo: GitHubRepo, basePath: String) {
         guard let source else {
             // No source declared at all → treat the plugin's name as the
             // directory (mirrors the legacy `plugin.source ?? plugin.name`
             // fallback).
-            return (rootRepo, normalizedSource(pluginName))
+            return (rootRepo, try GitHubImportInputValidator.normalizedSourcePath(pluginName))
         }
         switch source {
         case .localDirectory(let dir):
-            return (rootRepo, normalizedSource(dir))
+            return (rootRepo, try GitHubImportInputValidator.normalizedSourcePath(dir))
         case .externalRepo(let repo, _):
             let pinned = await pinnedExternalRepo(repo)
             return (pinned, "")
         case .externalSubdir(let repo, let path, _):
             let pinned = await pinnedExternalRepo(repo)
-            return (pinned, normalizedSource(path))
+            return (pinned, try GitHubImportInputValidator.normalizedSourcePath(path))
         }
     }
 
@@ -1862,18 +2602,13 @@ public final class GitHubSkillService: ObservableObject {
     private nonisolated func detectDefaultBranchNonIsolated(
         _ repo: GitHubRepo
     ) async throws -> GitHubRepo {
-        guard let apiURL = URL(string: repo.apiURL) else { return repo }
-        var request = URLRequest(url: apiURL)
-        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
-
-        let (data, response) = try await session.data(for: request)
-        if let httpResponse = response as? HTTPURLResponse,
-            let rateLimit = rateLimitError(from: httpResponse)
-        {
-            throw rateLimit
-        }
-        guard let httpResponse = response as? HTTPURLResponse,
-            httpResponse.statusCode == 200,
+        let apiURL = try repoAPIURL(repo)
+        let prepared = githubRequest(url: apiURL)
+        let (data, httpResponse) = try await githubData(
+            for: prepared.request,
+            authenticated: prepared.authenticated
+        )
+        guard httpResponse.statusCode == 200,
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let defaultBranch = json["default_branch"] as? String
         else {
@@ -1883,30 +2618,35 @@ public final class GitHubSkillService: ObservableObject {
     }
 
     private nonisolated func fileExists(repo: GitHubRepo, path: String) async -> Bool {
-        let fileURL = "\(repo.rawBaseURL)/\(path)"
-        guard let url = URL(string: fileURL) else { return false }
-        var request = URLRequest(url: url)
-        request.httpMethod = "HEAD"
+        guard let url = try? contentsAPIURL(repo: repo, path: path) else { return false }
+        let prepared = githubRequest(url: url, method: "HEAD")
         do {
-            let (_, response) = try await session.data(for: request)
-            if let http = response as? HTTPURLResponse {
-                return http.statusCode == 200
-            }
-            return false
+            let (_, http) = try await githubData(
+                for: prepared.request,
+                authenticated: prepared.authenticated
+            )
+            return http.statusCode == 200
         } catch {
             return false
         }
     }
 
     /// If `http` is a GitHub rate-limit response (403 with
-    /// `X-RateLimit-Remaining: 0`), return a `.rateLimited` error carrying
-    /// the parsed reset time. Returns nil otherwise.
-    private nonisolated func rateLimitError(from http: HTTPURLResponse) -> GitHubSkillError? {
-        guard http.statusCode == 403 else { return nil }
+    /// `X-RateLimit-Remaining: 0`, or 429), return a `.rateLimited` error
+    /// carrying reset/backoff details. Returns nil otherwise.
+    private nonisolated func rateLimitError(
+        from http: HTTPURLResponse,
+        authenticated: Bool
+    ) -> GitHubSkillError? {
+        guard http.statusCode == 403 || http.statusCode == 429 else { return nil }
         let remaining =
             (http.value(forHTTPHeaderField: "X-RateLimit-Remaining")
                 ?? http.value(forHTTPHeaderField: "x-ratelimit-remaining"))
-        guard remaining == "0" else { return nil }
+        let retryAfterStr =
+            http.value(forHTTPHeaderField: "Retry-After")
+            ?? http.value(forHTTPHeaderField: "retry-after")
+        let retryAfter = retryAfterStr.flatMap(TimeInterval.init)
+        guard http.statusCode == 429 || remaining == "0" || retryAfter != nil else { return nil }
         let resetStr =
             http.value(forHTTPHeaderField: "X-RateLimit-Reset")
             ?? http.value(forHTTPHeaderField: "x-ratelimit-reset")
@@ -1914,64 +2654,28 @@ public final class GitHubSkillService: ObservableObject {
             resetStr
             .flatMap(TimeInterval.init)
             .map { Date(timeIntervalSince1970: $0) }
-        return .rateLimited(resetAt: resetAt)
+        return .rateLimited(
+            resetAt: resetAt,
+            retryAfter: retryAfter,
+            authenticated: authenticated
+        )
     }
 
     private nonisolated func normalizedSource(_ source: String) -> String {
-        var s = source
-        if s.hasPrefix("./") { s = String(s.dropFirst(2)) }
-        s = s.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        return s
+        Self.normalizedSourceStatic(source)
     }
 
     // MARK: - Private Helpers
 
     private func detectDefaultBranch(_ repo: GitHubRepo) async throws -> GitHubRepo {
-        // First try 'main', then 'master'
-        let branches = ["main", "master"]
-
-        for branch in branches {
-            let testRepo = GitHubRepo(owner: repo.owner, name: repo.name, branch: branch)
-            let testURL = "\(testRepo.rawBaseURL)/.claude-plugin/marketplace.json"
-
-            guard let url = URL(string: testURL) else { continue }
-
-            var request = URLRequest(url: url)
-            request.httpMethod = "HEAD"
-
-            do {
-                let (_, response) = try await session.data(for: request)
-                if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
-                    return testRepo
-                }
-            } catch {
-                continue
-            }
-        }
-
-        // If neither worked, try the GitHub API to get default branch
-        guard let apiURL = URL(string: repo.apiURL) else {
-            return repo
-        }
-
         do {
-            var request = URLRequest(url: apiURL)
-            request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
-
-            let (data, response) = try await session.data(for: request)
-
-            // Surface a rate-limit hit here too — otherwise we'd silently
-            // fall back to "main" and the very next request would hit the
-            // limit anyway, just with a less actionable error message.
-            if let httpResponse = response as? HTTPURLResponse,
-                let rateLimit = rateLimitError(from: httpResponse)
-            {
-                throw rateLimit
-            }
-
-            guard let httpResponse = response as? HTTPURLResponse,
-                httpResponse.statusCode == 200
-            else {
+            let apiURL = try repoAPIURL(repo)
+            let prepared = githubRequest(url: apiURL)
+            let (data, httpResponse) = try await githubData(
+                for: prepared.request,
+                authenticated: prepared.authenticated
+            )
+            guard httpResponse.statusCode == 200 else {
                 return repo
             }
 
@@ -1992,21 +2696,13 @@ public final class GitHubSkillService: ObservableObject {
     }
 
     private func fetchMarketplace(_ repo: GitHubRepo) async throws -> GitHubMarketplace {
-        let marketplaceURL = "\(repo.rawBaseURL)/.claude-plugin/marketplace.json"
-
-        guard let url = URL(string: marketplaceURL) else {
-            throw GitHubSkillError.invalidURL(marketplaceURL)
-        }
-
-        let (data, response) = try await session.data(from: url)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw GitHubSkillError.networkError(NSError(domain: "HTTPError", code: -1))
-        }
-
-        if let rateLimit = rateLimitError(from: httpResponse) {
-            throw rateLimit
-        }
+        let marketplacePath = ".claude-plugin/marketplace.json"
+        let url = try contentsAPIURL(repo: repo, path: marketplacePath)
+        let prepared = githubRequest(url: url, accept: "application/vnd.github.raw+json")
+        let (data, httpResponse) = try await githubData(
+            for: prepared.request,
+            authenticated: prepared.authenticated
+        )
 
         switch httpResponse.statusCode {
         case 200:
@@ -2020,6 +2716,12 @@ public final class GitHubSkillService: ObservableObject {
                     code: httpResponse.statusCode,
                     userInfo: [NSLocalizedDescriptionKey: "HTTP \(httpResponse.statusCode)"]
                 )
+            )
+        }
+
+        guard data.count <= limits.maxFileBytes else {
+            throw GitHubSkillError.importTooLarge(
+                "\(marketplacePath) is \(data.count) bytes; limit is \(limits.maxFileBytes) bytes"
             )
         }
 
