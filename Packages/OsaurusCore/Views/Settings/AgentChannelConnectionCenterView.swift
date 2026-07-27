@@ -249,11 +249,21 @@ struct AgentChannelConnectionCenterView: View {
                     )
                 }
 
-                writeGateRow
+                sendingSection
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 24)
             .frame(maxWidth: .infinity)
+        }
+    }
+
+    /// The master send control gets its own labeled section so it reads as
+    /// the top of the sending hierarchy (replies AND new messages), not as
+    /// a stray toggle after the destination list.
+    private var sendingSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionLabel(L("Sending"))
+            writeGateRow
         }
     }
 
@@ -391,7 +401,7 @@ struct AgentChannelConnectionCenterView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
-                    Text("Channel Writes", bundle: .module)
+                    Text("Allow Agents to Send Messages", bundle: .module)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
@@ -406,8 +416,8 @@ struct AgentChannelConnectionCenterView: View {
                 }
                 Text(
                     globalWritesEnabled
-                        ? L("Agents may send messages to write-allowlisted destinations.")
-                        : L("Sending is paused everywhere. Agents can still read allowlisted channels.")
+                        ? L("Master switch for replies and new messages. Agents may send to write-allowlisted destinations.")
+                        : L("Sending is paused everywhere — replies and new messages. Agents can still read allowlisted channels.")
                 )
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
@@ -447,7 +457,7 @@ struct AgentChannelConnectionCenterView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text(
-                    "Authorized incoming messages are stored in a local inbox that agent read tools consult. Channels only answer automatically when their dispatch and auto-reply settings are turned on.",
+                    "Authorized incoming messages are stored in a local inbox that agent read tools consult. A channel only replies automatically when an agent is chosen to reply there and automatic replies are turned on.",
                     bundle: .module
                 )
                 .font(.system(size: 12))
@@ -674,9 +684,14 @@ struct AgentChannelConnectionCenterView: View {
         nativeConfigured[.discord] = discordConfigured
         nativeConfigured[.slack] = slackConfigured
         nativeConfigured[.telegram] = telegramConfigured
-        nativeRoutingDetails[.discord] = Self.routingSummary(discordConfig.inboundDispatch)
-        nativeRoutingDetails[.slack] = Self.routingSummary(slackDispatch)
-        nativeRoutingDetails[.telegram] = Self.routingSummary(telegramConfig.inboundDispatch)
+        // Reply state only makes sense on configured channels; the
+        // "Available" list would otherwise show a noisy "Replies off".
+        nativeRoutingDetails[.discord] =
+            discordConfigured ? Self.routingSummary(discordConfig.inboundDispatch) : nil
+        nativeRoutingDetails[.slack] =
+            slackConfigured ? Self.routingSummary(slackDispatch) : nil
+        nativeRoutingDetails[.telegram] =
+            telegramConfigured ? Self.routingSummary(telegramConfig.inboundDispatch) : nil
 
         Task {
             let discordHealth = await AgentChannelTransportHealthCenter.shared.state(
@@ -711,21 +726,23 @@ struct AgentChannelConnectionCenterView: View {
         }
     }
 
-    /// One-line description of who answers this channel, shown on the card.
+    /// One-line description of who replies on this channel, shown on the
+    /// card. Always explicit — a configured channel that never replies says
+    /// so instead of hiding the state.
     @MainActor
     static func routingSummary(
         _ dispatch: AgentChannelInboundDispatchConfiguration,
         agentName: (UUID) -> String? = { AgentManager.shared.agent(for: $0)?.name }
     ) -> String? {
-        guard dispatch.enabled else { return nil }
+        guard dispatch.enabled else { return L("Replies off") }
         let names = dispatch.referencedAgentIds.map { agentName($0) ?? L("Unknown agent") }
         switch names.count {
         case 0:
-            return L("No agent assigned")
+            return L("Replies on — choose an agent")
         case 1:
-            return L("Answers as \(names[0])")
+            return L("Replies: \(names[0])")
         default:
-            return L("Routes to \(names.count) agents: \(names.joined(separator: ", "))")
+            return L("Replies: \(names.count) agents — \(names.joined(separator: ", "))")
         }
     }
 
@@ -813,7 +830,7 @@ struct AgentChannelConnectionCenterView: View {
             globalWritesEnabled = previousEnabled
             reloadWriteGate()
             _ = ToastManager.shared.error(
-                L("Couldn't update channel writes"),
+                L("Couldn't update the Sending switch"),
                 message: error.localizedDescription
             )
         }

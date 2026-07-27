@@ -894,6 +894,11 @@ private enum DetailTab: String, CaseIterable {
     /// action. Visible for every agent; the content gates itself to agents
     /// that actually have a shareable identity (`agentAddress`).
     case connections
+    /// This agent's channel messaging surface: a read-only summary of
+    /// where it replies to incoming messages (reply routing is configured
+    /// per channel, in Settings → Channels) plus the destinations where it
+    /// may start new messages of its own.
+    case channels
     case sandbox
     case automation
     case memory
@@ -932,6 +937,7 @@ private enum DetailTab: String, CaseIterable {
         case .customization: return L("Appearance")
         case .network: return L("Network")
         case .connections: return L("Remote Connections")
+        case .channels: return L("Channels")
         case .sandbox: return L("Sandbox")
         case .automation: return L("Automation")
         case .memory: return L("Memory")
@@ -948,6 +954,7 @@ private enum DetailTab: String, CaseIterable {
         case .customization: return "paintpalette.fill"
         case .network: return "network"
         case .connections: return "person.2.badge.key"
+        case .channels: return "bubble.left.and.bubble.right"
         case .sandbox: return "shippingbox"
         case .automation: return "clock.badge.checkmark"
         case .memory: return "brain.head.profile"
@@ -972,6 +979,10 @@ private enum DetailTab: String, CaseIterable {
         case .network: return L("Bonjour discovery and relay tunnel.")
         case .connections:
             return L("Peers granted access to this agent — usage and revocation.")
+        case .channels:
+            return L(
+                "Where this agent replies on Discord, Slack, and Telegram — and where it may start messages of its own."
+            )
         case .sandbox: return L("Sandboxed code execution.")
         case .automation: return L("Schedules and file watchers for autonomous behavior.")
         case .memory: return L("Conversation history, pinned facts, and episode summaries.")
@@ -1022,7 +1033,7 @@ private enum DetailTabGroup: String, CaseIterable {
         switch self {
         case .general: return [.configure, .customization]
         case .abilities: return [.abilities, .capabilities, .subagents, .sandbox]
-        case .connections: return [.network, .connections]
+        case .connections: return [.network, .connections, .channels]
         case .automation: return [.automation]
         case .knowledge: return [.memory, .database]
         }
@@ -1874,7 +1885,7 @@ struct AgentDetailView: View {
         case .builtIn(let dt):
             switch dt {
             case .configure, .abilities, .capabilities, .subagents, .customization, .network,
-                .connections, .sandbox, .database:
+                .connections, .channels, .sandbox, .database:
                 return nil
             case .automation:
                 let count = linkedSchedules.count + linkedWatchers.count
@@ -2024,6 +2035,8 @@ struct AgentDetailView: View {
             networkTabContent
         case .builtIn(.connections):
             connectionsTabContent
+        case .builtIn(.channels):
+            channelsTabContent
         case .builtIn(.sandbox):
             sandboxTabContent
         case .builtIn(.automation):
@@ -2488,20 +2501,44 @@ struct AgentDetailView: View {
         tabHelperText(DetailTab.automation.helperText)
         schedulesSection
         watchersSection
-        channelDestinationsSummarySection
     }
 
-    /// This agent's proactive posting rooms — automatic ones derived from
-    /// the channel setup plus any customized rooms — embedded here so the
-    /// agent's configuration lives in one place. The Channels pane shows
-    /// the same rows across all agents (same store, same editor). Surfaced
-    /// under Automation because proactive posting is what schedules and
-    /// watchers use to reach a channel unprompted.
-    private var channelDestinationsSummarySection: some View {
+    /// The agent's channel messaging surface (Connections → Channels):
+    /// where it replies to incoming messages and where it may start new
+    /// messages. Both mirror the global Channels pane (same store, same
+    /// editor), scoped to this one agent.
+    @ViewBuilder
+    private var channelsTabContent: some View {
+        tabHelperText(DetailTab.channels.helperText)
+        channelRepliesSection
+        channelNewMessagesSection
+    }
+
+    /// Read-only summary of where this agent answers incoming messages.
+    /// Reply routing is configured per channel (Settings → Channels), so
+    /// this section reports the current state and links there.
+    private var channelRepliesSection: some View {
         AgentDetailSection(
-            title: L("Channel Posting"),
+            title: L("Replies"),
+            icon: "arrowshape.turn.up.left",
+            subtitle: L(
+                "Channels where this agent answers incoming messages. Configured on each connected channel, in Channels settings."
+            )
+        ) {
+            AgentChannelAgentRepliesSection(agentId: agent.id)
+        }
+    }
+
+    /// This agent's proactive destinations — automatic ones derived from
+    /// the channel setup plus any customized ones. The Channels pane shows
+    /// the same rows across all agents (same store, same editor).
+    private var channelNewMessagesSection: some View {
+        AgentDetailSection(
+            title: L("New Messages"),
             icon: "paperplane",
-            subtitle: L("Rooms this agent can post to on its own — it asks you first unless you change a room's setting.")
+            subtitle: L(
+                "Destinations this agent can start messages in on its own — it asks you first unless you change a destination's setting."
+            )
         ) {
             AgentChannelAgentDestinationsSection(agentId: agent.id)
         }

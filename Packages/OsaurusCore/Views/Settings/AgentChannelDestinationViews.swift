@@ -10,11 +10,11 @@ import SwiftUI
 
 // MARK: - Destinations Section
 
-/// "Agent Posting" section for the Channels pane: every room agents can
-/// proactively post to, across all agents. Rooms appear here automatically
-/// once a channel has an assigned agent and write-allowlisted rooms;
-/// stored (customized) rows are shown alongside. Rows share the card +
-/// inline mode menu with the per-agent section.
+/// "New Messages" section for the Channels pane: every destination agents
+/// can start messages in on their own, across all agents. Destinations
+/// appear here automatically once a channel has an assigned agent and
+/// write-allowlisted rooms; stored (customized) rows are shown alongside.
+/// Rows share the card + inline mode menu with the per-agent section.
 struct AgentChannelDestinationsSection: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
@@ -31,7 +31,7 @@ struct AgentChannelDestinationsSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Agent Posting", bundle: .module)
+                Text("New Messages", bundle: .module)
                     .textCase(.uppercase)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(theme.tertiaryText)
@@ -43,19 +43,27 @@ struct AgentChannelDestinationsSection: View {
                     HStack(spacing: 4) {
                         Image(systemName: "plus")
                             .font(.system(size: 9, weight: .semibold))
-                        Text("Add Room", bundle: .module)
+                        Text("Add Destination", bundle: .module)
                     }
                 }
                 .buttonStyle(SettingsButtonStyle())
             }
 
+            Text(
+                "Replies are configured on each connected channel above. This section controls where agents may start messages of their own — and whether they ask you first.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
             if bindings.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Agents can't post on their own yet", bundle: .module)
+                    Text("Agents can't start messages yet", bundle: .module)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                     Text(
-                        "Rooms appear here automatically once a connected channel allows the bot to post in at least one room and an agent is chosen to answer there. The agent can then bring things up on its own — and always asks you before sending.",
+                        "Destinations appear here automatically once a connected channel allows the bot to post in at least one room and an agent is chosen to reply there. The agent can then bring things up on its own — and always asks you before sending.",
                         bundle: .module
                     )
                     .font(.system(size: 11))
@@ -85,7 +93,7 @@ struct AgentChannelDestinationsSection: View {
                     }
                 }
                 Text(
-                    "Automatic rooms come from your channel setup and always ask before sending. Each agent's rooms are also editable in its own settings, under Automation.",
+                    "Automatic destinations come from your channel setup and always ask before sending. Each agent's destinations are also editable in its own settings, under Channels.",
                     bundle: .module
                 )
                 .font(.system(size: 10))
@@ -239,7 +247,7 @@ struct AgentChannelDestinationRowCard: View {
             L("Let the agent post without asking?"),
             isPresented: $pendingAutonomousConfirm,
             message: L(
-                "The agent will send messages to this room on its own, without a confirmation from you. Room allowlists, rate limits, and the global Channel Writes switch still apply."
+                "The agent will send messages to this room on its own, without a confirmation from you. Room allowlists, rate limits, and the global Sending switch still apply."
             ),
             primaryButton: .primary(L("Allow Auto-send")) { persist(mode: .autonomous) },
             secondaryButton: .cancel(L("Cancel")),
@@ -310,12 +318,141 @@ struct AgentChannelDestinationRowCard: View {
     }
 }
 
+// MARK: - Per-Agent Replies Summary (Agent Settings)
+
+/// Read-only summary of where ONE agent answers incoming messages,
+/// embedded in that agent's Channels tab. Reply routing itself is
+/// configured per channel (Settings → Channels → the channel's sheet),
+/// so this section reports the current state and links there instead of
+/// duplicating the editor.
+struct AgentChannelAgentRepliesSection: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    let agentId: UUID
+
+    @State private var rows: [Row] = []
+
+    struct Row: Identifiable {
+        let kind: AgentChannelKind
+        let detail: String
+        var id: String { kind.rawValue }
+    }
+
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if rows.isEmpty {
+                Text(
+                    "This agent doesn't reply on any channel yet. Open a connected channel in Channels settings and choose this agent under \u{201C}Reply to incoming messages\u{201D}.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(rows) { row in
+                        replyRow(row)
+                    }
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button {
+                    ManagementStateManager.shared.selectedTab = .agentChannels
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("Manage replies in Channels settings", bundle: .module)
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(PlainButtonStyle())
+                .foregroundColor(theme.accentColor)
+            }
+        }
+        .onAppear(perform: reload)
+    }
+
+    private func replyRow(_ row: Row) -> some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(
+                        LinearGradient(
+                            colors: row.kind.brandGradient,
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                Image(systemName: row.kind.icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white)
+            }
+            .frame(width: 28, height: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.kind.displayName)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text(row.detail)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.secondaryText)
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    private func reload() {
+        var next: [Row] = []
+        if DiscordConnectionService.shared.hasBotToken(),
+            let detail = AgentChannelAgentReplySummary.detail(
+                for: agentId,
+                dispatch: DiscordConnectionService.shared.configuration().inboundDispatch
+            )
+        {
+            next.append(Row(kind: .discord, detail: detail))
+        }
+        if SlackConnectionService.shared.hasBotToken(),
+            let detail = AgentChannelAgentReplySummary.detail(
+                for: agentId,
+                dispatch: SlackConnectionService.shared.configuration().inboundDispatch
+            )
+        {
+            next.append(Row(kind: .slack, detail: detail))
+        }
+        if TelegramConnectionService.shared.hasBotToken(),
+            let detail = AgentChannelAgentReplySummary.detail(
+                for: agentId,
+                dispatch: TelegramConnectionService.shared.configuration().inboundDispatch
+            )
+        {
+            next.append(Row(kind: .telegram, detail: detail))
+        }
+        rows = next
+    }
+}
+
 // MARK: - Per-Agent Destinations (Agent Settings)
 
-/// Channel posting management scoped to ONE agent, embedded in that agent's
-/// settings (Automation tab) so the agent's configuration lives alongside
-/// its schedules and watchers. Shows the same effective rows (automatic +
-/// customized) as the Channels pane and shares its editor sheet.
+/// New-message destinations scoped to ONE agent, embedded in that agent's
+/// settings (Connections → Channels tab) next to the read-only Replies
+/// summary. Shows the same effective rows (automatic + customized) as the
+/// Channels pane and shares its editor sheet.
 struct AgentChannelAgentDestinationsSection: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
@@ -347,7 +484,7 @@ struct AgentChannelAgentDestinationsSection: View {
         VStack(alignment: .leading, spacing: 10) {
             if bindings.isEmpty {
                 Text(
-                    "Nothing to post to yet. Rooms appear here automatically once a connected channel allows the bot to post in at least one room and this agent is chosen to answer there — the agent then always asks before sending. You can also add a specific room below.",
+                    "Nothing to post to yet. Destinations appear here automatically once a connected channel allows the bot to post in at least one room and this agent is chosen to reply there — the agent then always asks before sending. You can also add a specific destination below.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
@@ -369,7 +506,7 @@ struct AgentChannelAgentDestinationsSection: View {
 
             if autonomousCount > 0 {
                 Text(
-                    "\(autonomousCount) room(s) are set to Auto-send: this agent posts there without asking.",
+                    "\(autonomousCount) destination(s) are set to Auto-send: this agent posts there without asking.",
                     bundle: .module
                 )
                 .font(.system(size: 10))
@@ -383,7 +520,7 @@ struct AgentChannelAgentDestinationsSection: View {
                     HStack(spacing: 4) {
                         Image(systemName: "plus")
                             .font(.system(size: 9, weight: .semibold))
-                        Text("Add Room", bundle: .module)
+                        Text("Add Destination", bundle: .module)
                     }
                 }
                 .buttonStyle(SettingsButtonStyle())
@@ -610,7 +747,7 @@ struct AgentChannelDestinationEditorSheet: View {
             .frame(width: 40, height: 40)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(isNew ? L("Add a Posting Room") : L("Customize Posting"))
+                Text(isNew ? L("Add a Destination") : L("Customize Destination"))
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 Text(
@@ -865,7 +1002,7 @@ struct AgentChannelDestinationEditorSheet: View {
                             .font(.system(size: 12))
                             .foregroundColor(theme.warningColor)
                         Text(
-                            "Auto-send lets this agent post messages without asking you. Room permissions, rate limits, and the global Channel Writes switch still apply.",
+                            "Auto-send lets this agent post messages without asking you. Room permissions, rate limits, and the global Sending switch still apply.",
                             bundle: .module
                         )
                         .font(.system(size: 11))

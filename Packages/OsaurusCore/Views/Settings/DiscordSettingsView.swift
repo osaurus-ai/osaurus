@@ -395,7 +395,7 @@ struct DiscordSettingsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 SettingsToggle(
                     title: L("Allow Sending on Discord"),
-                    description: L("Let agents post to write-allowlisted Discord destinations. Channel writes must also be on globally."),
+                    description: L("Let agents post to write-allowlisted Discord destinations. The global Sending switch in Channels must also be on."),
                     isOn: $writeEnabled.animation(.easeOut(duration: 0.2))
                 )
 
@@ -415,11 +415,11 @@ struct DiscordSettingsView: View {
 
     private var stepDispatchSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AgentChannelSectionHeading(L("Send incoming messages to an agent"))
+            AgentChannelSectionHeading(L("Reply to incoming messages"))
 
             SettingsToggle(
-                title: L("Dispatch Discord Messages to an Agent"),
-                description: L("Run verified messages from allowed channels and senders through a selected agent."),
+                title: L("Reply with an Agent"),
+                description: L("Choose which agent answers verified messages from allowed channels and senders."),
                 isOn: $inboundDispatchEnabled.animation(.easeOut(duration: 0.2))
             )
             if inboundDispatchEnabled {
@@ -526,7 +526,7 @@ struct DiscordSettingsView: View {
                     title: L("Authorized Sender IDs"),
                     text: $senderAllowlistText,
                     placeholder: L("123456789012345678 — one per line"),
-                    help: L("Required for inbound dispatch. Use Discord user IDs.")
+                    help: L("Required before an agent can reply. Use Discord user IDs.")
                 )
                 StyledSettingsTextField(
                     label: L("Default Read Limit"),
@@ -741,13 +741,13 @@ struct DiscordSettingsView: View {
     private func validationFailure() -> (message: String, section: AgentChannelProviderSetupSection)? {
         if inboundDispatchEnabled && inboundAgentId == nil && inboundRoutes.isEmpty {
             return (
-                L("Select a default agent or add a routing rule for inbound Discord messages."),
+                L("Choose an agent to reply, or add a rule for incoming Discord messages."),
                 .behavior
             )
         }
         if inboundDispatchEnabled && parseIds(senderAllowlistText).isEmpty {
             return (
-                L("Add at least one authorized Discord sender for inbound dispatch."),
+                L("Add at least one authorized Discord sender before an agent can reply."),
                 .access
             )
         }

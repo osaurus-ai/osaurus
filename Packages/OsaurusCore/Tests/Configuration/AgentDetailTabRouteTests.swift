@@ -64,4 +64,13 @@ struct AgentDetailTabRouteTests {
         #expect(route == AgentDetailTabRoute(tabRawValue: "abilities"))
         #expect(route?.databaseSection == nil)
     }
+
+    @Test func channelsIsACanonicalTab() {
+        // The per-agent Channels tab (Connections group: replies summary +
+        // new-message destinations) must be directly addressable so
+        // channel surfaces can deep-link an agent's messaging settings.
+        let route = AgentDetailTabRoute.resolve("channels")
+        #expect(route == AgentDetailTabRoute(tabRawValue: "channels"))
+        #expect(route?.databaseSection == nil)
+    }
 }

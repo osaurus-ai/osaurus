@@ -492,9 +492,12 @@ public enum SettingsSearchIndex {
         .init(
             id: "agentChannels.globalWrites",
             tab: .agentChannels,
-            section: "Global Channel Safety",
-            title: "Global Channel Writes",
-            keywords: ["kill switch", "disable writes", "remote writes", "channel writes"]
+            section: "Sending",
+            title: "Allow Agents to Send Messages",
+            keywords: [
+                "kill switch", "disable writes", "remote writes", "channel writes",
+                "sending", "read-only", "pause sending",
+            ]
         ),
         .init(
             id: "agentChannels.discord",
@@ -534,11 +537,12 @@ public enum SettingsSearchIndex {
         .init(
             id: "agentChannels.destinations",
             tab: .agentChannels,
-            section: "Agent Destinations",
-            title: "Agent Destinations",
+            section: "New Messages",
+            title: "New Messages",
             keywords: [
                 "proactive", "publish", "destination", "binding", "outbound",
                 "autonomous", "draft", "confirm", "agent destinations",
+                "new messages", "agent posting", "post", "room", "auto-send",
             ]
         ),
         .init(

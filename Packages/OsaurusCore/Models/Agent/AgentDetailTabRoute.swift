@@ -41,7 +41,7 @@ public struct AgentDetailTabRoute: Equatable, Sendable {
     /// view's `DetailTab` enum.
     public static let canonicalTabRawValues: Set<String> = [
         "abilities", "configure", "capabilities", "subagents", "customization", "network",
-        "connections", "sandbox", "automation", "memory", "database",
+        "connections", "channels", "sandbox", "automation", "memory", "database",
     ]
 
     /// Resolves a deep-link tab string, including the legacy per-surface
