@@ -124,7 +124,7 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
                     + "Do not call `todo` again until a task or checkbox changes. Execute the "
                     + "next concrete pending action now. Before the final answer, send one last "
                     + "tool update only if status changed; never print the checklist as prose. "
-                    + "Then answer once and stop."
+                    + "Then answer the user once and stop."
             )
         }
         return ToolEnvelope.success(

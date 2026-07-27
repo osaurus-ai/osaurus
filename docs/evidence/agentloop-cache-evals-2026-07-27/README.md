@@ -1,14 +1,17 @@
 # Agent-loop and cache-proof regression gates — 2026-07-27
 
-Status: **PARTIAL — source changes authored; live model and UI rows pending.**
+Status: **PARTIAL — live model rows measured; Release-app UI row pending and
+Bonsai remains model-execution flaky.**
 
 This follow-up starts from Osaurus
-`74fa06aed48e9740b86d360542b380bf5de89bf8` with vMLX
-`64b6ca2433c12af2dd6955f317366f0f9626e061`. It does not claim a new
-runtime fix: that Osaurus source already returns immediately from an ordinary
-`AgentToolLoop.finalResponse`, even when a current Todo remains unchecked. This
-PR strengthens the regression suite so later agent-loop or cache changes cannot
-silently reintroduce the reported behaviors.
+`a8a78ecba61b98073822ceaf4c5d89b1352b57f6` and pins vMLX
+`a4b3258c0190d4c0868c6808a9944d42596969f6`. Osaurus source already
+returns immediately from an ordinary `AgentToolLoop.finalResponse`, even when
+a current Todo remains unchecked. This PR strengthens that regression gate and
+adds typed cache-progress scoring. The vMLX pin adds a topology-scoped runtime
+fix: standalone rotating/SWA caches capture an exact prompt-minus-one SSD seed
+while real prefill crosses that boundary, instead of attempting unsafe
+post-hoc trimming of disk-backed heterogeneous cache state.
 
 No screenshots or other binary evidence belong in this directory or the PR.
 Local UI captures are ephemeral operator evidence only.
@@ -17,11 +20,11 @@ Local UI captures are ephemeral operator evidence only.
 
 | Row | Failure to catch | Owning proof gap | Current status |
 |---|---|---|---|
-| A | Successful Reminder/tool side effect followed by repeated confirmation until the step cap | AgentLoop must terminate on the first ordinary final even with pending Todo | Existing runtime regression fixture retained; live rerun pending |
-| B | Task finishes while the pinned Todo remains `0/N` or partially checked | Existing scorer only required any one `[x]` | New opt-in final-checklist scorer authored; model runs pending |
-| C | SSD cache appears warm but UI/proof cannot show a complete restore → prefill → complete counter lifecycle | CacheProof kept only the largest restore count | Full typed progress sequence now recorded and scored; live runs pending |
-| D | Multiple SSD candidates exist but proof does not show that the longest valid prefix wins | Existing case used only two fresh sessions | Three-session short → extended → longest-match fixture authored; live runs pending |
-| E | Disk-only full-attention rows fail legacy RAM-prefix-counter assertions | Three general fixtures required raw `kvPrefixHits` | Converted to per-turn typed restore gates; live runs pending |
+| A | Successful Reminder/tool side effect followed by repeated confirmation until the step cap | AgentLoop must terminate on the first ordinary final even with pending Todo | Gemma 3/3; Ornith 9B 3/3; Bonsai 2/3 FLAKY, but its failed trial still exited `finalResponse` without repetition |
+| B | Task finishes while the pinned Todo remains `0/N` or partially checked | Existing scorer only required any one `[x]` | New opt-in final-checklist scorer covered by deterministic tests; strict live-model quality row remains separate |
+| C | SSD cache appears warm but UI/proof cannot show a complete restore → prefill → complete counter lifecycle | CacheProof kept only the largest restore count | Typed lifecycle scored 3/3 on Laguna, Gemma, and Bonsai with paged RAM off |
+| D | Multiple SSD candidates exist but proof does not show that the longest valid prefix wins | Existing case used only two fresh sessions | Three-session longest-match row scored 3/3 on all three available families |
+| E | Disk-only full-attention rows fail legacy RAM-prefix-counter assertions | Three general fixtures required raw `kvPrefixHits` | Per-turn typed disk-restore gates scored on full-attention and hybrid-SSM rows |
 
 ## Source contracts
 
@@ -39,6 +42,9 @@ Local UI captures are ephemeral operator evidence only.
   three independent sessions create a short cache candidate, extend it, then
   require the final session to restore the longer disk candidate by a scored
   token gain.
+- vMLX `Libraries/MLXLMCommon/Evaluate.swift`: captures a safe SSD seed only
+  for text-only, persistable, standalone rotating/SWA topology during actual
+  prefill; the fail-closed post-hoc disk rederive guard remains intact.
 
 ## Required proof before merge
 
@@ -48,15 +54,25 @@ never substitute “green” or screenshots for numbers.
 
 | Suite / model | Score | Key telemetry | Evidence |
 |---|---:|---|---|
-| Focused deterministic Swift tests | PENDING | schema, Todo parsing, progress accounting | PENDING |
-| AgentLoop — Gemma 4 | PENDING | exit, model steps, Todo final state, tok/s | PENDING |
-| AgentLoop — Bonsai/Qwen | PENDING | exit, model steps, Todo final state, tok/s | PENDING |
-| AgentLoop — Ornith | PENDING | exit, model steps, Todo final state, tok/s | PENDING |
+| Focused deterministic Swift tests | 12/12 PASS | schema, Todo parsing, progress accounting | `swift test --package-path Packages/OsaurusEvals --filter AgentLoopCacheProofCampaignTests` |
+| Core Todo tool tests | 28/28 PASS | first run exposed one stale exact-wording assertion at 27/28; corrected source rerun passed all 28 | `swift test --package-path Packages/OsaurusCore --filter AgentLoopToolsTests` |
+| Production AgentToolLoop tests | 84/84 PASS | ordinary final is authoritative; pending/stale Todo, cancellation, tool failure, parallel batch, Computer Use, AppleScript, and reasoning-only terminal paths | `swift test --package-path Packages/OsaurusCore --filter AgentToolLoopTests` |
+| vMLX growing-chat cache source | 18/18 PASS | rotating seed capture and growing-chat source behavior | `BatchEngineGrowingChatCacheSourceTests` at vMLX `a4b3258c0190d4c0868c6808a9944d42596969f6` |
+| vMLX topology-focused cache tests | 42/42 PASS | mixed-SWA TurboQuant RAM→disk, paged-off hybrid restore, eviction fallback, media/reasoning isolation, typed companion state | `CacheCoordinatorTopologyFocusedTests` at vMLX `a4b3258c0190d4c0868c6808a9944d42596969f6` |
+| vMLX restore-progress tests | 1/1 PASS | restore/prefill progress contract | `TokenIteratorCacheRestoreProgressTests` at vMLX `a4b3258c0190d4c0868c6808a9944d42596969f6` |
+| vMLX canonical cache-boundary tests | 7/7 PASS | exact prompt/cache boundary behavior | `CanonicalChatCacheBoundariesTests` at vMLX `a4b3258c0190d4c0868c6808a9944d42596969f6` |
+| AgentLoop — Gemma 4 26B A4B JANG_4M | 3/3 PASS | `finalResponse`; 4 model steps; 36.0 tok/s; TTFT 173 ms; L2 +3 hits/+10 stores | `/private/tmp/osaurus-evals-postseed-20260727/agentloop-gemma26/gemma26-final-after-success.json` |
+| AgentLoop — Bonsai 27B Ternary JANG | 2/3 FLAKY | passed trials exit once; failed trial also exited once but used `share_artifact` and wrote `REMAINDER_CREATED`; 16.6 tok/s | `/private/tmp/osaurus-evals-postseed-20260727/agentloop-bonsai27/bonsai27-final-after-success.json` |
+| AgentLoop — Ornith 9B JANG_4M | 3/3 PASS | `finalResponse`; 5 model steps; 37.2 tok/s; TTFT 236 ms; L2 +4 hits/+6 stores | `/private/tmp/osaurus-evals-postseed-20260727/agentloop-ornith9/ornith9-final-after-success.json` |
 | AgentLoopFrontier targeted rows | PENDING | outcomes, Todo final state, no loop | PENDING |
-| CacheProof disk-only — Gemma 4 | PENDING | restored/remaining, progress sequence, TTFT, disk counters | PENDING |
-| CacheProof disk-only — Bonsai/Qwen | PENDING | restored/remaining, companion state, TTFT, disk counters | PENDING |
-| CacheProof disk-only — Laguna | PENDING | restored/remaining, progress sequence, TTFT, disk counters | PENDING |
+| CacheProof disk-only — Gemma 4 26B A4B JANG_4M | 3/3 PASS | 292/704 → 703/704 restored; +411 gain; L2 +2 hits/+13 stores; 36.0 tok/s | `/private/tmp/osaurus-evals-postseed-20260727/gemma26/gemma26-postseed-cacheproof.json` |
+| CacheProof disk-only — Bonsai 27B Ternary JANG | 3/3 PASS | hybrid: 295/716 → 709/716; +414 gain; SSM +2 hits; L2 +2 hits/+4 stores; 18.7 tok/s | `/private/tmp/osaurus-evals-postseed-20260727/bonsai27/bonsai27-postseed-cacheproof.json` |
+| CacheProof disk-only — Laguna S 2.1 JANG_4M | 3/3 PASS | pre-fix 0/3 with +0 gain; post-fix 293/715 → 714/715; +421 gain; L2 +2 hits/+11 stores; 27.9 tok/s | `/private/tmp/osaurus-evals-postseed-20260727/laguna/laguna-postseed-cacheproof.json` |
 | Isolated Release app live UI | PENDING | terminal UI, input unlock, follow-up turn, visible cache settings | PENDING |
 
 Rows without current live evidence remain `PARTIAL`; one sibling quant or
 architecture never proves another.
+
+The model rows above use deterministic exit/tool/file/cache assertions. No
+strong external judge key was configured; the CLI emitted its self-judge
+warning, so no subjective rubric score is represented as authoritative.

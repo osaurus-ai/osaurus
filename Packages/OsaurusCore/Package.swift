@@ -94,9 +94,13 @@ let package = Package(
         // chat's warm-start checkpoint. vmlx-swift#189 makes the solo
         // TokenIterator path report an accepted disk/paged restore only after
         // path-dependent rollback checks, with exact restored/total counts.
+        // a4b3258 captures the exact prompt-minus-one SSD seed while the real
+        // prefill crosses it for standalone rotating/SWA cache topologies.
+        // This preserves the existing fail-closed post-hoc rederive guard
+        // while allowing a later compatible turn to restore the longer seed.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "64b6ca2433c12af2dd6955f317366f0f9626e061"
+            revision: "a4b3258c0190d4c0868c6808a9944d42596969f6"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
