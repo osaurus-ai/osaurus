@@ -81,7 +81,7 @@ public final class OnboardingService: ObservableObject {
         let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let legacyRoot = supportDir.appendingPathComponent("com.dinoki.osaurus", isDirectory: true)
 
-        let didDeleteAll = await Task.detached(priority: .userInitiated) { () -> Bool in
+        let wipeFailures = await Task.detached(priority: .userInitiated) { () -> [WipeFailure] in
             // helper to delete a directory with robust logging and error handling.
             //
             // Rename-then-delete: live services (server, SQLite WAL writers,
@@ -89,44 +89,54 @@ public final class OnboardingService: ObservableObject {
             // while `removeItem` walks the directory fails the whole removal
             // with "directory not empty". The rename is atomic, so writers
             // can't interrupt it; deleting the renamed tree then races nobody.
-            let deleteDir = { (url: URL, label: String) -> Bool in
+            let deleteDir = { (url: URL, label: String) -> WipeFailure? in
+                guard fm.fileExists(atPath: url.path) else {
+                    print("[OnboardingService] \(label.capitalized) directory did not exist: \(url.path)")
+                    return nil
+                }
+                let doomed = url.deletingLastPathComponent()
+                    .appendingPathComponent(
+                        ".\(url.lastPathComponent).factory-reset-\(ProcessInfo.processInfo.processIdentifier)",
+                        isDirectory: true
+                    )
                 do {
-                    if fm.fileExists(atPath: url.path) {
-                        let doomed = url.deletingLastPathComponent()
-                            .appendingPathComponent(
-                                ".\(url.lastPathComponent).factory-reset-\(ProcessInfo.processInfo.processIdentifier)",
-                                isDirectory: true
-                            )
-                        try fm.moveItem(at: url, to: doomed)
-                        try fm.removeItem(at: doomed)
-                        print("[OnboardingService] Deleted \(label) directory: \(url.path)")
-                    } else {
-                        print("[OnboardingService] \(label.capitalized) directory did not exist: \(url.path)")
-                    }
-                    return true
+                    try fm.moveItem(at: url, to: doomed)
                 } catch CocoaError.fileNoSuchFile {
                     print("[OnboardingService] \(label.capitalized) directory did not exist: \(url.path)")
-                    return true
+                    return nil
                 } catch {
-                    print("[OnboardingService] Failed to delete \(label) directory at \(url.path): \(error)")
-                    return false
+                    // The tree is untouched at its original path — the worst
+                    // failure: user data (chats, memory, identity keys) survives
+                    // the reset. Must be surfaced to the user before quitting.
+                    print("[OnboardingService] Failed to move \(label) directory at \(url.path): \(error)")
+                    return WipeFailure(path: url.path, dataRemains: true)
+                }
+                do {
+                    try fm.removeItem(at: doomed)
+                    print("[OnboardingService] Deleted \(label) directory: \(url.path)")
+                    return nil
+                } catch {
+                    // The rename succeeded, so the app is factory-fresh, but the
+                    // old data still sits on disk under the hidden renamed path.
+                    print("[OnboardingService] Failed to delete \(label) directory at \(doomed.path): \(error)")
+                    return WipeFailure(path: doomed.path, dataRemains: false)
                 }
             }
 
-            let rootDeleted = deleteDir(root, "root")
-            let legacyDeleted = deleteDir(legacyRoot, "legacy")
-
-            return rootDeleted && legacyDeleted
+            return [deleteDir(root, "root"), deleteDir(legacyRoot, "legacy")].compactMap { $0 }
         }.value
 
-        // Terminate even when a directory failed to delete. Bailing out here
-        // would leave the "Resetting Osaurus" spinner up forever with no error
-        // path — the app must always exit once the wipe has been attempted,
-        // since the Keychain and UserDefaults are already gone by this point.
-        if !didDeleteAll {
+        // Terminate even when a directory failed to delete — bailing out here
+        // would leave the "Resetting Osaurus" spinner up forever, and the
+        // Keychain and UserDefaults are already gone by this point. But a
+        // failed wipe means user data (chats, memory, identity keys) survives
+        // a reset the user believes completed, so block on a critical alert
+        // telling them exactly what was left behind before quitting.
+        if !wipeFailures.isEmpty {
             print(
-                "[OnboardingService] Factory reset incomplete: some data could not be wiped; terminating anyway."
+                "[OnboardingService] Factory reset incomplete: some data could not be wiped; notifying user."
             )
+            presentWipeFailureAlert(wipeFailures)
         } else {
             print("[OnboardingService] Factory reset complete. Terminating via normal flow...")
         }
@@ -141,6 +151,51 @@ public final class OnboardingService: ObservableObject {
                 NSApplication.shared.terminate(nil)
             }
         }
+    }
+
+    /// A directory the factory reset could not fully remove.
+    /// `dataRemains == true` means the tree is untouched at its original
+    /// path; `false` means it was renamed out of the way (the app resets
+    /// cleanly) but the orphaned copy still occupies disk at `path`.
+    private struct WipeFailure: Sendable {
+        let path: String
+        let dataRemains: Bool
+    }
+
+    /// Blocking critical alert shown when the wipe left data behind, so the
+    /// user knows the reset was incomplete before the app quits. Runs modal
+    /// on the main actor; termination proceeds once dismissed.
+    private func presentWipeFailureAlert(_ failures: [WipeFailure]) {
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = L("Factory Reset Incomplete")
+
+        var lines: [String] = []
+        for failure in failures {
+            if failure.dataRemains {
+                lines.append(
+                    String(
+                        format: L("Your data could not be removed and remains at:\n%@"),
+                        failure.path
+                    )
+                )
+            } else {
+                lines.append(
+                    String(
+                        format: L(
+                            "The app was reset, but a copy of your old data could not be deleted and remains at:\n%@"
+                        ),
+                        failure.path
+                    )
+                )
+            }
+        }
+        lines.append(
+            L("Osaurus will now quit. You can delete the listed items manually in Finder.")
+        )
+        alert.informativeText = lines.joined(separator: "\n\n")
+        alert.addButton(withTitle: L("Quit"))
+        alert.runModal()
     }
 
     /// Clear all known Osaurus Keychain services
