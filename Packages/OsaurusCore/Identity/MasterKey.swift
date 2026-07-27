@@ -174,6 +174,21 @@ public struct MasterKey: Sendable {
         }
     }
 
+    /// Awaitable variant of `warmExistsCacheInBackground` for launch paths
+    /// that are about to enter a cold `existsCached()` caller on the main
+    /// actor (e.g. `RemoteProviderManager.shared`'s init). Awaiting the seed
+    /// guarantees that caller finds the memo populated instead of racing the
+    /// fire-and-forget warm and paying the synchronous keychain probe on the
+    /// main thread.
+    public static func seedExistsCacheOffMainActor() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global(qos: .utility).async {
+                _ = existsCached()
+                continuation.resume()
+            }
+        }
+    }
+
     private static func refreshExistsInBackground() {
         let now = Date()
         existsCacheLock.lock()
