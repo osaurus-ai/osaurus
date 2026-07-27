@@ -183501,36 +183501,36 @@
         }
       }
     },
-    "The app was reset, but a copy of your old data could not be deleted and remains at:\n%@" : {
+    "The app was reset, but a copy of your old data could not be deleted and remains at:" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Die App wurde zurückgesetzt, aber eine Kopie Ihrer alten Daten konnte nicht gelöscht werden und verbleibt unter:\n%@"
+            "value" : "Die App wurde zurückgesetzt, aber eine Kopie Ihrer alten Daten konnte nicht gelöscht werden und verbleibt unter:"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "앱은 초기화되었지만 이전 데이터의 사본을 삭제할 수 없어 다음 위치에 남아 있습니다:\n%@"
+            "value" : "앱은 초기화되었지만 이전 데이터의 사본을 삭제할 수 없어 다음 위치에 남아 있습니다:"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Приложение было сброшено, но копию ваших старых данных не удалось удалить, она осталась по пути:\n%@"
+            "value" : "Приложение было сброшено, но копию ваших старых данных не удалось удалить, она осталась по пути:"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "应用已重置，但无法删除旧数据的副本，其仍保留在：\n%@"
+            "value" : "应用已重置，但无法删除旧数据的副本，其仍保留在："
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "App 已重置，但無法刪除舊資料的副本，其仍保留於：\n%@"
+            "value" : "App 已重置，但無法刪除舊資料的副本，其仍保留於："
           }
         }
       }
@@ -208456,36 +208456,36 @@
         }
       }
     },
-    "Your data could not be removed and remains at:\n%@" : {
+    "Your data could not be removed and remains at:" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ihre Daten konnten nicht entfernt werden und verbleiben unter:\n%@"
+            "value" : "Ihre Daten konnten nicht entfernt werden und verbleiben unter:"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "데이터를 제거할 수 없어 다음 위치에 남아 있습니다:\n%@"
+            "value" : "데이터를 제거할 수 없어 다음 위치에 남아 있습니다:"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Не удалось удалить ваши данные, они остались по пути:\n%@"
+            "value" : "Не удалось удалить ваши данные, они остались по пути:"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "无法移除您的数据，数据仍保留在：\n%@"
+            "value" : "无法移除您的数据，数据仍保留在："
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "無法移除您的資料，資料仍保留於：\n%@"
+            "value" : "無法移除您的資料，資料仍保留於："
           }
         }
       }

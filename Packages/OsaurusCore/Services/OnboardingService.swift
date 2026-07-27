@@ -252,23 +252,19 @@ public final class OnboardingService: ObservableObject {
     }
 
     private static func wipeFailureMessage(for failures: [WipeFailure]) -> String {
+        // The path is joined outside the localized string: catalog keys must
+        // stay newline-free (the i18n CI check compares Swift literals with
+        // escapes preserved, so a `\n` in a key can never match the catalog).
         var lines: [String] = []
         for failure in failures {
             if failure.dataRemains {
                 lines.append(
-                    String(
-                        format: L("Your data could not be removed and remains at:\n%@"),
-                        failure.path
-                    )
+                    L("Your data could not be removed and remains at:") + "\n" + failure.path
                 )
             } else {
                 lines.append(
-                    String(
-                        format: L(
-                            "The app was reset, but a copy of your old data could not be deleted and remains at:\n%@"
-                        ),
-                        failure.path
-                    )
+                    L("The app was reset, but a copy of your old data could not be deleted and remains at:")
+                        + "\n" + failure.path
                 )
             }
         }
