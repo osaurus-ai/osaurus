@@ -91,10 +91,12 @@ let package = Package(
         // stable-checkpoint follow-up also refreshes the existing canonical
         // system/tool seed when a longer compatible disk entry serves a
         // growing turn, preventing tool-loop snapshots from evicting the next
-        // chat's warm-start checkpoint.
+        // chat's warm-start checkpoint. vmlx-swift#189 makes the solo
+        // TokenIterator path report an accepted disk/paged restore only after
+        // path-dependent rollback checks, with exact restored/total counts.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "d0e1f1a9ef3115b505056b679d6b01d6861f8daa"
+            revision: "64b6ca2433c12af2dd6955f317366f0f9626e061"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

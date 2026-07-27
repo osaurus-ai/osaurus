@@ -826,6 +826,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// shared prefix). nil → the runner sends `query` twice, the
         /// minimal prefix-sharing shape.
         public let followUpTurns: [String]?
+        /// Optional stable system/tool prefix included at the start of every
+        /// session. Cross-session cases use this to prove a processor-valid
+        /// prompt boundary rather than treating an arbitrary shared substring
+        /// inside a changed user message as reusable KV state.
+        public let systemPrompt: String?
         /// Per-turn decode cap. nil → 128 (cache proof needs turns, not prose).
         public let maxTokens: Int?
         /// Floor on `prefixHits` delta (full-attention reuse proof).
@@ -868,9 +873,27 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// memory-growth gate — monotonic growth back toward the model's
         /// on-disk size fails here even when every reuse floor passes.
         public let maxFootprintGrowthMb: Double?
+        /// One-based turn numbers that begin a fresh chat/session. History is
+        /// cleared and a new session id is used before each listed turn.
+        public let startNewSessionBeforeTurns: [Int]?
+        /// Minimum structured cache-restore count on at least one turn after
+        /// the first. The count comes from vMLX prefill progress, not logs.
+        public let minCacheRestoredTokens: Int?
+        /// Require at least one post-first turn to restore a nonzero prefix
+        /// while still prefilling a nonzero divergent tail.
+        public let requirePartialCacheRestore: Bool?
+        /// Require the satisfying restore event to identify the disk tier.
+        public let requireDiskCacheRestore: Bool?
+        /// Require every completed turn to produce non-empty visible content.
+        public let requireNonEmptyVisibleTurns: Bool?
+        /// Require no turn to end with an unclosed reasoning channel.
+        public let requireClosedReasoning: Bool?
+        /// Optional per-turn TTFT ceiling, applied to every measured turn.
+        public let maxTtftMs: Double?
 
         public init(
             followUpTurns: [String]? = nil,
+            systemPrompt: String? = nil,
             maxTokens: Int? = nil,
             minKvPrefixHitsDelta: Int? = nil,
             minSsmCompanionHitsDelta: Int? = nil,
@@ -881,9 +904,17 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             thinkingPerTurn: [Bool]? = nil,
             requireDiskL2EvidenceOnHybrid: Bool? = nil,
             gatePeakFootprintToResolvedBudget: Bool? = nil,
-            maxFootprintGrowthMb: Double? = nil
+            maxFootprintGrowthMb: Double? = nil,
+            startNewSessionBeforeTurns: [Int]? = nil,
+            minCacheRestoredTokens: Int? = nil,
+            requirePartialCacheRestore: Bool? = nil,
+            requireDiskCacheRestore: Bool? = nil,
+            requireNonEmptyVisibleTurns: Bool? = nil,
+            requireClosedReasoning: Bool? = nil,
+            maxTtftMs: Double? = nil
         ) {
             self.followUpTurns = followUpTurns
+            self.systemPrompt = systemPrompt
             self.maxTokens = maxTokens
             self.minKvPrefixHitsDelta = minKvPrefixHitsDelta
             self.minSsmCompanionHitsDelta = minSsmCompanionHitsDelta
@@ -895,6 +926,13 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.requireDiskL2EvidenceOnHybrid = requireDiskL2EvidenceOnHybrid
             self.gatePeakFootprintToResolvedBudget = gatePeakFootprintToResolvedBudget
             self.maxFootprintGrowthMb = maxFootprintGrowthMb
+            self.startNewSessionBeforeTurns = startNewSessionBeforeTurns
+            self.minCacheRestoredTokens = minCacheRestoredTokens
+            self.requirePartialCacheRestore = requirePartialCacheRestore
+            self.requireDiskCacheRestore = requireDiskCacheRestore
+            self.requireNonEmptyVisibleTurns = requireNonEmptyVisibleTurns
+            self.requireClosedReasoning = requireClosedReasoning
+            self.maxTtftMs = maxTtftMs
         }
     }
 
@@ -1338,6 +1376,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     public struct AgentLoopExpectations: Sendable, Codable {
         /// Loop budget (model steps). nil → evaluator default (10).
         public let maxIterations: Int?
+        /// Scoreable ceiling on model steps actually consumed. Unlike
+        /// `maxIterations` (a safety budget), this fails needless post-success
+        /// continuation and repeated-final loops.
+        public let maxModelSteps: Int?
         /// Tool names that MUST be called somewhere in the run.
         public let mustCallTools: [String]?
         /// At least ONE of these tool names must be called (OR semantics).
@@ -1453,6 +1495,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
 
         public init(
             maxIterations: Int? = nil,
+            maxModelSteps: Int? = nil,
             mustCallTools: [String]? = nil,
             mustCallAnyTools: [String]? = nil,
             mustNotCallTools: [String]? = nil,
@@ -1482,6 +1525,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             cancelAfterToolCalls: Int? = nil
         ) {
             self.maxIterations = maxIterations
+            self.maxModelSteps = maxModelSteps
             self.mustCallTools = mustCallTools
             self.mustCallAnyTools = mustCallAnyTools
             self.mustNotCallTools = mustNotCallTools

@@ -1,0 +1,331 @@
+{
+  "cases" : [
+    {
+      "context" : {
+        "cumulativeInputTokens" : 109182,
+        "firstStepInputTokens" : 6374,
+        "history" : {
+          "assistantTokens" : 545,
+          "toolResultCount" : 15,
+          "toolResultTokens" : 1048,
+          "userTokens" : 132
+        },
+        "modelSteps" : 15,
+        "peakStepInputTokens" : 8154,
+        "sections" : [
+          {
+            "cacheability" : "static",
+            "id" : "platform",
+            "label" : "Platform",
+            "tokens" : 16
+          },
+          {
+            "cacheability" : "static",
+            "id" : "persona",
+            "label" : "Persona",
+            "tokens" : 51
+          },
+          {
+            "cacheability" : "static",
+            "id" : "agentDB",
+            "label" : "Agent DB",
+            "tokens" : 872
+          },
+          {
+            "cacheability" : "static",
+            "id" : "modelFamilyGuidance",
+            "label" : "Model Family Guidance",
+            "tokens" : 208
+          },
+          {
+            "cacheability" : "static",
+            "id" : "grounding",
+            "label" : "Grounding",
+            "tokens" : 272
+          },
+          {
+            "cacheability" : "static",
+            "id" : "codeStyle",
+            "label" : "Code Style",
+            "tokens" : 126
+          },
+          {
+            "cacheability" : "static",
+            "id" : "riskAware",
+            "label" : "Risk-Aware Actions",
+            "tokens" : 119
+          },
+          {
+            "cacheability" : "static",
+            "id" : "agentLoopGuidance",
+            "label" : "Agent Loop",
+            "tokens" : 308
+          },
+          {
+            "cacheability" : "static",
+            "id" : "folderContext",
+            "label" : "Working Directory",
+            "tokens" : 401
+          },
+          {
+            "cacheability" : "static",
+            "id" : "capabilityNudge",
+            "label" : "Capability Discovery",
+            "tokens" : 156
+          },
+          {
+            "cacheability" : "dynamic",
+            "id" : "agentDBSchema",
+            "label" : "Agent DB Schema",
+            "tokens" : 45
+          }
+        ],
+        "staticPrefixHash" : "a08810dfdcb54616a7059a48c0d75c13",
+        "staticPrefixTokens" : 2529,
+        "systemPromptTokens" : 2574,
+        "toolSchemaTokens" : 3651,
+        "tools" : [
+          {
+            "name" : "todo",
+            "tokens" : 69
+          },
+          {
+            "name" : "complete",
+            "tokens" : 128
+          },
+          {
+            "name" : "clarify",
+            "tokens" : 196
+          },
+          {
+            "name" : "share_artifact",
+            "tokens" : 266
+          },
+          {
+            "name" : "capabilities_discover",
+            "tokens" : 252
+          },
+          {
+            "name" : "capabilities_load",
+            "tokens" : 218
+          },
+          {
+            "name" : "db_alter_table",
+            "tokens" : 139
+          },
+          {
+            "name" : "db_create_table",
+            "tokens" : 225
+          },
+          {
+            "name" : "db_define_view",
+            "tokens" : 107
+          },
+          {
+            "name" : "db_delete",
+            "tokens" : 75
+          },
+          {
+            "name" : "db_drop_view",
+            "tokens" : 58
+          },
+          {
+            "name" : "db_execute",
+            "tokens" : 103
+          },
+          {
+            "name" : "db_export",
+            "tokens" : 106
+          },
+          {
+            "name" : "db_import",
+            "tokens" : 159
+          },
+          {
+            "name" : "db_insert",
+            "tokens" : 91
+          },
+          {
+            "name" : "db_list_views",
+            "tokens" : 59
+          },
+          {
+            "name" : "db_migrate",
+            "tokens" : 84
+          },
+          {
+            "name" : "db_query",
+            "tokens" : 77
+          },
+          {
+            "name" : "db_restore",
+            "tokens" : 83
+          },
+          {
+            "name" : "db_run_view",
+            "tokens" : 58
+          },
+          {
+            "name" : "db_schema",
+            "tokens" : 58
+          },
+          {
+            "name" : "db_update",
+            "tokens" : 99
+          },
+          {
+            "name" : "db_upsert",
+            "tokens" : 123
+          },
+          {
+            "name" : "file_edit",
+            "tokens" : 105
+          },
+          {
+            "name" : "file_operation_history",
+            "tokens" : 72
+          },
+          {
+            "name" : "file_read",
+            "tokens" : 136
+          },
+          {
+            "name" : "file_search",
+            "tokens" : 105
+          },
+          {
+            "name" : "file_undo",
+            "tokens" : 68
+          },
+          {
+            "name" : "file_write",
+            "tokens" : 96
+          },
+          {
+            "name" : "get_current_time",
+            "tokens" : 54
+          },
+          {
+            "name" : "shell_run",
+            "tokens" : 70
+          },
+          {
+            "name" : "web_search",
+            "tokens" : 112
+          }
+        ]
+      },
+      "domain" : "agent_loop",
+      "id" : "frontier.kitchen-sink",
+      "label" : "frontier • one run: todo → files → db → shell verify → artifact → complete",
+      "latencyMs" : 48077.91304588318,
+      "modelId" : "OsaurusAI/OsaurusAI--gemma-4-26B-A4B-it-qat-JANG_4M",
+      "notes" : [
+        "note: Composite stress: every loop surface in one run with ordering pinned (todo before db work, artifact before complete) and a tool-call ceiling against aimless wandering. dbState pins persisted rows (COUNT 3, SUM 47); verify.sh pins the workspace outcome.",
+        "exit ok: finalResponse",
+        "mustCallTools ok: [todo,db_create_table,db_insert,db_query,shell_run,share_artifact,complete]",
+        "maxToolCalls ok: 15 ≤ 32",
+        "todo updated (≥1 checked box) before complete",
+        "mustCallToolsInOrder ok: [todo → db_insert → share_artifact → complete]",
+        "artifactShared ok: 1 qualifying call(s)",
+        "dbState ok (SELECT COUNT(*) FROM orders): 1 rows",
+        "dbState ok (SELECT SUM(amount) FROM orders): 1 rows",
+        "file 'summary.md' contains 'Total: 47'",
+        "command 'zsh verify.sh' exited 0 as expected",
+        "summary: toolCalls=[todo,file_read,file_read,file_read,file_read,db_create_table,db_insert,todo,db_query,file_write,todo,shell_run,share_artifact,todo,complete] iters=14 exit=finalResponse",
+        "final: Processed orders from `orders/order1.txt`, `order2.txt`, and `order3.txt`. Created an `orders` table, inserted the data, computed the total (47), wrote the total to `summary.md`, and verified the process with `zsh verify.sh`, which returned 'ok'."
+      ],
+      "outcome" : "passed",
+      "query" : "Complete this workflow, tracking every step with a todo list that you update as you go: (1) read the three order files under orders/; (2) in your agent database create a table orders with columns id (TEXT) and amount (INTEGER) and insert one row per order; (3) query the table to compute the total amount; (4) write summary.md containing the line 'Total: <total>'; (5) verify by running 'zsh verify.sh' and make sure it prints ok; (6) share summary.md with me as an artifact; (7) then mark the task complete with a short summary.",
+      "telemetry" : {
+        "completionTokens" : 0,
+        "diskL2HitsDelta" : 14,
+        "diskL2MissesDelta" : 22,
+        "diskL2StoresDelta" : 16,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "meanCpuPercent" : 120.68696452206282,
+        "modelSteps" : 15,
+        "peakContextTokens" : 8154,
+        "peakCpuPercent" : 171.5281040328917,
+        "peakPhysFootprintMb" : 27350.621963500977,
+        "promptTokensTotal" : 109182,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0,
+        "totalModelTokens" : 109182,
+        "ttftMs" : 329.97894287109375
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "complete"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "db_create_table"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "db_insert"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "db_query"
+        },
+        {
+          "calls" : 4,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_read"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_write"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "share_artifact"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "shell_run"
+        },
+        {
+          "calls" : 4,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "todo"
+        }
+      ]
+    }
+  ],
+  "environment" : {
+    "caseCount" : 1,
+    "catalogHash" : "af57d2a66e0ed5da",
+    "chip" : "Apple M5 Max",
+    "cpuCores" : 18,
+    "judge" : "self-judge",
+    "lowPowerMode" : false,
+    "osVersion" : "26.4.0",
+    "powerSource" : "AC",
+    "runModel" : "OsaurusAI/OsaurusAI--gemma-4-26B-A4B-it-qat-JANG_4M",
+    "thermalState" : "fair",
+    "totalRamMb" : 131072
+  },
+  "modelId" : "OsaurusAI/OsaurusAI--gemma-4-26B-A4B-it-qat-JANG_4M",
+  "startedAt" : "2026-07-27T09:31:21Z"
+}

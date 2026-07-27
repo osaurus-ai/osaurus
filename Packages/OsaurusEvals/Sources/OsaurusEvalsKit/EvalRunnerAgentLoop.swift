@@ -859,6 +859,14 @@ extension EvalRunner {
             pass: "exit ok: \(transcript.exit)",
             fail: "exit '\(transcript.exit)' not in allowed \(allowedExits)"
         )
+        if let ceiling = exp.maxModelSteps {
+            let actual = transcript.modelSteps ?? transcript.iterations
+            score.check(
+                actual <= ceiling,
+                pass: "maxModelSteps ok: \(actual) ≤ \(ceiling)",
+                fail: "model kept running for \(actual) steps after a \(ceiling)-step ceiling"
+            )
+        }
 
         let calledSet = Set(transcript.toolCalls.map(\.name))
         if let must = exp.mustCallTools {

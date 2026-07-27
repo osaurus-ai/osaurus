@@ -52,7 +52,9 @@ extension EvalRunner {
         let transcript = await CacheProofEvaluator.run(
             queries: queries,
             maxTokens: exp.maxTokens ?? 128,
-            thinkingPerTurn: exp.thinkingPerTurn
+            thinkingPerTurn: exp.thinkingPerTurn,
+            systemPrompt: exp.systemPrompt,
+            startNewSessionBeforeTurns: exp.startNewSessionBeforeTurns ?? []
         )
         let elapsedMs = Date().timeIntervalSince(started) * 1000
         let sample = sampler.stop()
@@ -87,6 +89,18 @@ extension EvalRunner {
                 + "ssmHits +\(transcript.ssmCompanionHitsDelta) · ssmReDerives +\(transcript.ssmCompanionReDerivesDelta) · "
                 + "diskHits +\(transcript.diskL2HitsDelta) · diskStores +\(transcript.diskL2StoresDelta)",
         ]
+        let turnMetrics = transcript.turnMetrics ?? []
+        for turn in turnMetrics {
+            notes.append(
+                "turn \(turn.turnNumber) session \(turn.sessionNumber): "
+                    + "restore=\(turn.cacheRestoredTokens.map(String.init) ?? "none") "
+                    + "remaining=\(turn.remainingPrefillTokens.map(String.init) ?? "unknown") "
+                    + "tier=\(turn.cacheRestoreDetail ?? "none") "
+                    + "ttft=\(turn.ttftMs.map { String(format: "%.0fms", $0) } ?? "unknown") "
+                    + "prefill=\(turn.prefillTokensPerSecond.map { String(format: "%.1f tok/s", $0) } ?? "unknown") "
+                    + "stop=\(turn.stopReason ?? "unknown")"
+            )
+        }
         var passed = true
         func check(_ ok: Bool, pass: String, fail: String) {
             if ok {
@@ -145,6 +159,80 @@ extension EvalRunner {
                 transcript.diskL2StoresDelta >= floor,
                 pass: "disk-L2 stores +\(transcript.diskL2StoresDelta) ≥ \(floor)",
                 fail: "disk-L2 stores +\(transcript.diskL2StoresDelta) below floor \(floor)"
+            )
+        }
+
+        let postFirstTurns = turnMetrics.filter { $0.turnNumber > 1 }
+        if let floor = exp.minCacheRestoredTokens {
+            let best = postFirstTurns.compactMap(\.cacheRestoredTokens).max() ?? 0
+            check(
+                best >= floor,
+                pass: "structured cache restore \(best) tokens ≥ \(floor)",
+                fail: "best structured cache restore \(best) tokens below floor \(floor)"
+            )
+        }
+        if exp.requirePartialCacheRestore == true {
+            let partial = postFirstTurns.first {
+                ($0.cacheRestoredTokens ?? 0) > 0
+                    && ($0.remainingPrefillTokens ?? 0) > 0
+            }
+            check(
+                partial != nil,
+                pass: "partial restore proved on turn \(partial?.turnNumber ?? 0): "
+                    + "\((partial?.cacheRestoredTokens ?? 0)) restored + "
+                    + "\((partial?.remainingPrefillTokens ?? 0)) freshly prefilled",
+                fail: "no post-first turn had both restored tokens and a nonzero remaining prefill"
+            )
+        }
+        if exp.requireDiskCacheRestore == true {
+            let disk = postFirstTurns.first {
+                ($0.cacheRestoredTokens ?? 0) > 0
+                    && $0.cacheRestoreDetail?.lowercased() == "disk"
+            }
+            check(
+                disk != nil,
+                pass: "structured disk restore proved on turn \(disk?.turnNumber ?? 0)",
+                fail: "no post-first cacheRestore event identified tier=disk"
+            )
+        }
+        if exp.requireNonEmptyVisibleTurns == true {
+            let empty = turnMetrics.filter { $0.visibleCharacterCount == 0 }
+            check(
+                turnMetrics.count == transcript.visibleTurns.count && empty.isEmpty,
+                pass: "every turn produced non-empty visible content",
+                fail: "turn metrics missing or empty visible output on turn(s) "
+                    + (empty.isEmpty
+                        ? "unknown"
+                        : empty.map { String($0.turnNumber) }.joined(separator: ","))
+            )
+        }
+        if exp.requireClosedReasoning == true {
+            let unclosed = turnMetrics.filter(\.unclosedReasoning)
+            check(
+                turnMetrics.count == transcript.visibleTurns.count && unclosed.isEmpty,
+                pass: "reasoning closed on every turn",
+                fail: "turn metrics missing or unclosed reasoning on turn(s) "
+                    + (unclosed.isEmpty
+                        ? "unknown"
+                        : unclosed.map { String($0.turnNumber) }.joined(separator: ","))
+            )
+        }
+        if let ceiling = exp.maxTtftMs {
+            let measured = turnMetrics.compactMap(\.ttftMs)
+            let over = turnMetrics.filter { ($0.ttftMs ?? 0) > ceiling }
+            check(
+                turnMetrics.count == transcript.visibleTurns.count
+                    && !turnMetrics.isEmpty
+                    && measured.count == turnMetrics.count
+                    && over.isEmpty,
+                pass: String(
+                    format: "all %d TTFT readings within %.0f ms",
+                    measured.count, ceiling
+                ),
+                fail: "missing/over-ceiling TTFT on turn(s) "
+                    + turnMetrics.filter {
+                        $0.ttftMs == nil || ($0.ttftMs ?? 0) > ceiling
+                    }.map { String($0.turnNumber) }.joined(separator: ",")
             )
         }
 

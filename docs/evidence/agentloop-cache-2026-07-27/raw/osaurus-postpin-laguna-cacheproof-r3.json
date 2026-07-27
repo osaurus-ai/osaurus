@@ -1,0 +1,62 @@
+{
+  "cases" : [
+    {
+      "domain" : "cache_proof",
+      "id" : "cache_proof.cross-session-partial-disk-restore",
+      "label" : "cache proof • a new chat restores the longest valid partial prefix from SSD",
+      "latencyMs" : 1094.1016674041748,
+      "modelId" : "dealign.ai/Laguna-S-2.1-JANG_4M-CRACK",
+      "notes" : [
+        "trials: 3/3 passed",
+        "note: True disk-only new-chat proof. Both chats share the same long system/tool boundary but use different user instructions. This is a processor-valid prefix checkpoint, unlike an arbitrary matching substring inside a changed user message. Run with OSAURUS_EVALS_KV_REGIME=disk-l2 and OSAURUS_EVALS_PAGED_KV=off. The score requires vMLX's structured cacheRestore event to report tier=disk, at least 128 restored tokens, and a nonzero remaining prefill. Aggregate hit counters or UI color alone cannot pass this row.",
+        "turns: 2 · topology: full-attention",
+        "deltas: kvHits +0 · kvMisses +0 · ssmHits +0 · ssmReDerives +0 · diskHits +1 · diskStores +9",
+        "turn 1 session 1: restore=none remaining=unknown tier=none ttft=890ms prefill=431.1 tok/s stop=stop",
+        "turn 2 session 2: restore=240 remaining=22 tier=disk ttft=549ms prefill=1041.3 tok/s stop=stop",
+        "ok: disk-L2 hits +1 ≥ 1",
+        "ok: disk-L2 stores +9 ≥ 1",
+        "ok: structured cache restore 240 tokens ≥ 128",
+        "ok: partial restore proved on turn 2: 240 restored + 22 freshly prefetched",
+        "ok: structured disk restore proved on turn 2",
+        "ok: every turn produced non-empty visible content",
+        "ok: reasoning closed on every turn",
+        "note: requireDiskL2EvidenceOnHybrid skipped — non-hybrid topology",
+        "footprint after each turn (MB): 9285 → 9100",
+        "decode tok/s: 26.9"
+      ],
+      "outcome" : "passed",
+      "query" : "Reply with exactly the words ALPHA REFERENCE STORED.",
+      "telemetry" : {
+        "decodeTokensPerSecond" : 26.8777,
+        "diskL2HitsDelta" : 1,
+        "diskL2MissesDelta" : 11,
+        "diskL2StoresDelta" : 9,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "meanCpuPercent" : 70.27655196387596,
+        "peakCpuPercent" : 122.38038194385679,
+        "peakPhysFootprintMb" : 9554.376991271973,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0
+      },
+      "trials" : 3,
+      "trialsPassed" : 3
+    }
+  ],
+  "environment" : {
+    "caseCount" : 1,
+    "catalogHash" : "309b9fe021ebfb80",
+    "chip" : "Apple M5 Max",
+    "cpuCores" : 18,
+    "judge" : "self-judge",
+    "kvRegime" : "disk-l2",
+    "lowPowerMode" : false,
+    "osVersion" : "26.4.0",
+    "powerSource" : "AC",
+    "runModel" : "dealign.ai/Laguna-S-2.1-JANG_4M-CRACK",
+    "thermalState" : "fair",
+    "totalRamMb" : 131072
+  },
+  "modelId" : "dealign.ai/Laguna-S-2.1-JANG_4M-CRACK",
+  "startedAt" : "2026-07-27T09:25:40Z"
+}
