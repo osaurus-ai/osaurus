@@ -55,7 +55,17 @@ public final class OnboardingService: ObservableObject {
         // each store. Deleting the root directory below removes the catalog
         // but NOT the WKWebsiteDataStore data under ~/Library — without this
         // step the authenticated stores would be orphaned on disk forever.
-        await BrowserSessionManager.shared.resetAllSessions()
+        // Bounded: `resetAllSessions` awaits WKWebsiteDataStore.removeData
+        // completions that WebKit is not guaranteed to deliver (stale profile
+        // UUIDs, wedged networking XPC). An unbounded await here pins the
+        // "Resetting Osaurus" spinner forever; on timeout we proceed — the
+        // root-directory deletion below removes the catalog regardless.
+        let browserWipeCompleted = await runWithDeadline(seconds: 10) {
+            await BrowserSessionManager.shared.resetAllSessions()
+        }
+        if !browserWipeCompleted {
+            print("[OnboardingService] Browser session wipe timed out; continuing reset.")
+        }
 
         // wipe all Osaurus items from the Keychain
         wipeKeychain()
