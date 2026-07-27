@@ -2,9 +2,10 @@
 
 Status: `PARTIAL` — the Gemma 4 prompt-shape defect has an owning-layer fix,
 focused tests, real OsaurusEval passes on Ornith, Gemma 4, and Bonsai, and the
-current Osaurus UI-cache fix has passed the isolated Release-app lifecycle. The
-remaining gates are current-main integration and PR CI. The
-vMLX fix is squash-merged at
+current Osaurus UI-cache fix has passed the exact rebased isolated Release-app
+lifecycle. The branch is rebased on current `osaurus/main` at `929f8c25`; the
+remaining gate is fresh PR CI on the rebased head. The vMLX fix is
+squash-merged at
 `5aa5f160725187d327449628709d472add127541`, Osaurus is pinned to that exact
 commit in every workspace/package lockfile, and the Gemma runtime row was
 repeated on the merged pin.
@@ -128,6 +129,13 @@ is retained outside the repository.
   immediate-Send regression, prompt-shape signals, required rewarm,
   model-switch, Stop, shutdown, RAM-gate, runtime-residency, completed-run, and
   pin-policy coverage.
+- Post-rebase focused regression gate: 48/48 passed from the current workspace
+  source. It covers first-preview initialization, immediate prompt-shape
+  reconciliation, every Stop/reset/handshake row, every queued-send
+  persistence/privacy/regeneration row, and the exact merged-vMLX source
+  contract. The result bundle reports 48 tests, 0 failures, and 0 skips:
+  `/private/tmp/osaurus-settings-warmup-tests-derived-20260727/Logs/Test/`
+  `Test-OsaurusCoreTests-2026.07.27_16-05-25--0700.xcresult`.
 - vMLX `gemma4ProcessorPreservesTextOnlySystemContent`: 1/1 passed with the
   Xcode Swift toolchain after preparing the package Metal library.
 - All related vMLX chat-message processor tests: 17/17 passed before the
@@ -195,6 +203,44 @@ Report:
 - With the eval's 1 GB disk limit, the run also logged one KV entry and its
   companion entry being evicted, reducing the cache from 1.229 GB to
   0.994 GB.
+
+### Full CacheProof family matrix — one Bonsai finalization row remains red
+
+These runs used the current PR source with paged RAM cache off and typed disk
+L2 on. The JSON reports remain outside Git; PR reporting must preserve the
+exact pass/fail count rather than flattening a family to “cache works.”
+
+| Exact model | Cases | Decode tok/s mean (min-max) | Peak physical footprint | Disk L2 hits / stores |
+| --- | ---: | ---: | ---: | ---: |
+| `Ornith-1.0-9B-JANG_4M` | 11/11 pass | 31.66 (24.37-37.55) | 2,793 MB | +18 / +35 |
+| `Bonsai-27b-Ternary-JANG-CRACK` | 10/11 pass | 14.52 (12.58-18.03) | 3,232 MB | +18 / +35 |
+| `OsaurusAI--gemma-4-E2B-it-8bit` | 11/11 pass | 41.81 (29.38-45.76) | 6,422 MB | +18 / +116 |
+| `dealign.ai/Qwen3.6-27B-JANG_4M-CRACK` | 11/11 pass | 12.51 (8.64-15.96) | 16,322 MB | +18 / +35 |
+| `dealign.ai/Laguna-XS-2.1-JANG_4M-CRACK` | 11/11 pass | 33.09 (30.71-34.59) | 15,183 MB | +18 / +103 |
+
+The Bonsai failure is
+`cache_proof.cross-session-partial-disk-restore`. Its cache assertions passed:
+turn 2 restored 298/319 tokens from disk, freshly prefilling the remaining 21;
+disk L2 moved +1 hit/+3 stores; and the hybrid SSM companion moved +1 hit.
+The row failed because turn 1 consumed its 512-token budget entirely in
+reasoning, stopped for length, and produced no visible final answer.
+
+A fresh-root three-trial replay made that distinction repeatable: 0/3 trials
+passed, but every trial again restored 298/319 tokens from disk with 21
+remaining and the companion hit. Both turns length-stopped with empty visible
+output and unclosed reasoning. This is evidence of a Bonsai
+reasoning/finalization defect, not evidence of an SSD reset.
+
+The clean-main control reached the same result before this PR. A detached
+`osaurus/main` checkout at `235027b2`, using its exact pinned vMLX revision
+`d2f6f98265fabe2f017a9eb4af237b962154228a`, failed the row 0/3. The
+representative trial restored 295/316 tokens from disk with 21 remaining,
+moved disk L2 by +1 hit/+3 stores and the hybrid companion by +1 hit, then
+failed because its cold first turn stopped for length with reasoning but no
+visible answer. The report is retained outside Git at
+`/private/tmp/osaurus-main-cacheproof-bonsai-partial-repeat3-20260727.json`.
+This classifies the red Bonsai finalization row as pre-existing; the current
+settings-warmup branch neither caused it nor converts it into a cache pass.
 
 ## Isolated Release UI findings — FAIL before current UI-cache fix
 
@@ -264,9 +310,84 @@ Binary:
 - Current live trace artifacts remain outside Git:
   `/tmp/osaurus-prefill-debug-pass-revision-d-ui-20260727.log` and
   `/tmp/osaurus-prefill-debug.log`.
+- The exact corrected source was also exercised with the detected
+  `qwen3-0.6b-8bit` bundle in the same isolated Release app. With paged RAM off
+  and disk L2 on, Settings revision E was saved through the visible UI and the
+  immediate user turn restored 2,138/2,254 tokens from disk, prefilling only
+  116. The model answered `44 + 19 = 63.`, the visible terminal metrics were
+  TTFT 0.17 s / 312.2 tok/s, Stop disappeared, and input unlocked. The exact
+  trace is retained outside Git at
+  `/tmp/osaurus-prefill-debug-pass-revision-e-qwen-latest-20260727.log`.
+
+### Exact post-rebase Release lifecycle
+
+- The exact Release binary was built from Osaurus head
+  `7306a4017e51d37839f2afe2a3c0e8b96462ea18`, rebased onto
+  `osaurus/main` `929f8c25`, with vMLX pinned to
+  `5aa5f160725187d327449628709d472add127541`.
+- Binary SHA-256:
+  `6c1a9992d70598b7ba499382e424eb436e9dc0463ab9991cf1a24cfbca24bc25`.
+  The proof used bundle identifier
+  `com.dinoki.osaurus.settingswarmupproof20260727` and isolated root
+  `/private/tmp/osaurus-settings-warmup-live-root-20260727-2`.
+- With paged RAM off and block-disk L2 on, Settings -> Chat changed the system
+  prompt to revision G and the user immediately returned to chat and sent
+  `What is 58 plus 27?`. The revision-G warm-up established the new
+  2,447-token system prefix. The real user turn restored 2,447/2,558 tokens
+  from disk, prefilling only 111; prompt throughput was 9,269.6 tok/s and disk
+  L2 hits increased 0 -> 1.
+- The visible answer was `85`, TTFT was 0.44 s, decode was 68.1 tok/s, no
+  reasoning or protocol debris appeared, Stop disappeared, and input
+  unlocked.
+- The same-chat follow-up `What is 31 plus 12?` restored 2,565/2,676 tokens
+  from disk, prefilling 111; prompt throughput was 9,486.2 tok/s and disk L2
+  hits increased 2 -> 3. It answered `43` at TTFT 0.44 s / 69.1 tok/s and
+  finalized normally.
+- After quitting only the isolated proof app and relaunching the exact binary
+  against the same root, startup restored 2,446/2,447 system tokens from disk
+  with zero disk misses. The first new-chat turn visibly showed
+  `Prefill 2447/2558`, restored those same 2,447 tokens from disk, and
+  prefilling only 111 increased disk hits 1 -> 2.
+- The post-restart answer was `91` for `What is 72 plus 19?`, with TTFT
+  0.45 s / 63.4 tok/s. Stop disappeared and input unlocked.
+- The current trace remains outside Git at
+  `/tmp/osaurus-prefill-debug-rebased-revision-g-with-restart-20260727.log`.
 
 ## Remaining proof
 
-- Integrate onto current `osaurus/main` and repeat affected tests if the
-  rebase changes relevant files.
-- Run Osaurus PR CI and only then close this row.
+- PR CI run `30304013300` passed `test-evals`, `test-cli`, `test-packages`,
+  `test-statspack`, `swiftlint`, and `shellcheck`, but `test-core` failed.
+  This row therefore remains open.
+- One failure was a stale source-contract assertion:
+  `ImageGenerationBridgeContractTests` still expects vMLX revision
+  `d2f6f98265fabe2f017a9eb4af237b962154228a`, while the four actual package
+  pins and the runtime-policy source tripwire use the merged, live-proven
+  revision `5aa5f160725187d327449628709d472add127541`. The assertion now names the
+  exact merged revision and passes.
+- `reset_incomingWarmupSurvivesCancelledPreviousHandshake` timed out in the
+  cold CI run. It now passes in both workspace test-plan executions together
+  with every other Stop/reset/handshake row.
+- Two queued-send persistence tests observed a nil session ID in the same run.
+  Focused local execution reproduced those failures and additional privacy
+  rollback failures. Source tracing found a real shared cause: the first
+  preview composition has no older prompt shape to invalidate, but the new
+  required-rewarm path treated that nil-to-initial transition like a Settings
+  edit. An immediate first send was therefore moved into an unnecessary async
+  handshake instead of synchronously appending and persisting its user turn.
+  This also introduced an extra cancelled required-warmup task into the reset
+  lifecycle test. Initial preview priming must update the estimate without
+  creating required rewarm work; only a change from one established preview
+  shape to another is evidence that a warmed prefix became stale.
+- After that owning-layer correction, the original nil-session failures and
+  cancelled-handshake timeout passed. Additional local-only queue-suite rows
+  then exposed an independent test isolation defect: tests that inject a
+  `ChatEngineProtocol` double did not activate the existing
+  `forceChatEngineRouteForTests` seam. On a developer machine whose detected
+  picker currently resolves an image model first, regeneration bypassed the
+  injected cancellation double and produced `Enter a prompt to generate an
+  image.` This is not a production route change; all injected-engine rows are
+  made deterministic by selecting the existing test-only chat-engine route
+  explicitly. All queued-send rows now pass in both workspace test-plan
+  executions.
+- Push the rebased, live-proven head and require a fresh PR CI run. Close this
+  row only after every required check passes on that exact head.

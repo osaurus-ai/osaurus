@@ -96,6 +96,17 @@ struct ChatWarmupControllerPromptShapeTests {
 @MainActor
 struct ChatSessionImmediatePromptShapeTests {
 
+    @Test("first preview primes a baseline without creating a required rewarm")
+    func firstPreviewIsInitializationNotRevision() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            session.agentId = Agent.defaultId
+
+            #expect(!session.reconcilePromptShapeBeforeSendForTests())
+            #expect(!session.warmupController.needsPreSendHandshake)
+        }
+    }
+
     @Test("Settings Save then immediate Send sees the newest rendered prompt before debounce")
     func immediateSendReconcilesCurrentPrompt() async throws {
         try await ChatHistoryTestStorage.run {

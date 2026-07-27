@@ -2744,12 +2744,23 @@ final class ChatSession: ObservableObject {
     /// open chat windows, saturated the cooperative pool (see #1324).
     @discardableResult
     private func reconcilePromptShapeBeforeSend() -> Bool {
-        if recomputePreviewContext() {
-            invalidateWarmupAfterContextShapeChange()
+        let hadPromptShapeBaseline = cachedPreviewContext != nil
+        guard recomputePreviewContext() else { return false }
+
+        // Nil -> first preview is initialization, not evidence that a warmed
+        // prompt became stale. Treating it as a required shape rewarm moves an
+        // immediate first send into an unnecessary async handshake (and delays
+        // its crash-safe persistence). A real Settings/agent/tool change has
+        // an established old preview — preserved by the source observers —
+        // and still takes the required-rewarm path below.
+        guard hadPromptShapeBaseline else {
             objectWillChange.send()
-            return true
+            return false
         }
-        return false
+
+        invalidateWarmupAfterContextShapeChange()
+        objectWillChange.send()
+        return true
     }
 
     private func refreshPreviewEstimate() {
