@@ -59,6 +59,11 @@ enum ModelCompatibilityDiagnostics {
         let hasVisionConfig: Bool
         let hasJANGConfig: Bool
         let hasJANGTQSidecar: Bool
+        let configWeightFormat: String?
+        let configFormat: String?
+        let jangWeightFormat: String?
+        let jangFormat: String?
+        let jangProfile: String?
         let tokenizer: TokenizerSummary?
         let generation: GenerationSummary?
         let toolCalling: ToolCallingSummary?
@@ -111,6 +116,9 @@ enum ModelCompatibilityDiagnostics {
             case incompleteBundle
             case unsupportedHunyuanDense
             case unsupportedLongCat
+            case unsupportedDeepSeekOCR
+            case missingJANGTQSidecar
+            case mislabeledJANGTQSidecar
             case notMLXFormat
             case partialDFlashSpeculativeDecoding
         }
@@ -370,6 +378,13 @@ enum ModelCompatibilityDiagnostics {
                 detail: localBundle.detail ?? L("The local directory does not have the required MLX files.")
             )
         case .available:
+            if let sidecarStatus = jangtqSidecarStatus(
+                modelId: modelId,
+                modelName: modelName,
+                config: config
+            ) {
+                return sidecarStatus
+            }
             // A bundle can have every required file yet still be a non-MLX
             // (e.g. PyTorch / transformers) safetensors export co-mingled in a
             // shared model store — it passes discovery but vmlx cannot load it.
@@ -572,11 +587,200 @@ enum ModelCompatibilityDiagnostics {
                 detail:
                     L(
                         "LongCat local bundles require native vmlx architecture, processor, cache, and media-path support before Osaurus should offer them as runnable."
+                )
+            )
+        }
+
+        let hasOCRArchitecture = architectures.contains { $0.contains("ocr") }
+        let hasOCRName = names.contains { $0.contains("ocr") }
+        let isDeepSeekOCR =
+            modelTypes.contains(where: { $0.contains("deepseek") && $0.contains("ocr") })
+            || architectures.contains(where: { $0.contains("deepseek") && $0.contains("ocr") })
+            || names.contains(where: { $0.contains("deepseekocr") || $0.contains("deepseek-ocr") })
+            || names.contains(where: { $0.contains("unlimited") && $0.contains("ocr") })
+            || (modelTypes.contains("deepseek_vl_v2") && (hasOCRArchitecture || hasOCRName))
+        if isDeepSeekOCR {
+            return RuntimeStatus(
+                kind: .blocked,
+                reason: .unsupportedDeepSeekOCR,
+                title: L("Unsupported OCR model family"),
+                detail:
+                    L(
+                        "DeepSeek-OCR / Unlimited-OCR bundles require a dedicated OCR/VL processor and runtime contract that this Osaurus build does not ship. Use a supported MLX text or vision model instead."
                     )
             )
         }
 
         return nil
+    }
+
+    private static func jangtqSidecarStatus(
+        modelId: String,
+        modelName: String,
+        config: ConfigSummary?
+    ) -> RuntimeStatus? {
+        guard let config else { return nil }
+        let jangWeightFormat = normalizedJANGRoutingValueIfPresent(config.jangWeightFormat)
+        let configWeightFormat = normalizedJANGRoutingValueIfPresent(config.configWeightFormat)
+        let jangFormat = normalizedJANGRoutingValueIfPresent(config.jangFormat)
+        let configFormat = normalizedJANGRoutingValueIfPresent(config.configFormat)
+        let profile = normalizedJANGRoutingValueIfPresent(config.jangProfile)
+        let modelDeclaresJANGTQ = [modelId, modelName].contains { value in
+            value.lowercased().contains("jangtq")
+        }
+        // Keep top-level JANGTQ stamps aligned with the host preflight. Profile,
+        // config.json, and name fallbacks can prove a missing sidecar, but an
+        // existing sidecar plus jang_config.json must still have a real stamp.
+        let jangConfigValidatorDeclaresJANGTQ =
+            declaresJANGTQWeightFormat(jangWeightFormat)
+            || declaresJANGTQFormat(jangFormat)
+        let jangConfigDeclaresJANGTQ =
+            jangConfigValidatorDeclaresJANGTQ
+            || profile?.lowercased().contains("jangtq") == true
+        let fallbackDeclaresJANGTQ =
+            declaresJANGTQWeightFormat(configWeightFormat)
+            || declaresJANGTQFormat(configFormat)
+            || modelDeclaresJANGTQ
+        let declaresJANGTQ = jangConfigDeclaresJANGTQ || fallbackDeclaresJANGTQ
+        guard config.hasJANGConfig || config.hasJANGTQSidecar || declaresJANGTQ else { return nil }
+
+        if declaresJANGTQ, !config.hasJANGTQSidecar {
+            let declaration = jangRoutingDeclaration(
+                config: config,
+                modelId: modelId,
+                modelName: modelName
+            )
+            return RuntimeStatus(
+                kind: .blocked,
+                reason: .missingJANGTQSidecar,
+                title: L("JANGTQ sidecar missing"),
+                detail: String(
+                    format:
+                        L(
+                            "%@ declares JANGTQ via %@, but the required jangtq_runtime.safetensors sidecar is missing. Re-download the full model or obtain the sidecar from the publisher."
+                        ),
+                    modelName,
+                    declaration
+                )
+            )
+        }
+
+        if config.hasJANGTQSidecar, config.hasJANGConfig, !jangConfigValidatorDeclaresJANGTQ {
+            let declaration = jangRoutingDeclaration(
+                config: config,
+                modelId: modelId,
+                modelName: modelName
+            )
+            return RuntimeStatus(
+                kind: .blocked,
+                reason: .mislabeledJANGTQSidecar,
+                title: L("JANGTQ sidecar label mismatch"),
+                detail: String(
+                    format:
+                        L(
+                            "%@ ships jangtq_runtime.safetensors, but jang_config.json declares %@. Re-download from a corrected source or set a JANGTQ routing stamp (weight_format \"mxtq\" or format \"jangtq\") before loading."
+                        ),
+                    modelName,
+                    declaration
+                )
+            )
+        }
+
+        if config.hasJANGTQSidecar, !declaresJANGTQ {
+            let declaration = jangRoutingDeclaration(
+                config: config,
+                modelId: modelId,
+                modelName: modelName
+            )
+            return RuntimeStatus(
+                kind: .blocked,
+                reason: .mislabeledJANGTQSidecar,
+                title: L("JANGTQ sidecar label mismatch"),
+                detail: String(
+                    format:
+                        L(
+                            "%@ ships jangtq_runtime.safetensors, but routing metadata declares %@. Re-download from a corrected source or set a JANGTQ routing stamp (weight_format \"mxtq\", format \"jangtq\", profile \"jangtq\", or a JANGTQ model name) before loading."
+                        ),
+                    modelName,
+                    declaration
+                )
+            )
+        }
+
+        return nil
+    }
+
+    private static func declaresJANGTQWeightFormat(_ value: String?) -> Bool {
+        guard let value else { return false }
+        let normalized = value.lowercased()
+        return normalized == "mxtq" || normalized.contains("jangtq")
+    }
+
+    private static func declaresJANGTQFormat(_ value: String?) -> Bool {
+        guard let value else { return false }
+        let normalized = value.lowercased()
+        return normalized == "mxtq" || normalized.contains("jangtq")
+    }
+
+    private static func jangRoutingDeclaration(
+        config: ConfigSummary,
+        modelId: String,
+        modelName: String
+    ) -> String {
+        var fields: [String] = []
+        appendJANGRoutingField(
+            &fields,
+            source: "jang_config.json",
+            key: "weight_format",
+            value: config.jangWeightFormat
+        )
+        appendJANGRoutingField(
+            &fields,
+            source: "config.json",
+            key: "weight_format",
+            value: config.configWeightFormat
+        )
+        appendJANGRoutingField(
+            &fields,
+            source: "jang_config.json",
+            key: "format",
+            value: config.jangFormat
+        )
+        appendJANGRoutingField(
+            &fields,
+            source: "config.json",
+            key: "format",
+            value: config.configFormat
+        )
+        appendJANGRoutingField(
+            &fields,
+            source: "jang_config.json",
+            key: "profile",
+            value: config.jangProfile
+        )
+        if modelId.lowercased().contains("jangtq") {
+            fields.append(L("model id contains \"jangtq\""))
+        }
+        if modelName.lowercased().contains("jangtq") {
+            fields.append(L("model name contains \"jangtq\""))
+        }
+        return fields.isEmpty ? L("no JANGTQ routing stamp") : fields.joined(separator: ", ")
+    }
+
+    private static func appendJANGRoutingField(
+        _ fields: inout [String],
+        source: String,
+        key: String,
+        value: String?
+    ) {
+        guard let value = normalizedJANGRoutingValueIfPresent(value) else { return }
+        fields.append(String(format: L("%@ %@ \"%@\""), source, key, value))
+    }
+
+    private static func normalizedJANGRoutingValueIfPresent(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func isDFlashStyleBundle(
@@ -708,6 +912,36 @@ enum ModelCompatibilityDiagnostics {
                 value: config.hasJANGTQSidecar ? "present" : "absent"
             )
         )
+        appendOptional(
+            &rows,
+            source: "jang_config.json",
+            key: "weight_format",
+            value: config.jangWeightFormat
+        )
+        appendOptional(
+            &rows,
+            source: "config.json",
+            key: "weight_format",
+            value: config.configWeightFormat
+        )
+        appendOptional(
+            &rows,
+            source: "jang_config.json",
+            key: "format",
+            value: config.jangFormat
+        )
+        appendOptional(
+            &rows,
+            source: "config.json",
+            key: "format",
+            value: config.configFormat
+        )
+        appendOptional(
+            &rows,
+            source: "jang_config.json",
+            key: "profile",
+            value: config.jangProfile
+        )
 
         if let tokenizer = config.tokenizer {
             appendOptional(
@@ -830,6 +1064,7 @@ enum ModelCompatibilityDiagnostics {
         let architectures =
             (object["architectures"] as? [Any])?
             .compactMap { $0 as? String } ?? []
+        let jangRouting = readJANGRoutingSummary(at: bundleURL)
         return ConfigSummary(
             modelType: stringValue(object["model_type"]),
             textModelType: stringValue(textConfig?["model_type"]),
@@ -841,9 +1076,27 @@ enum ModelCompatibilityDiagnostics {
             hasJANGTQSidecar: FileManager.default.fileExists(
                 atPath: bundleURL.appendingPathComponent("jangtq_runtime.safetensors").path
             ),
+            configWeightFormat: stringValue(object["weight_format"]),
+            configFormat: stringValue(object["format"]),
+            jangWeightFormat: jangRouting.weightFormat,
+            jangFormat: jangRouting.format,
+            jangProfile: jangRouting.profile,
             tokenizer: readTokenizerSummary(at: bundleURL),
             generation: readGenerationSummary(at: bundleURL),
             toolCalling: readToolCallingSummary(at: bundleURL)
+        )
+    }
+
+    private static func readJANGRoutingSummary(
+        at bundleURL: URL
+    ) -> (weightFormat: String?, format: String?, profile: String?) {
+        let url = bundleURL.appendingPathComponent("jang_config.json")
+        guard let object = readJSONObject(at: url) else { return (nil, nil, nil) }
+        let quantization = object["quantization"] as? [String: Any]
+        return (
+            stringValue(object["weight_format"]),
+            stringValue(object["format"]),
+            stringValue(quantization?["profile"]) ?? stringValue(object["profile"])
         )
     }
 

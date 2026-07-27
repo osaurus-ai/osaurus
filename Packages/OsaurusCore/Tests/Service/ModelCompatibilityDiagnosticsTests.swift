@@ -22,6 +22,7 @@ struct ModelCompatibilityDiagnosticsTests {
         tokenizerConfig: String? = nil,
         generationConfig: String? = nil,
         jangConfig: String? = nil,
+        jangtqSidecar: Bool = false,
         tokenizer: Bool = true,
         weights: Bool = true
     ) {
@@ -48,6 +49,9 @@ struct ModelCompatibilityDiagnosticsTests {
         }
         if weights {
             try? Data("w".utf8).write(to: dir.appendingPathComponent("model.safetensors"))
+        }
+        if jangtqSidecar {
+            try? Data("sidecar".utf8).write(to: dir.appendingPathComponent("jangtq_runtime.safetensors"))
         }
     }
 
@@ -349,6 +353,408 @@ struct ModelCompatibilityDiagnosticsTests {
         #expect(report.runtime.reason == .unsupportedLongCat)
         #expect(report.preflight.status == .unsupported)
         #expect(report.preflight.blocksRuntimeLoad)
+    }
+
+    @Test func deepSeekOCRConfig_reportsUnsupportedFamily() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config:
+                #"{"model_type":"deepseek_ocr","architectures":["DeepseekOCRForConditionalGeneration"]}"#
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "deepseek-ai/DeepSeek-OCR",
+            modelName: "DeepSeek OCR",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.runtime.kind == .blocked)
+        #expect(report.runtime.reason == .unsupportedDeepSeekOCR)
+        #expect(report.preflight.status == .unsupported)
+        #expect(report.preflight.blocksRuntimeLoad)
+        #expect(report.toolUse.status == .failed)
+    }
+
+    @Test func unlimitedOCRName_reportsUnsupportedFamily() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"qwen2_vl","architectures":["Qwen2VLForConditionalGeneration"]}"#
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "osaurus-ai/Unlimited-OCR-Qwen",
+            modelName: "Unlimited OCR Qwen",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.runtime.kind == .blocked)
+        #expect(report.runtime.reason == .unsupportedDeepSeekOCR)
+        #expect(report.preflight.status == .unsupported)
+    }
+
+    @Test func deepSeekVLV2OCRName_reportsUnsupportedOCRFamily() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"deepseek_vl_v2","architectures":["AutoModelForVision2Seq"]}"#
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "local/custom-ocr-import",
+            modelName: "Custom OCR Import",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.runtime.kind == .blocked)
+        #expect(report.runtime.reason == .unsupportedDeepSeekOCR)
+        #expect(report.preflight.status == .unsupported)
+        #expect(report.preflight.blocksRuntimeLoad)
+    }
+
+    @Test func deepSeekVLV2WithoutOCRHint_doesNotReportUnsupportedOCRFamily() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"deepseek_vl_v2","architectures":["AutoModelForVision2Seq"]}"#
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "deepseek-ai/deepseek-vl2",
+            modelName: "DeepSeek VL2",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.runtime.reason == .localBundleReady)
+        #expect(report.preflight.status == .supported)
+    }
+
+    @Test func jangtqMxtqMissingSidecar_reportsRuntimeBlocker() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"minimax_m2"}"#,
+            jangConfig: #"{"weight_format":"mxtq"}"#
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "OsaurusAI/MiniMax-M2.7-JANGTQ",
+            modelName: "MiniMax M2.7 JANGTQ",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.runtime.kind == .blocked)
+        #expect(report.runtime.reason == .missingJANGTQSidecar)
+        #expect(report.preflight.status == .unsupported)
+        #expect(report.preflight.blocksRuntimeLoad)
+        #expect(report.toolUse.status == .failed)
+        #expect(
+            report.evidence.contains {
+                $0.source == "jang_config.json" && $0.key == "weight_format" && $0.value == "mxtq"
+            }
+        )
+        #expect(
+            report.evidence.contains {
+                $0.source == "jangtq_runtime.safetensors" && $0.key == "file" && $0.value == "absent"
+            }
+        )
+    }
+
+    @Test func jangtqFormatMissingSidecar_reportsRuntimeBlocker() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"step3"}"#,
+            jangConfig: #"{"format":"jangtq"}"#
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "JANGQ-AI/Step-3.7-Flash-JANGTQ_K",
+            modelName: "Step 3.7 Flash JANGTQ_K",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.runtime.kind == .blocked)
+        #expect(report.runtime.reason == .missingJANGTQSidecar)
+        #expect(report.preflight.status == .unsupported)
+        #expect(report.preflight.blocksRuntimeLoad)
+        #expect(
+            report.evidence.contains {
+                $0.source == "jang_config.json" && $0.key == "format" && $0.value == "jangtq"
+            }
+        )
+    }
+
+    @Test func jangtqVariantWeightFormatMissingSidecar_reportsRuntimeBlocker() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"deepseek_v4"}"#,
+            jangConfig: #"{"weight_format":"jangtq4"}"#
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "OsaurusAI/DeepSeek-V4-Flash",
+            modelName: "DeepSeek V4 Flash",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.runtime.kind == .blocked)
+        #expect(report.runtime.reason == .missingJANGTQSidecar)
+        #expect(report.preflight.status == .unsupported)
+        #expect(report.preflight.blocksRuntimeLoad)
+    }
+
+    @Test func jangtqMxtqWithSidecar_allowsRuntimePreflight() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"minimax_m2"}"#,
+            jangConfig: #"{"weight_format":"mxtq"}"#,
+            jangtqSidecar: true
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "OsaurusAI/MiniMax-M2.7-JANGTQ",
+            modelName: "MiniMax M2.7 JANGTQ",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.runtime.reason == .localBundleReady)
+        #expect(report.preflight.status == .supported)
+        #expect(
+            report.evidence.contains {
+                $0.source == "jang_config.json" && $0.key == "weight_format" && $0.value == "mxtq"
+            }
+        )
+    }
+
+    @Test func jangtqNameWithSidecarWithoutJANGConfig_allowsRuntimePreflight() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"deepseek_v4"}"#,
+            jangtqSidecar: true
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "OsaurusAI/DeepSeek-V4-Flash-JANGTQ2",
+            modelName: "DeepSeek V4 Flash JANGTQ2",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.runtime.reason == .localBundleReady)
+        #expect(report.preflight.status == .supported)
+    }
+
+    @Test func jangtqSidecarWithoutRoutingStamp_reportsMislabeledBlocker() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"deepseek_v4"}"#,
+            jangtqSidecar: true
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "OsaurusAI/DeepSeek-V4-Flash",
+            modelName: "DeepSeek V4 Flash",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.runtime.kind == .blocked)
+        #expect(report.runtime.reason == .mislabeledJANGTQSidecar)
+        #expect(report.preflight.status == .unsupported)
+        #expect(report.preflight.blocksRuntimeLoad)
+    }
+
+    @Test func jangtqSidecarWithBf16Stamp_reportsMislabeledBlocker() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"deepseek_v4"}"#,
+            jangConfig: #"{"weight_format":"bf16","quantization":{"profile":"JANGTQ_1L"}}"#,
+            jangtqSidecar: true
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "OsaurusAI/DeepSeek-V4-Flash-JANGTQ2",
+            modelName: "DeepSeek V4 Flash JANGTQ2",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.runtime.kind == .blocked)
+        #expect(report.runtime.reason == .mislabeledJANGTQSidecar)
+        #expect(report.preflight.status == .unsupported)
+        #expect(report.toolUse.status == .failed)
+    }
+
+    @Test func jangtqProfileMissingSidecar_reportsRuntimeBlocker() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"deepseek_v4"}"#,
+            jangConfig: #"{"quantization":{"profile":"JANGTQ_1L"}}"#
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "OsaurusAI/DeepSeek-V4-Flash",
+            modelName: "DeepSeek V4 Flash",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.runtime.kind == .blocked)
+        #expect(report.runtime.reason == .missingJANGTQSidecar)
+        #expect(report.preflight.status == .unsupported)
+        #expect(report.preflight.blocksRuntimeLoad)
+        #expect(
+            report.evidence.contains {
+                $0.source == "jang_config.json" && $0.key == "profile" && $0.value == "JANGTQ_1L"
+            }
+        )
+    }
+
+    @Test func jangtqFormatStampWithSidecar_allowsRuntimePreflight() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"step3"}"#,
+            jangConfig: #"{"format":"jangtq"}"#,
+            jangtqSidecar: true
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "JANGQ-AI/Step-3.7-Flash-JANGTQ_K",
+            modelName: "Step 3.7 Flash JANGTQ_K",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.runtime.reason == .localBundleReady)
+        #expect(report.preflight.status == .supported)
+        #expect(
+            report.evidence.contains {
+                $0.source == "jang_config.json" && $0.key == "format" && $0.value == "jangtq"
+            }
+        )
+    }
+
+    @Test func jangtqVariantFormatStampWithSidecar_allowsRuntimePreflight() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"deepseek_v4"}"#,
+            jangConfig: #"{"format":"jangtq2"}"#,
+            jangtqSidecar: true
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "OsaurusAI/DeepSeek-V4-Flash",
+            modelName: "DeepSeek V4 Flash",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.runtime.reason == .localBundleReady)
+        #expect(report.preflight.status == .supported)
+        #expect(
+            report.evidence.contains {
+                $0.source == "jang_config.json" && $0.key == "format" && $0.value == "jangtq2"
+            }
+        )
+    }
+
+    @Test func jangtqConfigWeightFormatMissingSidecar_reportsRuntimeBlocker() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"deepseek_v4","weight_format":"mxtq"}"#
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "OsaurusAI/DeepSeek-V4-Flash",
+            modelName: "DeepSeek V4 Flash",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.runtime.kind == .blocked)
+        #expect(report.runtime.reason == .missingJANGTQSidecar)
+        #expect(report.preflight.status == .unsupported)
+        #expect(report.preflight.blocksRuntimeLoad)
+        #expect(
+            report.evidence.contains {
+                $0.source == "config.json" && $0.key == "weight_format" && $0.value == "mxtq"
+            }
+        )
+    }
+
+    @Test func jangtqConfigWeightFormatWithSidecarWithoutJANGConfig_allowsRuntimePreflight() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"deepseek_v4","weight_format":"mxtq"}"#,
+            jangtqSidecar: true
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "OsaurusAI/DeepSeek-V4-Flash",
+            modelName: "DeepSeek V4 Flash",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.runtime.reason == .localBundleReady)
+        #expect(report.preflight.status == .supported)
+        #expect(
+            report.evidence.contains {
+                $0.source == "config.json" && $0.key == "weight_format" && $0.value == "mxtq"
+            }
+        )
     }
 
     @Test func dflashConfig_reportsPartialAndBlocksRuntimeLoad() {
