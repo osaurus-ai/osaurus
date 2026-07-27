@@ -149,9 +149,14 @@ public enum GlobalProxySettings {
             new: OsaurusPaths.serverConfigFile(),
             legacy: "ServerConfiguration.json"
         )
+        // Only the mtime is needed for cache validation. `attributesOfItem`
+        // builds the full attribute dictionary, whose owner/group-name fields
+        // resolve through an opendirectoryd XPC round-trip (getgrgid_r) that
+        // has hung the main thread at launch. `resourceValues` stats the file
+        // without that lookup.
         let modified =
-            (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate]
-            as? Date
+            (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+            .contentModificationDate
         return configCacheBox.withLock { state in
             if let state, state.path == url.path, state.modified == modified {
                 return state.configuration

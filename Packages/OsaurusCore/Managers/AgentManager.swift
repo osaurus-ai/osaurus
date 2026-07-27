@@ -1130,7 +1130,15 @@ extension AgentManager {
         agent.defaultModel = model
         agent.updatedAt = Date()
         AgentStore.save(agent)
-        refresh()
+        // Update in place instead of refresh(): a full AgentStore.loadAll
+        // re-enumerates and re-decodes every agent file on the main thread,
+        // which has hung on the model-picker click that lands here. The saved
+        // agent is the only record that changed.
+        if let index = agents.firstIndex(where: { $0.id == agent.id }) {
+            agents[index] = agent
+        } else {
+            refresh()
+        }
     }
 
 }
