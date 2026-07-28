@@ -28,6 +28,9 @@ struct SlackAuthIdentity: Codable, Equatable, Sendable {
 struct SlackConversation: Codable, Equatable, Sendable, Identifiable {
     let id: String
     let name: String?
+    /// For direct messages (`is_im`), the Slack user id of the person on the
+    /// other side. DMs have no `name`, so this is the only way to label them.
+    let user: String?
     let isChannel: Bool
     let isGroup: Bool
     let isIM: Bool
@@ -39,6 +42,7 @@ struct SlackConversation: Codable, Equatable, Sendable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id
         case name
+        case user
         case isChannel = "is_channel"
         case isGroup = "is_group"
         case isIM = "is_im"
@@ -51,6 +55,7 @@ struct SlackConversation: Codable, Equatable, Sendable, Identifiable {
     init(
         id: String,
         name: String? = nil,
+        user: String? = nil,
         isChannel: Bool = false,
         isGroup: Bool = false,
         isIM: Bool = false,
@@ -61,6 +66,7 @@ struct SlackConversation: Codable, Equatable, Sendable, Identifiable {
     ) {
         self.id = id
         self.name = name
+        self.user = user
         self.isChannel = isChannel
         self.isGroup = isGroup
         self.isIM = isIM
@@ -75,6 +81,7 @@ struct SlackConversation: Codable, Equatable, Sendable, Identifiable {
         self.init(
             id: try container.decode(String.self, forKey: .id),
             name: try container.decodeIfPresent(String.self, forKey: .name),
+            user: try container.decodeIfPresent(String.self, forKey: .user),
             isChannel: try container.decodeIfPresent(Bool.self, forKey: .isChannel) ?? false,
             isGroup: try container.decodeIfPresent(Bool.self, forKey: .isGroup) ?? false,
             isIM: try container.decodeIfPresent(Bool.self, forKey: .isIM) ?? false,
@@ -88,6 +95,16 @@ struct SlackConversation: Codable, Equatable, Sendable, Identifiable {
     var displayName: String {
         guard let name, !name.isEmpty else { return id }
         return name
+    }
+
+    /// Human name resolved against a `[userId: displayName]` map so direct
+    /// messages read as the person's name instead of a raw `D…` id.
+    func resolvedDisplayName(userNames: [String: String]) -> String {
+        if let name, !name.isEmpty { return name }
+        if isIM, let user, let personName = userNames[user], !personName.isEmpty {
+            return personName
+        }
+        return id
     }
 
     var kind: String {

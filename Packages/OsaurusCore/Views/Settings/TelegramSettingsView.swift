@@ -44,6 +44,8 @@ struct TelegramSettingsView: View {
     @State private var webhookRegistered = false
     @State private var isDiscovering = false
     @State private var discovery: TelegramConnectionDiscovery?
+    @State private var chatSearch = ""
+    @State private var senderSearch = ""
     @State private var isVerifying = false
     @State private var activityRefreshToken = 0
     @State private var selectedSectionId: String = AgentChannelProviderSetupSection.connect.rawValue
@@ -303,7 +305,7 @@ struct TelegramSettingsView: View {
 
     private var stepAccessSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AgentChannelSectionHeading(L("Choose chats and senders"))
+            AgentChannelSectionHeading(L("Choose chats and people"))
 
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
@@ -327,7 +329,8 @@ struct TelegramSettingsView: View {
                 .disabled(isDiscovering || (!tokenSaved && !hasPendingToken))
             }
             if let discovery {
-                telegramDiscoverySelector(discovery)
+                telegramChatSelector(discovery)
+                telegramSenderSelector(discovery)
                 ForEach(discovery.warnings, id: \.self) { warning in
                     Label(warning, systemImage: "exclamationmark.triangle.fill")
                         .font(.system(size: 10))
@@ -336,7 +339,7 @@ struct TelegramSettingsView: View {
             }
 
             Text(
-                "Mark chats as Read so agents can see them, and mark people as Allow so their messages are handled. Manual ID fields are under Advanced.",
+                "Read lets agents see a chat, Write lets them post there, and Allow marks whose messages are handled. Manual ID fields are under Advanced.",
                 bundle: .module
             )
             .font(.system(size: 11))
@@ -345,78 +348,163 @@ struct TelegramSettingsView: View {
         }
     }
 
-    private func telegramDiscoverySelector(_ discovery: TelegramConnectionDiscovery) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Recent Chats", bundle: .module)
-                .font(.system(size: 11, weight: .semibold))
-            ForEach(discovery.chats, id: \.stableId) { chat in
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(chat.displayName)
-                            .font(.system(size: 11, weight: .medium))
-                        Text(chat.stableId)
-                            .font(.system(size: 9, design: .monospaced))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                    Spacer()
-                    telegramSelectionButton(
-                        L("Read"),
-                        selected: parseIds(readableChatIdsText).contains(chat.stableId)
-                    ) {
-                        readableChatIdsText = toggledIdText(readableChatIdsText, id: chat.stableId)
-                    }
-                    telegramSelectionButton(
-                        L("Write"),
-                        selected: parseIds(writableChatIdsText).contains(chat.stableId)
-                    ) {
-                        writableChatIdsText = toggledIdText(writableChatIdsText, id: chat.stableId)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-
-            Text("Recent Senders", bundle: .module)
-                .font(.system(size: 11, weight: .semibold))
-            ForEach(discovery.users, id: \.id) { user in
-                let userId = "\(user.id)"
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(user.displayName)
-                            .font(.system(size: 11, weight: .medium))
-                        Text(userId)
-                            .font(.system(size: 9, design: .monospaced))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                    Spacer()
-                    telegramSelectionButton(
-                        L("Allow"),
-                        selected: parseIds(senderAllowlistText).contains(userId)
-                    ) {
-                        senderAllowlistText = toggledIdText(senderAllowlistText, id: userId)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.cardBackground)
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.cardBorder, lineWidth: 1))
-        )
+    /// Identifiable wrappers so discovered chats/users fit the shared
+    /// selector list shaping.
+    private struct TelegramChatRow: Identifiable, Equatable {
+        let chat: TelegramChat
+        var id: String { chat.stableId }
     }
 
-    private func telegramSelectionButton(
-        _ title: String,
-        selected: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: selected ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(selected ? theme.accentColor : theme.secondaryText)
+    private struct TelegramSenderRow: Identifiable, Equatable {
+        let user: TelegramUser
+        var id: String { "\(user.id)" }
+    }
+
+    private func telegramChatSelector(_ discovery: TelegramConnectionDiscovery) -> some View {
+        let readableIds = Set(parseIds(readableChatIdsText))
+        let writableIds = Set(parseIds(writableChatIdsText))
+        let shaped = AgentChannelSelectorList.shape(
+            discovery.chats.map { TelegramChatRow(chat: $0) },
+            query: chatSearch,
+            fields: { [$0.chat.displayName, $0.id, $0.chat.type] },
+            state: {
+                AgentChannelReadWriteSelection(
+                    read: readableIds.contains($0.id),
+                    write: writableIds.contains($0.id)
+                )
+            },
+            isSelected: { $0.isSelected }
+        )
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Recent Chats", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+                Text("\(discovery.chats.count) found")
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+            }
+
+            AgentChannelSelectorSearchField(
+                placeholder: L("Search chats by name or ID"),
+                text: $chatSearch
+            )
+
+            AgentChannelSelectorListCard(
+                shaped: shaped,
+                emptyText: L("No matching Telegram chats")
+            ) { item in
+                telegramChatRow(item.entry.chat, access: item.state)
+            }
         }
-        .buttonStyle(.plain)
+    }
+
+    private func telegramChatRow(
+        _ chat: TelegramChat,
+        access: AgentChannelReadWriteSelection
+    ) -> some View {
+        let kind = AgentChannelRoomKind.from(providerKind: chat.type)
+        return HStack(spacing: 9) {
+            Image(systemName: kind.icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+                .frame(width: 20)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    Text(chat.displayName)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    if let badge = kind.badgeLabel {
+                        Text(badge)
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundColor(theme.tertiaryText)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(theme.tertiaryBackground))
+                    }
+                }
+                Text(chat.stableId)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+            }
+
+            Spacer(minLength: 6)
+
+            AgentChannelSelectorToggle(title: L("Read"), selected: access.read) {
+                readableChatIdsText = toggledIdText(readableChatIdsText, id: chat.stableId)
+            }
+            AgentChannelSelectorToggle(title: L("Write"), selected: access.write) {
+                writableChatIdsText = toggledIdText(writableChatIdsText, id: chat.stableId)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+    }
+
+    private func telegramSenderSelector(_ discovery: TelegramConnectionDiscovery) -> some View {
+        let allowedIds = Set(parseIds(senderAllowlistText))
+        let allowedCount = discovery.users.filter { allowedIds.contains("\($0.id)") }.count
+        let shaped = AgentChannelSelectorList.shape(
+            discovery.users.map { TelegramSenderRow(user: $0) },
+            query: senderSearch,
+            fields: { [$0.user.displayName, $0.id] },
+            state: { allowedIds.contains($0.id) },
+            isSelected: { $0 }
+        )
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Authorized Senders", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+                Text("\(allowedCount) allowed · \(discovery.users.count) people", bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+            }
+
+            AgentChannelSelectorSearchField(
+                placeholder: L("Search people by name or ID"),
+                text: $senderSearch
+            )
+
+            AgentChannelSelectorListCard(
+                shaped: shaped,
+                emptyText: L("No matching Telegram senders"),
+                maxHeight: 200
+            ) { item in
+                telegramSenderSelectionRow(item.entry.user, selected: item.state)
+            }
+        }
+    }
+
+    private func telegramSenderSelectionRow(_ user: TelegramUser, selected: Bool) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: "person.crop.circle.fill")
+                .font(.system(size: 15))
+                .foregroundColor(theme.secondaryText)
+                .frame(width: 20)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(user.displayName)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                Text("\(user.id)")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+            }
+
+            Spacer(minLength: 6)
+
+            AgentChannelSelectorToggle(title: L("Allow"), selected: selected) {
+                senderAllowlistText = toggledIdText(senderAllowlistText, id: "\(user.id)")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
     }
 
     private var sendingSection: some View {

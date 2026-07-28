@@ -97,16 +97,16 @@ enum AgentChannelProviderSetupSection: String, CaseIterable, Sendable {
     var title: String {
         switch self {
         case .connect: return L("Connect")
-        case .access: return L("Access")
-        case .behavior: return L("Replies & Sending")
-        case .verify: return L("Verify")
+        case .access: return L("Conversations")
+        case .behavior: return L("Agent Behavior")
+        case .verify: return L("Test")
         }
     }
 
     var icon: String {
         switch self {
         case .connect: return "link"
-        case .access: return "person.2"
+        case .access: return "bubble.left.and.bubble.right"
         case .behavior: return "arrow.triangle.branch"
         case .verify: return "checkmark.seal"
         }
@@ -116,7 +116,7 @@ enum AgentChannelProviderSetupSection: String, CaseIterable, Sendable {
         switch self {
         case .connect: return L("Bot and tokens")
         case .access: return L("Rooms and people")
-        case .behavior: return L("Who replies, who may send")
+        case .behavior: return L("Replies and sending")
         case .verify: return L("Live check")
         }
     }
@@ -151,7 +151,7 @@ enum AgentChannelAddCatalog {
     static func tagline(for kind: AgentChannelKind) -> String {
         switch kind {
         case .discord: return L("Guided setup — bot access to allowlisted servers and channels")
-        case .slack: return L("Guided setup — bot access to allowlisted workspace channels")
+        case .slack: return L("Guided setup — bot access to allowlisted channels and DMs")
         case .telegram: return L("Guided setup — bot access to allowlisted chats and groups")
         case .customHTTP: return L("Advanced — define your own HTTP JSON channel")
         }

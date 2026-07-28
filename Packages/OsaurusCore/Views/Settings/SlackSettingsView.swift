@@ -104,7 +104,7 @@ struct SlackSettingsView: View {
             icon: AgentChannelKind.slack.icon,
             gradient: AgentChannelKind.slack.brandGradient,
             title: AgentChannelKind.slack.displayName,
-            subtitle: L("Read and reply in allowlisted workspace channels"),
+            subtitle: L("Read and reply in allowlisted channels and DMs"),
             sections: AgentChannelProviderSetupSection.sections,
             selection: $selectedSectionId,
             sectionStatus: sectionStatus(for:),
@@ -432,7 +432,7 @@ struct SlackSettingsView: View {
 
     private var accessSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AgentChannelSectionHeading(L("Choose channels and people"))
+            AgentChannelSectionHeading(L("Choose conversations and people"))
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -633,15 +633,18 @@ struct SlackSettingsView: View {
     }
 
     /// Discovered conversations mapped into the shared routing editor's
-    /// room shape, member channels first.
+    /// room shape, member channels first. DMs resolve to the person's name.
     private var routableRooms: [AgentChannelRoutableRoom] {
         guard let discovery else { return [] }
+        let userNames = discoveredUserNames(discovery)
         return discovery.conversations
             .sorted { ($0.isMember ? 0 : 1, $0.name ?? $0.id) < ($1.isMember ? 0 : 1, $1.name ?? $1.id) }
             .map { conversation in
-                AgentChannelRoutableRoom(
+                let name = conversation.resolvedDisplayName(userNames: userNames)
+                let kind = AgentChannelRoomKind.from(providerKind: conversation.kind)
+                return AgentChannelRoutableRoom(
                     id: conversation.id,
-                    name: conversation.name.map { "#\($0)" } ?? conversation.id
+                    name: name != conversation.id && kind.usesHashPrefix ? "#\(name)" : name
                 )
             }
     }
@@ -743,13 +746,23 @@ struct SlackSettingsView: View {
         )
     }
 
+    /// Names for DM conversations, resolved from the discovered user list.
+    private func discoveredUserNames(_ discovery: SlackConnectionDiscovery) -> [String: String] {
+        var names: [String: String] = [:]
+        for user in discovery.users {
+            names[user.id] = user.displayName
+        }
+        return names
+    }
+
     private func channelSelector(_ discovery: SlackConnectionDiscovery) -> some View {
         let readableIds = Set(parseIds(readableChannelIdsText))
         let writableIds = Set(parseIds(writableChannelIdsText))
+        let userNames = discoveredUserNames(discovery)
         let shaped = AgentChannelSelectorList.shape(
             discovery.conversations,
             query: channelSearch,
-            fields: { [$0.displayName, $0.id, $0.kind] },
+            fields: { [$0.resolvedDisplayName(userNames: userNames), $0.id, $0.kind] },
             state: {
                 AgentChannelReadWriteSelection(
                     read: readableIds.contains($0.id),
@@ -760,7 +773,7 @@ struct SlackSettingsView: View {
         )
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Channels", bundle: .module)
+                Text("Conversations", bundle: .module)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 Spacer()
@@ -769,20 +782,28 @@ struct SlackSettingsView: View {
                     .foregroundColor(theme.tertiaryText)
             }
 
+            Text(
+                "Channels, private channels, and direct messages the bot can see. Read lets agents see a conversation, Write lets them post there.",
+                bundle: .module
+            )
+            .font(.system(size: 10))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
             AgentChannelSelectorSearchField(
-                placeholder: L("Search channels by name or ID"),
+                placeholder: L("Search conversations by name or ID"),
                 text: $channelSearch
             )
 
             AgentChannelSelectorListCard(
                 shaped: shaped,
-                emptyText: L("No matching Slack channels")
+                emptyText: L("No matching Slack conversations")
             ) { item in
-                channelSelectionRow(item.entry, access: item.state)
+                channelSelectionRow(item.entry, access: item.state, userNames: userNames)
             }
 
             Text(
-                "Read and Write are independent allowlists. Unjoined channels stay unavailable until the bot is invited.",
+                "Channels stay unavailable until the bot is invited; direct messages work right away.",
                 bundle: .module
             )
             .font(.system(size: 10))
@@ -793,27 +814,34 @@ struct SlackSettingsView: View {
 
     private func channelSelectionRow(
         _ channel: SlackConversation,
-        access: AgentChannelReadWriteSelection
+        access: AgentChannelReadWriteSelection,
+        userNames: [String: String]
     ) -> some View {
         let canUse = channel.isMember || channel.isIM || channel.isMPIM
         let readSelected = access.read
         let writeSelected = access.write
+        let kind = AgentChannelRoomKind.from(providerKind: channel.kind)
+        let name = channel.resolvedDisplayName(userNames: userNames)
+        let nameIsResolved = name != channel.id
         return HStack(spacing: 9) {
-            Image(systemName: channelIcon(channel))
+            Image(systemName: kind.icon)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(canUse ? theme.secondaryText : theme.tertiaryText)
                 .frame(width: 20)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
-                    Text(channel.displayName)
+                    Text(nameIsResolved && kind.usesHashPrefix ? "#\(name)" : name)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(canUse ? theme.primaryText : theme.tertiaryText)
                         .lineLimit(1)
-                    if channel.isPrivate {
-                        Image(systemName: "lock.fill")
-                            .font(.system(size: 8))
+                    if let badge = kind.badgeLabel {
+                        Text(badge)
+                            .font(.system(size: 8, weight: .semibold))
                             .foregroundColor(theme.tertiaryText)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(theme.tertiaryBackground))
                     }
                     if !canUse {
                         Text("Invite bot", bundle: .module)
@@ -931,13 +959,6 @@ struct SlackSettingsView: View {
                 && !user.isAppUser
                 && user.id != discovery.identity.userId
         }
-    }
-
-    private func channelIcon(_ channel: SlackConversation) -> String {
-        if channel.isIM { return "person.fill" }
-        if channel.isMPIM { return "person.2.fill" }
-        if channel.isPrivate { return "number.square.fill" }
-        return "number"
     }
 
     private func loadConfiguration() {

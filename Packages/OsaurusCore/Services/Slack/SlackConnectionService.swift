@@ -902,10 +902,21 @@ final class SlackConnectionService: @unchecked Sendable {
         }
 
         let (channels, truncated) = try await collectConversations(token: token)
+        // DMs have no `name`; resolve the person's display name so a `D…`
+        // conversation never surfaces as a bare id. Name resolution is
+        // best-effort — a users.list failure degrades to ids, not an error.
+        var userNames: [String: String] = [:]
+        if channels.contains(where: { $0.isIM && $0.user != nil }) {
+            if let (users, _) = try? await collectUsers(token: token) {
+                for user in users {
+                    userNames[user.id] = user.displayName
+                }
+            }
+        }
         var rows: [[String: Any]] = channels.map { channel in
             [
                 "id": channel.id,
-                "name": channel.displayName,
+                "name": channel.resolvedDisplayName(userNames: userNames),
                 "type": channel.kind,
                 "team_id": normalizedTeamId,
                 "is_private": channel.isPrivate,

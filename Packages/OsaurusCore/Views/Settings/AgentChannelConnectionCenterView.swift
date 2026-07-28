@@ -243,6 +243,7 @@ struct AgentChannelConnectionCenterView: View {
                     AgentChannelDestinationsSection(
                         bindings: destinationBindings,
                         storedBindingIds: storedDestinationIds,
+                        sendingPaused: !globalWritesEnabled,
                         onAdd: { activeSheet = .addDestination },
                         onEdit: { activeSheet = .editDestination($0) },
                         onChanged: { reloadConnections() }
@@ -654,7 +655,7 @@ struct AgentChannelConnectionCenterView: View {
     private static func nativeSubtitle(for kind: AgentChannelKind) -> String {
         switch kind {
         case .discord: return L("Bot access to allowlisted servers and channels")
-        case .slack: return L("Bot access to allowlisted workspace channels")
+        case .slack: return L("Bot access to allowlisted channels and DMs")
         case .telegram: return L("Bot access to allowlisted chats and groups")
         case .customHTTP: return L("JSON-defined HTTP channel")
         }
@@ -663,6 +664,8 @@ struct AgentChannelConnectionCenterView: View {
     private func handleSheetDismiss() {
         reloadConnections()
         refreshNativeBadges()
+        // Allowlists or credentials may have changed; re-resolve room names.
+        AgentChannelRoomDirectory.shared.invalidate()
     }
 
     /// Derive channel badges for native providers from saved-credential

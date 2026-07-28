@@ -2534,10 +2534,10 @@ struct AgentDetailView: View {
     /// the same rows across all agents (same store, same editor).
     private var channelNewMessagesSection: some View {
         AgentDetailSection(
-            title: L("New Messages"),
+            title: L("Messages It Can Start"),
             icon: "paperplane",
             subtitle: L(
-                "Destinations this agent can start messages in on its own — it asks you first unless you change a destination's setting."
+                "Where this agent may bring things up on its own — it asks you first unless you change a destination's setting."
             )
         ) {
             AgentChannelAgentDestinationsSection(agentId: agent.id)

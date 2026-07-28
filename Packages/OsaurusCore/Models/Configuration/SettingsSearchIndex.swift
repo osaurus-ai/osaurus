@@ -537,8 +537,8 @@ public enum SettingsSearchIndex {
         .init(
             id: "agentChannels.destinations",
             tab: .agentChannels,
-            section: "New Messages",
-            title: "New Messages",
+            section: "Messages Agents Can Start",
+            title: "Messages Agents Can Start",
             keywords: [
                 "proactive", "publish", "destination", "binding", "outbound",
                 "autonomous", "draft", "confirm", "agent destinations",

@@ -77,6 +77,15 @@ struct AgentChannelSetupFlowTests {
         #expect(AgentChannelProviderSetupSection.requiredSectionIds == ["connect", "access"])
     }
 
+    @Test func providerSetupStagesReadAsUserIntents() {
+        // The rail is the setup's table of contents; stages must read as
+        // what the user is doing, not as internal configuration areas.
+        #expect(AgentChannelProviderSetupSection.connect.title == "Connect")
+        #expect(AgentChannelProviderSetupSection.access.title == "Conversations")
+        #expect(AgentChannelProviderSetupSection.behavior.title == "Agent Behavior")
+        #expect(AgentChannelProviderSetupSection.verify.title == "Test")
+    }
+
     @Test func addCatalogListsGuidedProvidersFirstAndCustomLastAsAdvanced() {
         #expect(AgentChannelAddCatalog.choices == [.discord, .slack, .telegram, .customHTTP])
         #expect(AgentChannelAddCatalog.choices.last == .customHTTP)

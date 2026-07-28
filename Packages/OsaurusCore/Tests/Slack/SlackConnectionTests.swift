@@ -570,6 +570,36 @@ struct SlackConnectionTests {
         }
     }
 
+    @Test func listChannelsResolvesDirectMessageNamesFromUsers() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let fake = FakeSlackAPIClient()
+            // A DM has no name — only the peer user id. The row must surface
+            // the person's name (from users.list), never a bare D… id.
+            await fake.setConversationPages([
+                [
+                    SlackConversation(id: "C11111", name: "content", isChannel: true, isMember: true),
+                    SlackConversation(id: "D77777", user: "U55555", isIM: true),
+                ]
+            ])
+            let service = SlackConnectionService(client: fake, credentialStore: credentials)
+            try service.saveBotToken("xoxb-slack-bot-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C11111"]
+                )
+            )
+
+            let rows = try await service.listChannels(teamId: "T12345")
+
+            let dmRow = try #require(rows.first { $0["id"] as? String == "D77777" })
+            #expect(dmRow["name"] as? String == "Mike")
+            #expect(dmRow["type"] as? String == "im")
+            let channelRow = try #require(rows.first { $0["id"] as? String == "C11111" })
+            #expect(channelRow["name"] as? String == "content")
+        }
+    }
+
     @Test func discoveryLoadsWorkspaceChannelsAndUsersBeforeAllowlistsExist() async throws {
         try await withIsolatedSlackStores { credentials in
             let fake = FakeSlackAPIClient()

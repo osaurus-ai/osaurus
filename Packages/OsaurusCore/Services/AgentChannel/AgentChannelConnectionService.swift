@@ -210,7 +210,9 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 [
                     "id": row["id"] ?? "",
                     "name": row["name"] ?? "",
-                    "kind": "room",
+                    // Slack's real conversation type (channel / private_channel /
+                    // im / mpim) so pickers and rows can label DMs as DMs.
+                    "kind": row["type"] ?? "room",
                     "space_id": spaceId,
                     "connection_id": connection.id,
                     "read_allowed": row["read_allowed"] ?? false,
@@ -223,7 +225,9 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 [
                     "id": row["id"] ?? "",
                     "name": row["name"] ?? "",
-                    "kind": row["kind"] ?? "chat",
+                    // Telegram's chat type (private / group / supergroup /
+                    // channel) when known, else the generic kind.
+                    "kind": row["type"] ?? row["kind"] ?? "chat",
                     "space_id": spaceId,
                     "connection_id": connection.id,
                     "read_allowed": row["read_allowed"] ?? false,

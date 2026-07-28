@@ -557,13 +557,21 @@ struct DiscordSettingsView: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Channels", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 Spacer()
-                Text("\(channels.count) channels", bundle: .module)
+                Text("\(channels.count) found", bundle: .module)
                     .font(.system(size: 10))
                     .foregroundColor(theme.tertiaryText)
             }
+
+            Text(
+                "Read lets agents see a channel, Write lets them post there.",
+                bundle: .module
+            )
+            .font(.system(size: 10))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
 
             AgentChannelSelectorSearchField(
                 placeholder: L("Search channels by name or ID"),
@@ -621,7 +629,7 @@ struct DiscordSettingsView: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Authorized Senders", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                 Spacer()
                 Text("\(allowedCount) allowed · \(members.count) people", bundle: .module)

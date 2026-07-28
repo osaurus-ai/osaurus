@@ -8,13 +8,44 @@
 
 import SwiftUI
 
+// MARK: - Connection Presentation Helpers
+
+/// Provider identity for a destination's connection id: native providers
+/// map to their brand, custom connections resolve through the manager.
+@MainActor
+enum AgentChannelConnectionPresentation {
+    static func kind(for connectionId: String) -> AgentChannelKind {
+        switch connectionId.lowercased() {
+        case AgentChannelConnection.nativeDiscordConnectionId: return .discord
+        case AgentChannelConnection.nativeSlackConnectionId: return .slack
+        case AgentChannelConnection.nativeTelegramConnectionId: return .telegram
+        default:
+            return AgentChannelConnectionManager.shared.connection(id: connectionId)?.kind
+                ?? .customHTTP
+        }
+    }
+
+    static func displayName(for connectionId: String) -> String {
+        switch connectionId.lowercased() {
+        case AgentChannelConnection.nativeDiscordConnectionId: return "Discord"
+        case AgentChannelConnection.nativeSlackConnectionId: return "Slack"
+        case AgentChannelConnection.nativeTelegramConnectionId: return "Telegram"
+        default:
+            let connection = AgentChannelConnectionManager.shared.connection(id: connectionId)
+            guard let connection, !connection.name.isEmpty else { return connectionId }
+            return connection.name
+        }
+    }
+}
+
 // MARK: - Destinations Section
 
-/// "New Messages" section for the Channels pane: every destination agents
-/// can start messages in on their own, across all agents. Destinations
-/// appear here automatically once a channel has an assigned agent and
-/// write-allowlisted rooms; stored (customized) rows are shown alongside.
-/// Rows share the card + inline mode menu with the per-agent section.
+/// "Messages Agents Can Start" section for the Channels pane: every
+/// destination agents can post to on their own, across all agents.
+/// Destinations appear here automatically once a channel has an assigned
+/// agent and write-allowlisted rooms; stored (customized) rows are shown
+/// alongside. Rows share the card + inline mode menu with the per-agent
+/// section.
 struct AgentChannelDestinationsSection: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
@@ -22,6 +53,9 @@ struct AgentChannelDestinationsSection: View {
     let bindings: [AgentChannelBinding]
     /// Ids of the stored subset, to badge the rest as "Automatic".
     let storedBindingIds: Set<String>
+    /// Whether the global Sending switch is off, so the section can say
+    /// exactly which layer is blocking deliveries.
+    var sendingPaused = false
     let onAdd: () -> Void
     let onEdit: (AgentChannelBinding) -> Void
     let onChanged: () -> Void
@@ -31,7 +65,7 @@ struct AgentChannelDestinationsSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("New Messages", bundle: .module)
+                Text("Messages Agents Can Start", bundle: .module)
                     .textCase(.uppercase)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(theme.tertiaryText)
@@ -50,12 +84,26 @@ struct AgentChannelDestinationsSection: View {
             }
 
             Text(
-                "Replies are configured on each connected channel above. This section controls where agents may start messages of their own — and whether they ask you first.",
+                "Where agents may bring things up on their own — and whether they ask you first. Replies to incoming messages are configured on each channel above.",
                 bundle: .module
             )
             .font(.system(size: 11))
             .foregroundColor(theme.secondaryText)
             .fixedSize(horizontal: false, vertical: true)
+
+            if sendingPaused && !bindings.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "pause.circle.fill")
+                        .font(.system(size: 11))
+                    Text(
+                        "Sending is paused by the global switch below — nothing is delivered from these destinations until it's back on.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundColor(theme.warningColor)
+            }
 
             if bindings.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -63,7 +111,7 @@ struct AgentChannelDestinationsSection: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                     Text(
-                        "Destinations appear here automatically once a connected channel allows the bot to post in at least one room and an agent is chosen to reply there. The agent can then bring things up on its own — and always asks you before sending.",
+                        "Destinations appear here automatically once a connected channel lets the bot post somewhere and an agent is chosen to reply there. Agents always ask before sending unless you change a destination's setting.",
                         bundle: .module
                     )
                     .font(.system(size: 11))
@@ -93,12 +141,17 @@ struct AgentChannelDestinationsSection: View {
                     }
                 }
                 Text(
-                    "Automatic destinations come from your channel setup and always ask before sending. Each agent's destinations are also editable in its own settings, under Channels.",
+                    "Automatic destinations come from your channel setup and always ask first. Each agent's destinations are also editable in its own settings, under Channels.",
                     bundle: .module
                 )
                 .font(.system(size: 10))
                 .foregroundColor(theme.tertiaryText)
             }
+        }
+        .onAppear {
+            AgentChannelRoomDirectory.shared.prepare(
+                connectionIds: bindings.map(\.connectionId)
+            )
         }
         .settingsLandingAnchor("agentChannels.destinations")
     }
@@ -163,12 +216,17 @@ struct AgentChannelDestinationModeBadge: View {
 /// full editor. Used by both the per-agent section (agent settings →
 /// Automation) and the cross-agent section (Settings → Channels).
 ///
+/// Rows read name-first ("#content", a person's name) with provider
+/// branding; the raw provider route stays available as a tooltip and in
+/// the editor rather than leading the row.
+///
 /// Changing the mode persists immediately. On an AUTOMATIC (derived) row
 /// this materializes a stored binding for the same route, which then
 /// suppresses the derived one — operator customization always wins.
 /// Switching to Auto-send always interposes an explicit confirmation.
 struct AgentChannelDestinationRowCard: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var roomDirectory = AgentChannelRoomDirectory.shared
 
     let binding: AgentChannelBinding
     /// Derived from the channel setup rather than stored configuration.
@@ -185,17 +243,58 @@ struct AgentChannelDestinationRowCard: View {
         binding.enabled ? binding.outboundMode : .off
     }
 
+    private var connectionKind: AgentChannelKind {
+        AgentChannelConnectionPresentation.kind(for: binding.connectionId)
+    }
+
+    private var presentation: AgentChannelDestinationPresentation {
+        AgentChannelDestinationPresentation.make(
+            binding: binding,
+            descriptor: roomDirectory.descriptor(
+                connectionId: binding.connectionId,
+                roomId: binding.roomId
+            ),
+            providerName: AgentChannelConnectionPresentation.displayName(for: binding.connectionId),
+            agentName: showAgentName
+                ? (AgentManager.shared.agent(for: binding.agentId)?.name ?? L("Unknown agent"))
+                : nil
+        )
+    }
+
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "paperplane.circle.fill")
-                .font(.system(size: 18))
-                .foregroundColor(binding.isUsable ? theme.accentColor : theme.tertiaryText)
+        let presentation = self.presentation
+        return HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(
+                        LinearGradient(
+                            colors: connectionKind.brandGradient,
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                Image(systemName: connectionKind.icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white)
+            }
+            .frame(width: 32, height: 32)
+            .opacity(binding.isUsable ? 1 : 0.5)
 
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Text(binding.displayLabel)
+                HStack(spacing: 6) {
+                    Text(presentation.title)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                        .help(presentation.technicalRoute)
+                    if let typeBadge = presentation.typeBadge {
+                        Text(typeBadge)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(theme.tertiaryText)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(theme.tertiaryBackground))
+                    }
                     if isAutomatic {
                         Text("Automatic", bundle: .module)
                             .font(.system(size: 10, weight: .medium))
@@ -210,10 +309,11 @@ struct AgentChannelDestinationRowCard: View {
                             )
                     }
                 }
-                Text(subtitle)
-                    .font(.system(size: 10, design: .monospaced))
+                Text(presentation.subtitle)
+                    .font(.system(size: 10))
                     .foregroundColor(theme.secondaryText)
                     .lineLimit(1)
+                    .help(presentation.technicalRoute)
                 Text(effectiveMode.friendlyDescription)
                     .font(.system(size: 10))
                     .foregroundColor(
@@ -243,23 +343,18 @@ struct AgentChannelDestinationRowCard: View {
                         .stroke(theme.cardBorder, lineWidth: 1)
                 )
         )
+        // Window-level modal: a contained overlay would center inside this
+        // one row and clip/z-fight against sibling rows in the scroll view.
         .themedAlert(
             L("Let the agent post without asking?"),
             isPresented: $pendingAutonomousConfirm,
             message: L(
-                "The agent will send messages to this room on its own, without a confirmation from you. Room allowlists, rate limits, and the global Sending switch still apply."
+                "The agent will send messages to \(presentation.title) on its own, without a confirmation from you. Room allowlists, rate limits, and the global Sending switch still apply."
             ),
             primaryButton: .primary(L("Allow Auto-send")) { persist(mode: .autonomous) },
             secondaryButton: .cancel(L("Cancel")),
-            presentationStyle: .contained
+            presentationStyle: .window
         )
-    }
-
-    private var subtitle: String {
-        let route = "\(binding.connectionId) · \(binding.roomId)"
-        guard showAgentName else { return route }
-        let agentName = AgentManager.shared.agent(for: binding.agentId)?.name ?? L("Unknown agent")
-        return "\(agentName) → \(route)"
     }
 
     private var modeMenu: some View {
@@ -480,11 +575,29 @@ struct AgentChannelAgentDestinationsSection: View {
         bindings.filter { $0.isUsable && $0.outboundMode == .autonomous }.count
     }
 
+    private var sendingPaused: Bool {
+        !ChannelWriteKillSwitch.shared.snapshot().writeEnabled
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if sendingPaused && !bindings.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "pause.circle.fill")
+                        .font(.system(size: 11))
+                    Text(
+                        "Sending is paused by the global switch in Channels settings — nothing is delivered from these destinations until it's back on.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundColor(theme.warningColor)
+            }
+
             if bindings.isEmpty {
                 Text(
-                    "Nothing to post to yet. Destinations appear here automatically once a connected channel allows the bot to post in at least one room and this agent is chosen to reply there — the agent then always asks before sending. You can also add a specific destination below.",
+                    "Nothing to post to yet. Destinations appear here automatically once a connected channel lets the bot post somewhere and this agent is chosen to reply there — the agent then always asks before sending. You can also add a specific destination below.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
@@ -567,6 +680,7 @@ struct AgentChannelAgentDestinationsSection: View {
                 $0.displayLabel.localizedCaseInsensitiveCompare($1.displayLabel)
                     == .orderedAscending
             }
+        AgentChannelRoomDirectory.shared.prepare(connectionIds: bindings.map(\.connectionId))
     }
 }
 
@@ -614,6 +728,7 @@ struct AgentChannelDestinationEditorSheet: View {
     private struct DiscoveredRoom: Identifiable, Equatable {
         let id: String
         let name: String
+        let kind: AgentChannelRoomKind
         let writeAllowed: Bool
     }
 
@@ -652,21 +767,11 @@ struct AgentChannelDestinationEditorSheet: View {
     /// the header and the room-row icon — the same visual identity used by
     /// the channel cards and setup sheets.
     private var connectionKind: AgentChannelKind {
-        switch connectionId.lowercased() {
-        case AgentChannelConnection.nativeDiscordConnectionId: return .discord
-        case AgentChannelConnection.nativeSlackConnectionId: return .slack
-        case AgentChannelConnection.nativeTelegramConnectionId: return .telegram
-        default: return manager.connection(id: connectionId)?.kind ?? .customHTTP
-        }
+        AgentChannelConnectionPresentation.kind(for: connectionId)
     }
 
     private func connectionDisplayName(_ id: String) -> String {
-        switch id.lowercased() {
-        case AgentChannelConnection.nativeDiscordConnectionId: return "Discord"
-        case AgentChannelConnection.nativeSlackConnectionId: return "Slack"
-        case AgentChannelConnection.nativeTelegramConnectionId: return "Telegram"
-        default: return manager.connection(id: id)?.name ?? id
-        }
+        AgentChannelConnectionPresentation.displayName(for: id)
     }
 
     var body: some View {
@@ -822,7 +927,7 @@ struct AgentChannelDestinationEditorSheet: View {
             .frame(maxWidth: 280, alignment: .leading)
 
             fieldLabel(
-                L("Room"),
+                L("Conversation"),
                 hint: L("Where the agent posts. The bot must be allowed to post there.")
             )
             roomSelector
@@ -848,7 +953,7 @@ struct AgentChannelDestinationEditorSheet: View {
         if isDiscoveringRooms && discoveredRooms.isEmpty {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text("Finding rooms…", bundle: .module)
+                Text("Finding conversations…", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -863,11 +968,11 @@ struct AgentChannelDestinationEditorSheet: View {
             )
         } else if discoveredRooms.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                Text("No rooms found on this channel yet.", bundle: .module)
+                Text("No conversations found on this channel yet.", bundle: .module)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
                 Text(
-                    "Check the channel's settings, or enter a room id directly under Advanced.",
+                    "Check the channel's settings, or enter a conversation id directly under Advanced.",
                     bundle: .module
                 )
                 .font(.system(size: 10))
@@ -893,19 +998,19 @@ struct AgentChannelDestinationEditorSheet: View {
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 AgentChannelSelectorSearchField(
-                    placeholder: L("Search rooms"),
+                    placeholder: L("Search conversations"),
                     text: $roomQuery
                 )
                 AgentChannelSelectorListCard(
                     shaped: shapedRooms,
-                    emptyText: L("No matching rooms"),
+                    emptyText: L("No matching conversations"),
                     maxHeight: 190
                 ) { item in
                     roomRow(item.entry, selected: item.state)
                 }
                 if discoveredRooms.contains(where: { !$0.writeAllowed }) {
                     Text(
-                        "Grayed-out rooms don't allow bot posts yet — enable posting for them in the channel's settings.",
+                        "Grayed-out conversations don't allow bot posts yet — enable posting for them in the channel's settings.",
                         bundle: .module
                     )
                     .font(.system(size: 10))
@@ -936,7 +1041,10 @@ struct AgentChannelDestinationEditorSheet: View {
     }
 
     private func roomRow(_ room: DiscoveredRoom, selected: Bool) -> some View {
-        Button {
+        let displayName =
+            room.name != room.id && room.kind.usesHashPrefix && !room.name.hasPrefix("#")
+            ? "#\(room.name)" : room.name
+        return Button {
             roomId = room.id
             if label.isEmpty { label = room.name }
         } label: {
@@ -947,10 +1055,22 @@ struct AgentChannelDestinationEditorSheet: View {
                     .frame(width: 20)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(room.name)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(room.writeAllowed ? theme.primaryText : theme.tertiaryText)
-                        .lineLimit(1)
+                    HStack(spacing: 5) {
+                        Text(displayName)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(
+                                room.writeAllowed ? theme.primaryText : theme.tertiaryText
+                            )
+                            .lineLimit(1)
+                        if let badge = room.kind.badgeLabel {
+                            Text(badge)
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundColor(theme.tertiaryText)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(theme.tertiaryBackground))
+                        }
+                    }
                     Text(room.id)
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundColor(theme.tertiaryText)
@@ -1407,10 +1527,14 @@ struct AgentChannelDestinationEditorSheet: View {
                         guard let id = row["id"] as? String, !id.isEmpty,
                             seen.insert(id).inserted
                         else { continue }
+                        let kindString = (row["kind"] as? String) ?? ""
+                        // Skip synthetic rows (e.g. Slack's pagination notice).
+                        guard kindString != "notice" else { continue }
                         rooms.append(
                             DiscoveredRoom(
                                 id: id,
                                 name: (row["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? id,
+                                kind: .from(providerKind: kindString),
                                 writeAllowed: (row["write_allowed"] as? Bool) ?? false
                             )
                         )
@@ -1511,6 +1635,7 @@ struct AgentChannelDestinationEditorSheet: View {
 /// authorization in `AgentChannelPublishService`.
 struct AgentChannelOutboxView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var roomDirectory = AgentChannelRoomDirectory.shared
 
     @State private var pending: [AgentChannelOutboundIntent] = []
     @State private var unknownDeliveries: [AgentChannelOutboundIntent] = []
@@ -1638,14 +1763,25 @@ struct AgentChannelOutboxView: View {
         }
     }
 
+    /// Route header for one intent, name-first: "Dinoki → #content · Slack".
+    /// Falls back to the raw room id until the directory resolves the name.
+    private func routeDescription(_ intent: AgentChannelOutboundIntent) -> String {
+        let provider = AgentChannelConnectionPresentation.displayName(for: intent.connectionId)
+        let room =
+            roomDirectory.descriptor(connectionId: intent.connectionId, roomId: intent.roomId)?
+            .formattedName ?? intent.roomId
+        return "\(agentName(intent.agentId)) → \(room) · \(provider)"
+    }
+
     private func intentRow(_ intent: AgentChannelOutboundIntent) -> some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     statusBadge(intent.status)
-                    Text("\(agentName(intent.agentId)) → \(intent.connectionId) · \(intent.roomId)")
-                        .font(.system(size: 10, design: .monospaced))
+                    Text(routeDescription(intent))
+                        .font(.system(size: 10))
                         .foregroundColor(theme.tertiaryText)
+                        .help("\(intent.connectionId) · \(intent.roomId)")
                     Text(intent.updatedAt, style: .relative)
                         .font(.system(size: 10))
                         .foregroundColor(theme.tertiaryText)
@@ -1739,6 +1875,10 @@ struct AgentChannelOutboxView: View {
             history = try store.recentOutboundIntents(
                 statuses: [.sending, .sent, .failed, .cancelled],
                 limit: 100
+            )
+            AgentChannelRoomDirectory.shared.prepare(
+                connectionIds: (pending + unknownDeliveries + drafts + history)
+                    .map(\.connectionId)
             )
         } catch {
             statusMessage = error.localizedDescription
@@ -1850,6 +1990,19 @@ struct AgentChannelOutboundReviewSheet: View {
         }
     }
 
+    /// Conversation shown name-first with the exact provider id alongside,
+    /// so the informed-consent surface loses no precision.
+    private var reviewedRoomDescription: String {
+        guard
+            let descriptor = AgentChannelRoomDirectory.shared.descriptor(
+                connectionId: intent.connectionId,
+                roomId: intent.roomId
+            ),
+            descriptor.name != intent.roomId
+        else { return intent.roomId }
+        return "\(descriptor.formattedName) (\(intent.roomId))"
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -1904,8 +2057,11 @@ struct AgentChannelOutboundReviewSheet: View {
     private var destinationSection: some View {
         VStack(alignment: .leading, spacing: 5) {
             detailRow(L("Agent"), agentName(intent.agentId))
-            detailRow(L("Channel"), intent.connectionId)
-            detailRow(L("Room"), intent.roomId)
+            detailRow(
+                L("Channel"),
+                AgentChannelConnectionPresentation.displayName(for: intent.connectionId)
+            )
+            detailRow(L("Conversation"), reviewedRoomDescription)
             if let threadId = intent.threadId, !threadId.isEmpty {
                 detailRow(L("Thread"), threadId)
             }
