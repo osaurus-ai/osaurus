@@ -213,8 +213,15 @@ struct FloatingInputCard: View {
 
     // Observe managers for reactive updates
     @ObservedObject private var agentManager = AgentManager.shared
-    @ObservedObject private var sandboxState = SandboxManager.State.shared
-    @ObservedObject private var clipboardService = ClipboardService.shared
+    // Deliberately NOT `@ObservedObject`: sandbox provisioning publishes
+    // per-progress-tick during runtime downloads and the clipboard service
+    // publishes on every copy, and an observing card re-ran its whole body
+    // each time. Every body-position read of these two lives inside the
+    // selector-row block, which `ChipObservationScope` wraps with its own
+    // observation — the closure re-reads this live singleton state when the
+    // scope re-renders. Everything else here calls them imperatively.
+    private let sandboxState = SandboxManager.State.shared
+    private let clipboardService = ClipboardService.shared
     @ObservedObject private var appConfig = AppConfiguration.shared
     /// Drives the composer credits chip (balance + low-balance tinting) and the
     /// wallet panel's recent-activity list.
@@ -657,20 +664,30 @@ struct FloatingInputCard: View {
             // selector row, right-aligned so it stacks directly over the
             // context-token count, rendered as quiet muted text (not a chip)
             // so it reads as passive status rather than a control.
-            if !showVoiceOverlay && (screenContextMayShow || showSelectorRow) {
-                VStack(alignment: .trailing, spacing: 7) {
-                    if screenContextMayShow {
-                        ScreenContextIndicator()
-                    }
-                    if showSelectorRow {
-                        selectorRow
+            if !showVoiceOverlay {
+                // The scope owns the sandbox/clipboard observation, so
+                // provisioning progress ticks and clipboard arrivals re-render
+                // only this row (including its visibility gate) — never the
+                // whole card body. The closure re-reads the live singleton
+                // state on every scope render.
+                ChipObservationScope {
+                    if screenContextMayShow || showSelectorRow {
+                        VStack(alignment: .trailing, spacing: 7) {
+                            if screenContextMayShow {
+                                ScreenContextIndicator()
+                            }
+                            if showSelectorRow {
+                                selectorRow
+                            }
+                        }
+                        .padding(.top, 8)
+                        .padding(.horizontal, 20)
+                        // Ease the row out while connecting and back in once
+                        // connected, so the composer height changes smoothly
+                        // instead of snapping.
+                        .transition(.opacity)
                     }
                 }
-                .padding(.top, 8)
-                .padding(.horizontal, 20)
-                // Ease the row out while connecting and back in once connected,
-                // so the composer height changes smoothly instead of snapping.
-                .transition(.opacity)
             }
 
             if showVoiceOverlay {
@@ -7527,5 +7544,22 @@ private struct VoiceStateSyncObservers: ViewModifier {
                     }
                 }
             }
+    }
+}
+
+/// Observation firewall for the selector row. Sandbox provisioning publishes
+/// per-progress-tick during runtime downloads and the clipboard service
+/// publishes on every copy; hosting those subscriptions here means their
+/// updates re-render only this subtree. The wrapped closure captures the
+/// card value and re-reads the live singleton state (via the card's derived
+/// properties) each time this scope's body runs, so the chips always render
+/// current sandbox/clipboard state without the card observing either object.
+private struct ChipObservationScope<Content: View>: View {
+    @ObservedObject private var sandboxState = SandboxManager.State.shared
+    @ObservedObject private var clipboardService = ClipboardService.shared
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
     }
 }
