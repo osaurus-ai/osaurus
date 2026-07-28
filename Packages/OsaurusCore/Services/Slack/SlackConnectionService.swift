@@ -468,6 +468,70 @@ final class SlackConnectionService: @unchecked Sendable {
         credentialStore.appToken()
     }
 
+    // MARK: - Off-main credential access
+    //
+    // SecItem calls can block for seconds under securityd contention, so UI
+    // flows await these instead of the synchronous accessors above.
+
+    struct CredentialPresence: Sendable {
+        let botToken: Bool
+        let signingSecret: Bool
+        let appToken: Bool
+    }
+
+    func credentialPresenceOffMain() async -> CredentialPresence {
+        let store = credentialStore
+        return await Keychain.perform {
+            CredentialPresence(
+                botToken: store.hasBotToken(),
+                signingSecret: store.hasSigningSecret(),
+                appToken: store.hasAppToken()
+            )
+        }
+    }
+
+    /// Save any provided secrets in one keychain hop; nil means "no change".
+    func saveCredentialsOffMain(
+        botToken: String? = nil,
+        signingSecret: String? = nil,
+        appToken: String? = nil
+    ) async throws {
+        let store = credentialStore
+        let failure: String? = await Keychain.perform {
+            if let botToken, !store.saveBotToken(botToken) {
+                return "The bot token was empty or Keychain storage was unavailable."
+            }
+            if let signingSecret, !store.saveSigningSecret(signingSecret) {
+                return "The signing secret was empty or Keychain storage was unavailable."
+            }
+            if let appToken, !store.saveAppToken(appToken) {
+                return "The app-level token was empty or Keychain storage was unavailable."
+            }
+            return nil
+        }
+        if let failure {
+            throw SlackConnectionServiceError.configurationSaveFailed(failure)
+        }
+    }
+
+    @discardableResult
+    func deleteBotTokenOffMain() async -> Bool {
+        let store = credentialStore
+        return await Keychain.perform { store.deleteBotToken() }
+    }
+
+    @discardableResult
+    func deleteSigningSecretOffMain() async -> Bool {
+        let store = credentialStore
+        return await Keychain.perform { store.deleteSigningSecret() }
+    }
+
+    @discardableResult
+    func deleteAppTokenOffMain() async -> Bool {
+        let store = credentialStore
+        return await Keychain.perform { store.deleteAppToken() }
+    }
+
     func socketModeAppToken(teamId: String) -> String? {
         credentialStore.appToken(teamId: teamId)
     }

@@ -955,9 +955,12 @@ struct SlackSettingsView: View {
         inboundRequireMention = configuration.inboundDispatch.requireMention
         inboundContinueThreads = configuration.inboundDispatch.continueThreads
         inboundAutoReplyEnabled = configuration.inboundDispatch.autoReplyEnabled
-        botTokenSaved = SlackConnectionService.shared.hasBotToken()
-        signingSecretSaved = SlackConnectionService.shared.hasSigningSecret()
-        appTokenSaved = SlackConnectionService.shared.hasAppToken()
+        Task {
+            let presence = await SlackConnectionService.shared.credentialPresenceOffMain()
+            botTokenSaved = presence.botToken
+            signingSecretSaved = presence.signingSecret
+            appTokenSaved = presence.appToken
+        }
         // Arm autosave only after the stored configuration has hydrated the
         // draft, so hydration itself is never mistaken for an edit.
         lastSavedDraft = currentDraft
@@ -968,9 +971,12 @@ struct SlackSettingsView: View {
     }
 
     private func refreshDiscovery(showStatus announce: Bool) {
-        guard persistPendingSecrets() else { return }
         isDiscovering = true
         Task {
+            guard await persistPendingSecrets() else {
+                isDiscovering = false
+                return
+            }
             do {
                 let loaded = try await SlackConnectionService.shared.discoverConfigurationOptions()
                 await MainActor.run {
@@ -1011,20 +1017,29 @@ struct SlackSettingsView: View {
     }
 
     /// Persist any pasted secrets to Keychain before the configuration save.
-    private func persistPendingSecrets() -> Bool {
+    /// Awaited off the main thread so a slow securityd never beachballs the
+    /// Save/Test buttons.
+    private func persistPendingSecrets() async -> Bool {
+        let pendingBot = hasPendingBotToken ? botToken : nil
+        let trimmedSigning = signingSecret.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pendingSigning = trimmedSigning.isEmpty ? nil : signingSecret
+        let trimmedApp = appToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pendingApp = trimmedApp.isEmpty ? nil : appToken
         do {
-            if hasPendingBotToken {
-                try SlackConnectionService.shared.saveBotToken(botToken)
+            try await SlackConnectionService.shared.saveCredentialsOffMain(
+                botToken: pendingBot,
+                signingSecret: pendingSigning,
+                appToken: pendingApp
+            )
+            if pendingBot != nil {
                 botToken = ""
                 botTokenSaved = true
             }
-            if !signingSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                try SlackConnectionService.shared.saveSigningSecret(signingSecret)
+            if pendingSigning != nil {
                 signingSecret = ""
                 signingSecretSaved = true
             }
-            if !appToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                try SlackConnectionService.shared.saveAppToken(appToken)
+            if pendingApp != nil {
                 appToken = ""
                 appTokenSaved = true
             }
@@ -1113,26 +1128,30 @@ struct SlackSettingsView: View {
     }
 
     private func removeBotToken() {
-        _ = SlackConnectionService.shared.deleteBotToken()
         botToken = ""
         botTokenSaved = false
         discovery = nil
-        refreshReceiveRuntime()
+        Task {
+            await SlackConnectionService.shared.deleteBotTokenOffMain()
+            refreshReceiveRuntime()
+        }
         showStatus(L("Slack bot token removed"), isError: false)
     }
 
     private func removeSigningSecret() {
-        _ = SlackConnectionService.shared.deleteSigningSecret()
         signingSecret = ""
         signingSecretSaved = false
+        Task { await SlackConnectionService.shared.deleteSigningSecretOffMain() }
         showStatus(L("Slack signing secret removed"), isError: false)
     }
 
     private func removeAppToken() {
-        _ = SlackConnectionService.shared.deleteAppToken()
         appToken = ""
         appTokenSaved = false
-        refreshReceiveRuntime()
+        Task {
+            await SlackConnectionService.shared.deleteAppTokenOffMain()
+            refreshReceiveRuntime()
+        }
         showStatus(L("Slack Socket Mode app token removed"), isError: false)
     }
 
@@ -1184,9 +1203,12 @@ struct SlackSettingsView: View {
     /// than dismissing on a superficially successful save.
     private func saveAndDismiss() {
         autosaveTask?.cancel()
-        guard persistPendingSecrets(), saveConfiguration(), persistAdditionalWorkspace() else { return }
         isSaving = true
         Task {
+            guard await persistPendingSecrets(), saveConfiguration(), persistAdditionalWorkspace() else {
+                isSaving = false
+                return
+            }
             await AgentChannelTransportSupervisor.shared.refreshSlackRuntime()
             guard inboundDispatchEnabled else {
                 await MainActor.run {
@@ -1220,9 +1242,12 @@ struct SlackSettingsView: View {
     /// user sees in the form, not a stale save.
     private func testConnection() {
         autosaveTask?.cancel()
-        guard persistPendingSecrets(), saveConfiguration(), persistAdditionalWorkspace() else { return }
         isTesting = true
         Task {
+            guard await persistPendingSecrets(), saveConfiguration(), persistAdditionalWorkspace() else {
+                isTesting = false
+                return
+            }
             await AgentChannelTransportSupervisor.shared.refreshSlackRuntime()
             let discoveryResult: Result<SlackConnectionDiscovery, any Error>
             do {
