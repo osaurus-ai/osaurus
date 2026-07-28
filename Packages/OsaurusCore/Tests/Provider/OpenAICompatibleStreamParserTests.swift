@@ -581,7 +581,32 @@ struct OpenAICompatibleStreamParserTests {
         #expect(error.localizedDescription.contains("while receiving tool arguments"))
     }
 
-    @Test func parser_strictFallsBackToLenientForNonstandardEnvelopeMidToolArguments() throws {
+    @Test func service_failsUnknownWellFormedFrameWhileReceivingToolArguments() {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        let toolStart =
+            #"{"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"file_write","arguments":"{\"pa"}}]}}]}"#
+        _ = RemoteProviderService.handleStreamEvent(
+            jsonData: Data(toolStart.utf8),
+            providerType: .openaiLegacy,
+            state: &state,
+            yield: { _ in }
+        )
+
+        let outcome = RemoteProviderService.handleStreamEvent(
+            jsonData: Data(#"{"unexpected":"frame"}"#.utf8),
+            providerType: .openaiLegacy,
+            state: &state,
+            yield: { _ in }
+        )
+        guard case .finishWithError(let error) = outcome else {
+            Issue.record("Expected unknown JSON mid-arguments to fail closed, got \(outcome)")
+            return
+        }
+        #expect(error.localizedDescription.contains("while receiving tool arguments"))
+        #expect(state.accumulatedToolCalls[0]?.args == #"{"pa"#)
+    }
+
+    @Test func parser_strictFallbackCompletesOneNonstandardToolCall() throws {
         var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
         var yielded: [String] = []
         let toolStart =
@@ -608,6 +633,108 @@ struct OpenAICompatibleStreamParserTests {
             return
         }
         #expect(state.accumulatedToolCalls[0]?.args == #"{"url":"https://cnn.com"}"#)
+
+        let finish = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(
+                #"{"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#
+                    .utf8
+            ),
+            options: .strict,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+        guard case .finishWithToolCall(let invocations) = finish else {
+            Issue.record("Expected exactly one completed tool call, got \(finish)")
+            return
+        }
+        #expect(invocations.count == 1)
+        #expect(invocations.first?.toolName == "fetch_url")
+        #expect(invocations.first?.toolCallId == "call_1")
+        #expect(invocations.first?.jsonArguments == #"{"url":"https://cnn.com"}"#)
+        #expect(yielded.compactMap { StreamingToolHint.decode($0) } == ["fetch_url"])
+    }
+
+    @Test func parser_strictFallbackMessageWithoutFinishReasonDoesNotFinalize() throws {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        var yielded: [String] = []
+
+        let intermediate = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(
+                #"{"choices":[{"message":{"role":"assistant","content":"still streaming"}}]}"#
+                    .utf8
+            ),
+            options: .strict,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+        guard case .continue = intermediate else {
+            Issue.record("Expected message without finish_reason to continue, got \(intermediate)")
+            return
+        }
+        #expect(yielded == ["still streaming"])
+        #expect(state.lastFinishReason == nil)
+
+        let finish = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(
+                #"{"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#
+                    .utf8
+            ),
+            options: .strict,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+        guard case .continue = finish else {
+            Issue.record("Expected strict terminal chunk to await stream boundary, got \(finish)")
+            return
+        }
+        #expect(state.lastFinishReason == "stop")
+    }
+
+    @Test func parser_strictFallbackPreservesParallelToolSlots() throws {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        let envelope = #""id":"c1","object":"chat.completion.chunk","created":1,"model":"m""#
+        for start in [
+            #"{\#(envelope),"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","function":{"name":"toolA","arguments":"{\"x\":"}}]}}]}"#,
+            #"{\#(envelope),"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_b","function":{"name":"toolB","arguments":"{\"y\":"}}]}}]}"#,
+        ] {
+            _ = try OpenAICompatibleStreamParser.handleEvent(
+                jsonData: Data(start.utf8),
+                options: .strict,
+                state: &state,
+                yield: { _ in }
+            )
+        }
+
+        // These continuations omit the strict chunk envelope and choice index,
+        // but retain the tool slot index needed to keep parallel calls apart.
+        for continuation in [
+            #"{"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"2}"}}]}}]}"#,
+            #"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]}}]}"#,
+        ] {
+            _ = try OpenAICompatibleStreamParser.handleEvent(
+                jsonData: Data(continuation.utf8),
+                options: .strict,
+                state: &state,
+                yield: { _ in }
+            )
+        }
+
+        let finish = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(
+                #"{\#(envelope),"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#
+                    .utf8
+            ),
+            options: .strict,
+            state: &state,
+            yield: { _ in }
+        )
+        guard case .finishWithToolCall(let invocations) = finish else {
+            Issue.record("Expected two completed parallel tool calls, got \(finish)")
+            return
+        }
+        #expect(invocations.map(\.toolCallId) == ["call_a", "call_b"])
+        #expect(invocations.map(\.toolName) == ["toolA", "toolB"])
+        #expect(invocations.map(\.jsonArguments) == [#"{"x":1}"#, #"{"y":2}"#])
     }
 
     private func dispatchEvents(
