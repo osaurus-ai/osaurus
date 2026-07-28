@@ -567,17 +567,47 @@ struct OpenAICompatibleStreamParserTests {
             yield: { _ in }
         )
 
+        let truncated = #"{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"fu"#
         let outcome = RemoteProviderService.handleStreamEvent(
-            jsonData: Data(#"{"unexpected":"frame"}"#.utf8),
+            jsonData: Data(truncated.utf8),
             providerType: .openaiLegacy,
             state: &state,
             yield: { _ in }
         )
         guard case .finishWithError(let error) = outcome else {
-            Issue.record("Expected unparseable chunk mid-arguments to fail, got \(outcome)")
+            Issue.record("Expected truncated chunk mid-arguments to fail, got \(outcome)")
             return
         }
         #expect(error.localizedDescription.contains("while receiving tool arguments"))
+    }
+
+    @Test func parser_strictFallsBackToLenientForNonstandardEnvelopeMidToolArguments() throws {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        var yielded: [String] = []
+        let toolStart =
+            #"{"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"fetch_url","arguments":"{\"url\":"}}]}}]}"#
+        _ = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(toolStart.utf8),
+            options: .strict,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+
+        // Missing `object`, `created`, and `model` fails the strict envelope
+        // but must still contribute its argument delta via the lenient schema.
+        let nonstandard =
+            #"{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"https://cnn.com\"}"}}]}}]}"#
+        let outcome = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Data(nonstandard.utf8),
+            options: .strict,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+        guard case .continue = outcome else {
+            Issue.record("Expected nonstandard envelope to continue, got \(outcome)")
+            return
+        }
+        #expect(state.accumulatedToolCalls[0]?.args == #"{"url":"https://cnn.com"}"#)
     }
 
     private func dispatchEvents(

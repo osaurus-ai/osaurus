@@ -1704,9 +1704,13 @@ public actor RemoteProviderService: ToolCapableService {
                 )
                 return .continue
             }
+            // Console-only payload prefix: without it an "invalid streaming
+            // event" report gives no way to identify the offending frame shape.
+            let payloadPrefix = String(decoding: jsonData.prefix(200), as: UTF8.self)
             print(
                 "[Osaurus] Failed to parse provider SSE event while receiving tool arguments: "
-                    + "\(error.localizedDescription) (\(jsonData.count) bytes)"
+                    + "\(error.localizedDescription) (\(jsonData.count) bytes) "
+                    + "payloadPrefix=\(payloadPrefix)"
             )
             return .finishWithError(
                 RemoteProviderServiceError.streamingError(

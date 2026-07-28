@@ -522,7 +522,26 @@ struct OpenAICompatibleStreamParser {
     ) throws -> RemoteProviderService.StreamEventOutcome {
         switch options.decodeMode {
         case .strict:
-            let chunk = try state.decoder.decode(ChatCompletionChunk.self, from: jsonData)
+            let chunk: ChatCompletionChunk
+            do {
+                chunk = try state.decoder.decode(ChatCompletionChunk.self, from: jsonData)
+            } catch {
+                // Mostly-compatible providers (DeepSeek among them) emit
+                // occasional frames that miss a strict-envelope field
+                // (`object`, `id`, `created`, `choices[].index`). Those frames
+                // can carry tool-argument deltas, so dropping them corrupts
+                // the accumulated call and failing on them kills the turn.
+                // Re-read well-formed JSON with the lenient schema; only
+                // genuinely corrupt payloads (real truncation) propagate the
+                // decode error.
+                guard
+                    let lenient = try? state.decoder.decode(
+                        LenientChatCompletionChunk.self,
+                        from: jsonData
+                    )
+                else { throw error }
+                return processLenientChunk(lenient, options: options, state: &state, yield: yield)
+            }
             // OpenAI emits usage on a dedicated final chunk (empty `choices`)
             // when `stream_options.include_usage` was set; on every other chunk
             // `usage` is null. Capture whatever is present — surfaced at the
@@ -538,25 +557,34 @@ struct OpenAICompatibleStreamParser {
             )
         case .lenient:
             let chunk = try state.decoder.decode(LenientChatCompletionChunk.self, from: jsonData)
-            state.captureProviderUsage(chunk.usage)
-            let choice = chunk.choices?.first
-            if let message = choice?.message {
-                return processMessageCompletion(
-                    message,
-                    finishReason: choice?.finish_reason,
-                    deferToolCallDispatchUntilUsage: options.deferToolCallDispatchUntilUsage,
-                    state: &state,
-                    yield: yield
-                )
-            }
-            return processChoice(
-                delta: choice?.delta,
+            return processLenientChunk(chunk, options: options, state: &state, yield: yield)
+        }
+    }
+
+    private static func processLenientChunk(
+        _ chunk: LenientChatCompletionChunk,
+        options: Options,
+        state: inout RemoteProviderService.StreamingState,
+        yield: (String) -> Void
+    ) -> RemoteProviderService.StreamEventOutcome {
+        state.captureProviderUsage(chunk.usage)
+        let choice = chunk.choices?.first
+        if let message = choice?.message {
+            return processMessageCompletion(
+                message,
                 finishReason: choice?.finish_reason,
                 deferToolCallDispatchUntilUsage: options.deferToolCallDispatchUntilUsage,
                 state: &state,
                 yield: yield
             )
         }
+        return processChoice(
+            delta: choice?.delta,
+            finishReason: choice?.finish_reason,
+            deferToolCallDispatchUntilUsage: options.deferToolCallDispatchUntilUsage,
+            state: &state,
+            yield: yield
+        )
     }
 
     private static func processMessageCompletion(
