@@ -21,26 +21,40 @@ struct SubagentAdmissionTests {
         SubagentAdmission(pollNanoseconds: 2_000_000)  // 2 ms poll for tests
     }
 
-    @Test("admission model identity is pure and collapses repo id to bundle name")
+    @Test("admission identity preserves full ids and groups aliases by stable id")
     func canonicalModelIdentity() {
         let full = ResolvedModel(
             name: "OsaurusAI/Ornith-1.0-9B-JANG_4M",
+            id: "OsaurusAI/Ornith-1.0-9B-JANG_4M",
             isLocal: true
         )
         let short = ResolvedModel(
             name: "ornith-1.0-9b-jang_4m",
+            id: "OsaurusAI/Ornith-1.0-9B-JANG_4M",
             isLocal: true
         )
-        let stable = ResolvedModel(
-            name: "friendly display alias",
-            id: "OsaurusAI/Ornith-1.0-9B-JANG_4M",
+        let sameBasenameOtherOrganization = ResolvedModel(
+            name: "ornith-1.0-9b-jang_4m",
+            id: "OtherOrg/Ornith-1.0-9B-JANG_4M",
+            isLocal: true
+        )
+        let idlessFallback = ResolvedModel(
+            name: "ThirdOrg/Ornith-1.0-9B-JANG_4M",
             isLocal: true
         )
         let remote = ResolvedModel(name: "remote/model", isLocal: false)
 
-        #expect(SubagentSession.canonicalAdmissionModelKey(full) == "ornith-1.0-9b-jang_4m")
-        #expect(SubagentSession.canonicalAdmissionModelKey(short) == "ornith-1.0-9b-jang_4m")
-        #expect(SubagentSession.canonicalAdmissionModelKey(stable) == "ornith-1.0-9b-jang_4m")
+        let canonical = "osaurusai/ornith-1.0-9b-jang_4m"
+        #expect(SubagentSession.canonicalAdmissionModelKey(full) == canonical)
+        #expect(SubagentSession.canonicalAdmissionModelKey(short) == canonical)
+        #expect(
+            SubagentSession.canonicalAdmissionModelKey(sameBasenameOtherOrganization)
+                == "otherorg/ornith-1.0-9b-jang_4m"
+        )
+        #expect(
+            SubagentSession.canonicalAdmissionModelKey(idlessFallback)
+                == "thirdorg/ornith-1.0-9b-jang_4m"
+        )
         #expect(SubagentSession.canonicalAdmissionModelKey(remote) == nil)
     }
 
@@ -185,6 +199,300 @@ struct SubagentAdmissionTests {
         #expect(counts.exclusive == 0)
         #expect(await gate.admit(.localExclusive) == .admitted)
         await gate.release(.localExclusive)
+    }
+
+    @Test("slot reservations compose atomically for one-plus-one and two-plus-two")
+    func slotReservationsComposeAtomically() async {
+        let onePlusOne = makeGate()
+        #expect(
+            await onePlusOne.reserveLocalInPlace(
+                modelKey: "model-a",
+                requestedSlots: 1,
+                slotCapacity: 2
+            ) == .admitted(slots: 1)
+        )
+        #expect(
+            await onePlusOne.reserveLocalInPlace(
+                modelKey: "MODEL-A",
+                requestedSlots: 1,
+                slotCapacity: 2
+            ) == .admitted(slots: 1)
+        )
+        #expect(await onePlusOne.snapshot().inPlace == 2)
+        await onePlusOne.releaseLocalInPlace(modelKey: "model-a", slots: 1)
+        await onePlusOne.releaseLocalInPlace(modelKey: "model-a", slots: 1)
+
+        let twoPlusTwo = makeGate()
+        #expect(
+            await twoPlusTwo.reserveLocalInPlace(
+                modelKey: "model-a",
+                requestedSlots: 2,
+                slotCapacity: 4
+            ) == .admitted(slots: 2)
+        )
+        #expect(
+            await twoPlusTwo.reserveLocalInPlace(
+                modelKey: "model-a",
+                requestedSlots: 2,
+                slotCapacity: 4
+            ) == .admitted(slots: 2)
+        )
+        #expect(await twoPlusTwo.snapshot().inPlace == 4)
+        await twoPlusTwo.releaseLocalInPlace(modelKey: "model-a", slots: 4)
+        #expect(await twoPlusTwo.snapshot().inPlace == 0)
+    }
+
+    @Test("post-admission capacity shrink resizes aggregate reservations atomically")
+    func slotReservationResizeHonorsFreshCapacity() async {
+        let gate = makeGate()
+        #expect(
+            await gate.reserveLocalInPlace(
+                modelKey: "model-a",
+                requestedSlots: 2,
+                slotCapacity: 4
+            ) == .admitted(slots: 2)
+        )
+        #expect(
+            await gate.reserveLocalInPlace(
+                modelKey: "model-a",
+                requestedSlots: 2,
+                slotCapacity: 4
+            ) == .admitted(slots: 2)
+        )
+        #expect(await gate.snapshot().inPlace == 4)
+
+        let first = await gate.resizeLocalInPlace(
+            modelKey: "model-a",
+            heldSlots: 2,
+            requestedSlots: 2,
+            slotCapacity: 3
+        )
+        #expect(first == 1)
+        #expect(await gate.snapshot().inPlace == 3)
+
+        let second = await gate.resizeLocalInPlace(
+            modelKey: "model-a",
+            heldSlots: 2,
+            requestedSlots: 2,
+            slotCapacity: 2
+        )
+        #expect(second == 1)
+        #expect(await gate.snapshot().inPlace == 2)
+
+        await gate.releaseLocalInPlace(modelKey: "model-a", slots: first)
+        await gate.releaseLocalInPlace(modelKey: "model-a", slots: second)
+        #expect(await gate.snapshot().inPlace == 0)
+    }
+
+    @Test("zero-width resize removes only the caller reservation")
+    func slotReservationResizeCanReleaseCaller() async {
+        let gate = makeGate()
+        #expect(
+            await gate.reserveLocalInPlace(
+                modelKey: "model-a",
+                requestedSlots: 2,
+                slotCapacity: 4
+            ) == .admitted(slots: 2)
+        )
+        #expect(
+            await gate.reserveLocalInPlace(
+                modelKey: "model-a",
+                requestedSlots: 2,
+                slotCapacity: 4
+            ) == .admitted(slots: 2)
+        )
+
+        let first = await gate.resizeLocalInPlace(
+            modelKey: "model-a",
+            heldSlots: 2,
+            requestedSlots: 2,
+            slotCapacity: 2
+        )
+        #expect(first == 0)
+        #expect(await gate.snapshot().inPlace == 2)
+
+        await gate.releaseLocalInPlace(modelKey: "model-a", slots: 2)
+        #expect(await gate.snapshot().inPlace == 0)
+    }
+
+    @Test("one direct-style slot leaves only the process-wide batch remainder")
+    func directStyleReservationLeavesBatchRemainder() async {
+        let gate = makeGate()
+        #expect(
+            await gate.reserveLocalInPlace(
+                modelKey: "model-a",
+                requestedSlots: 1,
+                slotCapacity: 3
+            ) == .admitted(slots: 1)
+        )
+        #expect(
+            await gate.reserveLocalInPlace(
+                modelKey: "model-a",
+                requestedSlots: 3,
+                slotCapacity: 3
+            ) == .admitted(slots: 2)
+        )
+        #expect(await gate.snapshot().inPlace == 3)
+        await gate.releaseLocalInPlace(modelKey: "model-a", slots: 1)
+        await gate.releaseLocalInPlace(modelKey: "model-a", slots: 2)
+        #expect(await gate.snapshot().inPlace == 0)
+    }
+
+    @Test("partial grants never oversubscribe and a full capacity waiter stays queued")
+    func slotCapacityNeverOversubscribes() async {
+        let gate = makeGate()
+        #expect(
+            await gate.reserveLocalInPlace(
+                modelKey: "model-a",
+                requestedSlots: 2,
+                slotCapacity: 3
+            ) == .admitted(slots: 2)
+        )
+        #expect(
+            await gate.reserveLocalInPlace(
+                modelKey: "model-a",
+                requestedSlots: 2,
+                slotCapacity: 3
+            ) == .admitted(slots: 1)
+        )
+
+        let waited = WaitFlag()
+        let blocked = Task {
+            await gate.reserveLocalInPlace(
+                modelKey: "model-a",
+                requestedSlots: 1,
+                slotCapacity: 3,
+                timeoutSeconds: 30,
+                onWait: { _ in waited.set() }
+            )
+        }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        #expect(waited.isSet)
+        #expect(await gate.snapshot().inPlace == 3)
+
+        blocked.cancel()
+        #expect(await blocked.value == .cancelled)
+        #expect(await gate.snapshot().inPlace == 3)
+        await gate.releaseLocalInPlace(modelKey: "model-a", slots: 3)
+        #expect(await gate.snapshot().inPlace == 0)
+    }
+
+    @Test("a different-model slot reservation waits until the resident model drains")
+    func differentModelSlotReservationWaits() async {
+        let gate = makeGate()
+        #expect(
+            await gate.reserveLocalInPlace(
+                modelKey: "model-a",
+                requestedSlots: 1,
+                slotCapacity: 2
+            ) == .admitted(slots: 1)
+        )
+        let waited = WaitFlag()
+        let other = Task {
+            await gate.reserveLocalInPlace(
+                modelKey: "model-b",
+                requestedSlots: 1,
+                slotCapacity: 2,
+                timeoutSeconds: 5,
+                onWait: { _ in waited.set() }
+            )
+        }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        #expect(waited.isSet)
+        #expect(await gate.snapshot().inPlace == 1)
+
+        await gate.releaseLocalInPlace(modelKey: "model-a", slots: 1)
+        #expect(await other.value == .admitted(slots: 1))
+        await gate.releaseLocalInPlace(modelKey: "model-b", slots: 1)
+        #expect(await gate.snapshot().inPlace == 0)
+    }
+
+    @Test("queued exclusive work wins before a newer same-model slot reservation")
+    func exclusiveWriterPreferenceAppliesToSlots() async {
+        let gate = makeGate()
+        #expect(
+            await gate.reserveLocalInPlace(
+                modelKey: "model-a",
+                requestedSlots: 1,
+                slotCapacity: 2
+            ) == .admitted(slots: 1)
+        )
+
+        let exclusiveWaited = WaitFlag()
+        let exclusive = Task {
+            await gate.admit(
+                .localExclusive,
+                timeoutSeconds: 5,
+                onWait: { _ in exclusiveWaited.set() }
+            )
+        }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        #expect(exclusiveWaited.isSet)
+        #expect(
+            await gate.resizeLocalInPlace(
+                modelKey: "model-a",
+                heldSlots: 1,
+                requestedSlots: 2,
+                slotCapacity: 2
+            ) == 1
+        )
+        #expect(await gate.snapshot().inPlace == 1)
+
+        let newerWaited = WaitFlag()
+        let newer = Task {
+            await gate.reserveLocalInPlace(
+                modelKey: "model-a",
+                requestedSlots: 1,
+                slotCapacity: 2,
+                timeoutSeconds: 5,
+                onWait: { _ in newerWaited.set() }
+            )
+        }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        #expect(newerWaited.isSet)
+
+        await gate.releaseLocalInPlace(modelKey: "model-a", slots: 1)
+        #expect(await exclusive.value == .admitted)
+        let whileExclusive = await gate.snapshot()
+        #expect(whileExclusive.exclusive == 1)
+        #expect(whileExclusive.inPlace == 0)
+
+        await gate.release(.localExclusive)
+        #expect(await newer.value == .admitted(slots: 1))
+        await gate.releaseLocalInPlace(modelKey: "model-a", slots: 1)
+        let final = await gate.snapshot()
+        #expect(final.exclusive == 0)
+        #expect(final.inPlace == 0)
+    }
+
+    @Test("cancelling a slot waiter leaves no hidden reservation")
+    func cancelledSlotWaiterDoesNotLeak() async {
+        let gate = makeGate()
+        #expect(
+            await gate.reserveLocalInPlace(
+                modelKey: "model-a",
+                requestedSlots: 1,
+                slotCapacity: 1
+            ) == .admitted(slots: 1)
+        )
+        let waited = WaitFlag()
+        let waiter = Task {
+            await gate.reserveLocalInPlace(
+                modelKey: "model-a",
+                requestedSlots: 1,
+                slotCapacity: 1,
+                timeoutSeconds: 30,
+                onWait: { _ in waited.set() }
+            )
+        }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        #expect(waited.isSet)
+        waiter.cancel()
+        #expect(await waiter.value == .cancelled)
+        #expect(await gate.snapshot().inPlace == 1)
+
+        await gate.releaseLocalInPlace(modelKey: "model-a", slots: 1)
+        #expect(await gate.snapshot().inPlace == 0)
     }
 
     // MARK: - Plan → class mapping

@@ -80,6 +80,25 @@ struct ModelLeaseTests {
         let activeAfter = await lease.activeNames()
         #expect(!activeAfter.contains(name))
     }
+
+    @Test func boundedRuntimeUnloadFailsClosedWhenLeaseDoesNotDrain() async {
+        let lease = ModelLease.shared
+        let name = "bounded-unload-\(UUID().uuidString)"
+        await lease.acquire(name)
+
+        let started = Date()
+        let unloaded = await ModelRuntime.shared.unload(
+            name: name,
+            leaseDrainTimeoutSeconds: 0.05
+        )
+        let elapsed = Date().timeIntervalSince(started)
+
+        #expect(!unloaded)
+        #expect(elapsed < 1.0)
+        #expect(await lease.count(for: name) == 1)
+
+        await lease.release(name)
+    }
 }
 
 private final class AtomicBoolFlag: @unchecked Sendable {

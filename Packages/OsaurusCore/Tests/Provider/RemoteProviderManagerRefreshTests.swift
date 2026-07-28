@@ -134,6 +134,38 @@ struct RemoteProviderManagerRefreshTests {
         }
     }
 
+    @Test func connectFailure_clearsStaleModelsAndPostsModelsChanged() async throws {
+        await RemoteProviderTestLock.shared.run {
+            let manager = RemoteProviderManager.shared
+            let provider = install(manager, discovered: ["stale-model"])
+            defer { manager._testRemoveProviders(ids: [provider.id]) }
+
+            let counter = Counter()
+            let observer = observeModelsChanged(counter)
+            defer { NotificationCenter.default.removeObserver(observer) }
+
+            struct Boom: Error {}
+            manager.testFetchModelsOverride = { _ in throw Boom() }
+
+            do {
+                try await manager.connect(providerId: provider.id)
+                Issue.record("expected reconnect to fail")
+            } catch is Boom {
+                // Expected: the state and picker invalidation below are the
+                // contract under test.
+            } catch {
+                Issue.record("unexpected error: \(error)")
+            }
+
+            let state = manager.providerStates[provider.id]
+            #expect(state?.isConnected == false)
+            #expect(state?.discoveredModels.isEmpty == true)
+
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            #expect(counter.value == 1)
+        }
+    }
+
     @Test func refetchModels_noopWhenProviderNotConnected() async throws {
         await RemoteProviderTestLock.shared.run {
             let manager = RemoteProviderManager.shared

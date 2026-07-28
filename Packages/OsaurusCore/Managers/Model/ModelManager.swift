@@ -1401,25 +1401,30 @@ extension ModelManager {
     private static nonisolated(unsafe) var matchMemoLocalGen: UInt64 = .max
     private static nonisolated(unsafe) var matchMemoExternalGen: UInt64 = .max
 
-    private nonisolated static func matchInstalledMLXModel(
+    nonisolated static func matchInstalledMLXModel(
         named name: String,
         in models: [MLXModel]
     ) -> MLXModel? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
+        let key = trimmed.lowercased()
 
-        // Try repo component first
-        if let match = models.first(where: { m in
-            m.id.split(separator: "/").last.map(String.init)?.lowercased() == trimmed.lowercased()
-        }) {
+        // A full installed id is the stable identity and must win even when a
+        // different organization has a bundle with the same final component.
+        if let match = models.first(where: { $0.id.lowercased() == key }) {
             return match
         }
 
-        // Try full id match
-        if let match = models.first(where: { m in m.id.lowercased() == trimmed.lowercased() }) {
-            return match
+        // Short bundle aliases remain convenient only when they identify one
+        // stable installed id. Silently choosing the first of two
+        // `Org-A/Shared` / `Org-B/Shared` bundles can load or batch the wrong
+        // model, so ambiguous aliases fail resolution instead.
+        let shortMatches = models.filter { model in
+            model.id.split(separator: "/").last.map(String.init)?.lowercased() == key
         }
-        return nil
+        let stableIds = Set(shortMatches.map { $0.id.lowercased() })
+        guard stableIds.count == 1 else { return nil }
+        return shortMatches.first
     }
 
     /// Find an installed model by user-provided name, returning the canonical

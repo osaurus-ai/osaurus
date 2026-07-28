@@ -103,8 +103,8 @@ enum SubagentModelKind: String, Codable, CaseIterable, Sendable {
 /// no new struct field: it reads/writes its own `capability.id`. A kind absent
 /// from the map resolves to the safe `.ask` default.
 ///
-/// Policy meaning: `.deny` blocks the kind's job; `.ask` prompts on first use
-/// (spawn has no interactive prompt, so `.ask` simply allows there);
+/// Policy meaning: `.deny` blocks the kind's job; `.ask` prompts before
+/// admission/model loading (`spawn_batch` prompts once for the whole batch);
 /// `.alwaysAllow` skips the prompt.
 public struct SubagentPermissionDefaults: Codable, Equatable, Sendable {
     private var policies: [String: SubagentPermissionPolicy]
@@ -121,6 +121,33 @@ public struct SubagentPermissionDefaults: Codable, Equatable, Sendable {
     /// Set the policy for a kind id.
     public mutating func setPolicy(_ policy: SubagentPermissionPolicy, for kindId: String) {
         policies[kindId] = policy
+    }
+
+    /// Three-way merge for a long-lived settings editor. Values the editor
+    /// changed since its loaded baseline win; untouched values are refreshed
+    /// from current persisted state. This prevents an unrelated debounced save
+    /// from erasing an "Always Allow" decision persisted by a live permission
+    /// prompt while the editor was already open.
+    static func mergingEditorSnapshot(
+        _ editor: SubagentPermissionDefaults,
+        loadedBaseline: SubagentPermissionDefaults,
+        live: SubagentPermissionDefaults
+    ) -> SubagentPermissionDefaults {
+        var merged = editor
+        let kindIds =
+            Set(editor.policies.keys)
+            .union(loadedBaseline.policies.keys)
+            .union(live.policies.keys)
+
+        for kindId in kindIds
+        where editor.policy(for: kindId) == loadedBaseline.policy(for: kindId) {
+            if let livePolicy = live.policies[kindId] {
+                merged.policies[kindId] = livePolicy
+            } else {
+                merged.policies.removeValue(forKey: kindId)
+            }
+        }
+        return merged
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -174,11 +201,13 @@ public struct SubagentPermissionDefaults: Codable, Equatable, Sendable {
     }
 }
 
-/// What tools a spawned subagent (the child worker) may reach. `none` keeps
-/// spawn text-only (every child tool call is refused); `readOnly` exposes the
-/// curated read-only set (`file_read` / `file_search`, plus the sandbox reads
-/// when registered) so the worker can do its own bulk reading — the parent's
-/// context is preserved instead of ferrying file contents through the digest.
+/// Extra generic tools a spawned subagent (the child worker) may reach.
+/// A configured target agent receives only the cancellation-audited subset of
+/// its own enabled tools; a bare-model worker has no target-agent tools. `none`
+/// adds nothing beyond that target contract. `readOnly` additionally exposes
+/// the cancellation-audited subset of the curated generic read candidates
+/// (currently host `file_read` / `file_search`) so the worker can do its own
+/// bulk reading without ferrying file contents through the parent digest.
 public enum SpawnToolAccess: String, Codable, CaseIterable, Sendable {
     case none
     case readOnly = "read_only"
@@ -195,10 +224,10 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
     /// call regardless).
     public var maxToolCalls: Int
     public var maxElapsedSeconds: Int
-    /// Maximum number of jobs accepted by one `spawn_batch` call and the
-    /// maximum number that may execute concurrently. The scheduler still
-    /// groups local jobs by canonical model and serializes different local
-    /// models, so actual local concurrency may be lower.
+    /// Maximum number of jobs accepted by one `spawn_batch` call and an upper
+    /// bound on concurrent workers. Engine occupancy, continuous-batching
+    /// settings, RAM safety, and model-residency grouping can lower actual
+    /// concurrency; different local models are serialized.
     public var maxParallelSpawns: Int
 
     /// Accepted bounds for each budget — the single source of truth shared by
@@ -296,7 +325,7 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// The DEFAULT / main-chat agent's spawnable agents (its `spawn` pool).
     /// Empty by default → the main chat has nothing to spawn until opted in.
     /// Custom agents carry their OWN per-agent list in `AgentSettings`; this
-    /// field governs the main chat only (edited in the main chat's Subagents tab).
+    /// field governs the main chat only (edited in Settings → Subagents).
     var spawnableAgentNames: [String]
     /// The DEFAULT / main-chat agent's `image` enable. Custom agents carry their
     /// own `AgentSettings.imageEnabled`; this governs the main chat only.

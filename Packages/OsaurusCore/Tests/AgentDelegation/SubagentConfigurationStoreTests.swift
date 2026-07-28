@@ -66,6 +66,65 @@ struct SubagentConfigurationStoreTests {
         #expect(reloaded.budgets.maxElapsedSeconds == 1_800)
     }
 
+    @Test("main-chat spawn policy survives a store reload")
+    func mainChatSpawnPolicySurvivesReload() async throws {
+        let lease = await acquireSubagentStoreSandbox("main-chat-spawn-policy")
+        defer { lease.release() }
+
+        let config = SubagentConfiguration(
+            spawnableAgentNames: ["Researcher", "Coder"],
+            permissionDefaults: SubagentPermissionDefaults(
+                policies: [SubagentCapabilityRegistry.spawn.id: .alwaysAllow]
+            ),
+            budgets: SubagentBudgets(
+                maxDelegateTokens: 4096,
+                maxDelegateTurns: 4,
+                maxToolCalls: 6,
+                maxElapsedSeconds: 300,
+                maxParallelSpawns: 5
+            ),
+            subagentModelOverrides: [
+                SubagentCapabilityRegistry.spawn.id: "local/orchestrator-helper"
+            ],
+            spawnableModelNames: [
+                "local/fast-helper",
+                "openai/frontier-helper",
+            ],
+            spawnableModelNotes: [
+                "local/fast-helper": "Fast local file batches",
+                "openai/frontier-helper": "Hard research",
+            ],
+            spawnToolAccess: .readOnly
+        )
+
+        SubagentConfigurationStore.save(config)
+        SubagentConfigurationStore.flushPendingWrites()
+        SubagentConfigurationStore.invalidateSnapshot()
+
+        let reloaded = SubagentConfigurationStore.snapshot()
+        #expect(reloaded.spawnableAgentNames == ["Researcher", "Coder"])
+        #expect(
+            reloaded.spawnableModelNames
+                == ["local/fast-helper", "openai/frontier-helper"]
+        )
+        #expect(reloaded.spawnableModelNotes["local/fast-helper"] == "Fast local file batches")
+        #expect(reloaded.spawnableModelNotes["openai/frontier-helper"] == "Hard research")
+        #expect(
+            reloaded.permissionDefaults.policy(for: SubagentCapabilityRegistry.spawn.id)
+                == .alwaysAllow
+        )
+        #expect(reloaded.budgets.maxDelegateTokens == 4096)
+        #expect(reloaded.budgets.maxDelegateTurns == 4)
+        #expect(reloaded.budgets.maxToolCalls == 6)
+        #expect(reloaded.budgets.maxElapsedSeconds == 300)
+        #expect(reloaded.budgets.maxParallelSpawns == 5)
+        #expect(reloaded.spawnToolAccess == .readOnly)
+        #expect(
+            reloaded.subagentModelOverrides[SubagentCapabilityRegistry.spawn.id]
+                == "local/orchestrator-helper"
+        )
+    }
+
     @Test("legacy files decode with safe delegation defaults")
     func legacyFilesDecodeWithSafeDefaults() throws {
         let data = Data(

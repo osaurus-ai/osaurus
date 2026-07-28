@@ -161,6 +161,58 @@ struct AgentSettingsCodableTests {
         #expect(decoded.spawnableModelNotes["openai/gpt-4o-mini"] == "Frontier reasoning")
     }
 
+    @Test("disabling Spawn preserves the custom agent's configured policy")
+    func disabledSpawnPreservesConfiguredPolicy() throws {
+        var settings = AgentSettings.defaultDisabled
+        settings.spawnDelegationEnabled = false
+        settings.spawnableAgentNames = ["Researcher", "File Worker"]
+        settings.spawnableModelNames = ["local/fast-helper", "openai/frontier-helper"]
+        settings.spawnableModelNotes = [
+            "local/fast-helper": "Fast local batches",
+            "openai/frontier-helper": "Difficult reasoning",
+        ]
+        settings.subagentModelOverrides = [
+            SubagentCapabilityRegistry.spawn.id: "local/override-helper"
+        ]
+        var permissions = SubagentPermissionDefaults()
+        permissions.setPolicy(.alwaysAllow, for: SubagentCapabilityRegistry.spawn.id)
+        settings.subagentPermissions = permissions
+        settings.subagentBudgets = SubagentBudgets(
+            maxDelegateTokens: 8192,
+            maxDelegateTurns: 5,
+            maxToolCalls: 8,
+            maxElapsedSeconds: 600,
+            maxParallelSpawns: 4
+        )
+        settings.spawnToolAccess = .readOnly
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AgentSettings.self, from: data)
+
+        #expect(decoded.spawnDelegationEnabled == false)
+        #expect(decoded.spawnableAgentNames == ["Researcher", "File Worker"])
+        #expect(
+            decoded.spawnableModelNames
+                == ["local/fast-helper", "openai/frontier-helper"]
+        )
+        #expect(decoded.spawnableModelNotes["local/fast-helper"] == "Fast local batches")
+        #expect(decoded.spawnableModelNotes["openai/frontier-helper"] == "Difficult reasoning")
+        #expect(
+            decoded.subagentModelOverrides[SubagentCapabilityRegistry.spawn.id]
+                == "local/override-helper"
+        )
+        #expect(
+            decoded.subagentPermissions.policy(for: SubagentCapabilityRegistry.spawn.id)
+                == .alwaysAllow
+        )
+        #expect(decoded.subagentBudgets.maxDelegateTokens == 8192)
+        #expect(decoded.subagentBudgets.maxDelegateTurns == 5)
+        #expect(decoded.subagentBudgets.maxToolCalls == 8)
+        #expect(decoded.subagentBudgets.maxElapsedSeconds == 600)
+        #expect(decoded.subagentBudgets.maxParallelSpawns == 4)
+        #expect(decoded.spawnToolAccess == .readOnly)
+    }
+
     @Test("legacy JSON without the spawnable model pool decodes to empty")
     func backCompatSpawnableModelPoolEmpty() throws {
         // An older agent file that predates the per-agent spawn_model pool.

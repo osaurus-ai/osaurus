@@ -146,6 +146,13 @@ struct SpawnToolTests {
         )
     }
 
+    @Test func spawnAgentDescriptionStatesCancellationAuditedToolBoundary() {
+        let description = SpawnAgentTool().description
+        #expect(description.contains("cancellation-audited for spawned execution"))
+        #expect(description.contains("other direct-chat tools remain parent-owned"))
+        #expect(!description.contains("calendar agent can create events"))
+    }
+
     @Test func everySpawnSchemaUsesTheStandaloneInputContract() throws {
         func inputDescription(
             _ tool: any OsaurusTool,
@@ -191,48 +198,77 @@ struct SpawnToolTests {
         #expect(expected.contains("Never refer to a previous/earlier message"))
     }
 
-    @Test func allSpawnSurfacesRejectExplicitParentContextBeforeLoading() async throws {
+    @Test func allSpawnSurfacesDoNotLexicallyRejectParentReferencePhrases() {
+        let inputs = [
+            (
+                input: #"Translate the quoted phrase "previous message" into French."#,
+                field: "input",
+                tool: "spawn_model"
+            ),
+            (
+                input: #"Review this code: let label = "message above"."#,
+                field: "input",
+                tool: "spawn_agent"
+            ),
+            (
+                input: "Translate '이전 메시지' into English.",
+                field: "jobs[0].input",
+                tool: "spawn_batch"
+            ),
+        ]
+        for value in inputs {
+            #expect(
+                SpawnInputContract.validationFailure(
+                    input: value.input,
+                    field: value.field,
+                    tool: value.tool
+                ) == nil
+            )
+        }
+    }
+
+    @Test func nonEmptySpawnInputsPassTheStructuralContract() {
+        let accepted = [
+            "Reply exactly SCHEMA-ALPHA-7391 and nothing else.",
+            "Compare the previous and current values: previous=7, current=9.",
+            "Summarize the previous message.",
+            #"Translate "previous message" into French."#,
+            #"Explain this code: let label = "message above"."#,
+            "Translate 'предыдущего сообщения' into English.",
+        ]
+        for input in accepted {
+            #expect(
+                SpawnInputContract.validationFailure(
+                    input: input,
+                    tool: "spawn_model"
+                ) == nil
+            )
+        }
+    }
+
+    @Test func allSpawnSurfacesRejectBlankInputStructurally() async throws {
         let model = try await SpawnModelTool().execute(
-            argumentsJSON:
-                #"{"input":"Reply with the value from the previous message.","model":"not-allowed"}"#
+            argumentsJSON: #"{"input":" \n\t ","model":"not-allowed"}"#
         )
         #expect(ToolEnvelope.isError(model))
-        #expect(ToolEnvelope.failureMessage(model).contains("cannot see the parent transcript"))
-        #expect(model.contains(#""retryable":true"#))
+        #expect(ToolEnvelope.failureMessage(model).contains("cannot be blank"))
+        #expect(model.contains(#""field":"input""#))
         #expect(!ToolEnvelope.failureMessage(model).contains("not spawnable"))
 
         let agent = try await SpawnAgentTool().execute(
-            argumentsJSON:
-                #"{"input":"Summarize the message above.","agent":"not-allowed"}"#
+            argumentsJSON: #"{"input":"   ","agent":"not-allowed"}"#
         )
         #expect(ToolEnvelope.isError(agent))
-        #expect(ToolEnvelope.failureMessage(agent).contains("cannot see the parent transcript"))
+        #expect(ToolEnvelope.failureMessage(agent).contains("cannot be blank"))
         #expect(agent.contains(#""field":"input""#))
+        #expect(!ToolEnvelope.failureMessage(agent).contains("not spawnable"))
 
         let batch = try await SpawnBatchTool().execute(
             argumentsJSON:
-                #"{"jobs":[{"id":"a","target_type":"model","target":"not-allowed","input":"Use the earlier instruction."}]}"#
+                #"{"jobs":[{"id":"a","target_type":"model","target":"not-allowed","input":" \n\t "}]} "#
         )
         #expect(ToolEnvelope.isError(batch))
-        #expect(ToolEnvelope.failureMessage(batch).contains("cannot see the parent transcript"))
-        #expect(batch.contains(#""field":"jobs[0].input""#))
-        #expect(batch.contains(#""retryable":true"#))
-        #expect(!ToolEnvelope.failureMessage(batch).contains("not spawnable"))
-    }
-
-    @Test func standaloneSpawnInputsPassTheContextContract() {
-        #expect(
-            SpawnInputContract.validationFailure(
-                input: "Reply exactly SCHEMA-ALPHA-7391 and nothing else.",
-                tool: "spawn_model"
-            ) == nil
-        )
-        #expect(
-            SpawnInputContract.validationFailure(
-                input: "Compare the previous and current values: previous=7, current=9.",
-                tool: "spawn_model"
-            ) == nil
-        )
+        #expect(ToolEnvelope.failureMessage(batch).contains("blank `target` or `input`"))
     }
 
     @Test func agentKindShape() {
@@ -290,6 +326,74 @@ struct SpawnToolTests {
                 elapsed: 1
             ) == nil
         )
+    }
+
+    @Test func childRunnerPreservesInterleavedReasoningWithoutInlineThinkLeakage() async throws {
+        let probe = InterleavedReasoningStreamProbe()
+        let toolset = AgentSubagentToolset(
+            specs: [
+                Tool(
+                    type: "function",
+                    function: ToolFunction(
+                        name: "lookup",
+                        description: "Return a deterministic test value.",
+                        parameters: .object([:])
+                    )
+                )
+            ],
+            execute: { invocation in
+                #expect(invocation.toolName == "lookup")
+                return ToolEnvelope.success(tool: invocation.toolName, result: ["value": "ok"])
+            }
+        )
+
+        let result = try await AgentSubagentRunner.run(
+            modelName: "scripted-reasoning-tool-model",
+            seedMessages: [
+                ChatMessage(role: "system", content: "Use tools when needed."),
+                ChatMessage(role: "user", content: "Look up the value, then answer.")
+            ],
+            maxTokens: 64,
+            maxIterations: 3,
+            deadline: Date().addingTimeInterval(10),
+            sessionId: "reasoning-tool-final-regression",
+            enableThinking: true,
+            toolset: toolset,
+            streamProvider: { request in
+                try await probe.stream(for: request)
+            }
+        )
+
+        #expect(result.exit == .finalResponse)
+        #expect(result.iterations == 2)
+        #expect(result.digest == "Visible final answer.")
+        #expect(result.digest?.contains("<think>") == false)
+        #expect(result.digest?.contains("private reasoning") == false)
+
+        let requests = await probe.requests()
+        #expect(requests.count == 2)
+        let followup = try #require(requests.last)
+        let assistantToolMessage = try #require(
+            followup.messages.first {
+                $0.role == "assistant" && !($0.tool_calls?.isEmpty ?? true)
+            }
+        )
+        #expect(assistantToolMessage.content == nil)
+        #expect(assistantToolMessage.reasoning_content == "private reasoning before tool")
+        #expect(assistantToolMessage.tool_calls?.first?.id == "call_lookup")
+        #expect(assistantToolMessage.tool_calls?.first?.function.name == "lookup")
+        #expect(
+            followup.messages.allSatisfy {
+                !($0.content ?? "").contains("<think>")
+                    && !($0.content ?? "").contains("private reasoning")
+            }
+        )
+
+        let toolResult = try #require(
+            followup.messages.first { $0.role == "tool" }
+        )
+        #expect(toolResult.tool_call_id == "call_lookup")
+        #expect(toolResult.content?.contains(#""ok":true"#) == true)
     }
 
     /// Per-agent spawnable enforcement (agents): a CUSTOM launching agent may
@@ -375,5 +479,41 @@ struct SpawnToolTests {
                 Issue.record("expected SubagentError.denied, got \(error)")
             }
         }
+    }
+}
+
+private actor InterleavedReasoningStreamProbe {
+    private var capturedRequests: [ChatCompletionRequest] = []
+
+    func stream(
+        for request: ChatCompletionRequest
+    ) throws -> AsyncThrowingStream<String, Error> {
+        capturedRequests.append(request)
+        let step = capturedRequests.count
+
+        return AsyncThrowingStream { continuation in
+            if step == 1 {
+                continuation.yield(
+                    StreamingReasoningHint.encode("private reasoning before tool")
+                )
+                continuation.finish(
+                    throwing: ServiceToolInvocation(
+                        toolName: "lookup",
+                        jsonArguments: "{}",
+                        toolCallId: "call_lookup"
+                    )
+                )
+            } else {
+                continuation.yield(
+                    StreamingReasoningHint.encode("private reasoning after tool")
+                )
+                continuation.yield("Visible final answer.")
+                continuation.finish()
+            }
+        }
+    }
+
+    func requests() -> [ChatCompletionRequest] {
+        capturedRequests
     }
 }

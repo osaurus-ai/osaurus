@@ -40,12 +40,15 @@ struct SubagentResidencyTests {
             modelName: "local-a",
             residentChatModels: ["local-a"],
             handoffEnabled: true,
-            ramSafetyEnabled: false,
-            requiredBytes: 0,
+            ramSafetyEnabled: true,
+            requiredBytes: 4096,
             idleWaitSeconds: 60,
             deniedMessage: denied
         )
         #expect(plan.shouldUnload == false)
+        #expect(plan.ramSafetyEnabled)
+        #expect(plan.requiredBytes == 4096)
+        #expect(plan.maxElapsedSeconds == 60)
     }
 
     @Test("the same model in a different case is treated as resident (no swap)")
@@ -61,6 +64,9 @@ struct SubagentResidencyTests {
             deniedMessage: denied
         )
         #expect(plan.shouldUnload == false)
+        #expect(plan.ramSafetyEnabled == false)
+        #expect(plan.requiredBytes == 0)
+        #expect(plan.maxElapsedSeconds == 60)
     }
 
     @Test("nothing else resident means nothing to evict")
@@ -76,6 +82,9 @@ struct SubagentResidencyTests {
             deniedMessage: denied
         )
         #expect(plan.shouldUnload == false)
+        #expect(plan.ramSafetyEnabled)
+        #expect(plan.requiredBytes == 4096)
+        #expect(plan.maxElapsedSeconds == 90)
     }
 
     @Test("a different local model with the handoff enabled unloads, carrying the plan")

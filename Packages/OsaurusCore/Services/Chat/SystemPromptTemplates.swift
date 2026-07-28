@@ -1009,24 +1009,34 @@ public enum SystemPromptTemplates {
             "- `spawn_batch(jobs)` fans out INDEPENDENT work across the same allowed agents/models. "
                 + "Each job needs a unique `id`, `target_type` (`agent` or `model`), exact `target`, "
                 + "and complete `input`. This agent allows at most \(maxParallel) jobs in one batch; "
-                + "at most \(maxParallel) workers run concurrently, and results "
+                + "\(maxParallel) is an upper bound on concurrent workers, while engine occupancy "
+                + "and RAM safety may queue or split local work. Results "
                 + "come back in input order. Use one batch instead of emitting several separate "
                 + "spawn calls when the subtasks do not depend on each other."
         )
         switch toolAccess {
         case .readOnly:
             lines.append(
-                "- Workers CAN read files themselves (read-only: file_read / file_search, plus "
-                    + "sandbox reads when available) within a per-run call budget — so you can "
+                "- Target-agent workers receive only their enabled tools whose implementations are "
+                    + "cancellation-audited for spawned execution. Workers also CAN read files "
+                    + "through the added host file_read / file_search tools within a per-run call "
+                    + "budget — so you can "
                     + "delegate \"read these files and report X\" with exact paths in `input` "
-                    + "instead of pasting file contents."
+                    + "instead of pasting file contents. Bare-model workers receive only these "
+                    + "added read-only tools."
             )
         case .none:
             lines.append(
-                "- Workers are text-only (no tools) — paste ALL material the task needs directly "
-                    + "into `input`; the worker cannot read files or fetch anything itself."
+                "- Target-agent workers receive only their enabled tools whose implementations are "
+                    + "cancellation-audited for spawned execution; bare-model workers have no "
+                    + "tools. No extra generic read-only file tools are added, so include any "
+                    + "material not reachable through the configured target agent in `input`."
             )
         }
+        lines.append(
+            "- A direct-chat tool omitted from a worker's schema remains parent-owned. Do not "
+                + "delegate a side effect that the selected worker cannot actually call."
+        )
         lines.append(
             "- `input` must be the COMPLETE task as a self-contained prompt — the worker sees only that, "
                 + "not this conversation. Pick the target whose description or note best fits the task; "

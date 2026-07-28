@@ -202,6 +202,73 @@ struct SpawnToolsetTests {
         #expect(!parentScope.permits("get_events"))
     }
 
+    @Test("configured-agent tool dispatch uses target UUID at the registry boundary")
+    @MainActor
+    func configuredAgentDispatchUsesTargetIdentity() async throws {
+        let launcher = UUID()
+        let target = UUID()
+        let tool = SpawnAgentIdentityProbeTool()
+        ToolRegistry.shared.register(tool)
+        defer { ToolRegistry.shared.unregister(names: [tool.name]) }
+
+        let executionAgentId = TextSubagentKind.childToolExecutionAgentId(
+            targetAgentId: target,
+            launcherAgentId: launcher
+        )
+        let toolset = await TextSubagentKind.makeToolset(
+            access: .none,
+            maxToolCalls: 1,
+            feed: nil,
+            agentSpecs: [spec(tool.name)],
+            executionAgentId: executionAgentId
+        )
+        let set = try #require(toolset)
+
+        let (result, restoredLauncher) =
+            await ChatExecutionContext.$currentAgentId.withValue(launcher) {
+                let output = await set.execute(invocation(tool.name))
+                return (output, ChatExecutionContext.currentAgentId == launcher)
+            }
+        #expect(restoredLauncher)
+        let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
+
+        #expect(payload["text"] as? String == target.uuidString)
+        #expect(ChatExecutionContext.currentAgentId == nil)
+    }
+
+    @Test("bare-model tool dispatch preserves the launcher UUID")
+    @MainActor
+    func bareModelDispatchUsesLauncherIdentity() async throws {
+        let launcher = UUID()
+        let tool = SpawnAgentIdentityProbeTool()
+        ToolRegistry.shared.register(tool)
+        defer { ToolRegistry.shared.unregister(names: [tool.name]) }
+
+        let executionAgentId = TextSubagentKind.childToolExecutionAgentId(
+            targetAgentId: nil,
+            launcherAgentId: launcher
+        )
+        let toolset = await TextSubagentKind.makeToolset(
+            access: .readOnly,
+            maxToolCalls: 1,
+            feed: nil,
+            specs: [spec(tool.name)],
+            executionAgentId: executionAgentId
+        )
+        let set = try #require(toolset)
+
+        let (result, restoredLauncher) =
+            await ChatExecutionContext.$currentAgentId.withValue(launcher) {
+                let output = await set.execute(invocation(tool.name))
+                return (output, ChatExecutionContext.currentAgentId == launcher)
+            }
+        #expect(restoredLauncher)
+        let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
+
+        #expect(payload["text"] as? String == launcher.uuidString)
+        #expect(ChatExecutionContext.currentAgentId == nil)
+    }
+
     @Test("subagent-capability tools and clarify are excluded from a child schema")
     func childExclusions() {
         #expect(TextSubagentKind.isExcludedChildTool("spawn_agent"))
@@ -285,5 +352,23 @@ struct SpawnToolsetTests {
                 settings: nil
             ) == SpawnToolAccess.none
         )
+    }
+}
+
+private struct SpawnAgentIdentityProbeTool: OsaurusTool {
+    let name = "test_spawn_agent_identity_\(UUID().uuidString.prefix(12))"
+    let description = "Returns the agent UUID visible at registry dispatch."
+    let parameters: JSONValue? = .object(["type": .string("object")])
+
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
+
+    func execute(argumentsJSON _: String) async throws -> String {
+        ChatExecutionContext.currentAgentId?.uuidString ?? "none"
     }
 }

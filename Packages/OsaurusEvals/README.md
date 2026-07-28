@@ -777,6 +777,12 @@ The runner seeds a fresh temp workspace from `fixtures.workspaceFiles`, drives `
 Field notes:
 
 - `fixtures.workspaceFiles` — `{ path, contents }` entries written into the per-case temp workspace (intermediate directories created). `path` is workspace-relative.
+- `fixtures.runtimeConcurrency` — optional, `agent_loop`-only process-local
+  mirror of Server → Concurrency (`continuousBatching`,
+  `maxConcurrentSequences`). The runner applies it before parent/worker
+  generation and restores the prior runtime snapshot on every exit; it never
+  writes the contributor's saved settings. Use it when a batching assertion
+  must prove exact effective slots instead of inheriting host state.
 - `expect.agentLoop.files` — `{ path, exists?, contains?, equals? }` assertions on the workspace after the loop ends. `exists` defaults to true; set `false` to pin that a file was NOT created.
 - `expect.agentLoop.commands` — `{ command, expectExitCode }` verification commands run in the workspace after the loop ends (e.g. `grep`, a test runner).
 - `expect.agentLoop.mustCallTools` / `mustNotCallTools` / `maxToolCalls` — deterministic transcript assertions. `maxToolCalls` counts processed calls (executed + deduped) and pins navigation discipline.
@@ -792,6 +798,12 @@ Field notes:
 - `expect.agentLoop.todoUpdatedBeforeComplete` — todo discipline: some `todo` call with at least one checked (`[x]`) box must appear before the first `complete` call (or before the run ends). A single list creation with all boxes unchecked does not pass.
 - `expect.agentLoop.todoCompletedBeforeFinal` — stronger opt-in Todo outcome: the last successful parseable checklist before `complete`/run end must be non-empty and fully checked. This does **not** change runtime termination; Todo remains advisory so an incomplete list cannot reopen a final response.
 - `expect.agentLoop.enableThinking` — optional explicit mirror of the chat model dropdown's Thinking choice, copied to every model step. Omit it to exercise the production unspecified-agent default; use `true`/`false` only when the row intentionally tests that visible user choice.
+- `expect.agentLoop.spawnBatch` — structured `spawn_batch` proof over ordered
+  job ids, nested child truth, aggregate counts/status, configured
+  `max_parallel`, execution waves (`effectiveLocalSlots`, `localSubwaves`,
+  limiting factors), and cache availability. A configured parallel ceiling is
+  not concurrency proof by itself; pin an execution wave such as
+  `{ "effectiveLocalSlots": 2, "localSubwaves": [2] }`.
 - `expect.agentLoop.finalTextContains` / `rubric` — cheap substring checks vs. LLM-judge grading of the final answer (same `JUDGE_MODEL` override as `capability_claims`).
 - `expect.agentLoop.scoredMaxPromptTokens` / `scoredMaxTotalTokens` — optional context-cost ceilings for the "saving context" lane. `scoredMaxPromptTokens` **fails the case** when `promptTokensTotal` (input summed across steps, including the frozen tool schema) exceeds the budget, so a later prompt/tool regression that re-bloats context can't pass while silently burning tokens; `scoredMaxTotalTokens` gates input + output. Both are omitted by default (reported via telemetry, not scored), and only bite a live model — scripted/deterministic runs spend `0`.
 

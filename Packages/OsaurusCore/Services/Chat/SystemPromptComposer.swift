@@ -2578,11 +2578,56 @@ public struct SystemPromptComposer: Sendable {
             byName = byName.filter { allowed.contains($0.key) }
         }
 
-        // `spawn_model` is agent-scoped, so its request-local schema should be
-        // agent-scoped too. Publish the exact legal ids as a nested enum. Remote
-        // providers can validate/select them directly, local tool parsers receive
-        // the same contract, and a blank/guessed id is corrected before the
-        // provider-routing gate. Execution still re-checks the allow-list.
+        // Generation-only image schema: when `image` survived the gates but no
+        // ready edit model is installed, swap it to the edit-free variant (no
+        // `source_paths` / `strength`, generation-only description) so the model
+        // is never offered an edit it can't run. Generation still works because a
+        // gen model is present. Mirror the baseline's first-turn compaction
+        // unless the tool was loaded explicitly (manual pick / capabilities_load),
+        // so the swapped spec sits at the same compaction level the edit-capable
+        // spec would have — byte-stable per availability state for KV reuse.
+        if byName["image"] != nil, !hasReadyImageEditModel {
+            let imageLoadedExplicitly =
+                additionalToolNames.contains("image")
+                || (isManual && (snapshot.manualToolNames?.contains("image") ?? false))
+            let genOnly = ImageTool.generationOnlySpec()
+            byName["image"] = imageLoadedExplicitly ? genOnly : compactBootstrapSpec(genOnly)
+        }
+
+        // Freeze the exact first-compose payload for every baseline tool that
+        // remains visible after the current permission/feature gates. Names
+        // alone are not sufficient: a computed schema can change while its
+        // registration and name remain identical (web_search categories are
+        // populated asynchronously after keychain/provider discovery). Such a
+        // change rewrites the tokenizer prefix and defeats disk-L2 reuse.
+        //
+        // A tool explicitly loaded this session is the intentional exception:
+        // `capabilities_load` must still be able to upgrade a compact
+        // bootstrap schema to the live full contract. Newly registered tools
+        // absent from the frozen baseline likewise remain live.
+        if let frozenToolSpecs {
+            let frozenByName = Dictionary(
+                uniqueKeysWithValues: frozenToolSpecs.map { ($0.function.name, $0) }
+            )
+            for name in Array(byName.keys)
+            where !additionalToolNames.contains(name) {
+                if let frozen = frozenByName[name] {
+                    byName[name] = frozen
+                }
+            }
+        }
+
+        // The baseline schema above is deliberately frozen for prefix-cache
+        // stability, but delegation targets and the per-launcher batch limit
+        // are request-local authorization guidance. Apply those constraints
+        // AFTER restoring frozen payloads so a settings edit cannot leave the
+        // model advertising stale targets or a stale maxItems value. Reapplying
+        // the same normalized constraints is byte-stable, so unchanged settings
+        // retain the frozen-prefix cache contract.
+        //
+        // Execution still enforces every allow-list and budget independently;
+        // these enums are provider/local-parser guidance, not the security
+        // boundary.
         if let spawnModel = byName[SubagentCapabilityRegistry.spawnModelToolName] {
             let config = SubagentConfigurationStore.snapshot()
             let allowedModelIds = SubagentToolVisibility.effectiveSpawnableModels(
@@ -2625,45 +2670,6 @@ public struct SystemPromptComposer: Sendable {
                     allowedModelIds: allowedModelIds,
                     maxParallel: maxParallel
                 )
-        }
-
-        // Generation-only image schema: when `image` survived the gates but no
-        // ready edit model is installed, swap it to the edit-free variant (no
-        // `source_paths` / `strength`, generation-only description) so the model
-        // is never offered an edit it can't run. Generation still works because a
-        // gen model is present. Mirror the baseline's first-turn compaction
-        // unless the tool was loaded explicitly (manual pick / capabilities_load),
-        // so the swapped spec sits at the same compaction level the edit-capable
-        // spec would have — byte-stable per availability state for KV reuse.
-        if byName["image"] != nil, !hasReadyImageEditModel {
-            let imageLoadedExplicitly =
-                additionalToolNames.contains("image")
-                || (isManual && (snapshot.manualToolNames?.contains("image") ?? false))
-            let genOnly = ImageTool.generationOnlySpec()
-            byName["image"] = imageLoadedExplicitly ? genOnly : compactBootstrapSpec(genOnly)
-        }
-
-        // Freeze the exact first-compose payload for every baseline tool that
-        // remains visible after the current permission/feature gates. Names
-        // alone are not sufficient: a computed schema can change while its
-        // registration and name remain identical (web_search categories are
-        // populated asynchronously after keychain/provider discovery). Such a
-        // change rewrites the tokenizer prefix and defeats disk-L2 reuse.
-        //
-        // A tool explicitly loaded this session is the intentional exception:
-        // `capabilities_load` must still be able to upgrade a compact
-        // bootstrap schema to the live full contract. Newly registered tools
-        // absent from the frozen baseline likewise remain live.
-        if let frozenToolSpecs {
-            let frozenByName = Dictionary(
-                uniqueKeysWithValues: frozenToolSpecs.map { ($0.function.name, $0) }
-            )
-            for name in Array(byName.keys)
-            where !additionalToolNames.contains(name) {
-                if let frozen = frozenByName[name] {
-                    byName[name] = frozen
-                }
-            }
         }
 
         // Eval-scoped ablation hook (nil in production): strip deferred

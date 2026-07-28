@@ -16,11 +16,12 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
     public let name = SubagentCapabilityRegistry.spawnAgentToolName
     public let description =
         "Delegate a bounded subtask to a user-configured agent (runs on the target agent's own "
-        + "system prompt + model + its enabled tools, local or remote) and get back only a compact "
-        + "result digest — the subagent transcript is not returned. The delegated agent can execute "
-        + "its own tools (e.g. a calendar agent can create events). The target agent must be in this "
-        + "agent's spawnable list. Use `spawn_model` instead to hand a task to a bare model with no "
-        + "agent attached."
+        + "system prompt + model, local or remote) and get back only a compact result digest — the "
+        + "subagent transcript is not returned. The worker receives only the target agent's enabled "
+        + "tools whose concrete implementations are cancellation-audited for spawned execution; "
+        + "other direct-chat tools remain parent-owned. The target agent must be in this agent's "
+        + "spawnable list. Use `spawn_model` instead to hand a task to a bare model with no agent "
+        + "attached."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -56,7 +57,7 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
         // The shared host owns the recursion guard, live feed, permission
         // verdict, residency handoff, compact-result normalization, and
         // telemetry; the kind owns model resolution + the bounded text loop.
-        return await SubagentSession.run(
+        return await SubagentSession.runWithVisiblePreparation(
             TextSubagentKind(agentName: agentName, input: input),
             tool: name
         )

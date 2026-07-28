@@ -97,7 +97,7 @@ public final class SpawnModelTool: OsaurusTool, @unchecked Sendable {
         // The shared host owns the recursion guard, live feed, permission
         // verdict, residency handoff, compact-result normalization, and
         // telemetry; the kind owns model resolution + the bounded text loop.
-        return await SubagentSession.run(
+        return await SubagentSession.runWithVisiblePreparation(
             TextSubagentKind(model: model, input: input),
             tool: name
         )

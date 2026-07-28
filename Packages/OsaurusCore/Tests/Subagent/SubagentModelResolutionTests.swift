@@ -168,3 +168,86 @@ struct SubagentModelResolutionTests {
         }
     }
 }
+
+@Suite("Explicit spawn target availability", .serialized)
+@MainActor
+struct SubagentRequestedTargetAvailabilityTests {
+    @Test("a connected remote target is accepted, then rejected when its provider disconnects")
+    func explicitRemoteTargetTracksCurrentProviderState() async throws {
+        try await RemoteProviderTestLock.shared.run {
+            let manager = RemoteProviderManager.shared
+            manager.testIdentityExistsOverride = false
+            let provider = RemoteProvider(
+                name: "Spawn Availability Test",
+                host: "127.0.0.1",
+                basePath: "/v1",
+                authType: .none,
+                providerType: .openaiLegacy
+            )
+            manager._testInstallConnectedProvider(
+                provider,
+                discoveredModels: ["model-a"],
+                installService: true
+            )
+            defer { manager._testRemoveProviders(ids: [provider.id]) }
+
+            let legacyTarget = "spawn-availability-test/model-a"
+            let canonicalTarget = try #require(
+                SpawnRemoteModelIdentity.make(
+                    providerId: provider.id,
+                    modelId: "model-a"
+                )
+            )
+            #expect(
+                SubagentModelResolution.currentRequestedTarget(legacyTarget)
+                    == canonicalTarget
+            )
+            #expect(
+                SubagentModelResolution.currentRequestedTarget(canonicalTarget)
+                    == canonicalTarget
+            )
+
+            let resolved = try await SubagentModelResolution.resolve(
+                capabilityId: SubagentCapabilityRegistry.spawn.id,
+                agentId: nil,
+                evalModel: nil,
+                requestedModel: legacyTarget,
+                idleWaitSeconds: 30,
+                deniedMessage: "denied",
+                unavailableMessage: "target unavailable",
+                defaultModel: { nil }
+            )
+            #expect(resolved.model == canonicalTarget)
+            #expect(resolved.decision.isLocal == false)
+
+            var disconnected = try #require(manager.providerStates[provider.id])
+            disconnected.isConnected = false
+            disconnected.discoveredModels = []
+            manager._testSetState(disconnected, for: provider.id)
+
+            #expect(SubagentModelResolution.currentRequestedTarget(legacyTarget) == nil)
+            #expect(SubagentModelResolution.currentRequestedTarget(canonicalTarget) == nil)
+            do {
+                _ = try await SubagentModelResolution.resolve(
+                    capabilityId: SubagentCapabilityRegistry.spawn.id,
+                    agentId: nil,
+                    evalModel: nil,
+                    requestedModel: canonicalTarget,
+                    idleWaitSeconds: 30,
+                    deniedMessage: "denied",
+                    unavailableMessage: "target unavailable",
+                    defaultModel: { nil }
+                )
+                Issue.record("expected a disconnected explicit target to fail")
+            } catch let error as SubagentError {
+                guard case .unavailable(let message) = error else {
+                    Issue.record("expected .unavailable, got \(error)")
+                    return
+                }
+                #expect(message == "target unavailable")
+            } catch {
+                Issue.record("unexpected error: \(error)")
+            }
+        }
+    }
+}

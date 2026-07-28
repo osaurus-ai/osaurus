@@ -100,11 +100,22 @@ enum SubagentResidency {
         // A remote/router model never touches local GPU residency.
         guard isLocal else { return .none }
         // Only a DIFFERENT resident chat model forces a swap; the same model
-        // already resident is reused in place.
+        // already resident is reused in place. Preserve the owning RAM-safety
+        // policy and target footprint even though no handoff is required:
+        // same-model batched children still allocate independent KV/SSM and
+        // activation state, so returning the hard-coded `.none` plan here
+        // would silently disable the batch admission memory clamp.
         let otherResidentModels = residentChatModels.filter {
             $0.caseInsensitiveCompare(modelName) != .orderedSame
         }
-        guard !otherResidentModels.isEmpty else { return .none }
+        guard !otherResidentModels.isEmpty else {
+            return ResidencyPlan(
+                shouldUnload: false,
+                requiredBytes: requiredBytes,
+                ramSafetyEnabled: ramSafetyEnabled,
+                maxElapsedSeconds: idleWaitSeconds
+            )
+        }
         // RAM-aware coexistence: both models fit (flexible policy, projection
         // proven) → skip the 10–60s unload+reload round-trip and run alongside.
         // Checked before the handoff-enabled gate on purpose: coexistence does

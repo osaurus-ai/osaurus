@@ -259,12 +259,16 @@ public enum ChatExecutionContext {
 
     /// Identity a spawned subagent's KNOWLEDGE tools resolve grants and the
     /// curator role against. A spawned worker keeps `currentAgentId` inherited
-    /// from its launcher (so budget/limiter/sandbox routing bill the launcher),
-    /// but knowledge is an access-control boundary that must follow the agent
-    /// actually running — otherwise a spawned helper would silently inherit its
-    /// launcher's collection grants and curator role. `TextSubagentKind` binds
-    /// this to the target agent's id for the duration of the child run; knowledge
-    /// tools read `knowledgeAgentId` (this when set, else `currentAgentId`).
+    /// from its launcher for the surrounding model run, admission, handoff, and
+    /// usage accounting. `TextSubagentKind` temporarily binds `currentAgentId`
+    /// to a configured target agent only while one of that child's tool
+    /// operations crosses the registry boundary. Knowledge is a separate
+    /// access-control boundary that must follow the agent actually running even
+    /// outside a tool body — otherwise a spawned helper would silently inherit
+    /// its launcher's collection grants and curator role. `TextSubagentKind`
+    /// binds this override to the target agent's id for the duration of the child
+    /// run; knowledge tools read `knowledgeAgentId` (this when set, else
+    /// `currentAgentId`).
     /// Module-internal so out-of-module callers cannot rebind the boundary.
     @TaskLocal static var knowledgeGrantAgentIdOverride: UUID? = nil
 

@@ -92,6 +92,34 @@ struct InferenceLoadCoordinatorTests {
         }
     }
 
+    @Test func waitForChatIdle_cancellation_removes_the_parked_waiter() async {
+        await InferenceLoadCoordinatorTestLock.shared.run {
+            let coord = InferenceLoadCoordinator()
+            await drainToZero(coord)
+            await coord.beginChatGeneration()
+
+            let waiter = Task {
+                await coord.waitForChatIdle(timeoutMs: 300_000)
+            }
+
+            // Observe actual registration rather than sleeping for a guessed
+            // duration. This makes the cancellation/removal assertion
+            // deterministic on both fast and loaded CI workers.
+            var spins = 2_000
+            while await coord.pendingIdleWaiterCount == 0, spins > 0 {
+                await Task.yield()
+                spins -= 1
+            }
+            #expect(await coord.pendingIdleWaiterCount == 1)
+
+            waiter.cancel()
+            #expect(await waiter.value == false)
+            #expect(await coord.pendingIdleWaiterCount == 0)
+
+            await coord.endChatGeneration()
+        }
+    }
+
     @Test func multi_window_refcount_only_idles_when_all_end() async {
         await InferenceLoadCoordinatorTestLock.shared.run {
             let coord = InferenceLoadCoordinator()

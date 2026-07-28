@@ -99,12 +99,21 @@ public actor InferenceLoadCoordinator {
     public static let shared = InferenceLoadCoordinator()
 
     private var activeChats = 0
-    /// Each waiter is a one-shot callback that fires when the count
-    /// transitions to zero. Storing closures (instead of raw
-    /// `CheckedContinuation` values) keeps the timeout-vs-idle race in
-    /// `waitForChatIdle` simple — the closure routes through a small
-    /// `RaceBox` that ensures only the first signal wins.
-    private var idleWaiters: [@Sendable () -> Void] = []
+    private enum IdleWaitSignal: Sendable {
+        case idle
+        case timedOut
+        case cancelled
+    }
+
+    /// One owned parked wait. The coordinator removes the entry, cancels its
+    /// timeout task, and resumes its continuation exactly once on every exit
+    /// path (idle, timeout, or caller cancellation).
+    private struct IdleWaiter {
+        let continuation: CheckedContinuation<IdleWaitSignal, Never>
+        let timeoutTask: Task<Void, Never>
+    }
+
+    private var idleWaiters: [UUID: IdleWaiter] = [:]
 
     init() {}
 
@@ -124,15 +133,21 @@ public actor InferenceLoadCoordinator {
 
     private func wakeIdleWaiters() {
         guard !idleWaiters.isEmpty else { return }
-        let pending = idleWaiters
+        let pending = Array(idleWaiters.values)
         idleWaiters.removeAll(keepingCapacity: false)
-        for cb in pending { cb() }
+        for waiter in pending {
+            waiter.timeoutTask.cancel()
+            waiter.continuation.resume(returning: .idle)
+        }
     }
 
     // MARK: - Inspection
 
     public var chatActive: Bool { activeChats > 0 }
     public var activeCount: Int { activeChats }
+    /// Internal diagnostic used by deterministic cancellation tests. A
+    /// cancelled caller must never leave a parked waiter behind.
+    var pendingIdleWaiterCount: Int { idleWaiters.count }
 
     // MARK: - Distillation side
 
@@ -143,58 +158,70 @@ public actor InferenceLoadCoordinator {
     /// race is real under sustained load — see `ModelLease.waitForZero`
     /// for the same pattern in a sibling primitive).
     public func waitForChatIdle(timeoutMs: Int) async -> Bool {
+        if Task.isCancelled { return false }
         if activeChats == 0 { return true }
 
         let deadline = Date().addingTimeInterval(Double(max(0, timeoutMs)) / 1000.0)
 
         while activeChats > 0 {
+            if Task.isCancelled { return false }
             let remaining = deadline.timeIntervalSinceNow
             if remaining <= 0 { return false }
 
-            let timedOut: Bool = await withCheckedContinuation { (cc: CheckedContinuation<Bool, Never>) in
-                // Re-check atomically inside the actor before parking
-                // — the increment that flipped activeChats to non-zero
-                // could have already been undone before we got here.
-                if activeChats == 0 {
-                    cc.resume(returning: false)
-                    return
-                }
-                let box = RaceBox(continuation: cc)
-
-                // Idle path: enqueued in the actor's waiter list,
-                // fired by `wakeIdleWaiters` when count hits zero.
-                idleWaiters.append { Task { await box.resumeOnce(timedOut: false) } }
-
-                // Timeout path: independent task; whichever signal
-                // wins through `RaceBox.resumeOnce` is the result.
-                Task { [remaining] in
-                    try? await Task.sleep(for: .seconds(remaining))
-                    await box.resumeOnce(timedOut: true)
-                }
+            let signal = await parkUntilIdleOrDeadline(remaining: remaining)
+            switch signal {
+            case .idle:
+                break
+            case .timedOut, .cancelled:
+                return false
             }
-
-            if timedOut { return false }
             // Loop and re-check activeChats. If a different chat
             // started during the wake, we re-park.
         }
         return true
     }
-}
 
-/// One-shot continuation router. Either the idle-wake path or the
-/// timeout task resumes the underlying continuation; whichever loses
-/// the race becomes a no-op. Avoids double-resume traps that
-/// `CheckedContinuation` would catch at runtime.
-private actor RaceBox {
-    private var continuation: CheckedContinuation<Bool, Never>?
+    private func parkUntilIdleOrDeadline(remaining: TimeInterval) async -> IdleWaitSignal {
+        let waiterID = UUID()
+        if Task.isCancelled { return .cancelled }
 
-    init(continuation: CheckedContinuation<Bool, Never>) {
-        self.continuation = continuation
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation {
+                (continuation: CheckedContinuation<IdleWaitSignal, Never>) in
+                // Re-check atomically inside the actor before parking.
+                if Task.isCancelled {
+                    continuation.resume(returning: .cancelled)
+                    return
+                }
+                if activeChats == 0 {
+                    continuation.resume(returning: .idle)
+                    return
+                }
+
+                let timeoutTask = Task { [remaining] in
+                    do {
+                        try await Task.sleep(for: .seconds(remaining))
+                    } catch {
+                        return
+                    }
+                    self.resolveIdleWaiter(waiterID, signal: .timedOut)
+                }
+                idleWaiters[waiterID] = IdleWaiter(
+                    continuation: continuation,
+                    timeoutTask: timeoutTask
+                )
+            }
+        } onCancel: {
+            // Cancellation handlers are synchronous. The actor-owned removal
+            // still runs in-order, and `resolveIdleWaiter` is the sole
+            // continuation-resume boundary.
+            Task { await self.resolveIdleWaiter(waiterID, signal: .cancelled) }
+        }
     }
 
-    func resumeOnce(timedOut: Bool) {
-        guard let cc = continuation else { return }
-        continuation = nil
-        cc.resume(returning: timedOut)
+    private func resolveIdleWaiter(_ id: UUID, signal: IdleWaitSignal) {
+        guard let waiter = idleWaiters.removeValue(forKey: id) else { return }
+        waiter.timeoutTask.cancel()
+        waiter.continuation.resume(returning: signal)
     }
 }

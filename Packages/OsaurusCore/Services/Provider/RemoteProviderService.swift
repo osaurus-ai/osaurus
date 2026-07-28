@@ -415,6 +415,13 @@ public actor RemoteProviderService: ToolCapableService {
             return false
         }
 
+        // Spawn-only ids carry the immutable provider UUID. This is the exact
+        // route when two connected providers have identical display names and
+        // model slugs; ordinary chat ids keep using the name prefix below.
+        if let spawn = SpawnRemoteModelIdentity.parse(model) {
+            return spawn.providerId == provider.id
+        }
+
         // Check if model starts with our provider prefix
         let prefix = provider.name
             .lowercased()
@@ -424,12 +431,18 @@ public actor RemoteProviderService: ToolCapableService {
         return model.lowercased().hasPrefix(prefix + "/")
     }
 
-    /// Extract the actual model name without provider prefix
-    private func extractModelName(_ requestedModel: String?) -> String? {
+    /// Extract the actual upstream model slug without the chat-picker or
+    /// spawn-only route prefix. Internal so routing tests can prove the exact
+    /// provider id is not leaked onto the wire.
+    func extractModelName(_ requestedModel: String?) -> String? {
         guard let model = requestedModel?.trimmingCharacters(in: .whitespacesAndNewlines),
             !model.isEmpty
         else {
             return nil
+        }
+
+        if let spawn = SpawnRemoteModelIdentity.parse(model) {
+            return spawn.providerId == provider.id ? spawn.modelId : nil
         }
 
         // Remove provider prefix if present
@@ -944,13 +957,25 @@ public actor RemoteProviderService: ToolCapableService {
     final class LiveURLSessionTaskBox: @unchecked Sendable {
         private let lock = NSLock()
         private var task: URLSessionTask?
+        private var cancellationRequested = false
+
         func store(_ task: URLSessionTask?) {
             lock.lock()
-            defer { lock.unlock() }
+            if cancellationRequested {
+                lock.unlock()
+                // Termination can beat URLSession task creation. Preserve that
+                // cancellation across the race instead of publishing a live
+                // socket after the consumer has already gone away.
+                task?.cancel()
+                return
+            }
             self.task = task
+            lock.unlock()
         }
+
         func cancel() {
             lock.lock()
+            cancellationRequested = true
             let t = task
             task = nil
             lock.unlock()

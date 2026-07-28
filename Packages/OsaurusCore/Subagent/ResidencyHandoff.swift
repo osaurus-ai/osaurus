@@ -81,8 +81,12 @@ struct ResidencyHandoff: SubagentHandoff {
     /// Unload resident chat models; returns the lease to restore.
     typealias Unload =
         @Sendable (_ maxElapsedSeconds: Int, _ onPhase: (String, String) -> Void) async throws -> ChatResidencyLease
-    /// Best-effort restore of an unload lease (logs, never throws).
-    typealias Restore = @Sendable (_ lease: ChatResidencyLease, _ onPhase: (String, String) -> Void) async -> [String]
+    /// Restore an unload lease. Unlike image-result preservation, text
+    /// delegation cannot report success while its orchestrator remains
+    /// unloaded, so restore failure is part of this handoff's outcome.
+    typealias Restore =
+        @Sendable (_ lease: ChatResidencyLease, _ onPhase: (String, String) -> Void) async throws
+            -> [String]
 
     let plan: PlanProvider
     let preflight: Preflight
@@ -119,7 +123,7 @@ struct ResidencyHandoff: SubagentHandoff {
                 )
             },
             restore: { lease, onPhase in
-                await ChatResidencyHandoff.restoreBestEffort(lease, onPhase: onPhase)
+                try await ChatResidencyHandoff.restore(lease, onPhase: onPhase)
             }
         )
     }
@@ -146,15 +150,65 @@ struct ResidencyHandoff: SubagentHandoff {
         }
 
         let lease = try await unload(plan.maxElapsedSeconds, emit)
+        let result: SubagentResult
         do {
-            let result = try await body()
-            _ = await restore(lease, emit)
-            return result
-        } catch {
+            result = try await body()
+        } catch let bodyError {
             // Restore on the failure path too so the orchestrator is never left
-            // unloaded with no diagnostic.
-            _ = await restore(lease, emit)
-            throw error
+            // unloaded with no diagnostic. This cleanup must not inherit the
+            // cancelled child task: model preload checks cancellation, so
+            // running restore inline after Stop can otherwise fail before the
+            // different-local orchestrator is resident again.
+            do {
+                _ = try await restoreOutsideCancelledRun(lease, feed: feed)
+            } catch let restoreError {
+                throw ResidencyHandoffFailure.bodyAndRestoreFailed(
+                    body: Self.errorContext(bodyError),
+                    restore: Self.errorContext(restoreError)
+                )
+            }
+            throw bodyError
+        }
+        _ = try await restoreOutsideCancelledRun(lease, feed: feed)
+        return result
+    }
+
+    /// Restore is owned cleanup, not child work. Run it in a fresh detached
+    /// task (no inherited cancellation) and await that task to completion
+    /// before the handoff returns. This is deliberately not fire-and-forget:
+    /// the caller cannot release admission or finish the tool card while the
+    /// original chat model is still absent.
+    private func restoreOutsideCancelledRun(
+        _ lease: ChatResidencyLease,
+        feed: SubagentFeed
+    ) async throws -> [String] {
+        let restore = self.restore
+        let operation = Task.detached(priority: .userInitiated) {
+            try await restore(lease) { phase, detail in
+                feed.emitPhase(phase, detail: detail.isEmpty ? nil : detail)
+            }
+        }
+        return try await operation.value
+    }
+
+    private static func errorContext(_ error: Error) -> String {
+        "\(String(reflecting: type(of: error))): \(error.localizedDescription)"
+    }
+}
+
+/// A child failure and a restore failure are both material. Swift can throw
+/// only one value, so preserve both typed contexts in one actionable error
+/// rather than replacing the child error with the cleanup error or silently
+/// returning the child result.
+enum ResidencyHandoffFailure: Error, LocalizedError, Sendable, Equatable {
+    case bodyAndRestoreFailed(body: String, restore: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .bodyAndRestoreFailed(let body, let restore):
+            return
+                "The subagent failed and its orchestrator could not be restored. "
+                + "Subagent failure: \(body). Restore failure: \(restore)."
         }
     }
 }

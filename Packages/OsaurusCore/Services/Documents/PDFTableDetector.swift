@@ -62,14 +62,21 @@ struct PDFTableDetector {
         }
     }
 
-    static func detectTables(glyphs: [Glyph], pageText: String? = nil) -> [Table] {
-        let visualRows = rows(from: glyphs)
-        let detectedTables = tables(from: visualRows)
+    static func detectTables(glyphs: [Glyph], pageText: String? = nil) throws -> [Table] {
+        try Task.checkCancellation()
+        let visualRows = try rows(from: glyphs)
+        try Task.checkCancellation()
+        let detectedTables = try tables(from: visualRows)
         guard let pageText else { return detectedTables }
-        return reconcileCellText(in: detectedTables, visualRows: visualRows, pageText: pageText)
+        return try reconcileCellText(
+            in: detectedTables,
+            visualRows: visualRows,
+            pageText: pageText
+        )
     }
 
-    static func rows(from glyphs: [Glyph]) -> [Row] {
+    static func rows(from glyphs: [Glyph]) throws -> [Row] {
+        try Task.checkCancellation()
         let visibleGlyphs =
             glyphs
             .filter { !$0.text.isNewline && !$0.bounds.isNull && !$0.bounds.isEmpty }
@@ -79,6 +86,7 @@ struct PDFTableDetector {
                 }
                 return $0.bounds.minX < $1.bounds.minX
             }
+        try Task.checkCancellation()
         guard !visibleGlyphs.isEmpty else { return [] }
 
         let tolerance = max(3, median(visibleGlyphs.map(\.bounds.height)) * 0.65)
@@ -87,6 +95,7 @@ struct PDFTableDetector {
         var currentMidY = visibleGlyphs[0].midY
 
         for glyph in visibleGlyphs {
+            try Task.checkCancellation()
             if current.isEmpty || abs(glyph.midY - currentMidY) <= tolerance {
                 current.append(glyph)
                 currentMidY = averageMidY(current)
@@ -100,25 +109,32 @@ struct PDFTableDetector {
             buckets.append(current)
         }
 
-        return buckets.compactMap { bucket in
+        var rows: [Row] = []
+        rows.reserveCapacity(buckets.count)
+        for bucket in buckets {
+            try Task.checkCancellation()
             let ordered = bucket.sorted {
                 if abs($0.bounds.minX - $1.bounds.minX) > 0.5 {
                     return $0.bounds.minX < $1.bounds.minX
                 }
                 return $0.characterIndex < $1.characterIndex
             }
-            let cells = cells(from: ordered)
-            guard let pageIndex = ordered.first?.pageIndex else { return nil }
-            return Row(
-                pageIndex: pageIndex,
-                glyphs: ordered,
-                bounds: unionBounds(ordered.map(\.bounds)),
-                cells: cells
+            try Task.checkCancellation()
+            guard let pageIndex = ordered.first?.pageIndex else { continue }
+            rows.append(
+                Row(
+                    pageIndex: pageIndex,
+                    glyphs: ordered,
+                    bounds: unionBounds(ordered.map(\.bounds)),
+                    cells: try cells(from: ordered)
+                )
             )
         }
+        return rows
     }
 
-    static func cells(from glyphs: [Glyph]) -> [Cell] {
+    static func cells(from glyphs: [Glyph]) throws -> [Cell] {
+        try Task.checkCancellation()
         guard let pageIndex = glyphs.first?.pageIndex else { return [] }
         let medianWidth = median(glyphs.map(\.bounds.width).filter { $0 > 0 })
         let gapThreshold = max(8, medianWidth * 2.2)
@@ -127,6 +143,7 @@ struct PDFTableDetector {
         var previousTextGlyph: Glyph?
 
         for glyph in glyphs {
+            try Task.checkCancellation()
             if glyph.text.isWhitespace {
                 let isWideDelimiter =
                     previousTextGlyph.map { glyph.bounds.minX - $0.bounds.minX > gapThreshold } ?? false
@@ -152,21 +169,28 @@ struct PDFTableDetector {
             groups.append(current)
         }
 
-        return groups.enumerated().compactMap { columnIndex, group in
+        var cells: [Cell] = []
+        cells.reserveCapacity(groups.count)
+        for (columnIndex, group) in groups.enumerated() {
+            try Task.checkCancellation()
             let text = normalizeCellText(group.map(\.text).joined())
-            guard !text.isEmpty else { return nil }
-            return Cell(
-                pageIndex: pageIndex,
-                rowIndex: 0,
-                columnIndex: columnIndex,
-                glyphs: group,
-                text: text,
-                bounds: unionBounds(group.map(\.bounds))
+            guard !text.isEmpty else { continue }
+            cells.append(
+                Cell(
+                    pageIndex: pageIndex,
+                    rowIndex: 0,
+                    columnIndex: columnIndex,
+                    glyphs: group,
+                    text: text,
+                    bounds: unionBounds(group.map(\.bounds))
+                )
             )
         }
+        return cells
     }
 
-    static func tables(from rows: [Row]) -> [Table] {
+    static func tables(from rows: [Row]) throws -> [Table] {
+        try Task.checkCancellation()
         let candidates = rows.filter { $0.cells.count >= 2 }
         guard !candidates.isEmpty else { return [] }
 
@@ -174,6 +198,7 @@ struct PDFTableDetector {
         var current: [Row] = []
 
         for row in candidates {
+            try Task.checkCancellation()
             if let last = current.last, canGroup(last, row) {
                 current.append(row)
             } else {
@@ -187,12 +212,19 @@ struct PDFTableDetector {
             groups.append(current)
         }
 
-        return groups.enumerated().map { tableIndex, group in
-            Table(
-                pageIndex: group[0].pageIndex,
-                index: tableIndex,
-                rows: group.enumerated().map { rowIndex, row in
-                    let cells = row.cells.enumerated().map { columnIndex, cell in
+        var tables: [Table] = []
+        tables.reserveCapacity(groups.count)
+        for (tableIndex, group) in groups.enumerated() {
+            try Task.checkCancellation()
+            var tableRows: [Row] = []
+            tableRows.reserveCapacity(group.count)
+            for (rowIndex, row) in group.enumerated() {
+                try Task.checkCancellation()
+                var cells: [Cell] = []
+                cells.reserveCapacity(row.cells.count)
+                for (columnIndex, cell) in row.cells.enumerated() {
+                    try Task.checkCancellation()
+                    cells.append(
                         Cell(
                             pageIndex: cell.pageIndex,
                             rowIndex: rowIndex,
@@ -201,17 +233,27 @@ struct PDFTableDetector {
                             text: cell.text,
                             bounds: cell.bounds
                         )
-                    }
-                    return Row(
+                    )
+                }
+                tableRows.append(
+                    Row(
                         pageIndex: row.pageIndex,
                         glyphs: row.glyphs,
                         bounds: row.bounds,
                         cells: cells
                     )
-                },
-                bounds: unionBounds(group.map(\.bounds))
+                )
+            }
+            tables.append(
+                Table(
+                    pageIndex: group[0].pageIndex,
+                    index: tableIndex,
+                    rows: tableRows,
+                    bounds: unionBounds(group.map(\.bounds))
+                )
             )
         }
+        return tables
     }
 
     private static func canGroup(_ upper: Row, _ lower: Row) -> Bool {
@@ -236,7 +278,8 @@ struct PDFTableDetector {
         in tables: [Table],
         visualRows: [Row],
         pageText: String
-    ) -> [Table] {
+    ) throws -> [Table] {
+        try Task.checkCancellation()
         let lineTokens =
             pageText
             .components(separatedBy: .newlines)
@@ -254,13 +297,20 @@ struct PDFTableDetector {
             }
         )
 
-        return tables.map { table in
-            let rows = table.rows.map { row -> Row in
+        var reconciledTables: [Table] = []
+        reconciledTables.reserveCapacity(tables.count)
+        for table in tables {
+            try Task.checkCancellation()
+            var rows: [Row] = []
+            rows.reserveCapacity(table.rows.count)
+            for row in table.rows {
+                try Task.checkCancellation()
                 guard let order = rowOrderByKey[rowKey(row)],
                     order < lineTokens.count,
                     lineTokens[order].count == row.cells.count
                 else {
-                    return row
+                    rows.append(row)
+                    continue
                 }
 
                 let cells = zip(row.cells, lineTokens[order]).map { cell, text in
@@ -273,15 +323,25 @@ struct PDFTableDetector {
                         bounds: cell.bounds
                     )
                 }
-                return Row(
-                    pageIndex: row.pageIndex,
-                    glyphs: row.glyphs,
-                    bounds: row.bounds,
-                    cells: cells
+                rows.append(
+                    Row(
+                        pageIndex: row.pageIndex,
+                        glyphs: row.glyphs,
+                        bounds: row.bounds,
+                        cells: cells
+                    )
                 )
             }
-            return Table(pageIndex: table.pageIndex, index: table.index, rows: rows, bounds: table.bounds)
+            reconciledTables.append(
+                Table(
+                    pageIndex: table.pageIndex,
+                    index: table.index,
+                    rows: rows,
+                    bounds: table.bounds
+                )
+            )
         }
+        return reconciledTables
     }
 
     private static func rowKey(_ row: Row) -> String {

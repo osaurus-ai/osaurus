@@ -35,6 +35,63 @@ extension EvalRunner {
             )
         }
 
+        // Batch-engine settings are user-visible production controls, but an
+        // eval must not inherit whichever values happen to be saved on the
+        // contributor's machine. Apply the fixture to the production
+        // in-memory snapshot before ANY parent/child generation starts, then
+        // restore the exact prior snapshot on every return path. The store's
+        // process-only override never writes server-runtime.json.
+        let runtimeConcurrencyBefore = testCase.fixtures.runtimeConcurrency.map { _ in
+            ServerRuntimeSettingsStore.snapshot()
+        }
+        defer {
+            if let runtimeConcurrencyBefore {
+                ServerRuntimeSettingsStore.overrideSnapshotInMemory(runtimeConcurrencyBefore)
+            }
+        }
+        var runtimeConcurrencyNote: String?
+        if let fixture = testCase.fixtures.runtimeConcurrency,
+            let runtimeConcurrencyBefore
+        {
+            if let maxConcurrent = fixture.maxConcurrentSequences,
+                !(1 ... 32).contains(maxConcurrent)
+            {
+                return .terminal(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    outcome: .errored,
+                    notes: [
+                        "fixtures.runtimeConcurrency.maxConcurrentSequences "
+                            + "must be in 1...32 (got \(maxConcurrent))"
+                    ],
+                    modelId: modelId
+                )
+            }
+
+            var settings = runtimeConcurrencyBefore
+            if let continuousBatching = fixture.continuousBatching {
+                settings.concurrency.continuousBatching = continuousBatching
+            }
+            if let maxConcurrent = fixture.maxConcurrentSequences {
+                settings.concurrency.maxConcurrentSequences = maxConcurrent
+            }
+            ServerRuntimeSettingsStore.overrideSnapshotInMemory(settings)
+
+            let effectiveMaxBatchSize = InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
+            runtimeConcurrencyNote =
+                "runtimeConcurrency fixture: continuousBatching="
+                + "\(settings.concurrency.continuousBatching), "
+                + "maxConcurrentSequences="
+                + "\(settings.concurrency.maxConcurrentSequences.map(String.init) ?? "nil"), "
+                + "effectiveMaxBatchSize=\(effectiveMaxBatchSize)"
+            if let runtimeConcurrencyNote {
+                FileHandle.standardError.write(
+                    Data("[evals] \(testCase.id) — \(runtimeConcurrencyNote)\n".utf8)
+                )
+            }
+        }
+
         // Sandbox availability gate (same "didn't apply" semantics as
         // `requirePlugins`): a host without a working, fully-set-up sandbox
         // SKIPS the case instead of failing it, so contributors without
@@ -147,6 +204,33 @@ extension EvalRunner {
             )
         }
         defer { try? FileManager.default.removeItem(at: workspace) }
+
+        // Seed the exact temporary worker pool before installing the
+        // orchestrator, so the production spawn resolver and prompt schema
+        // see real Agent records. Refuse fixture-name collisions instead of
+        // accidentally delegating to a user's existing agent.
+        var evalSpawnTargetIds: [UUID] = []
+        if let targets = testCase.fixtures.agentCapabilities?.spawnAgents,
+            !targets.isEmpty
+        {
+            let installed = installEvalSpawnTargets(targets, modelId: modelId)
+            if let error = installed.error {
+                return .terminal(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    outcome: .errored,
+                    notes: [error],
+                    modelId: modelId
+                )
+            }
+            evalSpawnTargetIds = installed.ids
+        }
+        defer {
+            for id in evalSpawnTargetIds {
+                removeEvalAgent(id)
+            }
+        }
 
         // Per-case capability fixtures: register a TEMPORARY agent whose
         // settings carry the requested flags so prompt gating / tool
@@ -353,7 +437,7 @@ extension EvalRunner {
                     domain: testCase.domain,
                     query: testCase.query,
                     outcome: .errored,
-                    notes: ["agent loop error: \(err)"],
+                    notes: [runtimeConcurrencyNote, "agent loop error: \(err)"].compactMap { $0 },
                     modelId: modelId,
                     latencyMs: latency,
                     toolUsage: toolUsageStats(transcript),
@@ -365,6 +449,9 @@ extension EvalRunner {
         }
 
         var score = AgentLoopScore()
+        if let runtimeConcurrencyNote {
+            score.notes.append(runtimeConcurrencyNote)
+        }
 
         // 1+2. Exit shape + transcript assertions.
         scoreTranscriptAssertions(exp, transcript: transcript, into: &score)
@@ -377,6 +464,10 @@ extension EvalRunner {
         }
         if let artifact = exp.artifactShared {
             let result = scoreArtifactShared(artifact, transcript: transcript)
+            score.record(result.passed, note: result.note)
+        }
+        if let assertion = exp.spawnBatch {
+            let result = scoreSpawnBatch(assertion, transcript: transcript)
             score.record(result.passed, note: result.note)
         }
         for audit in exp.toolUsageAudit ?? [] {
@@ -605,12 +696,72 @@ extension EvalRunner {
                 speakEnabled: caps?.speakEnabled ?? false,
                 searchMemoryEnabled: caps?.searchMemoryEnabled ?? false,
                 selfSchedulingEnabled: caps?.selfSchedulingEnabled ?? false,
-                appleScriptEnabled: caps?.appleScriptEnabled ?? false
+                spawnDelegationEnabled: !(caps?.spawnAgents?.isEmpty ?? true),
+                appleScriptEnabled: caps?.appleScriptEnabled ?? false,
+                spawnableAgentNames: caps?.spawnAgents?.map(\.name) ?? [],
+                subagentBudgets: SubagentBudgets(
+                    maxParallelSpawns: caps?.maxParallelSpawns
+                        ?? SubagentBudgets().maxParallelSpawns
+                ).normalized
             )
         )
         AgentStore.save(agent)
         AgentManager.shared.refresh()
         return agent.id
+    }
+
+    /// Persist temporary spawn workers for an agent-loop case. The fixture
+    /// cannot shadow an existing agent or contain duplicate/blank names.
+    /// Worker sampling remains nil so its model bundle owns generation
+    /// defaults exactly as it does in the app.
+    static func installEvalSpawnTargets(
+        _ fixtures: [EvalCase.AgentCapabilitiesFixture.SpawnAgentFixture],
+        modelId: String
+    ) -> (ids: [UUID], error: String?) {
+        let existingNames = Set(
+            AgentStore.loadAll().map {
+                $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            }
+        )
+        var fixtureNames = Set<String>()
+        var agents: [Agent] = []
+        for fixture in fixtures {
+            let name = fixture.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let canonical = name.lowercased()
+            let explicitModel = fixture.modelId?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else {
+                return ([], "spawn fixture has a blank agent name")
+            }
+            guard fixture.modelId == nil || !(explicitModel?.isEmpty ?? true) else {
+                return ([], "spawn fixture '\(name)' has a blank model id")
+            }
+            guard fixtureNames.insert(canonical).inserted else {
+                return ([], "spawn fixture repeats agent name '\(name)'")
+            }
+            guard !existingNames.contains(canonical) else {
+                return ([], "spawn fixture collides with existing agent '\(name)'")
+            }
+            agents.append(
+                Agent(
+                    name: name,
+                    description: fixture.description
+                        ?? "Temporary spawn worker registered by OsaurusEvals.",
+                    systemPrompt: fixture.systemPrompt
+                        ?? "Complete the bounded delegated task and return only the requested result.",
+                    defaultModel: explicitModel ?? modelId,
+                    temperature: nil,
+                    maxTokens: nil,
+                    toolsEnabled: false,
+                    memoryEnabled: false
+                )
+            )
+        }
+        for agent in agents {
+            AgentStore.save(agent)
+        }
+        AgentManager.shared.refresh()
+        return (agents.map(\.id), nil)
     }
 
     /// Stand up an isolated, fully-enabled auto-mode eval agent for a
@@ -1110,6 +1261,208 @@ extension EvalRunner {
             return (true, "toolUsageAudit ok: \(audit.tool) (\(calls.count) calls)")
         }
         return (false, "toolUsageAudit \(audit.tool): \(failures.joined(separator: "; "))")
+    }
+
+    /// Score complete `spawn_batch` aggregates retained outside the bounded
+    /// transcript preview. Internal so model-free evaluator tests can pin the
+    /// reporting contract without launching a model.
+    static func scoreSpawnBatch(
+        _ assertion: EvalCase.AgentLoopExpectations.SpawnBatchAssertion,
+        transcript: AgentLoopTranscript
+    ) -> (passed: Bool, note: String) {
+        let calls = transcript.toolCalls.filter { $0.name == "spawn_batch" }
+        let observations = calls.compactMap(\.spawnBatch)
+        var failures: [String] = []
+
+        // A structured spawn-batch assertion is never meaningful without a
+        // real spawn_batch invocation. Do not let omitted `exactCallCount`
+        // turn every other aggregate assertion into a vacuous pass.
+        if calls.isEmpty {
+            failures.append("no spawn_batch call was observed")
+        }
+        if let exact = assertion.exactCallCount, calls.count != exact {
+            failures.append("calls \(calls.count) != \(exact)")
+        }
+        if observations.count != calls.count {
+            failures.append(
+                "structured results \(observations.count)/\(calls.count)"
+            )
+        }
+
+        let orderedIds = observations.flatMap(\.orderedJobIds)
+        let succeeded = observations.reduce(0) { $0 + $1.observedSucceeded }
+        let failed = observations.reduce(0) { $0 + $1.observedFailed }
+        if let expected = assertion.expectedJobIds, orderedIds != expected {
+            failures.append("job ids \(orderedIds) != \(expected)")
+        }
+        let childRows = observations.flatMap(\.childRows)
+        if let expectedRows = assertion.expectedRows {
+            if childRows.count != expectedRows.count {
+                failures.append("child rows \(childRows.count) != \(expectedRows.count)")
+            }
+            for (index, pair) in zip(childRows, expectedRows).enumerated() {
+                let (observed, expected) = pair
+                if observed.id != expected.id {
+                    failures.append(
+                        "child[\(index)].id \(String(describing: observed.id)) != \(expected.id)"
+                    )
+                }
+                if let value = expected.targetType, observed.targetType != value {
+                    failures.append(
+                        "child[\(index)].target_type "
+                            + "\(String(describing: observed.targetType)) != \(value)"
+                    )
+                }
+                if let value = expected.target, observed.target != value {
+                    failures.append(
+                        "child[\(index)].target "
+                            + "\(String(describing: observed.target)) != \(value)"
+                    )
+                }
+                if let value = expected.ok, observed.ok != value {
+                    failures.append(
+                        "child[\(index)].ok \(String(describing: observed.ok)) != \(value)"
+                    )
+                }
+                if let value = expected.model, observed.model != value {
+                    failures.append(
+                        "child[\(index)].model "
+                            + "\(String(describing: observed.model)) != \(value)"
+                    )
+                }
+                if let needles = expected.summaryContains {
+                    let summary = observed.summary ?? ""
+                    for needle in needles where !summary.contains(needle) {
+                        failures.append(
+                            "child[\(index)].summary missing '\(needle)'"
+                        )
+                    }
+                }
+            }
+        }
+        if let expected = assertion.expectedSucceeded, succeeded != expected {
+            failures.append("succeeded \(succeeded) != \(expected)")
+        }
+        if let expected = assertion.expectedFailed, failed != expected {
+            failures.append("failed \(failed) != \(expected)")
+        }
+        if let expected = assertion.expectedMaxParallel,
+            observations.contains(where: { $0.maxParallel != expected })
+                || (observations.isEmpty && !calls.isEmpty)
+        {
+            failures.append(
+                "max_parallel values \(observations.map(\.maxParallel)) do not all equal \(expected)"
+            )
+        }
+        if assertion.requireEveryRowSettled == true,
+            observations.contains(where: { !$0.everyRowSettled })
+                || (observations.isEmpty && !calls.isEmpty)
+        {
+            failures.append("one or more child rows were not settled")
+        }
+        if assertion.requireReportedCountsMatchRows == true {
+            for observation in observations {
+                if observation.reportedSucceeded != observation.observedSucceeded
+                    || observation.reportedFailed != observation.observedFailed
+                {
+                    failures.append(
+                        "reported counts \(observation.reportedSucceeded.map(String.init) ?? "nil")/"
+                            + "\(observation.reportedFailed.map(String.init) ?? "nil") "
+                            + "!= observed \(observation.observedSucceeded)/"
+                            + "\(observation.observedFailed)"
+                    )
+                }
+            }
+        }
+        if let expected = assertion.expectedAggregateStatus,
+            observations.contains(where: { $0.aggregateStatus != expected })
+                || (observations.isEmpty && !calls.isEmpty)
+        {
+            failures.append(
+                "aggregate_status values \(observations.map(\.aggregateStatus)) "
+                    + "do not all equal \(expected)"
+            )
+        }
+
+        let executionWaves = observations.flatMap { $0.executionWaves ?? [] }
+        if assertion.requireEveryExecutionWaveWellFormed == true,
+            observations.contains(where: { $0.everyExecutionWaveWellFormed != true })
+                || (observations.isEmpty && !calls.isEmpty)
+        {
+            failures.append("one or more execution waves were absent or malformed")
+        }
+        if let expectedWaves = assertion.expectedExecutionWaves {
+            if executionWaves.count != expectedWaves.count {
+                failures.append(
+                    "execution waves \(executionWaves.count) != \(expectedWaves.count)"
+                )
+            }
+            for (index, pair) in zip(executionWaves, expectedWaves).enumerated() {
+                let (observed, expected) = pair
+                if let value = expected.wave, observed.wave != value {
+                    failures.append(
+                        "wave[\(index)].wave \(String(describing: observed.wave)) != \(value)"
+                    )
+                }
+                if let value = expected.remoteJobs, observed.remoteJobs != value {
+                    failures.append(
+                        "wave[\(index)].remote_jobs "
+                            + "\(String(describing: observed.remoteJobs)) != \(value)"
+                    )
+                }
+                if let value = expected.effectiveLocalSlots,
+                    observed.effectiveLocalSlots != value
+                {
+                    failures.append(
+                        "wave[\(index)].effective_local_slots "
+                            + "\(String(describing: observed.effectiveLocalSlots)) != \(value)"
+                    )
+                }
+                if let value = expected.localSubwaves, observed.localSubwaves != value {
+                    failures.append(
+                        "wave[\(index)].local_subwaves "
+                            + "\(String(describing: observed.localSubwaves)) != \(value)"
+                    )
+                }
+                if let value = expected.limitingFactors,
+                    observed.limitingFactors != value
+                {
+                    failures.append(
+                        "wave[\(index)].limited_by "
+                            + "\(String(describing: observed.limitingFactors)) != \(value)"
+                    )
+                }
+            }
+        }
+        if let expected = assertion.expectedCacheAvailable,
+            observations.contains(where: { $0.cacheAvailable != expected })
+                || (observations.isEmpty && !calls.isEmpty)
+        {
+            failures.append(
+                "cache available values \(observations.map(\.cacheAvailable)) "
+                    + "do not all equal \(expected)"
+            )
+        }
+
+        let executionWaveSummary = executionWaves.map { wave in
+            "wave=\(wave.wave.map(String.init) ?? "nil")"
+                + ",remote=\(wave.remoteJobs.map(String.init) ?? "nil")"
+                + ",slots=\(wave.effectiveLocalSlots.map(String.init) ?? "nil")"
+                + ",subwaves=\(wave.localSubwaves.map { String(describing: $0) } ?? "nil")"
+                + ",limitedBy=\(wave.limitingFactors.map { String(describing: $0) } ?? "nil")"
+        }
+        let summary =
+            "spawnBatch calls=\(calls.count), jobs=\(orderedIds), "
+            + "succeeded=\(succeeded), failed=\(failed), "
+            + "maxParallel=\(observations.map(\.maxParallel)), "
+            + "aggregateStatus=\(observations.map(\.aggregateStatus)), "
+            + "childModels=\(childRows.map(\.model)), "
+            + "executionWaves=[\(executionWaveSummary.joined(separator: " | "))], "
+            + "cacheAvailable=\(observations.map(\.cacheAvailable))"
+        if failures.isEmpty {
+            return (true, "\(summary) — ok")
+        }
+        return (false, "\(summary) — \(failures.joined(separator: "; "))")
     }
 
     /// Scheduler-store outcome: a next-run row must exist for the eval

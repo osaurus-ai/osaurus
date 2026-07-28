@@ -62,14 +62,47 @@ struct AgentSubagentRunResult: Sendable {
 
 /// Optional child toolset for a subagent run. When `nil`, the run is text-only
 /// (every tool call is refused). When present, the child sees `specs` and the
-/// runner dispatches allowed calls through `execute` (the kind enforces its own
-/// allowlist + error conversion inside `execute`).
+/// runner dispatches allowed calls through an owned operation (the kind
+/// enforces its own allowlist + error conversion inside the operation).
 struct AgentSubagentToolset: Sendable {
     var specs: [Tool]
-    /// Execute one child tool call and return the result envelope. The kind
-    /// owns the allowlist check, dispatch, and error→envelope conversion; the
-    /// runner owns message bookkeeping and child-session scoping.
-    var execute: @Sendable (_ invocation: ServiceToolInvocation) async -> String
+    var beginExecution:
+        @Sendable (_ invocation: ServiceToolInvocation) -> OwnedSubagentOperation<String>
+
+    init(
+        specs: [Tool],
+        beginExecution:
+            @escaping @Sendable (ServiceToolInvocation) -> OwnedSubagentOperation<String>
+    ) {
+        self.specs = specs
+        self.beginExecution = beginExecution
+    }
+
+    /// Compatibility initializer for private/injected dispatchers. The
+    /// resulting task is still explicitly owned: cancellation requests abort
+    /// and the runner drains it before the turn can finish.
+    init(
+        specs: [Tool],
+        execute: @escaping @Sendable (ServiceToolInvocation) async -> String
+    ) {
+        self.init(
+            specs: specs,
+            beginExecution: { invocation in
+                OwnedSubagentOperation {
+                    await execute(invocation)
+                }
+            }
+        )
+    }
+
+    func execute(_ invocation: ServiceToolInvocation) async -> String {
+        let operation = beginExecution(invocation)
+        do {
+            return try await operation.value()
+        } catch {
+            return ToolEnvelope.fromError(error, tool: invocation.toolName)
+        }
+    }
 }
 
 enum AgentSubagentRunner {
@@ -77,6 +110,10 @@ enum AgentSubagentRunner {
     /// current step and the last reported decode speed (nil until the runtime
     /// reports one).
     typealias Progress = @Sendable (_ completionTokens: Int, _ tokensPerSecond: Double?) -> Void
+    /// Injectable stream producer used by deterministic runner regressions.
+    /// Production callers omit it and continue through `ChatEngine`.
+    typealias StreamProvider =
+        @Sendable (ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error>
 
     /// Internal cancel signal carrying its cause. Thrown out of the stream
     /// consumption (or its watchdog) and converted to a `.cancelled` exit at
@@ -113,7 +150,8 @@ enum AgentSubagentRunner {
         treatEmptyChoicesAsFinal: Bool = false,
         isInterrupted: @escaping @Sendable () -> Bool = { false },
         toolset: AgentSubagentToolset? = nil,
-        onProgress: Progress? = nil
+        onProgress: Progress? = nil,
+        streamProvider: StreamProvider? = nil
     ) async throws -> AgentSubagentRunResult {
         var messages = seedMessages
         var finalDigest: String?
@@ -191,12 +229,21 @@ enum AgentSubagentRunner {
                 request.enable_thinking = enableThinking
 
                 let stepStarted = Date()
-                let stream = try await engine.streamChat(request: request)
+                let stream: AsyncThrowingStream<String, Error>
+                if let streamProvider {
+                    stream = try await streamProvider(request)
+                } else {
+                    stream = try await engine.streamChat(request: request)
+                }
                 let outcome = try await Self.consumeStream(
                     stream,
                     cancelCause: cancelCause,
                     onProgress: onProgress
                 )
+                // A Stop can land after the producer's final delta but before
+                // this model-step hook classifies the accumulated text. Never
+                // promote that partial/terminal buffer to a successful digest.
+                try Self.rejectTerminalCancellation(cancelCause)
 
                 // Usage: prompt of the last step (largest composed prompt),
                 // completions summed. Estimator fallback for providers that
@@ -236,7 +283,10 @@ enum AgentSubagentRunner {
                             role: "assistant",
                             content: nil,
                             tool_calls: calls,
-                            tool_call_id: nil
+                            tool_call_id: nil,
+                            reasoning_content: outcome.reasoning.isEmpty
+                                ? nil
+                                : outcome.reasoning
                         )
                     )
                     return .toolCalls(
@@ -287,11 +337,34 @@ enum AgentSubagentRunner {
                     )
                     return AgentLoopToolExecution(result: envelope, isError: true)
                 }
-                // Ephemeral child session id; `currentAgentId` stays inherited
-                // from the parent so sandbox routing + the exec limiter hit the
-                // same agent budget.
-                let result = await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-                    await toolset.execute(invocation)
+                // Ephemeral child session id. The surrounding run inherits the
+                // launcher `currentAgentId`; a configured target toolset may
+                // temporarily bind its target id inside the individual
+                // operation so registry policy follows the child's persona.
+                let operation = ChatExecutionContext.$currentSessionId.withValue(sessionId) {
+                    toolset.beginExecution(invocation)
+                }
+                let result: String
+                do {
+                    result = try await operation.value(
+                        cancellationRequested: { cancelCause() != nil }
+                    )
+                } catch is CancellationError {
+                    // `OwnedSubagentOperation.value` has already requested
+                    // abort and drained the child operation. The loop hook is
+                    // non-throwing, so record the sticky cause and return one
+                    // honest tool envelope; the loop's next cancellation
+                    // boundary produces the canonical `.cancelled` exit.
+                    let cause = cancelCause() ?? .parentTask
+                    recordedCancelCause = cause
+                    result = ToolEnvelope.failure(
+                        kind: .executionError,
+                        message: "Spawned tool operation was cancelled (\(cause.rawValue)).",
+                        tool: invocation.toolName,
+                        retryable: false
+                    )
+                } catch {
+                    result = ToolEnvelope.fromError(error, tool: invocation.toolName)
                 }
                 messages.append(
                     ChatMessage(
@@ -416,18 +489,11 @@ enum AgentSubagentRunner {
                 } catch let single as ServiceToolInvocation {
                     outcome.toolCalls = [single]
                 }
-                // The producer FINISHES (rather than throws) when its own task
-                // is cancelled, so re-probe after a clean stream end: a stream
-                // torn down by a cancel must not be mistaken for a complete
-                // answer. If the step still produced usable output (tool calls
-                // or non-empty text), keep it — the cancel landed at natural
-                // completion and honesty favors the finished result.
-                if outcome.toolCalls.isEmpty,
-                    outcome.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                    let cause = cancelCause()
-                {
-                    throw RunCancelled(cause: cause)
-                }
+                // The producer can FINISH (rather than throw) when its own
+                // task is cancelled. Re-probe after every clean stream end:
+                // buffered text/tool fragments are not proof the model
+                // reached a valid terminal boundary, so Stop always wins.
+                try Self.rejectTerminalCancellation(cancelCause)
                 return outcome
             }
             group.addTask {
@@ -451,6 +517,17 @@ enum AgentSubagentRunner {
                 group.cancelAll()
                 throw error
             }
+        }
+    }
+
+    /// The shared post-stream cancellation boundary. Internal for a
+    /// deterministic regression test: a stream that buffered visible text
+    /// before Stop must still exit as cancelled, never as a final answer.
+    static func rejectTerminalCancellation(
+        _ cancelCause: @escaping @Sendable () -> SubagentCancelCause?
+    ) throws {
+        if let cause = cancelCause() {
+            throw RunCancelled(cause: cause)
         }
     }
 }

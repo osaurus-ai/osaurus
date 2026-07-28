@@ -26,12 +26,12 @@ struct ConcurrencySection: View {
             section: .concurrency,
             status: .engineReady,
             blurb:
-                "How many requests the engine can decode at once. Higher = more throughput, more wired memory."
+                "How many same-model requests, including local subagents, the engine can decode at once. Higher = more throughput, more wired memory."
         ) {
             SettingsStepperField(
                 label: "Concurrent Sessions",
                 help:
-                    "BatchEngine max batch size. 1 keeps the compile fast-path engaged; >1 enables continuous batching.",
+                    "BatchEngine max batch size and the engine ceiling for same-model local subagent waves. 1 keeps the compile fast-path engaged; >1 allows concurrent decode when Continuous Batching is on.",
                 text: $maxConcurrentText,
                 range: 1 ... 32,
                 step: 1,
@@ -42,7 +42,7 @@ struct ConcurrencySection: View {
             SettingsToggle(
                 title: L("Continuous Batching"),
                 description:
-                    "When off, Osaurus pins the BatchEngine to one active slot even if Concurrent Sessions is higher.",
+                    "When off, Osaurus pins each local model to one active job even if Concurrent Sessions is higher. Remote jobs can still overlap, and jobs targeting different local models remain serialized by model residency.",
                 isOn: $draft.concurrency.continuousBatching
             )
 

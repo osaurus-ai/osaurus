@@ -61,6 +61,11 @@ public actor SubagentAdmission {
     /// race from an initially empty residency snapshot.
     private var inPlaceByModel: [String: Int] = [:]
     private var remoteActive = 0
+    /// Once an exclusive handoff is queued, new in-place work must not keep
+    /// extending the residency lease indefinitely. Existing in-place work
+    /// drains; the exclusive waiter then wins before another in-place
+    /// reservation is admitted.
+    private var exclusiveWaiters = 0
 
     /// Test seam: poll interval for blocked waiters.
     private let pollNanoseconds: UInt64
@@ -78,6 +83,18 @@ public actor SubagentAdmission {
         case cancelled
     }
 
+    /// Slot-aware outcome used by same-model BatchEngine consumers.
+    ///
+    /// A batch asks for its desired number of sequence slots and receives the
+    /// currently available subset atomically. This prevents two independent
+    /// `spawn_batch` calls from each planning against the full engine/RAM
+    /// ceiling and collectively oversubscribing it.
+    public enum SlotOutcome: Sendable, Equatable {
+        case admitted(slots: Int)
+        case timedOut(activeDescription: String)
+        case cancelled
+    }
+
     /// Admit a run of `admissionClass`, waiting (bounded) while conflicting
     /// runs hold the GPU. `onWait` fires once, only if the run actually has
     /// to queue (feed "waiting" row). Every `.admitted` return MUST be paired
@@ -86,25 +103,129 @@ public actor SubagentAdmission {
         _ admissionClass: SubagentAdmissionClass,
         modelKey: String? = nil,
         timeoutSeconds: TimeInterval = SubagentAdmission.defaultWaitTimeoutSeconds,
-        onWait: (@Sendable (_ activeDescription: String) -> Void)? = nil
+        onWait: (@Sendable (_ activeDescription: String) -> Void)? = nil,
+        cancellationRequested: (@Sendable () -> Bool)? = nil
     ) async -> Outcome {
         let normalizedModelKey = Self.normalizedModelKey(modelKey)
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         var signaledWait = false
+        var registeredExclusiveWaiter = false
         while !canAdmit(admissionClass, modelKey: normalizedModelKey) {
+            if admissionClass == .localExclusive, !registeredExclusiveWaiter {
+                exclusiveWaiters += 1
+                registeredExclusiveWaiter = true
+            }
             if !signaledWait {
                 signaledWait = true
                 onWait?(activeDescription)
             }
-            if Task.isCancelled { return .cancelled }
-            if Date() >= deadline { return .timedOut(activeDescription: activeDescription) }
+            if Task.isCancelled || cancellationRequested?() == true {
+                if registeredExclusiveWaiter { exclusiveWaiters -= 1 }
+                return .cancelled
+            }
+            if Date() >= deadline {
+                if registeredExclusiveWaiter { exclusiveWaiters -= 1 }
+                return .timedOut(activeDescription: activeDescription)
+            }
             // Suspending releases the actor so concurrent release()/admit()
-            // proceed; wake-up order between multiple waiters is unfair but
-            // the population is tiny (one tool batch).
+            // proceed.
             try? await Task.sleep(nanoseconds: pollNanoseconds)
         }
+        if registeredExclusiveWaiter { exclusiveWaiters -= 1 }
         take(admissionClass, modelKey: normalizedModelKey)
         return .admitted
+    }
+
+    /// Reserve up to `requestedSlots` for one already-resident canonical local
+    /// model. The aggregate reservation never exceeds `slotCapacity`.
+    ///
+    /// This is intentionally separate from `admit(.localInPlace)`: ordinary
+    /// one-worker callers keep the compatibility API, while batching callers
+    /// receive the exact granted width they must use for their subwaves.
+    public func reserveLocalInPlace(
+        modelKey: String?,
+        requestedSlots: Int,
+        slotCapacity: Int,
+        timeoutSeconds: TimeInterval = SubagentAdmission.defaultWaitTimeoutSeconds,
+        onWait: (@Sendable (_ activeDescription: String) -> Void)? = nil,
+        cancellationRequested: (@Sendable () -> Bool)? = nil
+    ) async -> SlotOutcome {
+        let key = Self.normalizedModelKey(modelKey)
+        let requested = max(1, requestedSlots)
+        let capacity = max(1, slotCapacity)
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        var signaledWait = false
+
+        while true {
+            if canReserveInPlace(modelKey: key, capacity: capacity) {
+                let active = inPlaceByModel[key] ?? 0
+                let granted = min(requested, max(0, capacity - active))
+                if granted > 0 {
+                    inPlaceByModel[key, default: 0] += granted
+                    return .admitted(slots: granted)
+                }
+            }
+            if !signaledWait {
+                signaledWait = true
+                onWait?(activeDescription)
+            }
+            if Task.isCancelled || cancellationRequested?() == true {
+                return .cancelled
+            }
+            if Date() >= deadline {
+                return .timedOut(activeDescription: activeDescription)
+            }
+            try? await Task.sleep(nanoseconds: pollNanoseconds)
+        }
+    }
+
+    /// Release a slot-aware same-model reservation.
+    public func releaseLocalInPlace(modelKey: String?, slots: Int) {
+        let key = Self.normalizedModelKey(modelKey)
+        let remaining = max(0, (inPlaceByModel[key] ?? 0) - max(0, slots))
+        if remaining == 0 {
+            inPlaceByModel.removeValue(forKey: key)
+        } else {
+            inPlaceByModel[key] = remaining
+        }
+    }
+
+    /// Atomically resize one caller's existing same-model reservation after a
+    /// fresh Server/RAM plan. Callers pass the exact slot count returned by
+    /// `reserveLocalInPlace`; the actor subtracts that ownership before
+    /// granting the new width, so concurrent batches cannot each retain a
+    /// stale pre-change capacity.
+    ///
+    /// Returning zero means the caller's reservation was fully released
+    /// because sibling reservations already consume the new capacity. The
+    /// caller must not start any local work in that case.
+    public func resizeLocalInPlace(
+        modelKey: String?,
+        heldSlots: Int,
+        requestedSlots: Int,
+        slotCapacity: Int
+    ) -> Int {
+        let key = Self.normalizedModelKey(modelKey)
+        let active = inPlaceByModel[key] ?? 0
+        let owned = min(max(0, heldSlots), active)
+        let siblingSlots = max(0, active - owned)
+        let capacity = max(0, slotCapacity)
+        let available = max(0, capacity - siblingSlots)
+        // A queued exclusive handoff has writer preference. A current owner
+        // may retain or shrink its reservation while draining, but must not
+        // expand it and postpone the exclusive run.
+        let requested =
+            exclusiveWaiters > 0
+            ? min(max(0, requestedSlots), owned)
+            : max(0, requestedSlots)
+        let granted = min(requested, available)
+        let updated = siblingSlots + granted
+        if updated == 0 {
+            inPlaceByModel.removeValue(forKey: key)
+        } else {
+            inPlaceByModel[key] = updated
+        }
+        return granted
     }
 
     /// Release a previously admitted run.
@@ -141,11 +262,23 @@ public actor SubagentAdmission {
             return true
         case .localInPlace:
             guard exclusiveActive == 0 else { return false }
+            guard exclusiveWaiters == 0 else { return false }
             return inPlaceByModel.isEmpty
                 || (inPlaceByModel.count == 1 && inPlaceByModel[modelKey] != nil)
         case .localExclusive:
             return exclusiveActive == 0 && inPlaceByModel.isEmpty
         }
+    }
+
+    private func canReserveInPlace(modelKey: String, capacity: Int) -> Bool {
+        guard exclusiveActive == 0, exclusiveWaiters == 0 else { return false }
+        guard
+            inPlaceByModel.isEmpty
+                || (inPlaceByModel.count == 1 && inPlaceByModel[modelKey] != nil)
+        else {
+            return false
+        }
+        return (inPlaceByModel[modelKey] ?? 0) < capacity
     }
 
     private func take(_ admissionClass: SubagentAdmissionClass, modelKey: String) {

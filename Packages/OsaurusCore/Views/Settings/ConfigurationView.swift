@@ -57,11 +57,10 @@ struct ConfigurationView: View {
     /// thread each (auto-)save.
     @State private var loadedServerConfig: ServerConfiguration = .default
 
-    /// System runtime knobs for subagent helper jobs (local handoff, RAM-safety
-    /// preflight, image load policy). Backed by `SubagentConfigurationStore`;
-    /// the per-agent spawn/image config lives in each agent's Subagents tab.
-    /// Saved immediately on change (like the toast toggles), not through the
-    /// debounced `saveConfiguration` path.
+    /// Built-in/main-chat Spawn policy plus system runtime knobs for subagent
+    /// helper jobs. Backed by `SubagentConfigurationStore`; custom agents keep
+    /// their own policy in their Subagents tab. Saved immediately on change
+    /// (like the toast toggles), not through the debounced configuration path.
     @State private var subagentConfiguration = SubagentConfigurationStore.snapshot()
 
     // Search (passed from sidebar)
@@ -306,8 +305,8 @@ struct ConfigurationView: View {
         }
     }
 
-    /// The relocated subagent runtime knobs (was the dedicated Spawn tab). The
-    /// component wraps itself in a `SettingsSection` card, so this only adds the
+    /// Main-chat Spawn policy and shared subagent runtime knobs. The component
+    /// wraps itself in a `SettingsSection` card, so this only adds the
     /// search-visibility gate.
     @ViewBuilder private var subagentSection: some View {
         if matchesSearch(Self.subagentKeywords) {

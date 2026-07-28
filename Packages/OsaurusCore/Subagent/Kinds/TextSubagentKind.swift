@@ -48,6 +48,10 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// in `.model` mode it forces the run model after the pool gate. The target
     /// must still exist and be spawnable — the allow-list gate runs first.
     private let modelOverride: String?
+    /// Set only by spawn_batch after its single batch-level gate succeeds.
+    /// Individual children still re-read and enforce a newly changed `.deny`
+    /// policy during resolution, but do not present N duplicate panels.
+    private let permissionPreauthorized: Bool
 
     /// Cap on the digest handed back to the parent.
     private static let digestMaxChars = 8_000
@@ -71,15 +75,13 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     private var systemPrompt: String = ""
     private var budgets = SubagentBudgets()
     /// The launching agent's child-tool grant (`none` = no generic read-only
-    /// file tools; the target agent's OWN tools ride along regardless — see
-    /// `agentToolSpecs`).
+    /// file tools; a target agent may still receive the cancellation-audited
+    /// subset of its own enabled tools — see `agentToolSpecs`).
     private var toolAccess: SpawnToolAccess = .none
-    /// Agent mode: the target agent's own enabled tools, resolved at
-    /// `resolveModel` time. This is what makes `spawn_agent` delegate to the
-    /// AGENT rather than to its bare prompt — a Calendar agent spawned without
-    /// its calendar tools either errors on an undispatchable envelope or
-    /// role-plays success while creating nothing (live report). Empty for
-    /// `spawn_model` and for agents with no tools enabled.
+    /// Agent mode: the cancellation-audited subset of the target agent's
+    /// enabled tools, resolved at `resolveModel` time. Empty for `spawn_model`,
+    /// for agents with no tools enabled, and when none of the enabled tools
+    /// expose cooperative abort-and-drain ownership for spawned execution.
     private var agentToolSpecs: [Tool] = []
     /// The target agent's user-set temperature override (agent mode only;
     /// `nil` keeps the model bundle's own generation defaults).
@@ -87,6 +89,10 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// The residency plan resolved at `resolveModel` time (reject-before-evict),
     /// consumed by `makeHandoff()`. `.none` when no swap is needed.
     private var residencyPlan: ResidencyPlan = .none
+    /// Snapshot resolved before model lookup. `.deny` is rejected immediately;
+    /// `.ask` is handled by `permission` unless the enclosing batch already
+    /// received one approval for all of its jobs.
+    private var resolvedPermissionPolicy: SubagentPermissionPolicy = .ask
 
     /// Batch scheduler inspection after `resolveModel`: lets the outer
     /// reject-before-load phase aggregate RAM requirements and choose one
@@ -94,21 +100,73 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// public spawn contract remains the resolved model + result envelope.
     var preparedResidencyPlan: ResidencyPlan { residencyPlan }
 
+    /// Re-resolve the local residency decision after a batch has acquired its
+    /// process-wide local scheduling lease. Preparation intentionally happens
+    /// before that wait so every target can be rejected before the first
+    /// unload, but resident models, RAM pressure, and the user's handoff/RAM
+    /// settings can change while a batch is queued. The batch scheduler must
+    /// therefore use this current decision for both capacity and the one
+    /// group-owned handoff instead of replaying the preparation snapshot.
+    func refreshedBatchResidencyPlan(for resolved: ResolvedModel) async throws -> ResidencyPlan {
+        guard resolved.isLocal else { return .none }
+
+        // Eval runs deliberately bypass production residency. A production
+        // local row never reaches this branch with a model override.
+        if modelOverride != nil { return residencyPlan }
+
+        let lookup = resolved.id ?? resolved.name
+        guard
+            let installed =
+                ModelManager.findInstalledModel(named: lookup)
+                ?? ModelManager.findInstalledModel(named: resolved.name)
+        else {
+            throw SubagentError.unavailable(
+                "Local model '\(resolved.name)' is no longer installed."
+            )
+        }
+
+        let decision = try await SubagentResidency.resolve(
+            modelName: installed.id,
+            config: SubagentConfigurationStore.snapshot(),
+            idleWaitSeconds: budgets.normalized.maxElapsedSeconds,
+            deniedMessage: residencyDeniedMessage
+        )
+        guard decision.isLocal else {
+            throw SubagentError.unavailable(
+                "Local model '\(resolved.name)' became unavailable while the batch was waiting."
+            )
+        }
+        residencyPlan = decision.plan
+        return decision.plan
+    }
+
     /// `spawn_agent` entry point (agent context). The optional `modelOverride`
     /// is the eval seam.
-    init(agentName: String, input: String, modelOverride: String? = nil) {
+    init(
+        agentName: String,
+        input: String,
+        modelOverride: String? = nil,
+        permissionPreauthorized: Bool = false
+    ) {
         self.target = .agent(name: agentName)
         self.input = input
         self.modelOverride = modelOverride
+        self.permissionPreauthorized = permissionPreauthorized
     }
 
     /// `spawn_model` entry point (bare model, no agent). The optional
     /// `modelOverride` is the eval seam (forces the run model + residency
     /// passthrough); production passes nil so the real residency decision runs.
-    init(model: String, input: String, modelOverride: String? = nil) {
+    init(
+        model: String,
+        input: String,
+        modelOverride: String? = nil,
+        permissionPreauthorized: Bool = false
+    ) {
         self.target = .model(id: model)
         self.input = input
         self.modelOverride = modelOverride
+        self.permissionPreauthorized = permissionPreauthorized
     }
 
     /// Human label of the spawn target for error/result copy: the resolved
@@ -118,6 +176,19 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         switch target {
         case .agent(let name): return resolvedAgentName.isEmpty ? name : resolvedAgentName
         case .model(let id): return id
+        }
+    }
+
+    private var residencyDeniedMessage: String {
+        switch target {
+        case .agent:
+            return
+                "Spawning a different local agent requires \"Local Orchestrator Handoff\" enabled "
+                + "in Settings → Subagents (so the chat model can unload to make room)."
+        case .model:
+            return
+                "Spawning a local model requires \"Local Orchestrator Handoff\" enabled in "
+                + "Settings → Subagents (so the chat model can unload to make room)."
         }
     }
 
@@ -131,7 +202,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
         let config = SubagentConfigurationStore.snapshot()
         // Per-agent allow-lists: the Default / main chat uses its own pools
-        // (edited in the main chat's Subagents tab); a custom agent uses its own
+        // (edited in Settings → Subagents); a custom agent uses its own
         // lists (its Subagents tab), resolved from the launching agent (`scope`).
         // There is no global master switch.
         let isDefault = scope.agentId == Agent.defaultId
@@ -142,12 +213,15 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         }
 
         // Permission gate is shared across both tools (one `spawn` capability).
-        if SubagentToolVisibility.effectivePermission(
+        // Deny is resolved before target/provider/model work. Ask remains a
+        // real interactive gate in `permission` (or one enclosing batch gate).
+        self.resolvedPermissionPolicy = SubagentToolVisibility.effectivePermission(
             capabilityId: capability.id,
             isDefault: isDefault,
             config: config,
             settings: settings
-        ) == .deny {
+        )
+        if resolvedPermissionPolicy == .deny {
             throw SubagentError.denied(
                 "Spawning is denied by this agent's permission settings."
             )
@@ -246,14 +320,16 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             agentId: scope.agentId,
             evalModel: modelOverride,
             idleWaitSeconds: self.budgets.maxElapsedSeconds,
-            deniedMessage:
-                "Spawning a different local agent requires \"Local Orchestrator Handoff\" enabled "
-                + "in Settings → Subagents (so the chat model can unload to make room).",
+            deniedMessage: residencyDeniedMessage,
             unavailableMessage: "Agent '\(agentName)' has no model configured.",
             defaultModel: { AgentManager.shared.effectiveModel(for: targetAgentId) }
         )
         self.residencyPlan = resolved.decision.plan
-        return ResolvedModel(name: resolved.model, id: nil, isLocal: resolved.decision.isLocal)
+        return ResolvedModel(
+            name: resolved.model,
+            id: resolved.installedModelID,
+            isLocal: resolved.decision.isLocal
+        )
     }
 
     /// `spawn_model`: gate the model allow-list, then run with NO agent (empty
@@ -305,20 +381,73 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             evalModel: modelOverride,
             requestedModel: modelId,
             idleWaitSeconds: self.budgets.maxElapsedSeconds,
-            deniedMessage:
-                "Spawning a local model requires \"Local Orchestrator Handoff\" enabled in "
-                + "Settings → Subagents (so the chat model can unload to make room).",
+            deniedMessage: residencyDeniedMessage,
             unavailableMessage: "Model '\(modelId)' is not available.",
             defaultModel: { nil }
         )
         self.residencyPlan = resolved.decision.plan
-        return ResolvedModel(name: resolved.model, id: nil, isLocal: resolved.decision.isLocal)
+        return ResolvedModel(
+            name: resolved.model,
+            id: resolved.installedModelID,
+            isLocal: resolved.decision.isLocal
+        )
     }
 
     func permission(_ scope: SubagentScope, _ resolved: ResolvedModel) async -> SubagentDecision {
-        // All policy gates are resolved up front in `resolveModel`
-        // (reject-before-evict); spawn has no interactive prompt.
-        .allow
+        if permissionPreauthorized {
+            return .allow
+        }
+        return await SpawnPermissionGate.authorize(
+            scope: scope,
+            policy: resolvedPermissionPolicy,
+            toolName: toolName,
+            description:
+                "Allow this agent to spawn one bounded \(targetKindLabel) subagent?",
+            argumentsJSON: approvalArgumentsJSON(resolvedModel: resolved.name)
+        )
+    }
+
+    private var toolName: String {
+        switch target {
+        case .agent: return SubagentCapabilityRegistry.spawnAgentToolName
+        case .model: return SubagentCapabilityRegistry.spawnModelToolName
+        }
+    }
+
+    private var targetKindLabel: String {
+        switch target {
+        case .agent: return "configured-agent"
+        case .model: return "model"
+        }
+    }
+
+    private func approvalArgumentsJSON(resolvedModel: String) -> String {
+        let targetType: String
+        let targetValue: String
+        switch target {
+        case .agent(let name):
+            targetType = "agent"
+            targetValue = name
+        case .model(let id):
+            targetType = "model"
+            targetValue = id
+        }
+        let payload: [String: Any] = [
+            "target_type": targetType,
+            "target": targetValue,
+            "input": input,
+            "resolved_model": resolvedModel,
+        ]
+        guard JSONSerialization.isValidJSONObject(payload),
+            let data = try? JSONSerialization.data(
+                withJSONObject: payload,
+                options: [.sortedKeys]
+            ),
+            let json = String(data: data, encoding: .utf8)
+        else {
+            return "{}"
+        }
+        return json
     }
 
     func makeHandoff() -> SubagentHandoff {
@@ -345,13 +474,18 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             access: toolAccess,
             maxToolCalls: budgets.maxToolCalls,
             feed: feed,
-            agentSpecs: agentToolSpecs
+            agentSpecs: agentToolSpecs,
+            executionAgentId: Self.childToolExecutionAgentId(
+                targetAgentId: resolvedAgentId,
+                launcherAgentId: scope.agentId
+            )
         )
 
         // Knowledge tools inside the child resolve grants + curator role against
-        // the TARGET agent (isolation), not the inherited launcher identity that
-        // keeps billing budget/limiter to the launcher. `nil` for `spawn_model`
-        // (no agent, no knowledge tools) simply falls back to `currentAgentId`.
+        // the TARGET agent (isolation), not the launcher identity that owns the
+        // surrounding model run, admission, handoff, and usage accounting.
+        // `nil` for `spawn_model` (no agent, no knowledge tools) falls back to
+        // the launcher's `currentAgentId`.
         let result = try await ChatExecutionContext.$knowledgeGrantAgentIdOverride
             .withValue(resolvedAgentId)
         {
@@ -496,12 +630,12 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         return name == "clarify"
     }
 
-    /// The target agent's own enabled tools, as the child's schema. Uses the
-    /// same per-agent enabled list the direct-chat surface scopes to
-    /// (`effectiveEnabledToolNames`), so a spawned agent can do what it can do
-    /// in a direct chat — minus the exclusions above. `specs(forTools:)`
-    /// silently drops names that aren't registered right now, so the child
-    /// only ever sees live tools.
+    /// The target agent's cancellation-safe enabled tools, as the child's
+    /// schema. Start with the same per-agent enabled-name source the direct-chat
+    /// surface uses (`effectiveEnabledToolNames`), apply the exclusions above,
+    /// then intersect it with tools that expose audited abort-and-drain
+    /// ownership. A direct-chat tool without that ownership is deliberately
+    /// absent rather than becoming an uninterruptible spawned operation.
     @MainActor
     static func agentChildToolSpecs(agentId: UUID) -> [Tool] {
         let caps = AgentManager.shared.effectiveCapabilities(for: agentId)
@@ -511,7 +645,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             knowledgeCuratorEnabled: caps.knowledgeCuratorEnabled
         )
         guard !names.isEmpty else { return [] }
-        return ToolRegistry.shared.specs(forTools: names)
+        return ToolRegistry.shared.specsForSpawnedOperations(forTools: names)
     }
 
     /// The tool NAMES a spawned child carries: the target agent's manual
@@ -539,9 +673,24 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         return Array(Set(names.filter { !isExcludedChildTool($0) }))
     }
 
-    /// Build the child's toolset: the target agent's own tools (agent mode,
-    /// `agentSpecs`) plus the curated read-only file set when the launching
-    /// agent granted access; `nil` keeps the run text-only. The closure
+    /// Identity used only while a spawned child's tool body crosses the shared
+    /// `ToolRegistry` boundary. A configured-agent spawn must execute with the
+    /// selected target agent's UUID so its tool policy, secrets, database, and
+    /// sandbox scope match the persona whose prompt/schema the model received.
+    /// A bare-model spawn has no target persona and therefore keeps the
+    /// launcher's UUID. The surrounding inference/admission/handoff lifecycle
+    /// remains launcher-owned; this value is bound around each tool operation,
+    /// not around `AgentSubagentRunner.run`.
+    static func childToolExecutionAgentId(
+        targetAgentId: UUID?,
+        launcherAgentId: UUID
+    ) -> UUID {
+        targetAgentId ?? launcherAgentId
+    }
+
+    /// Build the child's toolset: the target agent's cancellation-audited tools
+    /// (agent mode, `agentSpecs`) plus the curated read-only file set when the
+    /// launching agent granted access; `nil` keeps the run text-only. The closure
     /// enforces the allowlist and the per-run tool-call cap, dispatches
     /// through the shared `ToolRegistry` (its permission gate + schema
     /// preflight included), and narrates each call to the live feed.
@@ -554,6 +703,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         feed: SubagentFeed?,
         agentSpecs: [Tool] = [],
         specs specsOverride: [Tool]? = nil,
+        executionAgentId: UUID? = nil,
         dispatch: (@Sendable (ServiceToolInvocation) async -> String)? = nil
     ) async -> AgentSubagentToolset? {
         let readOnlySpecs: [Tool]
@@ -562,7 +712,9 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
                 readOnlySpecs = specsOverride
             } else {
                 readOnlySpecs = await MainActor.run {
-                    ToolRegistry.shared.specs(forTools: readOnlyChildToolNames)
+                    ToolRegistry.shared.specsForSpawnedOperations(
+                        forTools: readOnlyChildToolNames
+                    )
                 }
             }
         } else if specsOverride != nil, agentSpecs.isEmpty {
@@ -597,7 +749,8 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
                 do {
                     return try await ToolRegistry.shared.execute(
                         name: invocation.toolName,
-                        argumentsJSON: invocation.jsonArguments
+                        argumentsJSON: invocation.jsonArguments,
+                        ownsExecutionUntilTermination: true
                     )
                 } catch {
                     return ToolEnvelope.fromError(error, tool: invocation.toolName)
@@ -605,27 +758,31 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             }
         return AgentSubagentToolset(
             specs: specs,
-            execute: { [weak feed] invocation in
+            beginExecution: { [weak feed] invocation in
                 guard allowed.contains(invocation.toolName) else {
-                    return ToolEnvelope.failure(
-                        kind: .rejected,
-                        message:
-                            "Tool '\(invocation.toolName)' is not available inside this subagent. "
-                            + "Available: \(allowed.sorted().joined(separator: ", ")).",
-                        tool: invocation.toolName,
-                        retryable: false
-                    )
+                    return OwnedSubagentOperation {
+                        ToolEnvelope.failure(
+                            kind: .rejected,
+                            message:
+                                "Tool '\(invocation.toolName)' is not available inside this subagent. "
+                                + "Available: \(allowed.sorted().joined(separator: ", ")).",
+                            tool: invocation.toolName,
+                            retryable: false
+                        )
+                    }
                 }
                 let used = counter.increment()
                 guard used <= cap else {
-                    return ToolEnvelope.failure(
-                        kind: .rejected,
-                        message:
-                            "Tool-call budget (\(cap)) exhausted for this subagent run. "
-                            + "Produce your final answer from what you already have.",
-                        tool: invocation.toolName,
-                        retryable: false
-                    )
+                    return OwnedSubagentOperation {
+                        ToolEnvelope.failure(
+                            kind: .rejected,
+                            message:
+                                "Tool-call budget (\(cap)) exhausted for this subagent run. "
+                                + "Produce your final answer from what you already have.",
+                            tool: invocation.toolName,
+                            retryable: false
+                        )
+                    }
                 }
                 feed?.emit(
                     SubagentActivityEvent(
@@ -635,10 +792,22 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
                         detail: Self.toolCallDetail(invocation)
                     )
                 )
-                return await ChatExecutionContext.$toolExecutionScope.withValue(
-                    childExecutionScope
-                ) {
-                    await dispatchCall(invocation)
+                return OwnedSubagentOperation {
+                    let executeInChildScope: @Sendable () async -> String = {
+                        await ChatExecutionContext.$toolExecutionScope.withValue(
+                            childExecutionScope
+                        ) {
+                            await dispatchCall(invocation)
+                        }
+                    }
+                    if let executionAgentId {
+                        return await ChatExecutionContext.$currentAgentId.withValue(
+                            executionAgentId
+                        ) {
+                            await executeInChildScope()
+                        }
+                    }
+                    return await executeInChildScope()
                 }
             }
         )
@@ -665,7 +834,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         allowedNames: [String] = []
     ) -> String {
         let base = isDefault
-            ? "\(kind) '\(name)' is not spawnable. Add it in the main chat's Subagents tab."
+            ? "\(kind) '\(name)' is not spawnable. Add it in Settings → Subagents."
             : "\(kind) '\(name)' is not spawnable from this agent. Add it in the agent's Subagents tab."
         guard !allowedNames.isEmpty else { return base }
         let exact = allowedNames.map { "'\($0)'" }.joined(separator: ", ")

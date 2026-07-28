@@ -27,54 +27,28 @@ enum SpawnInputContract {
         + "or infer what an opaque label means. Never refer to a previous/earlier message, content "
         + "above, or prior conversation; copy the exact required information into this input."
 
-    /// Reject an input that explicitly delegates unresolved parent-chat state.
+    /// Enforce only the structural part of the standalone-input contract.
     ///
-    /// A text worker intentionally receives no parent transcript. Silently
-    /// running phrases such as “the value from the previous message” can only
-    /// produce a hallucination or an avoidable child failure. This validation
-    /// does not guess or inject context: it asks the parent model to retry with
-    /// the exact standalone value before any model load or residency handoff.
+    /// Whether prose depends on parent-chat state cannot be decided safely by
+    /// substring matching: quoted text, translation work, and source code may
+    /// legitimately contain phrases such as “previous message”. The schema
+    /// description remains the model-facing guidance; execution rejects only a
+    /// task that is structurally empty.
     static func validationFailure(
         input: String,
         field: String = "input",
         tool: String
     ) -> String? {
-        let normalized =
-            input
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            .lowercased()
-        let parentContextReferences = [
-            "previous message",
-            "prior message",
-            "earlier message",
-            "message above",
-            "above message",
-            "previous instruction",
-            "prior instruction",
-            "earlier instruction",
-            "as discussed above",
-            "as discussed earlier",
-            "same as before",
-            "предыдущего сообщения",
-            "предыдущем сообщении",
-            "предыдущей инструкции",
-            "как обсуждалось выше",
-            "上一条消息",
-            "上面的消息",
-            "이전 메시지",
-            "vorherigen nachricht",
-        ]
-        guard let reference = parentContextReferences.first(where: normalized.contains) else {
+        guard input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
         return ToolEnvelope.failure(
             kind: .invalidArgs,
             message:
-                "The worker input depends on parent-chat context (`\(reference)`), but spawned "
-                + "workers cannot see the parent transcript. Retry this tool call with the exact "
-                + "value, text, constraints, and output format copied into `\(field)`.",
+                "The worker task in `\(field)` cannot be blank. Provide the complete standalone "
+                + "instructions, input values, constraints, and required output format.",
             field: field,
-            expected: "a complete standalone worker task with no parent-chat references",
+            expected: "a non-empty standalone worker task",
             tool: tool,
             retryable: true
         )
@@ -192,6 +166,25 @@ public enum SpawnDescriptors {
     @MainActor
     private static func resolveModel(_ id: String, note: String?) -> SpawnModelDescriptor {
         let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let remote = RemoteProviderManager.shared.connectedSpawnModelTarget(
+            forStoredId: trimmed
+        ) {
+            let item = ModelPickerItemCache.shared.items.first { candidate in
+                guard case .remote(_, let providerId) = candidate.source else { return false }
+                return providerId == remote.providerId
+                    && candidate.id == remote.pickerModelId
+            }
+            return SpawnModelDescriptor(
+                id: remote.id,
+                displayName: item?.displayName ?? shortName(fromModelId: remote.modelId),
+                isLocal: false,
+                providerName: remote.providerName,
+                parameterCount: item?.parameterCount,
+                quantization: item?.quantization,
+                isVLM: item?.isVLM ?? false,
+                note: note
+            )
+        }
         if let item = ModelPickerItemCache.shared.items.first(where: { $0.id == trimmed }) {
             let locality = classify(item: item)
             return SpawnModelDescriptor(
@@ -231,6 +224,17 @@ public enum SpawnDescriptors {
         guard let trimmed = modelId?.trimmingCharacters(in: .whitespacesAndNewlines),
             !trimmed.isEmpty
         else { return (nil, nil, nil) }
+        if let remote = RemoteProviderManager.shared.connectedSpawnModelTarget(
+            forStoredId: trimmed
+        ) {
+            return (false, remote.providerName, remote.id)
+        }
+        if SpawnRemoteModelIdentity.parse(trimmed) != nil {
+            // A canonical remote target whose provider is disconnected or
+            // removed is known-remote but unavailable; preserve its id in the
+            // prompt descriptor without guessing a mutable provider name.
+            return (false, nil, trimmed)
+        }
         if let item = ModelPickerItemCache.shared.items.first(where: { $0.id == trimmed }) {
             let locality = classify(item: item)
             return (locality.isLocal, locality.providerName, trimmed)

@@ -800,6 +800,41 @@ struct FileReadTool: OsaurusTool {
         self.documentRegistry = documentRegistry
     }
 
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON: String
+    ) -> SpawnedOperationCancellationSupport {
+        guard let args = parseArguments(argumentsJSON),
+            let relativePath = args["path"] as? String,
+            combinedFileRoute(path: relativePath) == .host,
+            args["sheet_name"] == nil,
+            let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath),
+            let fileURL = try? FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+        else {
+            return .unsupported
+        }
+        var isDirectory: ObjCBool = false
+        let ext = fileURL.pathExtension.lowercased()
+        guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory),
+            !isDirectory.boolValue,
+            !DocumentParser.isImageFile(url: fileURL)
+        else {
+            return .unsupported
+        }
+        // PDF text-layer extraction has a fully async, cancellation-aware
+        // adapter path below. Other parser-backed formats still pass through
+        // DocumentParser's synchronous compatibility shim, so they cannot be
+        // owned by a spawned operation yet.
+        if ext == "pdf" {
+            return .cooperative
+        }
+        guard !Self.shouldExtractViaParser(url: fileURL, ext: ext) else {
+            return .unsupported
+        }
+        return .cooperative
+    }
+
     /// Maximum characters for file_read output to prevent context window exhaustion.
     /// Tiered against shell_run / git_diff via `ToolOutputCaps`.
     private static let maxOutputChars = ToolOutputCaps.fileRead
@@ -963,6 +998,7 @@ struct FileReadTool: OsaurusTool {
         // model actually saw by one line.
         var partialLine: Int? = nil
         for i in (validStart - 1) ..< validEnd {
+            try Task.checkCancellation()
             // Gutter format is `N|content` with NO space after the pipe:
             // everything after the first `|` is byte-exact file content.
             // The earlier `N| content` form made a leading gutter space
@@ -1094,11 +1130,13 @@ struct FileReadTool: OsaurusTool {
     }
 
     /// Pull text out of the file at `url`, throwing `binaryContent` when
-    /// the file is not text or text-extractable. Three branches:
+    /// the file is not text or text-extractable. Four branches:
     ///   - images are refused outright (this tool returns text only);
-    ///   - text-extractable documents (PDF, Word, PowerPoint, RTF, HTML,
-    ///     …) go through `DocumentParser`, which routes through
-    ///     `DocumentFormatRegistry` and PDFKit / `NSAttributedString`;
+    ///   - PDFs use `PDFAdapter` directly so spawned reads remain
+    ///     cancellation-cooperative without crossing the synchronous
+    ///     `DocumentParser` compatibility shim;
+    ///   - other text-extractable documents (Word, PowerPoint, RTF, HTML,
+    ///     …) continue through `DocumentParser`;
     ///   - plain text / source / CSV / unknown extensions read raw bytes,
     ///     NUL-sniff the first 4KB, then UTF-8 decode. The raw path keeps
     ///     line-numbering and `start_line`/`end_line` semantics, and the
@@ -1114,6 +1152,17 @@ struct FileReadTool: OsaurusTool {
             throw Self.binaryError(path: relativePath, ext: ext, detail: .image)
         }
 
+        if ext == "pdf" {
+            return LoadedFileContent(
+                text: try await extractPDFTextLayer(
+                    url: url,
+                    relativePath: relativePath,
+                    ext: ext
+                ),
+                rawRead: nil
+            )
+        }
+
         if Self.shouldExtractViaParser(url: url, ext: ext) {
             return LoadedFileContent(
                 text: try await extractRichDocumentText(
@@ -1125,20 +1174,56 @@ struct FileReadTool: OsaurusTool {
             )
         }
 
-        return try await Task.detached(priority: .userInitiated) {
+        let worker = Task.detached(priority: .userInitiated) {
             try Self.loadBoundedRawText(
                 url: url,
                 relativePath: relativePath,
                 ext: ext
             )
-        }.value
+        }
+        return try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
+    }
+
+    /// Extract a PDF text layer without the synchronous `DocumentParser`
+    /// bridge. `PDFAdapter` checks cancellation between pages, glyphs, table
+    /// phases, and representation construction, so an owning spawned
+    /// operation can cancel and drain this work before it returns.
+    private func extractPDFTextLayer(
+        url: URL,
+        relativePath: String,
+        ext: String
+    ) async throws -> String {
+        do {
+            let document = try await PDFAdapter().parse(
+                url: url,
+                sizeLimit: Int64(DocumentParser.maxFileSize)
+            )
+            try Task.checkCancellation()
+            return document.textFallback
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as DocumentAdapterError {
+            switch error {
+            case .emptyContent:
+                throw Self.binaryError(path: relativePath, ext: ext, detail: .imageOnlyPdf)
+            case .cancelled:
+                throw CancellationError()
+            case .unsupportedFormat, .sizeLimitExceeded, .readFailed, .writeFailed:
+                throw Self.binaryError(path: relativePath, ext: ext, detail: .parseFailed)
+            }
+        }
     }
 
     /// Whether `url` should be routed through `DocumentParser` for text
     /// extraction rather than read as raw bytes. Plain-text / source /
-    /// CSV extensions stay on the raw path (so line ranges keep working);
-    /// every other format the document infrastructure can parse — PDF,
-    /// Word, PowerPoint, RTF, HTML, etc. — is extracted. Lazily registers
+    /// CSV extensions stay on the raw path (so line ranges keep working).
+    /// PDFs are intercepted by `extractPDFTextLayer`; every other format the
+    /// document infrastructure can parse — Word, PowerPoint, RTF, HTML,
+    /// etc. — is extracted here. Lazily registers
     /// the built-in adapters (idempotent) so `canParse` sees formats like
     /// PPTX even on entry points that didn't bootstrap at launch, mirroring
     /// `workbookAdapter(for:)`.
@@ -1148,7 +1233,8 @@ struct FileReadTool: OsaurusTool {
         return DocumentParser.canParse(url: url)
     }
 
-    /// Run `DocumentParser.parse(url:)` on a detached task so the
+    /// Run the non-PDF `DocumentParser.parse(url:)` compatibility path on a
+    /// detached task so the
     /// parser's internal `runBlocking` semaphore can't starve the
     /// cooperative thread pool. Matches the production pattern in
     /// `FloatingInputCard`.
@@ -2287,6 +2373,8 @@ struct FileUndoTool: OsaurusTool, PermissionedTool {
 // MARK: File Search Tool
 
 struct FileSearchTool: OsaurusTool {
+    typealias ContentReader = @Sendable (URL) async throws -> String?
+
     let name = "file_search"
     let description =
         "Search files in the working directory. With `target=\"content\"` (default) it finds text by "
@@ -2336,20 +2424,47 @@ struct FileSearchTool: OsaurusTool {
     ])
 
     private let fixedRootPath: URL?
+    /// Async seam for cancellation-owned content reads. Production uses a
+    /// close-on-cancel `FileHandle` owner; tests inject a suspended read so
+    /// cancellation can be asserted deterministically at the mid-read boundary.
+    private let contentReader: ContentReader
     /// Entries pulled from the enumerator before a search stops and reports
     /// truncation. Defaults to the shared budget; injectable so tests can
     /// exercise the bound without creating tens of thousands of files.
     private let maxEntriesVisited: Int
 
-    init(rootPath: URL? = nil, maxEntriesVisited: Int = FolderToolHelpers.maxSearchEntriesVisited) {
+    init(
+        rootPath: URL? = nil,
+        maxEntriesVisited: Int = FolderToolHelpers.maxSearchEntriesVisited,
+        contentReader: ContentReader? = nil
+    ) {
         self.fixedRootPath = rootPath
         self.maxEntriesVisited = maxEntriesVisited
+        self.contentReader =
+            contentReader
+            ?? { url in
+                try await Self.readContentCancellationAware(url)
+            }
     }
 
     /// The executing chat's folder root (TaskLocal scope), or the fixed
     /// root when this instance was built for a known folder. Helpers run
     /// inside `execute`'s task, so they resolve the same root.
     private var rootPath: URL? { FolderToolHelpers.resolveRoot(fixed: fixedRootPath) }
+
+    var canExposeToSpawnedOperation: Bool { true }
+
+    func spawnedOperationCancellationSupport(
+        argumentsJSON: String
+    ) -> SpawnedOperationCancellationSupport {
+        guard let args = parseArguments(argumentsJSON) else {
+            return .unsupported
+        }
+        let searchPath = args["path"] as? String ?? "."
+        return combinedFileRoute(path: searchPath) == .host
+            ? .cooperative
+            : .unsupported
+    }
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
@@ -2481,7 +2596,11 @@ struct FileSearchTool: OsaurusTool {
                 }
 
                 // Search file
-                switch searchFile(fileURL, pattern: pattern, maxResults: maxResults - totalMatches) {
+                switch try await searchFile(
+                    fileURL,
+                    pattern: pattern,
+                    maxResults: maxResults - totalMatches
+                ) {
                 case .matches(let matches):
                     results.append(contentsOf: matches)
                     totalMatches += matches.count
@@ -2491,7 +2610,7 @@ struct FileSearchTool: OsaurusTool {
             }
         } else {
             // Search single file
-            switch searchFile(searchURL, pattern: pattern, maxResults: maxResults) {
+            switch try await searchFile(searchURL, pattern: pattern, maxResults: maxResults) {
             case .matches(let matches):
                 results.append(contentsOf: matches)
                 totalMatches = matches.count
@@ -2765,7 +2884,12 @@ struct FileSearchTool: OsaurusTool {
         case skipped
     }
 
-    private func searchFile(_ url: URL, pattern: String, maxResults: Int) -> ContentSearchFileOutcome {
+    private func searchFile(
+        _ url: URL,
+        pattern: String,
+        maxResults: Int
+    ) async throws -> ContentSearchFileOutcome {
+        try Task.checkCancellation()
         // Skip obvious binaries by extension and any file over the size cap
         // before loading it into memory; the UTF-8 decode below is the final
         // backstop for misnamed or unexpectedly-large text.
@@ -2779,7 +2903,15 @@ struct FileSearchTool: OsaurusTool {
         {
             return .skipped
         }
-        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return .skipped }
+        let content: String
+        do {
+            guard let loaded = try await contentReader(url) else { return .skipped }
+            content = loaded
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return .skipped
+        }
 
         guard let rootPath else { return .skipped }
         let relativePath = FolderToolHelpers.displayPath(for: url, under: rootPath)
@@ -2788,6 +2920,7 @@ struct FileSearchTool: OsaurusTool {
         var matches: [String] = []
 
         for (index, line) in lines.enumerated() {
+            try Task.checkCancellation()
             guard matches.count < maxResults else { break }
 
             if line.localizedCaseInsensitiveContains(pattern) {
@@ -2797,6 +2930,101 @@ struct FileSearchTool: OsaurusTool {
         }
 
         return .matches(matches)
+    }
+
+    /// Read at most the content-search byte limit on a detached worker whose
+    /// file descriptor remains owned by this call. Cancellation closes the
+    /// live handle before draining the worker, so a blocked host/network read
+    /// cannot outlive a stopped spawned run. Invalid UTF-8 and files that grow
+    /// past the cap retain the prior `skipped` behavior.
+    private static func readContentCancellationAware(_ url: URL) async throws -> String? {
+        let owner = ContentReadOwner(url: url)
+        let worker = Task.detached(priority: .userInitiated) {
+            try owner.read(
+                maxBytes: FolderToolHelpers.maxContentSearchFileBytes,
+                chunkBytes: 64 * 1024
+            )
+        }
+
+        do {
+            let data = try await withTaskCancellationHandler {
+                try await worker.value
+            } onCancel: {
+                owner.requestAbort()
+                worker.cancel()
+            }
+            try Task.checkCancellation()
+            guard let data else { return nil }
+            return String(data: data, encoding: .utf8)
+        } catch {
+            if Task.isCancelled {
+                throw CancellationError()
+            }
+            throw error
+        }
+    }
+
+    /// Synchronous `FileHandle.read` itself does not observe Swift task
+    /// cancellation. This owner supplies the missing hard-abort edge by closing
+    /// the handle from the cancellation handler, then the caller awaits the
+    /// worker's termination before returning.
+    private final class ContentReadOwner: @unchecked Sendable {
+        private let url: URL
+        private let lock = NSLock()
+        private var handle: FileHandle?
+        private var abortRequested = false
+
+        init(url: URL) {
+            self.url = url
+        }
+
+        func read(maxBytes: Int, chunkBytes: Int) throws -> Data? {
+            try Task.checkCancellation()
+            let opened = try FileHandle(forReadingFrom: url)
+
+            lock.lock()
+            if abortRequested {
+                lock.unlock()
+                try? opened.close()
+                throw CancellationError()
+            }
+            handle = opened
+            lock.unlock()
+
+            defer { finish(opened) }
+
+            var data = Data()
+            data.reserveCapacity(maxBytes)
+            while data.count <= maxBytes {
+                try Task.checkCancellation()
+                let remaining = (maxBytes + 1) - data.count
+                let count = min(chunkBytes, remaining)
+                guard let chunk = try opened.read(upToCount: count), !chunk.isEmpty else {
+                    break
+                }
+                data.append(chunk)
+            }
+            try Task.checkCancellation()
+            return data.count > maxBytes ? nil : data
+        }
+
+        func requestAbort() {
+            lock.lock()
+            abortRequested = true
+            let opened = handle
+            handle = nil
+            lock.unlock()
+            try? opened?.close()
+        }
+
+        private func finish(_ opened: FileHandle) {
+            lock.lock()
+            if handle === opened {
+                handle = nil
+            }
+            lock.unlock()
+            try? opened.close()
+        }
     }
 }
 

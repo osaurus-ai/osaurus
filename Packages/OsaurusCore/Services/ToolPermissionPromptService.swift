@@ -15,6 +15,16 @@ enum ToolPermissionPromptService {
     private static var localKeyMonitor: Any?
     private static var globalKeyMonitor: Any?
     private static var closeObserver: NSObjectProtocol?
+    /// Identity + cancellation hook for the currently presented policy prompt.
+    /// The id prevents a delayed task-cancellation callback from dismissing a
+    /// newer prompt that happened to open after the cancelled one completed.
+    private static var pendingPolicyPrompt: (id: UUID, cancel: () -> Void)?
+
+    enum PolicyApprovalOutcome: Sendable, Equatable {
+        case denied
+        case allowOnce
+        case alwaysAllow
+    }
 
     static func requestApproval(
         toolName: String,
@@ -157,6 +167,74 @@ enum ToolPermissionPromptService {
                 if let contentView = panel.contentView {
                     panel.makeFirstResponder(contentView)
                 }
+            }
+        }
+    }
+
+    /// Approval prompt for a caller-owned policy. Unlike `requestApproval`,
+    /// choosing "Always Allow" does NOT mutate `ToolRegistry`: the caller owns
+    /// the policy namespace and persists that outcome in its own store.
+    ///
+    /// Cancellation is terminal and denial-shaped. This is required by spawn
+    /// preparation, where the feed's Stop control can fire while the panel is
+    /// open; the continuation must be resumed and the modal dismissed rather
+    /// than stranding the tool call.
+    static func requestPolicyApproval(
+        toolName: String,
+        description: String,
+        argumentsJSON: String
+    ) async -> PolicyApprovalOutcome {
+        if Task.isCancelled { return .denied }
+
+        let requestID = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                var hasResumed = false
+
+                let finish: (PolicyApprovalOutcome) -> Void = { outcome in
+                    guard !hasResumed else { return }
+                    hasResumed = true
+                    if pendingPolicyPrompt?.id == requestID {
+                        pendingPolicyPrompt = nil
+                    }
+                    dismissWindow()
+                    continuation.resume(returning: outcome)
+                }
+                let onAllow = { finish(.allowOnce) }
+                let onDeny = { finish(.denied) }
+                let onAlwaysAllow = { finish(.alwaysAllow) }
+
+                pendingPolicyPrompt = (id: requestID, cancel: onDeny)
+
+                let themeManager = ThemeManager.shared
+                let permissionView = ToolPermissionView(
+                    toolName: toolName,
+                    description:
+                        description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? "This action requires your approval."
+                        : description,
+                    argumentsJSON: argumentsJSON,
+                    onAllow: onAllow,
+                    onDeny: onDeny,
+                    onAlwaysAllow: onAlwaysAllow
+                )
+                .environment(\.theme, themeManager.currentTheme)
+
+                presentPanel(
+                    view: permissionView,
+                    onAllow: onAllow,
+                    onDeny: onDeny
+                )
+
+                // Cancellation can race the MainActor hop into this
+                // continuation. Re-check after the cancellation hook exists.
+                if Task.isCancelled {
+                    onDeny()
+                }
+            }
+        } onCancel: {
+            Task { @MainActor in
+                cancelPolicyPrompt(id: requestID)
             }
         }
     }
@@ -311,5 +389,10 @@ enum ToolPermissionPromptService {
         }
         permissionWindow?.orderOut(nil)
         permissionWindow = nil
+    }
+
+    private static func cancelPolicyPrompt(id: UUID) {
+        guard pendingPolicyPrompt?.id == id else { return }
+        pendingPolicyPrompt?.cancel()
     }
 }

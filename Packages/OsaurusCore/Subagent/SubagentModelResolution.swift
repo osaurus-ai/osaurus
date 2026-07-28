@@ -31,7 +31,21 @@ enum SubagentModelResolution {
     /// will run. Bundled so a kind stores one value and returns one model.
     struct Resolved: Sendable {
         let model: String
+        /// Canonical full installed id for a local bundle. The user-facing
+        /// `model` string may be a short alias, but admission and batching must
+        /// never collapse two organizations that publish the same basename.
+        let installedModelID: String?
         let decision: SubagentResidencyDecision
+
+        init(
+            model: String,
+            installedModelID: String? = nil,
+            decision: SubagentResidencyDecision
+        ) {
+            self.model = model
+            self.installedModelID = installedModelID
+            self.decision = decision
+        }
     }
 
     /// Pure model precedence: the eval seam (forced run model) wins, then an
@@ -69,6 +83,15 @@ enum SubagentModelResolution {
     static func availableOverride(_ id: String?) -> String? {
         guard let trimmed = trimmedNonEmpty(id) else { return nil }
         if ModelManager.findInstalledModel(named: trimmed) != nil { return trimmed }
+        if let remote = RemoteProviderManager.shared.connectedSpawnModelTarget(
+            forStoredId: trimmed
+        ) {
+            return remote.id
+        }
+        // A canonical spawn-only remote id must always be backed by a live
+        // connected provider/service. Do not let a cold picker cache turn a
+        // disconnected or removed UUID target into a trusted opaque model id.
+        if SpawnRemoteModelIdentity.parse(trimmed) != nil { return nil }
         guard ModelPickerItemCache.shared.isLoaded else { return trimmed }
         return ModelPickerItemCache.shared.items.contains { $0.id == trimmed } ? trimmed : nil
     }
@@ -89,15 +112,13 @@ enum SubagentModelResolution {
     /// default model source, evaluated on the
     /// main actor only when no usable override is present.
     ///
-    /// `requestedModel` is an EXPLICIT run-model target the caller resolved
-    /// itself (the `spawn_model` tool's `model` argument). Unlike `evalModel` it
-    /// does NOT bypass residency — it is used as-is (trusted; the kind already
-    /// pool-gated it) and still runs the live `SubagentResidency` decision so a
-    /// local target evicts the resident chat model and a remote one does not. It
-    /// ranks above the per-agent override and the kind default, and deliberately
-    /// skips the `availableOverride` cache check so an explicit target isn't
-    /// silently swapped for a default — an unavailable id surfaces a real load
-    /// error from residency instead.
+    /// `requestedModel` is an EXPLICIT run-model target (the `spawn_model`
+    /// tool's `model` argument, including each `spawn_batch` model job). Unlike
+    /// `evalModel` it does NOT bypass residency. It ranks above the per-agent
+    /// override and kind default, but its persisted allow-list membership is
+    /// not treated as proof of current availability: the target must still be
+    /// Foundation, an installed local model, or a model advertised by a
+    /// currently connected provider before the residency decision can run.
     static func resolve(
         capabilityId: String,
         agentId: UUID?,
@@ -118,10 +139,17 @@ enum SubagentModelResolution {
 
         let config = SubagentConfigurationStore.snapshot()
         let isDefault = agentId == Agent.defaultId
+        let requested = await MainActor.run {
+            currentRequestedTarget(requestedModel)
+        }
+        if trimmedNonEmpty(requestedModel) != nil, requested == nil {
+            throw SubagentError.unavailable(unavailableMessage)
+        }
         let model: String? = await MainActor.run {
             // Explicit target (spawn_model) wins over the override/default, but
-            // still flows into the residency decision below (not a bypass).
-            if let requested = trimmedNonEmpty(requestedModel) { return requested }
+            // only after current availability was proven above. It still flows
+            // into the residency decision below (not a bypass).
+            if let requested { return requested }
             let settings = agentId.flatMap { AgentManager.shared.agent(for: $0)?.settings }
             let override = SubagentToolVisibility.effectiveSubagentModel(
                 capabilityId: capabilityId,
@@ -145,6 +173,35 @@ enum SubagentModelResolution {
             idleWaitSeconds: idleWaitSeconds,
             deniedMessage: deniedMessage
         )
-        return Resolved(model: model, decision: decision)
+        let installedModelID =
+            decision.isLocal ? ModelManager.findInstalledModel(named: model)?.id : nil
+        return Resolved(
+            model: model,
+            installedModelID: installedModelID,
+            decision: decision
+        )
+    }
+
+    /// Normalize and validate one explicit model-only spawn target against
+    /// current runtime truth. This is intentionally independent of the picker
+    /// cache: a cache row can be cold or stale, while local installation state
+    /// and the connected provider catalog are the owning sources used during
+    /// preparation. Both `spawn_model` and `spawn_batch` reuse this check via
+    /// `resolve`, before admission or any model unload/load can occur.
+    @MainActor
+    static func currentRequestedTarget(_ id: String?) -> String? {
+        guard let trimmed = trimmedNonEmpty(id) else { return nil }
+        if trimmed == ModelPickerItem.foundation().id {
+            return AppConfiguration.shared.foundationModelAvailable ? trimmed : nil
+        }
+        if ModelManager.findInstalledModel(named: trimmed) != nil {
+            return trimmed
+        }
+        if let remote = RemoteProviderManager.shared.connectedSpawnModelTarget(
+            forStoredId: trimmed
+        ) {
+            return remote.id
+        }
+        return nil
     }
 }

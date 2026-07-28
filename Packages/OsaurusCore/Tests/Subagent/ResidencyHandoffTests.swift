@@ -15,7 +15,12 @@ import Testing
 @testable import OsaurusCore
 
 private struct PreflightRefused: Error {}
-private struct BodyBlewUp: Error {}
+private struct BodyBlewUp: Error, LocalizedError {
+    var errorDescription: String? { "body failed" }
+}
+private struct RestoreBlewUp: Error, LocalizedError {
+    var errorDescription: String? { "restore failed" }
+}
 
 /// Thread-safe ordered log of which residency operations ran.
 private final class OpLog: @unchecked Sendable {
@@ -36,7 +41,8 @@ private final class OpLog: @unchecked Sendable {
 private func makeHandoff(
     log: OpLog,
     plan: ResidencyPlan,
-    preflightThrows: Bool = false
+    preflightThrows: Bool = false,
+    restoreThrows: Bool = false
 ) -> ResidencyHandoff {
     ResidencyHandoff(
         plan: { _ in plan },
@@ -50,6 +56,7 @@ private func makeHandoff(
         },
         restore: { lease, _ in
             log.add("restore")
+            if restoreThrows { throw RestoreBlewUp() }
             return lease.unloadedModelNames
         }
     )
@@ -115,5 +122,95 @@ struct ResidencyHandoffTests {
             }
         }
         #expect(log.value == ["preflight", "unload", "body", "restore"])
+    }
+
+    @Test("successful child is not reported as success when parent restore fails")
+    func restoreFailureAfterSuccessPropagates() async {
+        let log = OpLog()
+        let handoff = makeHandoff(
+            log: log,
+            plan: ResidencyPlan(shouldUnload: true),
+            restoreThrows: true
+        )
+
+        await #expect(throws: RestoreBlewUp.self) {
+            _ = try await handoff.around(scope: scope, resolved: resolved, feed: feed()) {
+                log.add("body")
+                return SubagentResult(payload: ["summary": "child succeeded"])
+            }
+        }
+        #expect(log.value == ["preflight", "unload", "body", "restore"])
+    }
+
+    @Test("body and restore failures preserve both failure contexts")
+    func bodyAndRestoreFailurePreservesBothContexts() async {
+        let log = OpLog()
+        let handoff = makeHandoff(
+            log: log,
+            plan: ResidencyPlan(shouldUnload: true),
+            restoreThrows: true
+        )
+
+        do {
+            _ = try await handoff.around(scope: scope, resolved: resolved, feed: feed()) {
+                log.add("body")
+                throw BodyBlewUp()
+            }
+            Issue.record("handoff should have failed")
+        } catch let error as ResidencyHandoffFailure {
+            guard case .bodyAndRestoreFailed(let body, let restore) = error else {
+                Issue.record("unexpected residency handoff failure: \(error)")
+                return
+            }
+            #expect(body.contains("BodyBlewUp"))
+            #expect(body.contains("body failed"))
+            #expect(restore.contains("RestoreBlewUp"))
+            #expect(restore.contains("restore failed"))
+            #expect(error.localizedDescription.contains("Subagent failure"))
+            #expect(error.localizedDescription.contains("Restore failure"))
+        } catch {
+            Issue.record("unexpected error type: \(error)")
+        }
+        #expect(log.value == ["preflight", "unload", "body", "restore"])
+    }
+
+    @Test("cancelled child restores the parent from an uncancelled cleanup task")
+    func restoreEscapesChildCancellation() async {
+        let log = OpLog()
+        let handoff = ResidencyHandoff(
+            plan: { _ in ResidencyPlan(shouldUnload: true) },
+            preflight: { _, _, _ in log.add("preflight") },
+            unload: { _, _ in
+                log.add("unload")
+                return ChatResidencyLease(unloadedModelNames: ["chat-model"])
+            },
+            restore: { lease, _ in
+                log.add("restore-cancelled=\(Task.isCancelled)")
+                return lease.unloadedModelNames
+            }
+        )
+
+        let task = Task {
+            try await handoff.around(
+                scope: scope,
+                resolved: resolved,
+                feed: feed()
+            ) {
+                log.add("body")
+                withUnsafeCurrentTask { $0?.cancel() }
+                throw CancellationError()
+            }
+        }
+        _ = try? await task.value
+
+        #expect(
+            log.value
+                == [
+                    "preflight",
+                    "unload",
+                    "body",
+                    "restore-cancelled=false",
+                ]
+        )
     }
 }

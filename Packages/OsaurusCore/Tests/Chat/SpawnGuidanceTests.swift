@@ -147,17 +147,33 @@ struct SpawnGuidanceTests {
             models: [],
             toolAccess: SpawnToolAccess.none
         )
-        #expect(textOnly.contains("Workers are text-only"))
-        #expect(!textOnly.contains("Workers CAN read files"))
+        #expect(
+            textOnly.contains(
+                "Target-agent workers receive only their enabled tools whose implementations are "
+                    + "cancellation-audited for spawned execution"
+            )
+        )
+        #expect(textOnly.contains("bare-model workers have no tools"))
+        #expect(textOnly.contains("No extra generic read-only file tools"))
+        #expect(!textOnly.contains("Workers also CAN read files"))
+        #expect(textOnly.contains("A direct-chat tool omitted from a worker's schema"))
 
         let readOnly = SystemPromptTemplates.spawnGuidance(
             agents: [agent("helper")],
             models: [],
             toolAccess: .readOnly
         )
-        #expect(readOnly.contains("Workers CAN read files"))
+        #expect(
+            readOnly.contains(
+                "Target-agent workers receive only their enabled tools whose implementations are "
+                    + "cancellation-audited for spawned execution"
+            )
+        )
+        #expect(readOnly.contains("Workers also CAN read files"))
         #expect(readOnly.contains("file_read"))
-        #expect(!readOnly.contains("Workers are text-only"))
+        #expect(readOnly.contains("Bare-model workers receive only these added read-only tools"))
+        #expect(!readOnly.contains("bare-model workers have no tools"))
+        #expect(!readOnly.contains("sandbox reads"))
     }
 
     @Test("context-offload framing, self-contained input rule, and batch limits are always present")

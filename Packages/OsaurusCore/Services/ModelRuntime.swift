@@ -1050,6 +1050,7 @@ public actor ModelRuntime {
         Memory.clearCache()
         Stream.gpu.synchronize()
         await MetalGate.shared.exitModelTeardown(model: name)
+        return true
     }
 
     /// Evict `other` for the strict-single-model policy WITHOUT cancelling an
@@ -2010,6 +2011,108 @@ public actor ModelRuntime {
             physical: physical,
             available: Self.availableMemoryBytes()
         )
+    }
+
+    /// Resolve the live, authoritative memory facts used to admit one
+    /// same-local-model subagent batch.
+    ///
+    /// This deliberately shares the normal model-load policy instead of
+    /// teaching `SpawnBatchTool` another weight/JANG/materialization formula:
+    /// the target footprint follows the same preliminary Memory Safety plan as
+    /// `loadContainer`, while per-child cache/state comes from the existing
+    /// architecture-aware KV/SSM/activation estimator. Resident parent bytes
+    /// are counted as releasable only when the already-resolved handoff plan
+    /// will actually unload them.
+    func subagentBatchMemoryFacts(
+        for modelName: String,
+        residencyPlan: ResidencyPlan
+    ) async -> SubagentBatchMemoryFacts? {
+        let trimmed = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+            let found = ModelManager.findInstalledModel(named: trimmed),
+            let localURL = Self.findLocalDirectory(forModelId: found.id)
+        else {
+            return nil
+        }
+
+        let canonicalName = found.name
+        let summaries = await cachedModelSummaries()
+        let targetAlreadyResident = summaries.contains { summary in
+            let residentName =
+                ModelManager.findInstalledModel(named: summary.name)?.name
+                ?? summary.name
+            return residentName.caseInsensitiveCompare(canonicalName) == .orderedSame
+        }
+        let releasableParentBytes: Int64 =
+            residencyPlan.shouldUnload
+            ? summaries.reduce(Int64(0)) { partial, summary in
+                let residentName =
+                    ModelManager.findInstalledModel(named: summary.name)?.name
+                    ?? summary.name
+                guard residentName.caseInsensitiveCompare(canonicalName) != .orderedSame else {
+                    return partial
+                }
+                let (sum, overflow) = partial.addingReportingOverflow(summary.bytes)
+                return overflow ? Int64.max : sum
+            }
+            : 0
+
+        let settings = ServerRuntimeSettingsStore.snapshot()
+        let preliminaryPlan = Self.resolveMemorySafetyLoadPlan(
+            modelName: canonicalName,
+            modelDirectory: localURL,
+            settings: settings,
+            baseLoadConfiguration: .osaurusProduction,
+            inspectBundleFacts: true
+        )
+        let rawWeightsBytes = candidateWeightsSizeBytes(
+            modelName: canonicalName,
+            directory: localURL
+        )
+        let targetLoadFootprintBytes: Int64? =
+            rawWeightsBytes > 0
+            ? (
+                preliminaryPlan.loadConfiguration.useMmapSafetensors
+                ? Self.effectiveLoadFootprintBytes(
+                    rawWeightsBytes: rawWeightsBytes,
+                    modelDirectory: localURL,
+                    modelName: canonicalName
+                )
+                : rawWeightsBytes
+            )
+            : nil
+        let perActiveChildHeadroomBytes = targetLoadFootprintBytes.map {
+            Self.estimatedKVHeadroomBytes(
+                forWeights: $0,
+                modelDirectory: localURL,
+                modelName: canonicalName,
+                kvRetentionCap: preliminaryPlan.cache.defaultMaxKVSize
+            )
+        }
+
+        return SubagentBatchMemoryFacts(
+            canonicalModelKey: canonicalName,
+            targetAlreadyResident: targetAlreadyResident,
+            targetLoadFootprintBytes: targetLoadFootprintBytes.flatMap(Self.nonnegativeUInt64),
+            perActiveChildHeadroomBytes: perActiveChildHeadroomBytes.flatMap(
+                Self.nonnegativeUInt64
+            ),
+            // Match the existing subagent handoff preflight exactly. The
+            // broader model-load estimator also counts speculative pages,
+            // which are not part of the conservative handoff admission
+            // contract and could over-admit a batch.
+            reclaimableBytes: Self.nonnegativeUInt64(
+                ChatResidencyHandoff.availableMemoryBytes()
+            ),
+            releasableParentBytes: Self.nonnegativeUInt64(releasableParentBytes) ?? 0,
+            resolvedLoadBudgetBytes: preliminaryPlan.resolvedLoadBudgetBytes,
+            osHeadroomBytes: Self.nonnegativeUInt64(SubagentCoexistence.headroomBytes) ?? 0
+        )
+    }
+
+    private nonisolated static func nonnegativeUInt64(_ value: Int64) -> UInt64? {
+        guard value >= 0 else { return nil }
+        return UInt64(value)
     }
 
     /// Memoized bundle-size lookup for `projectedLoadFeasibility`: the UI

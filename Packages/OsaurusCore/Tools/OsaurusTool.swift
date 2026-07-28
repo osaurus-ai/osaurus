@@ -7,6 +7,15 @@
 
 import Foundation
 
+/// Whether a tool body can be owned by a spawned run that must abort and
+/// drain every child operation before returning. The default is deliberately
+/// unsupported: cancelling a Swift `Task` does not terminate synchronous work
+/// or an external process unless the concrete tool cooperates.
+enum SpawnedOperationCancellationSupport: Sendable, Equatable {
+    case unsupported
+    case cooperative
+}
+
 protocol OsaurusTool: Sendable {
     /// Unique tool name exposed to the model
     var name: String { get }
@@ -27,6 +36,21 @@ protocol OsaurusTool: Sendable {
     /// `ToolEnvelope.failure(kind: .executionError, …,
     /// retryable: false)` so resources are released promptly.
     func execute(argumentsJSON: String) async throws -> String
+
+    /// Classify one concrete invocation for spawned-run ownership. A tool may
+    /// opt in only when every path selected by these arguments observes task
+    /// cancellation (or forwards it to a hard-abort owner) and does not return
+    /// until that work has terminated.
+    func spawnedOperationCancellationSupport(
+        argumentsJSON: String
+    ) -> SpawnedOperationCancellationSupport
+
+    /// Whether this tool has at least one invocation shape that can satisfy
+    /// `spawnedOperationCancellationSupport`. Spawned children only receive
+    /// schemas for tools that opt in here; the argument-aware check above
+    /// remains the final gate for tools whose safe support is narrower than
+    /// their ordinary chat schema.
+    var canExposeToSpawnedOperation: Bool { get }
 
     /// When `true`, the registry skips its own wall-clock race and
     /// dispatches the body straight through. Streaming-aware tools
@@ -58,6 +82,18 @@ protocol OsaurusTool: Sendable {
 }
 
 extension OsaurusTool {
+    /// Unknown/plugin/MCP operations are not assumed abortable from their
+    /// names. Concrete tools opt in after their cancellation path is audited.
+    func spawnedOperationCancellationSupport(
+        argumentsJSON _: String
+    ) -> SpawnedOperationCancellationSupport {
+        .unsupported
+    }
+
+    /// Unknown/plugin/MCP tools stay out of spawned-worker schemas until
+    /// their concrete cancellation owner has been audited.
+    var canExposeToSpawnedOperation: Bool { false }
+
     /// Default: every tool gets the registry's wall-clock safety net.
     /// Streaming tools (`sandbox_exec`, `shell_run`) override to `true`.
     var bypassRegistryTimeout: Bool { false }
