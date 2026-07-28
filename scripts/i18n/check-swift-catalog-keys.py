@@ -130,6 +130,19 @@ def parse_swift_string_from_marker(line: str, marker: str, start: int) -> tuple[
     return None
 
 
+def at_identifier_boundary(line: str, start: int) -> bool:
+    """True when the marker at *start* is not the tail of a longer identifier.
+
+    Without this, `escapeHTML("...")` matches the `L("` marker because the
+    call ends in `L(`, and plain string arguments get misreported as
+    localization keys.
+    """
+    if start == 0:
+        return True
+    prev = line[start - 1]
+    return not (prev.isalnum() or prev == "_")
+
+
 def referenced_keys(root: Path) -> dict[str, list[str]]:
     refs: dict[str, list[str]] = {}
     for path in sorted(root.rglob("*.swift")):
@@ -143,6 +156,9 @@ def referenced_keys(root: Path) -> dict[str, list[str]]:
                     start = line.find(marker, search_from)
                     if start == -1:
                         break
+                    if not at_identifier_boundary(line, start):
+                        search_from = start + len(marker)
+                        continue
                     parsed = parse_swift_string_from_marker(line, marker, start)
                     search_from = start + len(marker)
                     if not parsed:
