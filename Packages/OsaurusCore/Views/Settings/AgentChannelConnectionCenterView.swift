@@ -668,15 +668,32 @@ struct AgentChannelConnectionCenterView: View {
     /// Derive channel badges for native providers from saved-credential
     /// presence plus live receive-transport health.
     private func refreshNativeBadges() {
+        // Credential presence lives in the keychain; read it off the main
+        // thread so a slow securityd never stalls the connection list.
+        Task {
+            let discordConfigured = await DiscordConnectionService.shared.hasBotTokenOffMain()
+            let slackPresence = await SlackConnectionService.shared.credentialPresenceOffMain()
+            let telegramConfigured = await TelegramConnectionService.shared.hasBotTokenOffMain()
+            applyNativeBadges(
+                discordConfigured: discordConfigured,
+                slackConfigured: slackPresence.botToken,
+                slackReceiveExpected: slackPresence.appToken,
+                telegramConfigured: telegramConfigured
+            )
+        }
+    }
+
+    private func applyNativeBadges(
+        discordConfigured: Bool,
+        slackConfigured: Bool,
+        slackReceiveExpected: Bool,
+        telegramConfigured: Bool
+    ) {
         let discordConfig = DiscordConnectionService.shared.configuration()
-        let discordConfigured = DiscordConnectionService.shared.hasBotToken()
         let discordReceiveExpected = discordConfigured
             && !discordConfig.readableChannelIds.isEmpty
             && !discordConfig.senderAllowlist.isEmpty
-        let slackConfigured = SlackConnectionService.shared.hasBotToken()
-        let slackReceiveExpected = SlackConnectionService.shared.hasAppToken()
         let telegramConfig = TelegramConnectionService.shared.configuration()
-        let telegramConfigured = TelegramConnectionService.shared.hasBotToken()
         let telegramReceiveExpected = telegramConfig.longPollingEnabled
         let slackDispatch = SlackConnectionService.shared.configuration().inboundDispatch
 
