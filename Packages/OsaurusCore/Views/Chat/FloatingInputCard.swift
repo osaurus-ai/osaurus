@@ -338,8 +338,28 @@ struct FloatingInputCard: View {
         return !query.isEmpty && !query.hasSuffix("/")
     }
 
-    // Local state for text input to prevent parent re-renders on every keystroke
-    @State private var localText: String = ""
+    // The typed text lives in a reference-type model so keystrokes never
+    // invalidate the card: `@State` tracks only the reference (never
+    // replaced), and mutations publish through the model, re-rendering just
+    // the regions that observe it (`ComposerTextObservationScope` around the
+    // popups + input card, and `ChipObservationScope` for the live token
+    // count). Everything else reads the text imperatively via `localText`.
+    @State private var composerText = ComposerTextModel()
+
+    /// Compatibility accessor over `composerText` so the many existing
+    /// read/write sites keep their exact shape. Writes route through the
+    /// model — they never touch card state.
+    private var localText: String {
+        get { composerText.text }
+        nonmutating set { composerText.text = newValue }
+    }
+
+    /// Binding for `EditableTextView`, scoped to the model so per-keystroke
+    /// writes bypass the card's state storage entirely.
+    private var localTextBinding: Binding<String> {
+        let model = composerText
+        return Binding(get: { model.text }, set: { model.text = $0 })
+    }
     @State private var isFocused: Bool = false
     @State private var isComposing: Bool = false
     /// Keeps focus in the input through the send/queue state cascade.
@@ -670,7 +690,7 @@ struct FloatingInputCard: View {
                 // only this row (including its visibility gate) — never the
                 // whole card body. The closure re-reads the live singleton
                 // state on every scope render.
-                ChipObservationScope {
+                ChipObservationScope(textModel: composerText) {
                     if screenContextMayShow || showSelectorRow {
                         VStack(alignment: .trailing, spacing: 7) {
                             if screenContextMayShow {
@@ -712,6 +732,21 @@ struct FloatingInputCard: View {
                     )
                 )
             } else {
+                // The scope observes the text model, so keystrokes re-render
+                // only this subtree (popups, input area, send gating) — never
+                // the whole card body.
+                ComposerTextObservationScope(model: composerText) {
+                    composerContent
+                }
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showVoiceOverlay)
+        // Smoothly collapse/reveal the selector row (model chip + balance) as
+        // the remote-agent connection resolves, so the composer doesn't snap.
+        .animation(theme.springAnimation(), value: remoteConnectionPending)
+    }
+
+    private var composerContent: some View {
                 VStack(spacing: 4) {
                     // Slash command popup — appears above the input card
                     if showSlashPopup {
@@ -745,12 +780,22 @@ struct FloatingInputCard: View {
                         removal: .opacity.combined(with: .scale(scale: 0.98))
                     )
                 )
-            }
-        }
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showVoiceOverlay)
-        // Smoothly collapse/reveal the selector row (model chip + balance) as
-        // the remote-agent connection resolves, so the composer doesn't snap.
-        .animation(theme.springAnimation(), value: remoteConnectionPending)
+                .onChange(of: composerText.text) { _, _ in
+                    // Reset popup selection whenever the typed query changes.
+                    // Attached here (inside the text observation scope) so the
+                    // change is detected on scope re-renders — the card itself
+                    // no longer re-renders per keystroke.
+                    slashSelectedIndex = 0
+                    atSelectedIndex = 0
+                    // Typing after an Escape-dismissal re-arms the slash popup
+                    if dismissedSlashQuery != nil, activeSlashQuery != dismissedSlashQuery {
+                        dismissedSlashQuery = nil
+                    }
+                    // Re-list the "@" menu off the main actor for the new query.
+                    // (folds in the registry sync so it costs no extra body chain
+                    // link — the whole chain is at the type-checker's limit.)
+                    refreshAtMenu()
+                }
     }
 
     var body: some View {
@@ -894,19 +939,6 @@ struct FloatingInputCard: View {
                 if newValue != localText {
                     localText = newValue
                 }
-            }
-            .onChange(of: localText) { _, _ in
-                // Reset popup selection whenever the typed query changes
-                slashSelectedIndex = 0
-                atSelectedIndex = 0
-                // Typing after an Escape-dismissal re-arms the slash popup
-                if dismissedSlashQuery != nil, activeSlashQuery != dismissedSlashQuery {
-                    dismissedSlashQuery = nil
-                }
-                // Re-list the "@" menu off the main actor for the new query.
-                // (folds in the registry sync so it costs no extra body chain
-                // link — the whole chain is at the type-checker's limit.)
-                refreshAtMenu()
             }
             .onChange(of: showSlashPopup) { _, _ in
                 // Keep registry in sync so the global key monitor can suppress
@@ -4721,7 +4753,7 @@ extension FloatingInputCard {
 
     private var textInputArea: some View {
         EditableTextView(
-            text: $localText,
+            text: localTextBinding,
             fontSize: inputFontSize,
             textColor: theme.primaryText,
             cursorColor: theme.cursorColor,
@@ -7557,9 +7589,34 @@ private struct VoiceStateSyncObservers: ViewModifier {
 private struct ChipObservationScope<Content: View>: View {
     @ObservedObject private var sandboxState = SandboxManager.State.shared
     @ObservedObject private var clipboardService = ClipboardService.shared
+    /// The card's composer text model: the row's context chip shows a live
+    /// token count that includes what's being typed, so the row re-renders
+    /// per keystroke here instead of the whole card observing the text.
+    @ObservedObject var textModel: ComposerTextModel
     @ViewBuilder let content: () -> Content
 
     var body: some View {
         content()
     }
+}
+
+/// Observation firewall for the popups + input card subtree. Keystrokes
+/// publish through `ComposerTextModel`, re-rendering only this scope's
+/// content — the card holds the model as plain `@State` (the reference never
+/// changes) so typing never invalidates the card body. The closure re-reads
+/// the model's current text through the card's derived properties on every
+/// scope render.
+private struct ComposerTextObservationScope<Content: View>: View {
+    @ObservedObject var model: ComposerTextModel
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+    }
+}
+
+/// Reference-type home for the composer's typed text. See
+/// `FloatingInputCard.composerText` for the invalidation contract.
+final class ComposerTextModel: ObservableObject {
+    @Published var text: String = ""
 }
