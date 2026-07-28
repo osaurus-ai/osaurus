@@ -106,7 +106,7 @@ let package = Package(
         // 44 loop-layer KV slots and fail-closed runtime-contract validation.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "75ee8c170b015456f29f1463e031c275116cb3ae"
+            revision: "7300afaa764f50743b11d8f7f8ececf0100731a2"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
