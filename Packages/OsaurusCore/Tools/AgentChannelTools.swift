@@ -940,7 +940,7 @@ final class AgentChannelAddReactionTool: AgentChannelReactionTool, @unchecked Se
     init(service: AgentChannelConnectionService = .shared) {
         super.init(
             name: "agent_channel_add_reaction",
-            description: "Add a reaction to a message in a write-allowlisted room. Requires `confirm_send: true`.",
+            description: "Add an emoji reaction to a message in a write-allowlisted room. Requires `confirm_send: true`. `reaction` accepts a Unicode emoji (🎉), a Slack-style alias (`:white_check_mark:`), a Discord custom emoji (`name:id` or `<:name:id>`), or a Telegram custom emoji (`custom_emoji:<id>`); it is normalized to the connection's native format.",
             adding: true,
             service: service
         )
@@ -951,7 +951,7 @@ final class AgentChannelRemoveReactionTool: AgentChannelReactionTool, @unchecked
     init(service: AgentChannelConnectionService = .shared) {
         super.init(
             name: "agent_channel_remove_reaction",
-            description: "Remove the bot's reaction from a message. Requires `confirm_send: true`.",
+            description: "Remove the bot's own reaction from a message. Requires `confirm_send: true`. `reaction` takes the same forms as `agent_channel_add_reaction`. On Telegram, bots keep a single reaction per message; removal is refused if the bot's current reaction differs from `reaction`.",
             adding: false,
             service: service
         )

@@ -146,7 +146,7 @@ public enum AgentChannelEvalHarness {
         ) async throws -> [TelegramUpdate] { [] }
 
         func sendMessage(
-            chatId: String, text: String, replyToMessageId: Int?, token: String
+            chatId: String, text: String, replyToMessageId: Int?, parseMode: String?, token: String
         ) async throws -> TelegramMessage {
             lock.withLock { _sentTexts.append((chatId, text)) }
             return TelegramMessage(

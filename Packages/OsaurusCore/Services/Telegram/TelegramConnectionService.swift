@@ -218,7 +218,7 @@ enum TelegramConnectionServiceError: LocalizedError, Equatable, Sendable {
         case .sendBackpressure(let chatId):
             return "A Telegram send is already in flight for chat `\(chatId)`. Retry after the current send completes."
         case .messageTooLong:
-            return "Telegram messages must fit Telegram's 4096-character limit."
+            return "Telegram content is too long, even after splitting into multiple messages."
         case .emptyMessage:
             return "Telegram message content must not be empty."
         case .configurationSaveFailed(let message):
@@ -406,6 +406,12 @@ final class TelegramConnectionService: @unchecked Sendable {
     private let sendGate = TelegramPerChatSendGate()
     private let botIdentityLock = NSLock()
     private var cachedBotId: Int64?
+    /// Telegram bots keep at most one reaction per message and the Bot API
+    /// only offers "replace the whole reaction list". Remembering what the bot
+    /// last set lets `remove` refuse to clear a *different* reaction than the
+    /// one the agent asked to remove.
+    private let botReactionLock = NSLock()
+    private var botReactionByMessage: [String: TelegramReactionPayload] = [:]
 
     init(
         client: TelegramAPIClientProtocol,
@@ -847,24 +853,41 @@ final class TelegramConnectionService: @unchecked Sendable {
         let config = configuration()
         let chatId = try requireWritableChat(request.chatId, config: config)
         let text = try validateMessageContent(request.text)
+        let chunks = AgentChannelMessageFormatter.telegramHTMLChunks(text)
+        guard !chunks.isEmpty else { throw TelegramConnectionServiceError.emptyMessage }
+        guard chunks.count <= AgentChannelMessageFormatter.maxChunksPerSend else {
+            throw TelegramConnectionServiceError.messageTooLong
+        }
         guard await sendGate.begin(chatId: chatId) else {
             throw TelegramConnectionServiceError.sendBackpressure(chatId)
         }
         do {
-            let message = try await client.sendMessage(
-                chatId: chatId,
-                text: text,
-                replyToMessageId: request.replyToMessageId,
-                token: token
-            )
+            var messages: [TelegramMessage] = []
+            for (index, chunk) in chunks.enumerated() {
+                // Only the first chunk carries the reply reference; the rest
+                // are plain follow-ups in the same chat.
+                messages.append(
+                    try await client.sendMessage(
+                        chatId: chatId,
+                        text: chunk,
+                        replyToMessageId: index == 0 ? request.replyToMessageId : nil,
+                        parseMode: "HTML",
+                        token: token
+                    )
+                )
+            }
             await sendGate.finish(chatId: chatId)
-            recordMessages([Self.storedMessage(message, roomId: chatId, direction: .outbound)])
-            return [
+            recordMessages(messages.map { Self.storedMessage($0, roomId: chatId, direction: .outbound) })
+            var result: [String: Any] = [
                 "kind": "telegram_message_sent",
                 "chat_id": chatId,
                 "delivery_status": TelegramDeliveryStatus.sent.rawValue,
-                "message": Self.messageDictionary(message),
+                "message": Self.messageDictionary(messages[0]),
             ]
+            if messages.count > 1 {
+                result["chunk_count"] = messages.count
+            }
+            return result
         } catch {
             await sendGate.finish(chatId: chatId)
             throw error
@@ -882,10 +905,17 @@ final class TelegramConnectionService: @unchecked Sendable {
         let chatId = try requireWritableChat(chatId, config: configuration())
         let messageId = try requireMessageId(messageId)
         let content = try validateMessageContent(content)
+        // Edits must stay a single native message: reject content whose
+        // rendered form would need chunking.
+        let chunks = AgentChannelMessageFormatter.telegramHTMLChunks(content)
+        guard chunks.count == 1, let rendered = chunks.first else {
+            throw TelegramConnectionServiceError.messageTooLong
+        }
         let message = try await client.editMessage(
             chatId: chatId,
             messageId: messageId,
-            text: content,
+            text: rendered,
+            parseMode: "HTML",
             token: token
         )
         recordMessages([Self.storedMessage(message, roomId: chatId, direction: .outbound)])
@@ -926,21 +956,35 @@ final class TelegramConnectionService: @unchecked Sendable {
         let token = try requireToken()
         let chatId = try requireWritableChat(chatId, config: configuration())
         let messageId = try requireMessageId(messageId)
-        let reaction = reaction.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !reaction.isEmpty, reaction.count <= 16 else {
+        guard let payload = AgentChannelReactionNormalizer.telegramReaction(reaction) else {
             throw TelegramConnectionServiceError.invalidChatId("reaction")
+        }
+        let reactionKey = "\(chatId):\(messageId)"
+        if !adding,
+           let recorded = botReactionLock.withLock({ botReactionByMessage[reactionKey] }),
+           recorded != payload {
+            throw TelegramConnectionServiceError.api(
+                "The bot's reaction on this message is \(recorded.displayValue), not \(payload.displayValue). Telegram bots keep one reaction per message; removal was skipped so the existing reaction is not cleared."
+            )
         }
         _ = try await client.setReaction(
             chatId: chatId,
             messageId: messageId,
-            reaction: adding ? reaction : nil,
+            reaction: adding ? payload : nil,
             token: token
         )
+        botReactionLock.withLock {
+            if adding {
+                botReactionByMessage[reactionKey] = payload
+            } else {
+                botReactionByMessage.removeValue(forKey: reactionKey)
+            }
+        }
         return [
             "kind": adding ? "telegram_reaction_added" : "telegram_reaction_removed",
             "chat_id": chatId,
             "message_id": "\(messageId)",
-            "reaction": reaction,
+            "reaction": payload.displayValue,
             "delivery_status": adding ? "added" : "removed",
         ]
     }
@@ -1254,7 +1298,11 @@ final class TelegramConnectionService: @unchecked Sendable {
         guard !trimmed.isEmpty else {
             throw TelegramConnectionServiceError.emptyMessage
         }
-        guard trimmed.utf16.count <= TelegramUpdateNormalizer.maxInboundContentLength else {
+        // Long sends are split into up to `maxChunksPerSend` native messages
+        // of 4,096 UTF-16 units each; cap the raw input accordingly.
+        let maxInput = AgentChannelMessageFormatter.telegramChunkLimit
+            * AgentChannelMessageFormatter.maxChunksPerSend
+        guard trimmed.utf16.count <= maxInput else {
             throw TelegramConnectionServiceError.messageTooLong
         }
         return trimmed

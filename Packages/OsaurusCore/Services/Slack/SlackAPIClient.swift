@@ -305,6 +305,11 @@ struct SlackOutboundMessageRequest: Equatable, Sendable {
     let unfurlLinks: Bool
     let unfurlMedia: Bool
     let replyBroadcast: Bool
+    /// When true (the default for agent sends) the content is posted through
+    /// `markdown_text`, so Slack renders standard Markdown natively instead of
+    /// showing literal `**bold**` markup. `parse` only applies to the plain
+    /// `text` mode.
+    let useMarkdownText: Bool
 
     init(
         channelId: String,
@@ -314,7 +319,8 @@ struct SlackOutboundMessageRequest: Equatable, Sendable {
         linkNames: Bool = false,
         unfurlLinks: Bool = false,
         unfurlMedia: Bool = false,
-        replyBroadcast: Bool = false
+        replyBroadcast: Bool = false,
+        useMarkdownText: Bool = true
     ) {
         self.channelId = channelId
         self.content = content
@@ -324,18 +330,23 @@ struct SlackOutboundMessageRequest: Equatable, Sendable {
         self.unfurlLinks = unfurlLinks
         self.unfurlMedia = unfurlMedia
         self.replyBroadcast = replyBroadcast
+        self.useMarkdownText = useMarkdownText
     }
 
     var jsonBody: [String: Any] {
         var body: [String: Any] = [
             "channel": channelId,
-            "text": content,
-            "parse": parse,
             "link_names": linkNames,
             "unfurl_links": unfurlLinks,
             "unfurl_media": unfurlMedia,
             "reply_broadcast": replyBroadcast,
         ]
+        if useMarkdownText {
+            body["markdown_text"] = content
+        } else {
+            body["text"] = content
+            body["parse"] = parse
+        }
         if let threadTs, !threadTs.isEmpty {
             body["thread_ts"] = threadTs
         }
@@ -643,8 +654,7 @@ final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
             body: [
                 "channel": channelId,
                 "ts": messageId,
-                "text": content,
-                "parse": "none",
+                "markdown_text": content,
                 "link_names": false,
             ]
         )

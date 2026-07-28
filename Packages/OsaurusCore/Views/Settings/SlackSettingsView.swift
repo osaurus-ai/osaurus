@@ -292,6 +292,14 @@ struct SlackSettingsView: View {
             .font(.system(size: 11))
             .foregroundColor(theme.tertiaryText)
             .fixedSize(horizontal: false, vertical: true)
+
+            Text(
+                "The manifest marks the bot as always online so it shows a green presence dot in Slack. For an existing app, reapply the manifest under “App Manifest” on api.slack.com/apps — the flag only takes effect after the manifest is saved again.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -1464,13 +1472,17 @@ struct SlackSettingsView: View {
         return nil
     }
 
-    private static let recommendedManifest = """
+    /// Slack has no runtime presence API for bot tokens: the only supported
+    /// way to show the bot with a green presence dot is the static
+    /// `always_online` manifest flag. Existing apps must reapply the manifest
+    /// (App Manifest page) for the change to take effect.
+    static let recommendedManifest = """
     display_information:
       name: Osaurus
     features:
       bot_user:
         display_name: Osaurus
-        always_online: false
+        always_online: true
     oauth_config:
       scopes:
         bot:

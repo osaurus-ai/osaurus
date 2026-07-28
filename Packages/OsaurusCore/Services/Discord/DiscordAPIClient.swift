@@ -167,8 +167,13 @@ enum DiscordAPIError: LocalizedError, Equatable, Sendable {
     }
 }
 
+struct DiscordGatewayInfo: Codable, Equatable, Sendable {
+    let url: String
+}
+
 protocol DiscordAPIClientProtocol: Sendable {
     func currentUser(token: String) async throws -> DiscordBotIdentity
+    func gatewayURL(token: String) async throws -> URL
     func guilds(token: String) async throws -> [DiscordGuild]
     func guild(id: String, token: String) async throws -> DiscordGuild
     func members(guildId: String, token: String) async throws -> [DiscordGuildMember]
@@ -186,6 +191,9 @@ protocol DiscordAPIClientProtocol: Sendable {
 extension DiscordAPIClientProtocol {
     func messages(channelId: String, token: String, limit: Int, after _: String?) async throws -> [DiscordMessage] {
         try await messages(channelId: channelId, token: token, limit: limit)
+    }
+    func gatewayURL(token _: String) async throws -> URL {
+        throw DiscordAPIError.invalidResponse("Discord Gateway discovery is not implemented by this client.")
     }
     func guilds(token _: String) async throws -> [DiscordGuild] {
         throw DiscordAPIError.invalidResponse("Discord server discovery is not implemented by this client.")
@@ -229,6 +237,23 @@ final class DiscordAPIClient: DiscordAPIClientProtocol, @unchecked Sendable {
 
     func currentUser(token: String) async throws -> DiscordBotIdentity {
         try await get(["users", "@me"], token: token)
+    }
+
+    func gatewayURL(token: String) async throws -> URL {
+        let info: DiscordGatewayInfo = try await get(["gateway", "bot"], token: token)
+        guard var components = URLComponents(string: info.url),
+              components.scheme == "wss"
+        else {
+            throw DiscordAPIError.invalidResponse("Discord returned an invalid Gateway URL.")
+        }
+        components.queryItems = [
+            URLQueryItem(name: "v", value: "10"),
+            URLQueryItem(name: "encoding", value: "json"),
+        ]
+        guard let url = components.url else {
+            throw DiscordAPIError.invalidResponse("Discord Gateway URL could not be built.")
+        }
+        return url
     }
 
     func guilds(token: String) async throws -> [DiscordGuild] {

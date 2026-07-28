@@ -337,11 +337,23 @@ protocol TelegramAPIClientProtocol: Sendable {
         chatId: String,
         text: String,
         replyToMessageId: Int?,
+        parseMode: String?,
         token: String
     ) async throws -> TelegramMessage
-    func editMessage(chatId: String, messageId: Int, text: String, token: String) async throws -> TelegramMessage
+    func editMessage(
+        chatId: String,
+        messageId: Int,
+        text: String,
+        parseMode: String?,
+        token: String
+    ) async throws -> TelegramMessage
     func deleteMessage(chatId: String, messageId: Int, token: String) async throws -> Bool
-    func setReaction(chatId: String, messageId: Int, reaction: String?, token: String) async throws -> Bool
+    func setReaction(
+        chatId: String,
+        messageId: Int,
+        reaction: TelegramReactionPayload?,
+        token: String
+    ) async throws -> Bool
     func sendChatAction(chatId: String, action: String, token: String) async throws -> Bool
 }
 
@@ -350,6 +362,7 @@ extension TelegramAPIClientProtocol {
         chatId _: String,
         messageId _: Int,
         text _: String,
+        parseMode _: String?,
         token _: String
     ) async throws -> TelegramMessage {
         throw TelegramAPIError.invalidResponse("Telegram message editing is not implemented by this client.")
@@ -360,7 +373,7 @@ extension TelegramAPIClientProtocol {
     func setReaction(
         chatId _: String,
         messageId _: Int,
-        reaction _: String?,
+        reaction _: TelegramReactionPayload?,
         token _: String
     ) async throws -> Bool {
         throw TelegramAPIError.invalidResponse("Telegram reactions are not implemented by this client.")
@@ -421,6 +434,7 @@ final class TelegramAPIClient: TelegramAPIClientProtocol, @unchecked Sendable {
         chatId: String,
         text: String,
         replyToMessageId: Int?,
+        parseMode: String?,
         token: String
     ) async throws -> TelegramMessage {
         var body: [String: Any] = [
@@ -431,19 +445,32 @@ final class TelegramAPIClient: TelegramAPIClientProtocol, @unchecked Sendable {
         if let replyToMessageId {
             body["reply_to_message_id"] = replyToMessageId
         }
+        if let parseMode {
+            body["parse_mode"] = parseMode
+        }
         return try await post(method: "sendMessage", token: token, body: body)
     }
 
-    func editMessage(chatId: String, messageId: Int, text: String, token: String) async throws -> TelegramMessage {
-        try await post(
+    func editMessage(
+        chatId: String,
+        messageId: Int,
+        text: String,
+        parseMode: String?,
+        token: String
+    ) async throws -> TelegramMessage {
+        var body: [String: Any] = [
+            "chat_id": chatId,
+            "message_id": messageId,
+            "text": text,
+            "disable_web_page_preview": true,
+        ]
+        if let parseMode {
+            body["parse_mode"] = parseMode
+        }
+        return try await post(
             method: "editMessageText",
             token: token,
-            body: [
-                "chat_id": chatId,
-                "message_id": messageId,
-                "text": text,
-                "disable_web_page_preview": true,
-            ]
+            body: body
         )
     }
 
@@ -455,10 +482,15 @@ final class TelegramAPIClient: TelegramAPIClientProtocol, @unchecked Sendable {
         )
     }
 
-    func setReaction(chatId: String, messageId: Int, reaction: String?, token: String) async throws -> Bool {
-        let reactions: [[String: String]] = reaction.map {
-            [["type": "emoji", "emoji": $0]]
-        } ?? []
+    func setReaction(
+        chatId: String,
+        messageId: Int,
+        reaction: TelegramReactionPayload?,
+        token: String
+    ) async throws -> Bool {
+        // An empty list clears the bot's reaction (Telegram bots keep at most
+        // one reaction per message).
+        let reactions: [[String: String]] = reaction.map { [$0.dictionary] } ?? []
         return try await post(
             method: "setMessageReaction",
             token: token,

@@ -60,7 +60,7 @@ display_information:
 features:
   bot_user:
     display_name: osaurus-smoke
-    always_online: false
+    always_online: true
 oauth_config:
   scopes:
     bot:
@@ -101,6 +101,12 @@ Scope notes:
 
 Do not add `chat:write.public` for release proof. Invite the bot to the
 disposable channel instead, so channel membership stays explicit.
+
+Presence note: `features.bot_user.always_online: true` is what shows the bot
+with a green presence dot. Slack has no runtime presence API for bot tokens,
+so this static manifest flag is the only supported mechanism. Existing Slack
+apps created from an older manifest must reapply the updated manifest on the
+App Manifest page for the change to take effect.
 
 Guided setup (matches the numbered steps in Settings -> Channels -> Slack):
 

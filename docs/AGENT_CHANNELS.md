@@ -520,8 +520,9 @@ Slack thread ids use `channel_id:thread_ts` so the canonical
 `agent_channel_read_thread` and `agent_channel_reply_thread` tools can route
 Slack thread operations without adding Slack-only tool names. Sent messages use
 conservative Slack posting controls: automatic name linking is disabled,
-message parsing is set to `none`, unfurls are disabled, and thread replies do
-not broadcast.
+content posts through the `markdown_text` field so standard Markdown renders
+natively, unfurls are disabled, and thread replies do not broadcast. The
+explicit plain-text mode still posts through `text` with `parse: none`.
 
 The native adapter keeps live Slack calls behind `SlackAPIClientProtocol`.
 Outbound sends are represented as a `SlackOutboundMessageRequest` before
@@ -547,6 +548,70 @@ payloads through the same normalization, authorization, storage, and audit path
 used by signed webhook fixtures. Public Events API webhooks remain an
 advanced/future transport that still must use the same signature verifier
 before parsing user-visible content.
+
+## Platform Presence
+
+Osaurus distinguishes transport health (shown in settings as "Not running" /
+"Healthy") from the presence indicator each platform shows next to the bot:
+
+- **Slack** has no runtime presence API for bot tokens. The recommended app
+  manifest sets `features.bot_user.always_online: true`, which is the only
+  supported way to show the bot with a green presence dot. Existing Slack apps
+  must reapply the manifest (App Manifest page) for the change to take effect.
+- **Discord** requires a live Gateway (WebSocket) session for the bot to appear
+  online; REST polling alone leaves it grey. Osaurus runs a lightweight
+  presence-only Gateway session (`DiscordGatewayPresenceRuntime`) whenever a
+  Discord bot token is saved — including send-only setups — identifying as
+  `online` with zero event intents, maintaining heartbeats, and reconnecting
+  with exponential backoff. Message receive stays on cursor-based REST polling.
+  The session disconnects cleanly when the token is removed or Osaurus stops,
+  so the bot presence tracks whether Osaurus is actually running.
+- **Telegram** does not show bot presence, so no presence work applies.
+
+## Native Message Formatting
+
+Outbound channel content is written by agents as Markdown and rendered
+per-provider by `AgentChannelMessageFormatter`, which reuses the same
+`parseBlocks` Markdown pipeline as the in-app chat view:
+
+- **Slack** receives standard Markdown through the `markdown_text` field, so
+  `**bold**`, lists, and code fences render natively instead of appearing as
+  literal markup. Mention/broadcast protections and disabled unfurls are
+  retained.
+- **Discord** receives Discord-compatible Markdown in `content` (headings are
+  clamped to Discord's `#`–`###` levels, images become plain links), with
+  mentions still suppressed via `allowed_mentions`.
+- **Telegram** receives escaped Bot API HTML with an explicit
+  `parse_mode: HTML`, so `**bold**` becomes `<b>bold</b>` and user content
+  containing `<`, `>`, or `&` is escaped rather than interpreted.
+
+Long content is split with shared structure-aware chunking: block boundaries
+first, then line boundaries, then grapheme clusters, so links, code fences, and
+emoji are never split mid-sequence. Limits are 12,000 characters per Slack
+message, 2,000 UTF-16 units per Discord message, and 4,096 UTF-16 units per
+Telegram message, with at most 5 native messages per send. Sends and replies
+chunk automatically (a reply reference applies to the first chunk only);
+message edits must fit a single native message.
+
+## Emoji Reactions
+
+`agent_channel_add_reaction` and `agent_channel_remove_reaction` accept both
+Slack-style aliases and Unicode emoji and normalize per provider through
+`AgentChannelReactionNormalizer`:
+
+- **Slack** takes alias names (`white_check_mark`); Unicode emoji such as `✅`
+  and colon-wrapped aliases such as `:tada:` are converted to the bare alias.
+- **Discord** takes Unicode emoji (`🔥`); aliases are converted to Unicode, and
+  custom emoji use the `name:id` form (`partyparrot:123456789012345678`).
+- **Telegram** takes Unicode emoji or a numeric custom-emoji id, sent as typed
+  `ReactionTypeEmoji` / `ReactionTypeCustomEmoji` payloads. Telegram bots keep
+  one reaction per message: removal clears the bot's reaction only when the
+  requested emoji matches the last reaction Osaurus set on that message, so an
+  unrelated remove request cannot wipe an existing reaction.
+
+Reactions remain behind the same confirmation, write-allowlist, and global
+kill-switch gates as other channel writes; there are no automatic reaction
+heuristics.
 
 ## Message State And Dedupe
 

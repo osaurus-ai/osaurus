@@ -1072,19 +1072,53 @@ final class SlackConnectionService: @unchecked Sendable {
         let normalizedChannelId = try requireWritableChannel(channelId, config: config)
         let token = try requireToken(forChannelId: normalizedChannelId, config: config)
         let trimmedContent = try validateMessageContent(content, config: config)
-        let request = SlackOutboundMessageRequest(
-            channelId: normalizedChannelId,
+        let messages = try await sendRenderedChunks(
             content: trimmedContent,
-            threadTs: nil
+            channelId: normalizedChannelId,
+            threadTs: nil,
+            token: token
         )
-        let message = try await client.sendMessage(request, token: token)
-        recordMessages([message], channelId: normalizedChannelId, direction: .outbound)
-        return [
+        var result: [String: Any] = [
             "kind": "slack_message_sent",
             "channel_id": normalizedChannelId,
-            "message": Self.messageDictionary(message, channelId: normalizedChannelId),
+            "message": Self.messageDictionary(messages[0], channelId: normalizedChannelId),
             "mention_policy": mentionPolicyDictionary(config: config),
         ]
+        if messages.count > 1 {
+            result["chunk_count"] = messages.count
+        }
+        return result
+    }
+
+    /// Renders agent Markdown to Slack `markdown_text` chunks and posts them
+    /// in order (same channel/thread). Returns the sent messages, first chunk
+    /// first. Content that would need more than
+    /// `AgentChannelMessageFormatter.maxChunksPerSend` messages fails as too
+    /// long instead of flooding the channel.
+    private func sendRenderedChunks(
+        content: String,
+        channelId: String,
+        threadTs: String?,
+        token: String
+    ) async throws -> [SlackMessage] {
+        let chunks = AgentChannelMessageFormatter.slackChunks(content)
+        guard !chunks.isEmpty else {
+            throw SlackConnectionServiceError.emptyMessage
+        }
+        guard chunks.count <= AgentChannelMessageFormatter.maxChunksPerSend else {
+            throw SlackConnectionServiceError.messageTooLong
+        }
+        var messages: [SlackMessage] = []
+        for chunk in chunks {
+            let request = SlackOutboundMessageRequest(
+                channelId: channelId,
+                content: chunk,
+                threadTs: threadTs
+            )
+            messages.append(try await client.sendMessage(request, token: token))
+        }
+        recordMessages(messages, channelId: channelId, direction: .outbound)
+        return messages
     }
 
     func replyToThread(
@@ -1100,21 +1134,24 @@ final class SlackConnectionService: @unchecked Sendable {
         let normalizedChannelId = try requireWritableChannel(parsed.channelId, config: config)
         let token = try requireToken(forChannelId: normalizedChannelId, config: config)
         let trimmedContent = try validateMessageContent(content, config: config)
-        let request = SlackOutboundMessageRequest(
-            channelId: normalizedChannelId,
+        let messages = try await sendRenderedChunks(
             content: trimmedContent,
-            threadTs: parsed.threadTs
+            channelId: normalizedChannelId,
+            threadTs: parsed.threadTs,
+            token: token
         )
-        let message = try await client.sendMessage(request, token: token)
-        recordMessages([message], channelId: normalizedChannelId, direction: .outbound)
-        return [
+        var result: [String: Any] = [
             "kind": "slack_thread_reply_sent",
             "channel_id": normalizedChannelId,
             "thread_id": "\(normalizedChannelId):\(parsed.threadTs)",
             "thread_ts": parsed.threadTs,
-            "message": Self.messageDictionary(message, channelId: normalizedChannelId),
+            "message": Self.messageDictionary(messages[0], channelId: normalizedChannelId),
             "mention_policy": mentionPolicyDictionary(config: config),
         ]
+        if messages.count > 1 {
+            result["chunk_count"] = messages.count
+        }
+        return result
     }
 
     func editMessage(
@@ -1131,10 +1168,16 @@ final class SlackConnectionService: @unchecked Sendable {
             throw SlackConnectionServiceError.invalidId(field: "message_id")
         }
         let content = try validateMessageContent(content, config: config)
+        // Edits must stay a single native message: reject content whose
+        // rendered form would need chunking.
+        let chunks = AgentChannelMessageFormatter.slackChunks(content)
+        guard chunks.count == 1, let rendered = chunks.first else {
+            throw SlackConnectionServiceError.messageTooLong
+        }
         let message = try await client.updateMessage(
             channelId: channelId,
             messageId: messageId,
-            content: content,
+            content: rendered,
             token: token
         )
         recordMessages([message], channelId: channelId, direction: .outbound)
@@ -1181,8 +1224,7 @@ final class SlackConnectionService: @unchecked Sendable {
         guard Self.isValidThreadTimestamp(messageId) else {
             throw SlackConnectionServiceError.invalidId(field: "message_id")
         }
-        let reaction = reaction.trimmingCharacters(in: CharacterSet(charactersIn: ": \n\t"))
-        guard !reaction.isEmpty, reaction.count <= 100 else {
+        guard let reaction = AgentChannelReactionNormalizer.slackName(reaction) else {
             throw SlackConnectionServiceError.invalidId(field: "reaction")
         }
         if adding {
