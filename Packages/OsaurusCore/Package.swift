@@ -102,9 +102,11 @@ let package = Package(
         // text-only system/developer turns. Real bundle templates otherwise
         // omit prompt-affecting settings text and can accept an incompatible
         // SSD checkpoint because distinct revisions tokenize identically.
+        // vmlx-swift#192 adds Nanbeige 4.2's looped-transformer runtime with
+        // 44 loop-layer KV slots and fail-closed runtime-contract validation.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "5aa5f160725187d327449628709d472add127541"
+            revision: "75ee8c170b015456f29f1463e031c275116cb3ae"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

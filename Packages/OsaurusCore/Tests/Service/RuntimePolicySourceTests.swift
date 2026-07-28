@@ -766,7 +766,7 @@ struct RuntimePolicySourceTests {
         // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
         // xcworkspace Package.resolved files. Miss one and the app resolves a
         // revision nobody proved.
-        let expectedRuntimeHardenedRevision = "5aa5f160725187d327449628709d472add127541"
+        let expectedRuntimeHardenedRevision = "75ee8c170b015456f29f1463e031c275116cb3ae"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -776,7 +776,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the proven vmlx-swift revision with schema-bound Qwen XML string-array recovery, Gemma reasoning routing, scalar text-only Gemma system prompts, and static system-prefix SSD cache boundaries together with the existing runtime checkpoints. An internally-consistent older pin is still not wired"
+            "Osaurus must consume the proven vmlx-swift revision with schema-bound Qwen XML string-array recovery, Gemma reasoning routing, scalar text-only Gemma system prompts, static system-prefix SSD cache boundaries, and Nanbeige 4.2 looped-transformer runtime support together with the existing runtime checkpoints. An internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
