@@ -375,8 +375,14 @@ struct FloatingInputCard: View {
     /// changes or the projection escalates to a hard block.
     @State private var ramBannerDismissedForModel: String?
     // MARK: - Voice Input State
-    @ObservedObject private var speechService = SpeechService.shared
-    @ObservedObject private var speechModelManager = SpeechModelManager.shared
+    // Deliberately NOT `@ObservedObject`: `SpeechService.audioLevel` publishes
+    // per audio buffer while recording, and an observing card re-ran its whole
+    // body at that rate. Reactive reads live in the extracted children
+    // (`FloatingVoiceOverlayHost`, `FloatingVoiceButton`,
+    // `VoiceStateSyncObservers`), which observe the services themselves;
+    // everything here only calls the services imperatively.
+    private let speechService = SpeechService.shared
+    private let speechModelManager = SpeechModelManager.shared
     @State private var voiceConfig = SpeechConfiguration.default
 
     // Pause detection state
@@ -668,11 +674,8 @@ struct FloatingInputCard: View {
             }
 
             if showVoiceOverlay {
-                VoiceInputOverlay(
+                FloatingVoiceOverlayHost(
                     state: $voiceInputState,
-                    audioLevel: speechService.audioLevel,
-                    transcription: speechService.currentTranscription,
-                    confirmedText: speechService.confirmedTranscription,
                     pauseDuration: voiceConfig.pauseDuration,
                     confirmationDelay: voiceConfig.confirmationDelay,
                     silenceDuration: currentSilenceDuration,
@@ -900,57 +903,16 @@ struct FloatingInputCard: View {
             .onChange(of: focusTrigger) { _, _ in
                 isFocused = true
             }
-            .onChange(of: speechService.isRecording) { _, isRecording in
-                print(
-                    "[FloatingInputCard] isRecording changed to: \(isRecording). voiceInputState: \(voiceInputState), showVoiceOverlay: \(showVoiceOverlay)"
+            .modifier(
+                VoiceStateSyncObservers(
+                    voiceInputState: $voiceInputState,
+                    showVoiceOverlay: $showVoiceOverlay,
+                    lastVoiceActivityTime: $lastVoiceActivityTime,
+                    lastSpeechTime: $lastSpeechTime,
+                    hasDetectedSpeechThisTurn: $hasDetectedSpeechThisTurn,
+                    resetPauseDetectionForRecording: resetPauseDetectionForRecording
                 )
-                // Sync voice state with service
-                if isRecording {
-                    if voiceInputState == .idle && showVoiceOverlay {
-                        voiceInputState = .recording
-                        lastVoiceActivityTime = Date()
-                        resetPauseDetectionForRecording()
-                        print("[FloatingInputCard] Recording confirmed - voice input ready")
-                    } else if voiceInputState == .idle {
-                        print("[FloatingInputCard] External recording detected. Overlay: \(showVoiceOverlay)")
-                        voiceInputState = .recording
-                        lastVoiceActivityTime = Date()
-                        resetPauseDetectionForRecording()
-                    }
-                } else {
-                    // If service stopped recording (e.g. via Esc key in ChatView), sync local state.
-                    // Preserve `.sending` so the overlay stays up during LLM cleanup.
-                    if voiceInputState != .idle && voiceInputState != .sending {
-                        voiceInputState = .idle
-                        showVoiceOverlay = false
-                    }
-                }
-            }
-            .onChange(of: speechService.isSpeechDetected) { _, detected in
-                if detected && voiceInputState == .recording {
-                    hasDetectedSpeechThisTurn = true
-                    lastSpeechTime = Date()
-                }
-            }
-            .onChange(of: speechService.currentTranscription) { _, newValue in
-                // When new transcription arrives, user is speaking
-                // Only reset silence timer if there is also active audio detection or meaningful level
-                if voiceInputState == .recording && TranscriptionTextNormalizer.hasVisibleText(newValue) {
-                    if speechService.isSpeechDetected || speechService.audioLevel > 0.05 {
-                        hasDetectedSpeechThisTurn = true
-                        lastSpeechTime = Date()
-                    }
-                }
-            }
-            .onChange(of: speechService.confirmedTranscription) { _, newValue in
-                // When confirmed transcription changes, user was speaking
-                if voiceInputState == .recording && TranscriptionTextNormalizer.hasVisibleText(newValue) {
-                    if speechService.isSpeechDetected || speechService.audioLevel > 0.05 {
-                        hasDetectedSpeechThisTurn = true
-                        lastSpeechTime = Date()
-                    }
-                }
-            }
+            )
             .onChange(of: voiceInputState) { _, newState in
                 if newState == .recording {
                     resetPauseDetectionForRecording()
@@ -4041,43 +4003,6 @@ extension FloatingInputCard {
 
     // MARK: - Voice Input Button
 
-    private var voiceInputButton: some View {
-        // Only render the disabled "loading…" state when mic access has
-        // actually been granted. For `.notDetermined`/`.denied` the model
-        // can't be used yet, and a background autoload (e.g.
-        // `SpeechService.autoLoadIfNeeded` at launch) would otherwise
-        // freeze the button and swallow the tap that needs to surface
-        // either the system mic prompt or the denied alert.
-        let micAuthorized = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        return Group {
-            if speechService.isLoadingModel && micAuthorized {
-                // Original disabled-spinner state — only when mic is
-                // already authorized, since otherwise no model load is
-                // running and the tap must remain free to surface either
-                // the system prompt or the denied alert.
-                InputActionButton(
-                    icon: "mic.fill",
-                    help: "Loading voice model…",
-                    action: {}
-                )
-                .overlay(
-                    ProgressView()
-                        .scaleEffect(0.5)
-                        .allowsHitTesting(false)
-                )
-                .disabled(true)
-                .opacity(0.5)
-            } else {
-                InputActionButton(
-                    icon: "mic.fill",
-                    help: "Voice input (speak to type)",
-                    action: { startVoiceInput() }
-                )
-            }
-        }
-        .transition(.opacity.combined(with: .scale(scale: 0.96)))
-    }
-
     private func appendAttachment(_ attachment: Attachment) {
         withAnimation(theme.springAnimation()) {
             pendingAttachments.append(attachment)
@@ -4837,11 +4762,11 @@ extension FloatingInputCard {
             HStack(spacing: 6) {
                 mediaButton
                 slashCommandButton
-                if isVoiceConfigured {
-                    voiceInputButton
-                        .disabled(isStreaming)
-                        .opacity(isStreaming ? 0.4 : 1.0)
-                }
+                FloatingVoiceButton(
+                    voiceInputEnabled: voiceConfig.voiceInputEnabled,
+                    isStreaming: isStreaming,
+                    startVoiceInput: startVoiceInput
+                )
             }
 
             Spacer()
@@ -7422,5 +7347,185 @@ private struct FloatingContextChip: View {
             guard !Task.isCancelled else { return }
             showContextBreakdown = false
         }
+    }
+}
+
+// MARK: - Voice Children
+
+/// Hosts `VoiceInputOverlay` and feeds it the live speech fields
+/// (`audioLevel` publishes per audio buffer while recording) from its own
+/// observation, so those high-frequency updates re-render only the overlay —
+/// never the whole card. All non-speech parameters pass through from the
+/// parent unchanged.
+private struct FloatingVoiceOverlayHost: View {
+    @Binding var state: VoiceInputState
+    let pauseDuration: Double
+    let confirmationDelay: Double
+    let silenceDuration: Double
+    let silenceTimeoutDuration: Double
+    let silenceTimeoutProgress: Double
+    let isContinuousMode: Bool
+    let isStreaming: Bool
+    let transcriptionStopMode: TranscriptionStopMode
+    let onCancel: () -> Void
+    let onSend: (String) -> Void
+    let onEdit: () -> Void
+
+    @ObservedObject private var speechService = SpeechService.shared
+
+    var body: some View {
+        VoiceInputOverlay(
+            state: $state,
+            audioLevel: speechService.audioLevel,
+            transcription: speechService.currentTranscription,
+            confirmedText: speechService.confirmedTranscription,
+            pauseDuration: pauseDuration,
+            confirmationDelay: confirmationDelay,
+            silenceDuration: silenceDuration,
+            silenceTimeoutDuration: silenceTimeoutDuration,
+            silenceTimeoutProgress: silenceTimeoutProgress,
+            isContinuousMode: isContinuousMode,
+            isStreaming: isStreaming,
+            transcriptionStopMode: transcriptionStopMode,
+            onCancel: onCancel,
+            onSend: onSend,
+            onEdit: onEdit
+        )
+    }
+}
+
+/// Mic button for the composer button bar. Owns the reactive reads that
+/// gate and style it (`downloadedModelsCount`, `isLoadingModel`) so speech
+/// service updates re-render only this button. Renders nothing when voice
+/// is not configured — the same visibility the parent's inline
+/// `if isVoiceConfigured` gate produced.
+private struct FloatingVoiceButton: View {
+    /// `voiceConfig.voiceInputEnabled` from the parent's loaded configuration.
+    let voiceInputEnabled: Bool
+    let isStreaming: Bool
+    let startVoiceInput: () -> Void
+
+    @ObservedObject private var speechService = SpeechService.shared
+    @ObservedObject private var speechModelManager = SpeechModelManager.shared
+
+    private var isVoiceConfigured: Bool {
+        voiceInputEnabled && speechModelManager.downloadedModelsCount > 0
+    }
+
+    var body: some View {
+        if isVoiceConfigured {
+            button
+                .disabled(isStreaming)
+                .opacity(isStreaming ? 0.4 : 1.0)
+        }
+    }
+
+    private var button: some View {
+        // Only render the disabled "loading…" state when mic access has
+        // actually been granted. For `.notDetermined`/`.denied` the model
+        // can't be used yet, and a background autoload (e.g.
+        // `SpeechService.autoLoadIfNeeded` at launch) would otherwise
+        // freeze the button and swallow the tap that needs to surface
+        // either the system mic prompt or the denied alert.
+        let micAuthorized = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        return Group {
+            if speechService.isLoadingModel && micAuthorized {
+                // Original disabled-spinner state — only when mic is
+                // already authorized, since otherwise no model load is
+                // running and the tap must remain free to surface either
+                // the system prompt or the denied alert.
+                InputActionButton(
+                    icon: "mic.fill",
+                    help: "Loading voice model…",
+                    action: {}
+                )
+                .overlay(
+                    ProgressView()
+                        .scaleEffect(0.5)
+                        .allowsHitTesting(false)
+                )
+                .disabled(true)
+                .opacity(0.5)
+            } else {
+                InputActionButton(
+                    icon: "mic.fill",
+                    help: "Voice input (speak to type)",
+                    action: { startVoiceInput() }
+                )
+            }
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+    }
+}
+
+/// Syncs the card's voice state with `SpeechService` transitions. Lives in
+/// its own modifier node (like `VoiceDebugObservers`) so observing the
+/// service — whose `audioLevel` publishes per audio buffer while recording —
+/// re-runs only this modifier's lightweight body, not the card's. The
+/// side effects write back through bindings, which invalidate the card only
+/// when a watched transition actually fires.
+private struct VoiceStateSyncObservers: ViewModifier {
+    @Binding var voiceInputState: VoiceInputState
+    @Binding var showVoiceOverlay: Bool
+    @Binding var lastVoiceActivityTime: Date
+    @Binding var lastSpeechTime: Date
+    @Binding var hasDetectedSpeechThisTurn: Bool
+    let resetPauseDetectionForRecording: () -> Void
+
+    @ObservedObject private var speechService = SpeechService.shared
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: speechService.isRecording) { _, isRecording in
+                print(
+                    "[FloatingInputCard] isRecording changed to: \(isRecording). voiceInputState: \(voiceInputState), showVoiceOverlay: \(showVoiceOverlay)"
+                )
+                // Sync voice state with service
+                if isRecording {
+                    if voiceInputState == .idle && showVoiceOverlay {
+                        voiceInputState = .recording
+                        lastVoiceActivityTime = Date()
+                        resetPauseDetectionForRecording()
+                        print("[FloatingInputCard] Recording confirmed - voice input ready")
+                    } else if voiceInputState == .idle {
+                        print("[FloatingInputCard] External recording detected. Overlay: \(showVoiceOverlay)")
+                        voiceInputState = .recording
+                        lastVoiceActivityTime = Date()
+                        resetPauseDetectionForRecording()
+                    }
+                } else {
+                    // If service stopped recording (e.g. via Esc key in ChatView), sync local state.
+                    // Preserve `.sending` so the overlay stays up during LLM cleanup.
+                    if voiceInputState != .idle && voiceInputState != .sending {
+                        voiceInputState = .idle
+                        showVoiceOverlay = false
+                    }
+                }
+            }
+            .onChange(of: speechService.isSpeechDetected) { _, detected in
+                if detected && voiceInputState == .recording {
+                    hasDetectedSpeechThisTurn = true
+                    lastSpeechTime = Date()
+                }
+            }
+            .onChange(of: speechService.currentTranscription) { _, newValue in
+                // When new transcription arrives, user is speaking
+                // Only reset silence timer if there is also active audio detection or meaningful level
+                if voiceInputState == .recording && TranscriptionTextNormalizer.hasVisibleText(newValue) {
+                    if speechService.isSpeechDetected || speechService.audioLevel > 0.05 {
+                        hasDetectedSpeechThisTurn = true
+                        lastSpeechTime = Date()
+                    }
+                }
+            }
+            .onChange(of: speechService.confirmedTranscription) { _, newValue in
+                // When confirmed transcription changes, user was speaking
+                if voiceInputState == .recording && TranscriptionTextNormalizer.hasVisibleText(newValue) {
+                    if speechService.isSpeechDetected || speechService.audioLevel > 0.05 {
+                        hasDetectedSpeechThisTurn = true
+                        lastSpeechTime = Date()
+                    }
+                }
+            }
     }
 }
