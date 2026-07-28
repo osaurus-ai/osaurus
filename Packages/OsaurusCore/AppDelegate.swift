@@ -331,6 +331,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // as provider connection, model-picker bundle metadata scans,
         // scheduler DB polling, sandbox registration, or Parakeet/CoreML
         // auto-load can occupy the main actor or accelerator.
+        //
+        // ServerController centrally gates every bind (initial launch,
+        // restart, Settings, status panel, and App Intents) on crash-orphan
+        // reconciliation and readable revocation state.
         let serverStartupTask = Task { @MainActor in
             await serverController.startServer()
         }
@@ -1209,6 +1213,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             return .terminateLater
         }
         isTerminating = true
+        // Stop accepting new temporary pairing credentials as soon as ordered
+        // shutdown begins (before NIO teardown). Cleanup of already-tracked
+        // IDs runs after the server stops so no concurrent mint can race.
+        TemporaryPairedKeyStore.shared.beginShutdown()
 
         // Global watchdog: hard ceiling on the entire quit. Independent of
         // the ordered chain below, so it fires even if a step blocks the
@@ -1312,6 +1320,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // false)`; the outer deadline is a backstop.
             await runWithDeadline(seconds: 4) {
                 await self.serverController.ensureShutdown()
+            }
+            // Temporary pairing cleanup runs only after the server has stopped
+            // accepting traffic. Failed durable deletes keep IDs tracked for
+            // the next launch — do not depend on willTerminate observer order.
+            await runWithDeadline(seconds: 4) {
+                await TemporaryPairedKeyStore.shared.cleanupTrackedKeysOnShutdownOffMain()
             }
             await runWithDeadline(seconds: 3) {
                 do {

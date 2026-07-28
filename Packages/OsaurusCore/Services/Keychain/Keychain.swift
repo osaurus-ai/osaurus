@@ -9,6 +9,20 @@
 import Foundation
 import Security
 
+/// Distinguishes an absent Keychain item from a denied/transient/corrupt read.
+///
+/// Existing `Keychain.read` callers still collapse non-values to `nil`; security-
+/// critical paths that must not treat "could not read" as "empty" use this.
+enum KeychainReadResult: Equatable, Sendable {
+    /// No generic-password item exists for the query.
+    case missing
+    /// Item exists and its value was returned.
+    case value(Data)
+    /// Item may exist but the read failed (auth UI required, locked, transient
+    /// error, unexpected payload type, etc.). Must not be treated as empty.
+    case unavailable
+}
+
 /// Generic-password CRUD used by every secret store in the app.
 ///
 /// Reads run with `kSecUseAuthenticationUISkip` plus a non-interactive
@@ -75,11 +89,66 @@ enum Keychain {
     static func writeInBackground(
         service: String,
         account: String,
-        data: Data,
-        accessible: CFString = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        data: Data
     ) {
+        _ = performOrderedWrite(waitUntilFinished: false) {
+            write(service: service, account: account, data: data)
+        }
+    }
+
+    /// Perform a checked write behind every previously-enqueued background
+    /// write. Security-critical callers use this instead of calling `write`
+    /// directly so an older fire-and-forget snapshot cannot land afterward
+    /// and roll durable state back.
+    @discardableResult
+    static func writeAfterPendingWrites(
+        service: String,
+        account: String,
+        data: Data
+    ) -> Bool {
+        performOrderedWrite(waitUntilFinished: true) {
+            write(service: service, account: account, data: data)
+        }
+    }
+
+    /// Internal deterministic seam for proving ordering without touching the
+    /// login Keychain. All queued writes share the same serial executor.
+    @discardableResult
+    static func performOrderedWrite(
+        waitUntilFinished: Bool,
+        operation: @escaping @Sendable () -> Bool
+    ) -> Bool {
+        if waitUntilFinished {
+            return writeQueue.sync(execute: operation)
+        }
         writeQueue.async {
-            _ = write(service: service, account: account, data: data, accessible: accessible)
+            _ = operation()
+        }
+        return true
+    }
+
+    /// Read (`service`, `account`) with an explicit missing vs unavailable result.
+    static func readResult(
+        service: String,
+        account: String,
+        accessible: CFString = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+    ) -> KeychainReadResult {
+        var query = baseQuery(service: service, account: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUISkip
+        query[kSecUseAuthenticationContext as String] = KeychainQueryHelpers.nonInteractiveContext()
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        switch status {
+        case errSecSuccess:
+            guard let data = result as? Data else { return .unavailable }
+            return .value(data)
+        case errSecItemNotFound:
+            return .missing
+        default:
+            return .unavailable
         }
     }
 
@@ -109,17 +178,12 @@ enum Keychain {
         account: String,
         accessible: CFString = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
     ) -> Data? {
-        var query = baseQuery(service: service, account: account)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUISkip
-        query[kSecUseAuthenticationContext as String] = KeychainQueryHelpers.nonInteractiveContext()
-
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-            let data = result as? Data
-        else { return nil }
-        return data
+        if case .value(let data) = readResult(
+            service: service, account: account, accessible: accessible)
+        {
+            return data
+        }
+        return nil
     }
 
     /// Delete (`service`, `account`).

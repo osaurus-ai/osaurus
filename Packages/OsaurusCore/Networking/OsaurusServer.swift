@@ -54,6 +54,8 @@ public actor OsaurusServer: Sendable {
 
     private var group: MultiThreadedEventLoopGroup?
     private var channel: Channel?
+    /// Invalidates a suspended bind when stop wins the lifecycle race.
+    private var lifecycleGeneration: UInt64 = 0
 
     public init() {}
 
@@ -70,9 +72,14 @@ public actor OsaurusServer: Sendable {
         serverConfiguration: ServerConfiguration = .default
     ) async throws {
         guard group == nil, channel == nil else { return }
+        lifecycleGeneration &+= 1
+        let startGeneration = lifecycleGeneration
 
         let threads = ProcessInfo.processInfo.activeProcessorCount
         let group = MultiThreadedEventLoopGroup(numberOfThreads: threads)
+        // Root before bind. `bootstrap.bind(...).get()` suspends; without this,
+        // stop/quit cannot observe or shut down the in-progress event loop.
+        self.group = group
 
         let validatorSnapshot = LazyAPIKeyValidatorSnapshot {
             Self.buildValidator(agentIndex: config.agentIndex)
@@ -115,9 +122,21 @@ public actor OsaurusServer: Sendable {
             .childChannelOption(ChannelOptions.maxMessagesPerRead, value: 16)
             .childChannelOption(ChannelOptions.recvAllocator, value: AdaptiveRecvByteBufferAllocator())
 
-        let ch = try await bootstrap.bind(host: config.host, port: config.port).get()
-        self.group = group
-        self.channel = ch
+        do {
+            let ch = try await bootstrap.bind(host: config.host, port: config.port).get()
+            guard lifecycleGeneration == startGeneration, self.group === group else {
+                _ = try? await ch.close()
+                throw CancellationError()
+            }
+            self.channel = ch
+        } catch {
+            // If this start still owns the lifecycle, release its group. When
+            // stop already advanced the generation, it owns that cleanup.
+            if lifecycleGeneration == startGeneration {
+                _ = await stop(gracefully: false)
+            }
+            throw error
+        }
         print("[Osaurus] OsaurusServer started on http://\(config.host):\(config.port)")
     }
 
@@ -131,6 +150,7 @@ public actor OsaurusServer: Sendable {
     ///   trips NIO's `EventLoopGroup is still running` precondition at exit).
     @discardableResult
     public func stop(gracefully: Bool = true) async -> Bool {
+        lifecycleGeneration &+= 1
         if let ch = self.channel {
             _ = try? await ch.close()
             self.channel = nil

@@ -325,8 +325,10 @@ struct RuntimePolicySourceTests {
         #expect(!chatSessions.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
 
         let apiKeys = try Self.source("Identity/APIKeyManager.swift")
-        // The metadata blob now loads through the shared non-interactive store.
-        #expect(apiKeys.contains("Keychain.read("))
+        // The metadata blob now uses the shared non-interactive store's typed
+        // read so security-critical callers can distinguish missing data from
+        // a denied or transient Keychain failure.
+        #expect(apiKeys.contains("Keychain.readResult("))
         #expect(apiKeys.contains("private init() {}"))
         #expect(apiKeys.contains("private func ensureLoadedFromKeychain()"))
         #expect(!apiKeys.contains("private init() {\n        keys = Self.loadFromKeychain()"))

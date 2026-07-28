@@ -10,12 +10,47 @@
 import Foundation
 import LocalAuthentication
 
+private enum APIKeyPersistenceError: LocalizedError {
+    case metadataReadFailed
+    case metadataWriteFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .metadataReadFailed:
+            "Could not safely read existing access-key metadata."
+        case .metadataWriteFailed:
+            "Could not persist access-key metadata."
+        }
+    }
+}
+
+/// Result of a security-critical temporary API-key deletion.
+/// Internal only — not part of the public access-key management surface.
+enum TemporaryAPIKeyDeletionResult: Equatable, Sendable {
+    /// Key was absent after a successful metadata load, or was revoked and
+    /// removed with durable revocation + metadata persistence.
+    case succeeded
+    /// Metadata could not be loaded, durable revocation failed, or metadata
+    /// write failed. Callers must retain recovery tracking for this id.
+    case failed
+}
+
+/// Typed access-key metadata Keychain load for security-critical paths.
+private enum APIKeyMetadataLoad: Sendable {
+    case missing
+    case loaded([AccessKeyInfo])
+    case unavailable
+}
+
 public final class APIKeyManager: @unchecked Sendable {
     public static let shared = APIKeyManager()
 
     private let queue = DispatchQueue(label: "com.osaurus.api-keys", attributes: .concurrent)
     private var keys: [AccessKeyInfo] = []
     private var didLoadFromKeychain = false
+    /// Set when a security-critical load observed unavailable/corrupt metadata.
+    /// Prevents treating "could not read" as an empty key list for deletion.
+    private var metadataLoadUnavailable = false
 
     private static let keychainService = "com.osaurus.access-keys"
     private static let keychainAccount = "key-metadata"
@@ -35,7 +70,27 @@ public final class APIKeyManager: @unchecked Sendable {
         expiration: AccessKeyExpiration,
         agentIndex: UInt32? = nil
     ) throws -> (fullKey: String, info: AccessKeyInfo) {
-        ensureLoadedFromKeychain()
+        try generate(label: label, expiration: expiration, agentIndex: agentIndex, keyId: UUID())
+    }
+
+    /// Create a new access key with a caller-chosen metadata id.
+    ///
+    /// Temporary Bonjour pairing uses this after durably registering `keyId` in
+    /// `TemporaryPairedKeyStore`, so a crash between registration and mint
+    /// cannot leave an untracked long-lived credential (only an orphan id that
+    /// launch reconciliation deletes as a no-op).
+    func generate(
+        label: String,
+        expiration: AccessKeyExpiration,
+        agentIndex: UInt32?,
+        keyId: UUID
+    ) throws -> (fullKey: String, info: AccessKeyInfo) {
+        guard ensureLoadedFromKeychain() else {
+            // Never overwrite an inaccessible/corrupt metadata blob with a
+            // list containing only the new key. Temporary pairing depends on
+            // this read succeeding before minting.
+            throw APIKeyPersistenceError.metadataReadFailed
+        }
 
         let context = LAContext()
         context.touchIDAuthenticationAllowableReuseDuration = 300
@@ -85,7 +140,7 @@ public final class APIKeyManager: @unchecked Sendable {
         let fullKey = "osk-v1.\(payloadData.base64urlEncoded).\(signature.hexEncodedString)"
 
         let info = AccessKeyInfo(
-            id: UUID(),
+            id: keyId,
             label: label,
             prefix: String(fullKey.prefix(20)),
             nonce: nonce,
@@ -97,10 +152,22 @@ public final class APIKeyManager: @unchecked Sendable {
             expiresAt: expiration.expirationDate(from: now)
         )
 
-        queue.sync(flags: .barrier) {
+        let didPersist = queue.sync(flags: .barrier) {
+            // Signing / biometric work above can suspend this mutation for
+            // seconds. A reload may discover unavailable/corrupt metadata in
+            // that interval; never append and overwrite that unknown blob
+            // using the stale preflight state.
+            guard didLoadFromKeychain, !metadataLoadUnavailable else {
+                return false
+            }
             keys.append(info)
-            Self.saveToKeychain(keys)
+            guard Self.saveToKeychain(keys) else {
+                keys.removeAll { $0.id == keyId }
+                return false
+            }
+            return true
         }
+        guard didPersist else { throw APIKeyPersistenceError.metadataWriteFailed }
         // A new key (and possibly the first key) must be honored by the live
         // server without a restart.
         APIKeyValidatorEpoch.shared.bump()
@@ -113,7 +180,7 @@ public final class APIKeyManager: @unchecked Sendable {
     /// Revoke an access key by its ID. Adds (address, nonce) to the revocation store
     /// and marks the metadata as revoked.
     public func revoke(id: UUID) {
-        ensureLoadedFromKeychain()
+        guard ensureLoadedFromKeychain() else { return }
 
         queue.sync(flags: .barrier) {
             guard let index = keys.firstIndex(where: { $0.id == id }) else { return }
@@ -127,7 +194,7 @@ public final class APIKeyManager: @unchecked Sendable {
 
     /// Revoke all keys from a given address with counter <= current counter.
     public func revokeAll(forAddress address: OsaurusID) {
-        ensureLoadedFromKeychain()
+        guard ensureLoadedFromKeychain() else { return }
 
         queue.sync(flags: .barrier) {
             let currentCounter = CounterStore.shared.current
@@ -143,17 +210,60 @@ public final class APIKeyManager: @unchecked Sendable {
 
     /// Revoke an access key and remove it from the key list entirely.
     /// Use this for temporary keys that should leave no trace after deletion.
+    ///
+    /// Best-effort: does not report durable write failures. Temporary pairing
+    /// recovery must use `deleteTemporaryKeyChecked(id:)` instead.
     public func delete(id: UUID) {
-        ensureLoadedFromKeychain()
+        _ = deleteTemporaryKeyChecked(id: id)
+    }
 
-        queue.sync(flags: .barrier) {
-            guard let index = keys.firstIndex(where: { $0.id == id }) else { return }
+    /// Security-critical temporary-key deletion used by crash reconciliation.
+    ///
+    /// Returns `.succeeded` only when:
+    /// - access-key metadata was loaded successfully, and
+    /// - the key was already absent, or
+    /// - durable synchronous revocation succeeded and metadata removal persisted.
+    ///
+    /// On `.failed`, callers must retain temporary-pairing tracking so a later
+    /// retry (or next launch) can finish the job. Never clears tracking first.
+    @discardableResult
+    func deleteTemporaryKeyChecked(id: UUID) -> TemporaryAPIKeyDeletionResult {
+        let outcome: TemporaryAPIKeyDeletionResult = queue.sync(flags: .barrier) {
+            switch ensureMetadataReadyForSecurityCriticalMutationLocked() {
+            case .unavailable:
+                return .failed
+            case .ready:
+                break
+            }
+
+            guard let index = keys.firstIndex(where: { $0.id == id }) else {
+                // Missing key after a safe load: track-before-mint orphan or
+                // prior successful delete. Idempotent success.
+                return .succeeded
+            }
+
             let key = keys[index]
-            RevocationStore.shared.revokeKey(address: key.iss, nonce: key.nonce)
+            // Durable revocation MUST succeed before we drop metadata (and
+            // before TemporaryPairedKeyStore clears tracking).
+            guard RevocationStore.shared.revokeKeySynchronously(
+                address: key.iss, nonce: key.nonce)
+            else {
+                return .failed
+            }
+
             keys.remove(at: index)
-            Self.saveToKeychain(keys)
+            guard Self.saveToKeychain(keys) else {
+                // Keep the in-memory entry so a retry can re-attempt the
+                // metadata write; revocation is already durable.
+                keys.insert(key, at: min(index, keys.count))
+                return .failed
+            }
+            return .succeeded
         }
-        APIKeyValidatorEpoch.shared.bump()
+        if outcome == .succeeded {
+            APIKeyValidatorEpoch.shared.bump()
+        }
+        return outcome
     }
 
     // MARK: - List
@@ -215,34 +325,111 @@ public final class APIKeyManager: @unchecked Sendable {
 
     // The access-key metadata blob is read/written through the shared
     // `Keychain` helper.
-    private static func saveToKeychain(_ keys: [AccessKeyInfo]) {
+    @discardableResult
+    private static func saveToKeychain(_ keys: [AccessKeyInfo]) -> Bool {
+        if KeychainQueryHelpers.disablesKeychainForProcess {
+            return true
+        }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(keys) else { return }
-        Keychain.write(service: keychainService, account: keychainAccount, data: data)
+        guard let data = try? encoder.encode(keys) else { return false }
+        return Keychain.write(service: keychainService, account: keychainAccount, data: data)
     }
 
-    private static func loadFromKeychain() -> [AccessKeyInfo] {
-        guard let data = Keychain.read(service: keychainService, account: keychainAccount)
-        else { return [] }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return (try? decoder.decode([AccessKeyInfo].self, from: data)) ?? []
+    private static func loadFromKeychainChecked() -> APIKeyMetadataLoad {
+        if KeychainQueryHelpers.disablesKeychainForProcess {
+            return .missing
+        }
+        switch Keychain.readResult(service: keychainService, account: keychainAccount) {
+        case .missing:
+            return .missing
+        case .unavailable:
+            return .unavailable
+        case .value(let data):
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            guard let decoded = try? decoder.decode([AccessKeyInfo].self, from: data) else {
+                return .unavailable
+            }
+            return .loaded(decoded)
+        }
     }
 
     /// Force a reload from Keychain.
     public func reload() {
         queue.sync(flags: .barrier) {
-            keys = Self.loadFromKeychain()
-            didLoadFromKeychain = true
+            switch Self.loadFromKeychainChecked() {
+            case .missing:
+                keys = []
+                didLoadFromKeychain = true
+                metadataLoadUnavailable = false
+            case .loaded(let loaded):
+                keys = loaded
+                didLoadFromKeychain = true
+                metadataLoadUnavailable = false
+            case .unavailable:
+                // Do not pretend the store is empty when the read failed.
+                keys = []
+                didLoadFromKeychain = false
+                metadataLoadUnavailable = true
+            }
         }
     }
 
-    private func ensureLoadedFromKeychain() {
+    @discardableResult
+    private func ensureLoadedFromKeychain() -> Bool {
         queue.sync(flags: .barrier) {
-            guard !didLoadFromKeychain else { return }
-            keys = Self.loadFromKeychain()
+            guard !didLoadFromKeychain else { return !metadataLoadUnavailable }
+            switch Self.loadFromKeychainChecked() {
+            case .missing:
+                keys = []
+                didLoadFromKeychain = true
+                metadataLoadUnavailable = false
+                return true
+            case .loaded(let loaded):
+                keys = loaded
+                didLoadFromKeychain = true
+                metadataLoadUnavailable = false
+                return true
+            case .unavailable:
+                // Never let generation overwrite an inaccessible/corrupt
+                // metadata blob as though it were an empty store.
+                keys = []
+                didLoadFromKeychain = false
+                metadataLoadUnavailable = true
+                return false
+            }
+        }
+    }
+
+    private enum SecurityCriticalMetadataAccess {
+        case ready
+        case unavailable
+    }
+
+    /// Must be called under `queue` barrier. Loads metadata when needed and
+    /// refuses security-critical mutation when the Keychain read is unsafe.
+    private func ensureMetadataReadyForSecurityCriticalMutationLocked()
+        -> SecurityCriticalMetadataAccess
+    {
+        if didLoadFromKeychain {
+            return metadataLoadUnavailable ? .unavailable : .ready
+        }
+        switch Self.loadFromKeychainChecked() {
+        case .missing:
+            keys = []
             didLoadFromKeychain = true
+            metadataLoadUnavailable = false
+            return .ready
+        case .loaded(let loaded):
+            keys = loaded
+            didLoadFromKeychain = true
+            metadataLoadUnavailable = false
+            return .ready
+        case .unavailable:
+            metadataLoadUnavailable = true
+            // Leave didLoadFromKeychain false so a later retry can re-read.
+            return .unavailable
         }
     }
 }
