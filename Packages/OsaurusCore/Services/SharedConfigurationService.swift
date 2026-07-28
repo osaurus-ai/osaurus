@@ -97,9 +97,15 @@ final class SharedConfigurationService {
         }
     }
 
-    /// Drain the I/O queue so pending writes/removals land before process exit
+    /// Drain the I/O queue so pending writes/removals land before process exit.
+    /// The wait is bounded: an unbounded `sync {}` here ran inside
+    /// `applicationWillTerminate` and tripped the 3s main-thread watchdog when
+    /// the disk was slow. Losing a shared-config touch at quit is harmless —
+    /// the file is rewritten on next launch.
     func flushPendingWork() {
-        Self.ioQueue.sync {}
+        let drained = DispatchSemaphore(value: 0)
+        Self.ioQueue.async { drained.signal() }
+        _ = drained.wait(timeout: .now() + 2)
     }
 
     /// Remove this instance's shared files

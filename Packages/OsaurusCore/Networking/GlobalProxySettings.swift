@@ -144,11 +144,23 @@ public enum GlobalProxySettings {
     /// immediately because the mtime changes.
     private static let configCacheBox = OSAllocatedUnfairLock<ConfigCacheState?>(initialState: nil)
 
+    /// Resolved config-file URL, memoized because `resolvePath` performs two
+    /// `fileExists` stats per call and proxy lookups run on the main thread
+    /// (session builds, tunnel connects). Legacy-vs-new resolution is a
+    /// one-time migration decision, so first-call resolution is stable for
+    /// the process lifetime.
+    private static let resolvedConfigURLBox = OSAllocatedUnfairLock<URL?>(initialState: nil)
+
     static func diskBackedServerConfiguration() -> ServerConfiguration? {
-        let url = OsaurusPaths.resolvePath(
-            new: OsaurusPaths.serverConfigFile(),
-            legacy: "ServerConfiguration.json"
-        )
+        let url = resolvedConfigURLBox.withLock { cached in
+            if let cached { return cached }
+            let resolved = OsaurusPaths.resolvePath(
+                new: OsaurusPaths.serverConfigFile(),
+                legacy: "ServerConfiguration.json"
+            )
+            cached = resolved
+            return resolved
+        }
         // Only the mtime is needed for cache validation. `attributesOfItem`
         // builds the full attribute dictionary, whose owner/group-name fields
         // resolve through an opendirectoryd XPC round-trip (getgrgid_r) that
