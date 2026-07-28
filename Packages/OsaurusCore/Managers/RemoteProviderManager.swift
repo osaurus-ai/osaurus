@@ -1280,7 +1280,8 @@ public final class RemoteProviderManager: ObservableObject {
                     do {
                         let catalog = try await RemoteProviderService.fetchFireworksCatalogModels(
                             headers: testHeaders,
-                            timeout: 30
+                            timeout: 30,
+                            transport: testConnectionTransportOverride
                         )
                         let merged = RemoteProviderService.mergeFireworksModelIds(
                             discovered: models,

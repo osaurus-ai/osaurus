@@ -5914,7 +5914,8 @@ extension RemoteProviderService {
     /// which the OpenAI-compatible inference endpoints accept as model ids.
     static func fetchFireworksCatalogModels(
         headers: [String: String],
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        transport: (@MainActor (URLRequest) async throws -> (Data, URLResponse))? = nil
     ) async throws -> [String] {
         var allModels: [String] = []
         var pageToken: String?
@@ -5934,7 +5935,13 @@ extension RemoteProviderService {
             }
 
             let request = modelDiscoveryRequest(url: url, headers: headers, timeout: timeout)
-            let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+            let data: Data
+            let response: URLResponse
+            if let transport {
+                (data, response) = try await transport(request)
+            } else {
+                (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+            }
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw RemoteProviderServiceError.invalidResponse
