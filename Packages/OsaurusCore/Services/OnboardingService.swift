@@ -286,26 +286,11 @@ public final class OnboardingService: ObservableObject {
         return lines.joined(separator: "\n\n")
     }
 
-    /// Clear all known Osaurus Keychain services
+    /// Clear all known Osaurus Keychain services. The list lives in
+    /// `OsaurusKeychainServices` next to the wrappers so a newly added
+    /// secret store can't be silently missed by factory reset.
     private func wipeKeychain() {
-        let services = [
-            // MasterKey
-            "com.osaurus.account",
-
-            // AgentSecretsKeychain
-            "ai.osaurus.agent-secrets",
-
-            // ToolSecretsKeychain
-            "ai.osaurus.tools",
-
-            // MCPProviderKeychain
-            "ai.osaurus.mcp",
-
-            // RemoteProviderKeychain
-            "ai.osaurus.remote",
-        ]
-
-        for service in services {
+        for service in OsaurusKeychainServices.all {
             let query: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: service,

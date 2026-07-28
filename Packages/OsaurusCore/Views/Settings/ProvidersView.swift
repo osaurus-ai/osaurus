@@ -187,14 +187,23 @@ struct ProvidersView: View {
 
     private func refreshCredentialPresence() {
         let providers = manager.configuration.providers
+        let previous = credentialPresence
         Task {
             var next: [UUID: MCPProviderCredentialPresence] = [:]
             for provider in providers {
                 let providerID = provider.id
+                let previousPresence = previous[providerID]
+                // Typed availability: a transiently unavailable keychain
+                // (locked, interaction required) keeps the previous known
+                // presence instead of flashing a false "missing token" warning.
                 let presence = await Task.detached(priority: .utility) {
                     MCPProviderCredentialPresence(
-                        bearerTokenPresent: MCPProviderKeychain.hasToken(for: providerID),
-                        oauthTokensPresent: MCPProviderKeychain.hasOAuthTokens(for: providerID)
+                        bearerTokenPresent: MCPProviderKeychain.tokenAvailability(for: providerID)
+                            .presenceForUI(previous: previousPresence?.bearerTokenPresent),
+                        oauthTokensPresent: MCPProviderKeychain.oauthTokensAvailability(
+                            for: providerID
+                        )
+                        .presenceForUI(previous: previousPresence?.oauthTokensPresent)
                     )
                 }.value
                 next[providerID] = presence
@@ -3136,16 +3145,22 @@ private struct ProviderEditSheet: View {
         // sensitive fields alone after the first save.
         for entry in envEntries
         where entry.isSecret && !entry.key.isEmpty && !entry.value.isEmpty {
-            _ = MCPProviderKeychain.saveEnvSecret(
+            if !MCPProviderKeychain.saveEnvSecret(
                 entry.value,
                 key: entry.key,
                 for: updatedProvider.id
-            )
+            ) {
+                NSLog("ProvidersView: failed to save secret env value to Keychain")
+            }
         }
 
         // Save secret header values to Keychain
         for header in customHeaders where header.isSecret && !header.key.isEmpty && !header.value.isEmpty {
-            MCPProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: updatedProvider.id)
+            if !MCPProviderKeychain.saveHeaderSecret(
+                header.value, key: header.key, for: updatedProvider.id
+            ) {
+                NSLog("ProvidersView: failed to save secret header to Keychain")
+            }
         }
 
         // Pass token (empty string means no change, nil means keep existing).

@@ -22,7 +22,9 @@ struct IdentityView: View {
     @State private var phase: IdentityPhase = .checking
     @State private var drift: IdentityDrift?
 
-    @State private var showRecoverSheet = false
+    /// Non-nil presents `RecoverFromMnemonicSheet` in the given mode
+    /// (drift repair, fresh restore, or replace-existing).
+    @State private var restoreSheetMode: RecoverFromMnemonicMode?
     @State private var showRepairConfirm = false
     @State private var showResetConfirm = false
     @State private var showRecoveryPhraseSheet = false
@@ -61,11 +63,16 @@ struct IdentityView: View {
                 hasAppeared = true
             }
         }
-        .sheet(isPresented: $showRecoverSheet) {
+        .sheet(
+            isPresented: Binding(
+                get: { restoreSheetMode != nil },
+                set: { if !$0 { restoreSheetMode = nil } }
+            )
+        ) {
             RecoverFromMnemonicSheet(
-                drift: drift ?? IdentityDrift(mismatchedAgents: [], staleAccessKeys: []),
+                mode: restoreSheetMode ?? .freshRestore,
                 onRecovered: handleRecovered,
-                onCancel: { showRecoverSheet = false }
+                onCancel: { restoreSheetMode = nil }
             )
             .environment(\.theme, theme)
         }
@@ -111,7 +118,11 @@ struct IdentityView: View {
             ProgressView()
                 .frame(maxWidth: .infinity, minHeight: 200)
         case .noIdentity:
-            IdentitySetupCard(onCreated: handleIdentityCreated)
+            IdentitySetupCard(
+                onCreated: handleIdentityCreated,
+                onRestore: { restoreSheetMode = .freshRestore },
+                onCheckAgain: checkIdentityStatus
+            )
         case .ready(let osaurusId, let deviceId):
             readyContent(osaurusId: osaurusId, deviceId: deviceId)
         }
@@ -122,7 +133,7 @@ struct IdentityView: View {
         if let drift, drift.hasDrift {
             IdentityDriftBanner(
                 drift: drift,
-                onRecover: { showRecoverSheet = true },
+                onRecover: { restoreSheetMode = .driftRepair(drift) },
                 onRepair: { showRepairConfirm = true },
                 onReset: { showResetConfirm = true }
             )
@@ -143,7 +154,10 @@ struct IdentityView: View {
             onChange: { runRefresh() }
         )
         DeviceSection(deviceId: deviceId)
-        DangerZoneSection(onReset: { showResetConfirm = true })
+        DangerZoneSection(
+            onRestore: { restoreSheetMode = .replaceExisting(current: osaurusId) },
+            onReset: { showResetConfirm = true }
+        )
     }
 
     // MARK: - Header
@@ -273,12 +287,22 @@ struct IdentityView: View {
 
     // MARK: - Recover
 
-    private func handleRecovered() {
-        showRecoverSheet = false
-        lastActionResult = ActionResult(
-            message: "Master key restored from recovery phrase.",
-            isError: false
-        )
+    private func handleRecovered(_ result: OsaurusIdentity.RestoreResult) {
+        restoreSheetMode = nil
+
+        var parts = ["Identity \(result.osaurusId) restored from recovery phrase."]
+        if result.rederivedAgentCount > 0 {
+            parts.append("Re-derived addresses for \(result.rederivedAgentCount) agent(s).")
+        }
+        if result.revokedAccessKeyCount > 0 {
+            parts.append("Revoked \(result.revokedAccessKeyCount) stale access key(s).")
+        }
+        var message = parts.joined(separator: " ")
+        if !result.failures.isEmpty {
+            message += "\nCompleted with errors:\n" + result.failures.joined(separator: "\n")
+        }
+
+        lastActionResult = ActionResult(message: message, isError: !result.failures.isEmpty)
         runRefresh()
         restartServerIfRunning()
     }
@@ -543,36 +567,69 @@ private struct IdentityDriftBanner: View {
 
 private struct DangerZoneSection: View {
     @Environment(\.theme) private var theme
+    let onRestore: () -> Void
     let onReset: () -> Void
 
     var body: some View {
         IdentitySection(title: L("DANGER ZONE"), icon: "exclamationmark.triangle.fill") {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Reset Identity", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(
-                        "Wipes your signature, every agent address, and every access key, including the backup in your iCloud Keychain. Onboarding will start over.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-                Button(action: onReset) {
-                    Text("Reset…", bundle: .module)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.errorColor)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.errorColor.opacity(0.10))
+            VStack(spacing: 14) {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Restore from recovery phrase", bundle: .module)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                        Text(
+                            "Replaces the identity on this Mac with one restored from a 24-word phrase. Agents get new addresses and existing access keys are revoked.",
+                            bundle: .module
                         )
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Button(action: onRestore) {
+                        Text("Restore…", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(theme.warningColor)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(theme.warningColor.opacity(0.10))
+                            )
+                    }
+                    .buttonStyle(PlainButtonStyle())
                 }
-                .buttonStyle(PlainButtonStyle())
+
+                Divider()
+
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Reset Identity", bundle: .module)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                        Text(
+                            "Wipes your signature, every agent address, and every access key, including the backup in your iCloud Keychain. Onboarding will start over.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Button(action: onReset) {
+                        Text("Reset…", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(theme.errorColor)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(theme.errorColor.opacity(0.10))
+                            )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
             }
         }
     }
@@ -595,6 +652,11 @@ private struct IdentitySetupCard: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     let onCreated: (IdentityInfo) -> Void
+    /// Open the fresh-restore mnemonic sheet.
+    let onRestore: () -> Void
+    /// Re-probe Keychain — an identity synced from another Mac via iCloud
+    /// Keychain may have arrived since this card was rendered.
+    let onCheckAgain: () -> Void
 
     @State private var isCreating = false
     @State private var errorMessage: String?
@@ -657,6 +719,47 @@ private struct IdentitySetupCard: View {
             }
             .buttonStyle(PlainButtonStyle())
             .disabled(isCreating)
+
+            Button(action: onRestore) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.counterclockwise.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Restore from recovery phrase", bundle: .module)
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .foregroundColor(theme.primaryText)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.tertiaryBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(isCreating)
+
+            VStack(spacing: 4) {
+                Text(
+                    "Already using Osaurus on another Mac? With iCloud Keychain enabled on both, your identity restores here automatically — it can take a few minutes to sync.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 420)
+
+                Button(action: onCheckAgain) {
+                    Text("Check again", bundle: .module)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.accentColor)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
 
             Spacer().frame(height: 40)
         }

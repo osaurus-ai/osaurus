@@ -2,22 +2,41 @@
 //  RecoverFromMnemonicSheet.swift
 //  osaurus
 //
-//  Modal recovery flow for the broken-master state. The user pastes the
-//  24-word BIP39 phrase saved during onboarding; we validate the checksum,
-//  confirm the resulting master derives the agent addresses we already have
-//  on disk (so we know it's the *previous* master, not an unrelated valid
-//  mnemonic), and re-install the master into Keychain. Drift goes away
-//  because every persisted derivative now matches again.
+//  Modal mnemonic-restore flow. The user pastes the 24-word BIP39 phrase
+//  saved during onboarding; we validate the checksum and install the decoded
+//  master into Keychain via `OsaurusIdentity.restore`, which also reconciles
+//  agent addresses and access keys derived from a previous master.
+//
+//  Three entry modes share this sheet:
+//  - driftRepair: the broken-master state. Confirms the phrase reproduces the
+//    agent addresses already on disk (so we know it's the *previous* master,
+//    not an unrelated valid mnemonic) before installing.
+//  - freshRestore: no identity on this Mac (Settings → Identity setup card).
+//  - replaceExisting: overwrite a healthy identity. Shows the current vs.
+//    candidate address and requires an explicit acknowledgment because
+//    agent addresses are re-minted and existing access keys revoked.
 //
 
 import AppKit
 import SwiftUI
 
+/// Which flow presented the sheet — controls copy, safety checks, and
+/// confirmation requirements.
+enum RecoverFromMnemonicMode {
+    /// Identity drift banner: restore the previous master so persisted
+    /// derivatives match again.
+    case driftRepair(IdentityDrift)
+    /// No identity on disk: restore an identity from another Mac.
+    case freshRestore
+    /// Healthy identity present: replace it with a different one.
+    case replaceExisting(current: OsaurusID)
+}
+
 struct RecoverFromMnemonicSheet: View {
     @Environment(\.theme) private var theme
 
-    let drift: IdentityDrift
-    let onRecovered: () -> Void
+    let mode: RecoverFromMnemonicMode
+    let onRecovered: (OsaurusIdentity.RestoreResult) -> Void
     let onCancel: () -> Void
 
     @State private var phraseText: String = ""
@@ -25,6 +44,7 @@ struct RecoverFromMnemonicSheet: View {
     @State private var statusIsError: Bool = true
     @State private var isRestoring: Bool = false
     @State private var requiresExplicitOverride: Bool = false
+    @State private var hasAcknowledgedReplace: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -35,6 +55,10 @@ struct RecoverFromMnemonicSheet: View {
             phraseEditor
 
             wordCountLine
+
+            if case .replaceExisting(let current) = mode {
+                replaceDetails(current: current)
+            }
 
             if let statusMessage {
                 statusBanner(statusMessage)
@@ -51,7 +75,7 @@ struct RecoverFromMnemonicSheet: View {
 
     private var header: some View {
         HStack {
-            Text("Recover Master Key", bundle: .module)
+            titleText
                 .font(.system(size: 16, weight: .bold))
                 .foregroundColor(theme.primaryText)
             Spacer()
@@ -64,15 +88,43 @@ struct RecoverFromMnemonicSheet: View {
         }
     }
 
-    private var description: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(
+    private var titleText: Text {
+        switch mode {
+        case .driftRepair:
+            return Text("Recover Master Key", bundle: .module)
+        case .freshRestore:
+            return Text("Restore Identity", bundle: .module)
+        case .replaceExisting:
+            return Text("Replace Identity", bundle: .module)
+        }
+    }
+
+    private var descriptionText: Text {
+        switch mode {
+        case .driftRepair:
+            return Text(
                 "Paste the 24-word recovery phrase you saved during onboarding. We'll restore the original master key and your existing agents and access keys will start working again.",
                 bundle: .module
             )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
-            .fixedSize(horizontal: false, vertical: true)
+        case .freshRestore:
+            return Text(
+                "Paste the 24-word recovery phrase from your other Mac to restore your identity here. If iCloud Keychain is enabled on both Macs, the identity usually syncs on its own — the phrase is only needed when it doesn't.",
+                bundle: .module
+            )
+        case .replaceExisting:
+            return Text(
+                "Paste the 24-word recovery phrase of the identity you want to switch to. This replaces the identity currently on this Mac.",
+                bundle: .module
+            )
+        }
+    }
+
+    private var description: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            descriptionText
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -125,6 +177,64 @@ struct RecoverFromMnemonicSheet: View {
                 )
             }
             .buttonStyle(PlainButtonStyle())
+        }
+    }
+
+    // MARK: - Replace-existing details
+
+    /// Current vs. candidate address plus the destructive-consequences
+    /// acknowledgment required before Restore enables.
+    @ViewBuilder
+    private func replaceDetails(current: OsaurusID) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                addressLine(label: Text("Current identity", bundle: .module), address: current)
+                addressLine(
+                    label: Text("Restored identity", bundle: .module),
+                    address: candidateAddress
+                )
+            }
+
+            Toggle(isOn: $hasAcknowledgedReplace) {
+                Text(
+                    "I understand: agents get new addresses, existing access keys are revoked, and the current identity's recovery phrase will no longer restore this Mac unless I saved it.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .toggleStyle(.checkbox)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.warningColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(theme.warningColor.opacity(0.35), lineWidth: 1)
+                )
+        )
+    }
+
+    private func addressLine(label: Text, address: OsaurusID?) -> some View {
+        HStack(spacing: 8) {
+            label
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+                .frame(width: 110, alignment: .leading)
+            if let address {
+                Text(address)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            } else {
+                Text("Enter a valid phrase", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            Spacer(minLength: 0)
         }
     }
 
@@ -202,11 +312,11 @@ struct RecoverFromMnemonicSheet: View {
                 .padding(.vertical, 9)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(parsedWords.count == 24 ? theme.accentColor : theme.accentColor.opacity(0.4))
+                        .fill(canRestore ? theme.accentColor : theme.accentColor.opacity(0.4))
                 )
             }
             .buttonStyle(PlainButtonStyle())
-            .disabled(parsedWords.count != 24 || isRestoring)
+            .disabled(!canRestore || isRestoring)
         }
     }
 
@@ -214,6 +324,36 @@ struct RecoverFromMnemonicSheet: View {
 
     private var parsedWords: [String] {
         MasterKeyMnemonic.words(fromPhrase: phraseText)
+    }
+
+    private var canRestore: Bool {
+        Self.canRestore(
+            words: parsedWords, mode: mode, acknowledgedReplace: hasAcknowledgedReplace)
+    }
+
+    /// Whether the Restore button is enabled: a complete 24-word phrase, plus
+    /// the explicit acknowledgment when replacing a healthy identity.
+    /// Internal (not private) for direct testing.
+    static func canRestore(
+        words: [String], mode: RecoverFromMnemonicMode, acknowledgedReplace: Bool
+    ) -> Bool {
+        guard words.count == 24 else { return false }
+        if case .replaceExisting = mode, !acknowledgedReplace { return false }
+        return true
+    }
+
+    private var candidateAddress: OsaurusID? {
+        Self.candidateAddress(for: parsedWords)
+    }
+
+    /// Address the entered phrase would restore, or nil while the phrase is
+    /// incomplete or fails checksum validation. Used for the replace-existing
+    /// current-vs-candidate preview. Internal (not private) for direct testing.
+    static func candidateAddress(for words: [String]) -> OsaurusID? {
+        guard words.count == 24 else { return nil }
+        guard var seed = try? MasterKeyMnemonic.key(fromMnemonic: words) else { return nil }
+        defer { seed.zeroOut() }
+        return try? deriveOsaurusId(from: seed)
     }
 
     private func pasteFromClipboard() {
@@ -227,13 +367,16 @@ struct RecoverFromMnemonicSheet: View {
         isRestoring = true
 
         do {
-            var seed = try MasterKeyMnemonic.key(fromMnemonic: parsedWords)
-            defer { seed.zeroOut() }
-
-            let candidateAddress = try deriveOsaurusId(from: seed)
-
-            if !forceOverride {
-                if let mismatchCheck = matchesPreviousMaster(seed: seed, candidate: candidateAddress) {
+            // Drift repair verifies the phrase is the *previous* master before
+            // installing, so a typo'd-but-valid mnemonic can't silently mint a
+            // brand-new identity. Fresh restore has nothing to compare against
+            // and replace-existing is an intentional identity change.
+            if case .driftRepair(let drift) = mode, !forceOverride {
+                var seed = try MasterKeyMnemonic.key(fromMnemonic: parsedWords)
+                defer { seed.zeroOut() }
+                let candidateAddress = try deriveOsaurusId(from: seed)
+                if let mismatchCheck = Self.previousSeedMismatchMessage(
+                    drift: drift, seed: seed, candidate: candidateAddress) {
                     statusIsError = true
                     statusMessage = mismatchCheck
                     requiresExplicitOverride = true
@@ -242,15 +385,11 @@ struct RecoverFromMnemonicSheet: View {
                 }
             }
 
-            try MasterKey.install(seed: seed, allowReplace: true)
-            // Keep the stored phrase in sync with the newly-installed master
-            // so subsequent "View recovery phrase" reads hit the cache
-            // instead of falling into the lazy-backfill path.
-            try? MasterMnemonicStore.store(parsedWords)
+            let result = try OsaurusIdentity.restore(words: parsedWords)
             statusIsError = false
-            statusMessage = "Master key restored. Drift cleared."
+            statusMessage = successMessage(for: result)
             isRestoring = false
-            onRecovered()
+            onRecovered(result)
         } catch let err as OsaurusIdentityError {
             statusIsError = true
             statusMessage = err.errorDescription ?? "Recovery failed."
@@ -262,11 +401,23 @@ struct RecoverFromMnemonicSheet: View {
         }
     }
 
+    private func successMessage(for result: OsaurusIdentity.RestoreResult) -> String {
+        switch mode {
+        case .driftRepair:
+            return "Master key restored. Drift cleared."
+        case .freshRestore, .replaceExisting:
+            return "Identity \(result.osaurusId) restored."
+        }
+    }
+
     /// Returns nil when the candidate seed reproduces the agent addresses we
     /// have on disk (i.e. it's the previous master). Returns a user-facing
     /// error message when there is no match — the caller surfaces an explicit
-    /// "Restore Anyway" override in that case.
-    private func matchesPreviousMaster(seed: Data, candidate: OsaurusID) -> String? {
+    /// "Restore Anyway" override in that case. Internal (not private) for
+    /// direct testing.
+    static func previousSeedMismatchMessage(
+        drift: IdentityDrift, seed: Data, candidate: OsaurusID
+    ) -> String? {
         // We have agents whose stored addresses don't derive from the current
         // master; verify the candidate seed reproduces *those* stored addresses.
         let mismatched = drift.mismatchedAgents

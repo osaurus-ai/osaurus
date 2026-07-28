@@ -32,11 +32,49 @@ public enum ToolSecretsKeychain {
     public static func getSecret(id: String, for pluginId: String, agentId: UUID) -> String? {
         let account = agentAccount(agentId: agentId, pluginId: pluginId, key: id)
         if KeychainQueryHelpers.usesInMemoryKeychainStoreForTests {
-            return testStoreLock.withLock { testStore[account] }
+            if let value = testStoreLock.withLock({ testStore[account] }) { return value }
+            return migrateLegacySecretIfPresent(id: id, pluginId: pluginId, agentId: agentId)
         }
         if KeychainQueryHelpers.disablesKeychainForProcess { return nil }
-        return Keychain.read(service: service, account: account)
-            .flatMap { String(data: $0, encoding: .utf8) }
+        if let data = Keychain.read(service: service, account: account),
+            let value = String(data: data, encoding: .utf8) {
+            return value
+        }
+        return migrateLegacySecretIfPresent(id: id, pluginId: pluginId, agentId: agentId)
+    }
+
+    /// Read-through migration for pre-agent-scoping secrets stored as
+    /// `"{pluginId}.{key}"`. Uninstall has cleanup code for that format but
+    /// nothing ever *read* it after the agent-scoping migration, so a user
+    /// upgrading from an old build silently lost those credentials. Only the
+    /// default-agent namespace falls back (per-agent reads already fall back
+    /// to `Agent.defaultId` via `resolvedSecret`, so every resolution path
+    /// benefits). On a hit the value is copied to the canonical account, and
+    /// the legacy item is deleted only after the canonical copy reads back —
+    /// an interrupted migration can never lose the secret.
+    private static func migrateLegacySecretIfPresent(
+        id: String, pluginId: String, agentId: UUID
+    ) -> String? {
+        guard agentId == Agent.defaultId else { return nil }
+        let legacyAccount = "\(pluginId).\(id)"
+        let canonicalAccount = agentAccount(agentId: agentId, pluginId: pluginId, key: id)
+
+        if KeychainQueryHelpers.usesInMemoryKeychainStoreForTests {
+            return testStoreLock.withLock {
+                guard let value = testStore[legacyAccount] else { return nil }
+                testStore[canonicalAccount] = value
+                testStore.removeValue(forKey: legacyAccount)
+                return value
+            }
+        }
+        guard case .found(let data) = Keychain.readItem(service: service, account: legacyAccount),
+            let value = String(data: data, encoding: .utf8)
+        else { return nil }
+        if Keychain.write(service: service, account: canonicalAccount, data: data),
+            Keychain.read(service: service, account: canonicalAccount) == data {
+            Keychain.delete(service: service, account: legacyAccount)
+        }
+        return value
     }
 
     public static func hasSecret(id: String, for pluginId: String, agentId: UUID) -> Bool {
@@ -46,12 +84,23 @@ public enum ToolSecretsKeychain {
     @discardableResult
     public static func deleteSecret(id: String, for pluginId: String, agentId: UUID) -> Bool {
         let account = agentAccount(agentId: agentId, pluginId: pluginId, key: id)
+        // Deleting from the default-agent namespace also removes any
+        // pre-migration `"{pluginId}.{key}"` twin — otherwise the legacy
+        // read-through fallback would resurrect a secret the user deleted.
+        let legacyAccount = agentId == Agent.defaultId ? "\(pluginId).\(id)" : nil
         if KeychainQueryHelpers.usesInMemoryKeychainStoreForTests {
-            testStoreLock.withLock { _ = testStore.removeValue(forKey: account) }
+            testStoreLock.withLock {
+                _ = testStore.removeValue(forKey: account)
+                if let legacyAccount { _ = testStore.removeValue(forKey: legacyAccount) }
+            }
             return true
         }
         if KeychainQueryHelpers.disablesKeychainForProcess { return true }
-        return Keychain.delete(service: service, account: account)
+        let deleted = Keychain.delete(service: service, account: account)
+        if let legacyAccount {
+            Keychain.delete(service: service, account: legacyAccount)
+        }
+        return deleted
     }
 
     public static func deleteAllSecrets(for pluginId: String, agentId: UUID) {
@@ -203,6 +252,20 @@ public enum ToolSecretsKeychain {
         }
         if KeychainQueryHelpers.disablesKeychainForProcess { return [] }
         return Keychain.fetchAll(service: service, returnData: !attributesOnly)
+    }
+
+    // MARK: - Test seams
+
+    /// Seed a raw account (e.g. a pre-agent-scoping `"{pluginId}.{key}"`
+    /// entry) into the in-memory test store. Test-only: production code has
+    /// no API that writes the legacy format anymore.
+    static func _testSeedRawAccount(_ account: String, value: String) {
+        testStoreLock.withLock { testStore[account] = value }
+    }
+
+    /// Raw account lookup in the in-memory test store. Test-only.
+    static func _testRawAccountValue(_ account: String) -> String? {
+        testStoreLock.withLock { testStore[account] }
     }
 
     private static func deleteAllMatchingPrefix(_ prefix: String) {

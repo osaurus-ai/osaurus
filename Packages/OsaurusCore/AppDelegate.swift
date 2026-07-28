@@ -377,8 +377,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 await MasterKey.seedExistsCacheOffMainActor()
             }
             if !keychainDisabledTestMode {
-                await MCPProviderManager.shared.connectEnabledProviders()
-                await RemoteProviderManager.shared.connectEnabledProviders()
+                // MCP and remote-provider startup connects run concurrently:
+                // one slow or unreachable MCP server must not delay every
+                // model provider (each connect has its own timeout and
+                // bounded transient retry inside its manager).
+                async let mcpConnects: Void = MCPProviderManager.shared.connectEnabledProviders()
+                async let remoteConnects: Void =
+                    RemoteProviderManager.shared.connectEnabledProviders()
+                _ = await (mcpConnects, remoteConnects)
                 // Touch the search-provider manager so its one-time migration
                 // of osaurus.search plugin keys runs at launch, not lazily on
                 // the first web_search call / Settings visit.
@@ -1404,6 +1410,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Same for the sandbox and agent-delegation stores.
         SandboxConfigurationStore.flushPendingWrites()
         SubagentConfigurationStore.flushPendingWrites()
+
+        // Provider/tool configuration files (remote.json, mcp.json, …) persist
+        // through ConfigDiskWriter's background queue, and credentials persist
+        // through the Keychain serial write queue. Drain both, bounded, so a
+        // provider added or edited right before quit survives relaunch —
+        // otherwise `_exit` below drops the pending write and the provider
+        // comes back disabled or credential-less.
+        ConfigDiskWriter.flushPendingWrites()
+        Keychain.flushPendingWrites()
 
         // Aptabase batches analytics in an in-memory queue and normally drains
         // it from its own `willTerminate` observer — but that flush is async and

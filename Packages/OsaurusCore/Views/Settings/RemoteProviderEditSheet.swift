@@ -1605,7 +1605,9 @@ private struct AddProviderFlow: View {
 
     private func saveSecretHeaders(for providerId: UUID) {
         for header in customHeaders where header.isSecret && !header.key.isEmpty && !header.value.isEmpty {
-            RemoteProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: providerId)
+            if !RemoteProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: providerId) {
+                NSLog("RemoteProviderEditSheet: failed to save secret header to Keychain")
+            }
         }
     }
 
@@ -2586,7 +2588,8 @@ private struct EditProviderFlow: View {
             authType: authType,
             providerType: providerType,
             enabled: provider.enabled,
-            autoConnect: true,
+            // Editing must not overwrite the user's auto-connect choice.
+            autoConnect: provider.autoConnect,
             timeout: timeout,
             disableTimeout: disableTimeout,
             manualModelIds: parseManualModelIds(manualModelIdsText),
@@ -2594,7 +2597,9 @@ private struct EditProviderFlow: View {
         )
 
         for header in customHeaders where header.isSecret && !header.key.isEmpty && !header.value.isEmpty {
-            RemoteProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: updatedProvider.id)
+            if !RemoteProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: updatedProvider.id) {
+                NSLog("RemoteProviderEditSheet: failed to save secret header to Keychain")
+            }
         }
 
         onSave(updatedProvider, apiKey.isEmpty ? nil : apiKey, nil)

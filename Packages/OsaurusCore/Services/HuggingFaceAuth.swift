@@ -37,15 +37,21 @@ enum HuggingFaceAuth {
         // the catalog card reads on the main thread at view-init. That is the
         // deadlock behind the Catalog-tab hang: the main thread blocks on the
         // lock held by a background keychain read.
-        let raw = Keychain.read(service: keychainService, account: keychainAccount)
+        let outcome = Keychain.readItem(service: keychainService, account: keychainAccount)
+        let raw = outcome.data
             .flatMap { String(data: $0, encoding: .utf8) }?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let value = (raw?.isEmpty == false) ? raw : nil
 
         // Publish once; a racing reader that resolved the same value first
         // wins (the keychain read is idempotent, so a double read is benign).
-        cachedToken.withLock { state in
-            if case .none = state { state = .some(value) }
+        // Only definitive outcomes (found / not-found) are cached: a locked
+        // or transiently failing keychain must not latch "no token" for the
+        // rest of the process lifetime.
+        if outcome.isDefinitive {
+            cachedToken.withLock { state in
+                if case .none = state { state = .some(value) }
+            }
         }
         return value
     }

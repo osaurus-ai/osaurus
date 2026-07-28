@@ -2200,11 +2200,26 @@ struct RuntimePolicySourceTests {
         #expect(appDelegate.contains("OSAURUS_KEYCHAIN_FREE_SHOW_UI"))
         #expect(appDelegate.contains("Keychain disabled by OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1"))
         #expect(appDelegate.contains("if keychainDisabledTestMode {"))
-        #expect(
-            appDelegate.contains(
-                "if !keychainDisabledTestMode {\n                await MCPProviderManager.shared.connectEnabledProviders()"
+        // The provider connects stay behind the keychain-disabled gate and
+        // run concurrently (one slow MCP server must not delay every model
+        // provider).
+        let mcpConnect = try #require(
+            appDelegate.range(
+                of: "async let mcpConnects: Void = MCPProviderManager.shared.connectEnabledProviders()"
             )
         )
+        let remoteConnect = try #require(
+            appDelegate.range(
+                of: "async let remoteConnects: Void =\n                    RemoteProviderManager.shared.connectEnabledProviders()"
+            )
+        )
+        let connectGate = try #require(
+            appDelegate.range(
+                of: "if !keychainDisabledTestMode {\n                // MCP and remote-provider startup connects run concurrently:"
+            )
+        )
+        #expect(connectGate.lowerBound < mcpConnect.lowerBound)
+        #expect(mcpConnect.lowerBound < remoteConnect.lowerBound)
         #expect(
             appDelegate.contains(
                 "if !keychainDisabledTestMode && !LaunchGuard.shouldSkip(.sandbox) {\n            SandboxToolRegistrar.shared.start()"

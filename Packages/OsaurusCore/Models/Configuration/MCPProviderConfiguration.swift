@@ -319,6 +319,14 @@ public struct MCPProviderState: Sendable {
     /// Optional `resource_metadata` URL parsed out of `WWW-Authenticate`. When present
     /// the OAuth service can skip path-scoped `.well-known` discovery.
     public var resourceMetadataURL: URL?
+    /// True when the most recent connect attempt failed for a *transient*
+    /// reason (offline, timeout, DNS/TLS, server 5xx) rather than a terminal
+    /// one (auth, bad config). Drives launch/network/wake/activation
+    /// auto-reconnect so a provider that failed while the machine was offline
+    /// comes back on its own, without hammering providers whose tokens or
+    /// endpoints are actually wrong. Mirrors
+    /// `RemoteProviderState.lastFailureWasTransient`.
+    public var lastFailureWasTransient: Bool
 
     public init(providerId: UUID) {
         self.providerId = providerId
@@ -333,6 +341,7 @@ public struct MCPProviderState: Sendable {
         self.lastStderrTail = nil
         self.requiresAuth = false
         self.resourceMetadataURL = nil
+        self.lastFailureWasTransient = false
     }
 }
 

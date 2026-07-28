@@ -156,14 +156,23 @@ public final class SearchProviderManager: ObservableObject {
 
     // MARK: - Secrets
 
-    public func saveSecret(_ value: String, field: String, for definitionId: String) {
+    /// Save (or clear, when blank) a secret field. Returns false when the
+    /// keychain write failed, so callers can surface that the credential may
+    /// not survive relaunch.
+    @discardableResult
+    public func saveSecret(_ value: String, field: String, for definitionId: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let durable: Bool
         if trimmed.isEmpty {
-            SearchProviderKeychain.deleteSecret(field: field, for: definitionId)
+            durable = SearchProviderKeychain.deleteSecret(field: field, for: definitionId)
         } else {
-            SearchProviderKeychain.saveSecret(trimmed, field: field, for: definitionId)
+            durable = SearchProviderKeychain.saveSecret(trimmed, field: field, for: definitionId)
+            if !durable, !KeychainQueryHelpers.disablesKeychainForProcess {
+                NSLog("SearchProviderManager: failed to save secret to Keychain")
+            }
         }
         refreshConfiguredProviderIds()
+        return durable
     }
 
     public func hasSecret(field: String, for definitionId: String) -> Bool {
