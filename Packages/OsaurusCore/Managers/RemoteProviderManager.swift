@@ -1109,6 +1109,72 @@ public final class RemoteProviderManager: ObservableObject {
         let pickerModelId: String
     }
 
+    /// Immutable lookup snapshot for one connected spawn catalog refresh.
+    ///
+    /// SwiftUI may ask for the same row identity many times while laying out a
+    /// picker. Indexing once keeps those body reads independent from
+    /// `RemoteProviderManager.shared` initialization and avoids rebuilding the
+    /// complete provider/model catalog per row.
+    struct ConnectedSpawnModelTargetIndex: Sendable {
+        private struct PickerKey: Hashable, Sendable {
+            let providerId: UUID
+            let pickerModelId: String
+        }
+
+        static let empty = ConnectedSpawnModelTargetIndex(targets: [])
+
+        private let canonicalTargets: [String: ConnectedSpawnModelTarget]
+        private let targetIDsByPicker: [PickerKey: String]
+        private let uniqueLegacyTargets: [String: ConnectedSpawnModelTarget]
+
+        init(targets: [ConnectedSpawnModelTarget]) {
+            var canonicalTargets: [String: ConnectedSpawnModelTarget] = [:]
+            var targetIDsByPicker: [PickerKey: String] = [:]
+            var legacyBuckets: [String: [ConnectedSpawnModelTarget]] = [:]
+
+            for target in targets {
+                canonicalTargets[target.id] = target
+                targetIDsByPicker[
+                    PickerKey(
+                        providerId: target.providerId,
+                        pickerModelId: target.pickerModelId
+                    )
+                ] = target.id
+                legacyBuckets[target.pickerModelId, default: []].append(target)
+            }
+
+            self.canonicalTargets = canonicalTargets
+            self.targetIDsByPicker = targetIDsByPicker
+            self.uniqueLegacyTargets = legacyBuckets.compactMapValues { matches in
+                matches.count == 1 ? matches[0] : nil
+            }
+        }
+
+        func target(forStoredId id: String) -> ConnectedSpawnModelTarget? {
+            let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+
+            if let parsed = SpawnRemoteModelIdentity.parse(trimmed),
+                let canonicalID = SpawnRemoteModelIdentity.make(
+                    providerId: parsed.providerId,
+                    modelId: parsed.modelId
+                )
+            {
+                return canonicalTargets[canonicalID]
+            }
+            return uniqueLegacyTargets[trimmed]
+        }
+
+        func targetID(
+            forPickerModelId pickerModelId: String,
+            providerId: UUID
+        ) -> String? {
+            targetIDsByPicker[
+                PickerKey(providerId: providerId, pickerModelId: pickerModelId)
+            ]
+        }
+    }
+
     /// Get all available models synchronously from cached state. Empty while
     /// offline so the model picker (via `ModelPickerItemCache`) hides every
     /// cloud model and chat sessions fall back to Foundation/local; the
@@ -1174,22 +1240,18 @@ public final class RemoteProviderManager: ObservableObject {
         }
     }
 
+    /// Capture one indexed view of the current connected spawn catalog.
+    func connectedSpawnModelTargetIndex() -> ConnectedSpawnModelTargetIndex {
+        ConnectedSpawnModelTargetIndex(targets: connectedSpawnModelTargets())
+    }
+
     /// Resolve a canonical UUID-backed spawn id, or one unambiguous legacy
     /// name-prefixed id, against current connected service truth. Legacy ids
     /// normalize to the canonical id before the model request is routed.
     func connectedSpawnModelTarget(
         forStoredId id: String
     ) -> ConnectedSpawnModelTarget? {
-        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let targets = connectedSpawnModelTargets()
-        if let parsed = SpawnRemoteModelIdentity.parse(trimmed) {
-            return targets.first {
-                $0.providerId == parsed.providerId && $0.modelId == parsed.modelId
-            }
-        }
-        let legacyMatches = targets.filter { $0.pickerModelId == trimmed }
-        return legacyMatches.count == 1 ? legacyMatches[0] : nil
+        connectedSpawnModelTargetIndex().target(forStoredId: id)
     }
 
     /// Convert one current normal-chat picker item to its spawn-only stable id.
@@ -1198,9 +1260,10 @@ public final class RemoteProviderManager: ObservableObject {
         forPickerModelId pickerModelId: String,
         providerId: UUID
     ) -> String? {
-        connectedSpawnModelTargets().first {
-            $0.providerId == providerId && $0.pickerModelId == pickerModelId
-        }?.id
+        connectedSpawnModelTargetIndex().targetID(
+            forPickerModelId: pickerModelId,
+            providerId: providerId
+        )
     }
 
     nonisolated static func pickerPrefix(for providerName: String) -> String {

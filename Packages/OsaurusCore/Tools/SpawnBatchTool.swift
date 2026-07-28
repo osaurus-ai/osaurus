@@ -94,6 +94,21 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
     @TaskLocal
     static var modelOverrideForTests: String?
 
+    /// Model-free production-path eval seam. The scripted lane binds this
+    /// value so it can exercise this tool's real parser, prepare-all barrier,
+    /// one permission gate, admission/grouping scheduler, and ordered
+    /// aggregation without resolving or loading a live model. Production
+    /// never binds it.
+    struct EvaluationOverrides: Sendable {
+        let kindForJob: @Sendable (Job) -> any SubagentKind
+        let maxParallel: Int
+        let localParallelism: Int
+        let localAdmissionPlan: SubagentBatchAdmissionPlan
+    }
+
+    @TaskLocal
+    static var evaluationOverrides: EvaluationOverrides?
+
     enum TargetType: String, Sendable, Equatable {
         case agent
         case model
@@ -369,7 +384,13 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         }
 
         let parentScope = SubagentScope.current()
-        let maxParallel = await Self.effectiveMaxParallel(scope: parentScope)
+        let evaluationOverrides = Self.evaluationOverrides
+        let maxParallel: Int
+        if let evaluationOverrides {
+            maxParallel = evaluationOverrides.maxParallel
+        } else {
+            maxParallel = await Self.effectiveMaxParallel(scope: parentScope)
+        }
         if let limitFailure = Self.batchLimitFailure(
             jobCount: jobs.count,
             maxJobs: maxParallel,
@@ -445,7 +466,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                     "Batch preparation was cancelled before any jobs started."
                 feed.finish(success: false, summary: message)
                 return ToolEnvelope.failure(
-                    kind: .executionError,
+                    kind: interrupt.isInterrupted ? .userDenied : .executionError,
                     message: message,
                     tool: name,
                     retryable: false
@@ -457,22 +478,26 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 agentId: parentScope.agentId,
                 enableThinking: parentScope.enableThinking
             )
-            let kind: TextSubagentKind
-            switch job.targetType {
-            case .agent:
-                kind = TextSubagentKind(
-                    agentName: job.target,
-                    input: job.input,
-                    modelOverride: Self.modelOverrideForTests,
-                    permissionPreauthorized: true
-                )
-            case .model:
-                kind = TextSubagentKind(
-                    model: job.target,
-                    input: job.input,
-                    modelOverride: Self.modelOverrideForTests,
-                    permissionPreauthorized: true
-                )
+            let kind: any SubagentKind
+            if let evaluationOverrides {
+                kind = evaluationOverrides.kindForJob(job)
+            } else {
+                switch job.targetType {
+                case .agent:
+                    kind = TextSubagentKind(
+                        agentName: job.target,
+                        input: job.input,
+                        modelOverride: Self.modelOverrideForTests,
+                        permissionPreauthorized: true
+                    )
+                case .model:
+                    kind = TextSubagentKind(
+                        model: job.target,
+                        input: job.input,
+                        modelOverride: Self.modelOverrideForTests,
+                        permissionPreauthorized: true
+                    )
+                }
             }
             switch await SubagentSession.prepare(
                 kind,
@@ -543,7 +568,8 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 : reason
             feed.finish(success: false, summary: message)
             return ToolEnvelope.failure(
-                kind: cancelled ? .executionError : .userDenied,
+                kind: cancelled && !interrupt.isInterrupted
+                    ? .executionError : .userDenied,
                 message: message,
                 tool: name,
                 retryable: false
@@ -557,12 +583,21 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
 
         let diagnostics = BatchDiagnosticsCollector()
         let cacheBefore = await ModelRuntime.batchDiagnosticsSnapshot()
+        let localAdmissionPlanOverride:
+            (@Sendable () async -> SubagentBatchAdmissionPlan)?
+        if let plan = evaluationOverrides?.localAdmissionPlan {
+            localAdmissionPlanOverride = { plan }
+        } else {
+            localAdmissionPlanOverride = nil
+        }
         let results = await Self.runPreparedJobs(
             prepared,
             maxParallel: maxParallel,
             feed: feed,
             interrupt: interrupt,
             tool: name,
+            localParallelismOverride: evaluationOverrides?.localParallelism,
+            localAdmissionPlanOverride: localAdmissionPlanOverride,
             diagnostics: diagnostics
         )
         let cacheAfter = await ModelRuntime.batchDiagnosticsSnapshot()
@@ -831,7 +866,13 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         diagnostics: BatchDiagnosticsCollector? = nil
     ) async -> [RawJobResult] {
         if interrupt.isInterrupted || Task.isCancelled {
-            return jobs.map { cancelledResult($0, tool: tool) }
+            return jobs.map {
+                cancelledResult(
+                    $0,
+                    tool: tool,
+                    userInterrupted: interrupt.isInterrupted
+                )
+            }
         }
 
         let remote = jobs.filter { $0.run.admissionModelKey == nil }
@@ -934,7 +975,13 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 results.append(
                     contentsOf: jobs
                         .filter { !completedIDs.contains($0.job.id) }
-                        .map { cancelledResult($0, tool: tool) }
+                        .map {
+                            cancelledResult(
+                                $0,
+                                tool: tool,
+                                userInterrupted: interrupt.isInterrupted
+                            )
+                        }
                 )
             }
             return results
@@ -1156,7 +1203,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 admissionWaitSeconds: admissionWaitSeconds,
                 diagnostics: diagnostics
             )
-            return jobs.map { cancelledResult($0, tool: tool) }
+            return jobs.map {
+                cancelledResult($0, tool: tool, userInterrupted: true)
+            }
         }
 
         if interrupt.isInterrupted || Task.isCancelled {
@@ -1164,7 +1213,13 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 admissionClass,
                 modelKey: sequenceModelKey
             )
-            return jobs.map { cancelledResult($0, tool: tool) }
+            return jobs.map {
+                cancelledResult(
+                    $0,
+                    tool: tool,
+                    userInterrupted: interrupt.isInterrupted
+                )
+            }
         }
 
         // Resolve all plans only after admission. This preserves the existing
@@ -1465,7 +1520,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 )
             }
         case .cancelled:
-            return groupJobs.map { cancelledResult($0, tool: tool) }
+            return groupJobs.map {
+                cancelledResult($0, tool: tool, userInterrupted: true)
+            }
         }
 
         if interrupt.isInterrupted || Task.isCancelled {
@@ -1473,7 +1530,13 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 modelKey: first.run.admissionModelKey,
                 slots: grantedSlots
             )
-            return groupJobs.map { cancelledResult($0, tool: tool) }
+            return groupJobs.map {
+                cancelledResult(
+                    $0,
+                    tool: tool,
+                    userInterrupted: interrupt.isInterrupted
+                )
+            }
         }
 
         // Residency and settings may change while this call waits. Re-check
@@ -1837,7 +1900,11 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             if interrupt.isInterrupted || Task.isCancelled {
                 results.append(
                     contentsOf: groups.dropFirst(offset).flatMap(\.jobs).map {
-                        cancelledResult($0, tool: tool)
+                        cancelledResult(
+                            $0,
+                            tool: tool,
+                            userInterrupted: interrupt.isInterrupted
+                        )
                     }
                 )
                 break
@@ -1981,7 +2048,11 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             if interrupt.isInterrupted || Task.isCancelled {
                 results.append(
                     contentsOf: group.jobs[start...].map {
-                        cancelledResult($0, tool: tool)
+                        cancelledResult(
+                            $0,
+                            tool: tool,
+                            userInterrupted: interrupt.isInterrupted
+                        )
                     }
                 )
                 break
@@ -2175,12 +2246,13 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
 
     static func cancelledResult(
         _ job: PreparedJob,
-        tool: String
+        tool: String,
+        userInterrupted: Bool = false
     ) -> RawJobResult {
         RawJobResult(
             job: job.job,
             envelope: ToolEnvelope.failure(
-                kind: .executionError,
+                kind: userInterrupted ? .userDenied : .executionError,
                 message: "Batch job was cancelled before it started.",
                 tool: tool,
                 retryable: false

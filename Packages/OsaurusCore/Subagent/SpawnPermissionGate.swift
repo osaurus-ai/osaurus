@@ -30,9 +30,18 @@ enum SpawnPermissionGate {
     static var promptOverride:
         (@Sendable (PromptRequest) async throws -> PromptChoice)?
 
+    /// Deterministic eval seam. Production never binds this value; scripted
+    /// SpawnBatchTool evaluations still execute the real single batch gate,
+    /// but cannot inherit a developer machine's persisted Deny setting.
+    @TaskLocal
+    static var policyOverrideForTests: SubagentPermissionPolicy?
+
     static func effectivePolicy(
         for scope: SubagentScope
     ) async -> SubagentPermissionPolicy {
+        if let policyOverrideForTests {
+            return policyOverrideForTests
+        }
         let config = SubagentConfigurationStore.snapshot()
         let isDefault = scope.agentId == Agent.defaultId
         let settings = await MainActor.run {

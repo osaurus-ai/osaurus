@@ -45,6 +45,42 @@ suites (e.g. `PluginAgentScopingTests`) still fail by design under
 `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`; run those without the flag when you
 need real Keychain proof.
 
+## Osaurus Release Proof and PR Reporting
+
+For every change that can affect a runtime, parser, tool call, agent loop,
+subagent/delegation path, cache, model setting, or user-facing execution
+lifecycle, source inspection and focused unit tests are necessary but never
+sufficient:
+
+- Build a fresh isolated Release development app and exercise the real Chat and
+  Settings UI. Click every control touched by the change, save it, navigate
+  away and back, relaunch when persistence is part of the contract, and prove
+  the effective request/runtime state changed. Inspect the complete turn until
+  reasoning closes, every tool/subagent card settles, Stop disappears, input
+  unlocks, and a follow-up turn completes.
+- For batching/delegation specifically, live-test the allowed agent/local/cloud
+  target pool, add/remove/save/relaunch, target notes, permission modes, worker
+  tools, child budgets, per-agent maximum fan-out, Server Continuous Batching,
+  Concurrent Sessions, RAM-safety clamp/refusal, same-model batching,
+  different-model handoff/restore, mixed local/remote fan-out, ordering,
+  cancellation at each lifecycle phase, cache reuse, and parent continuation.
+  A visible control or source-wired value is not proof that it is effective.
+- Run the relevant focused regression suites and the applicable full
+  OsaurusEvals lanes, including AgentLoop and AgentLoopFrontier when agent-loop
+  behavior can change. Add efficient deterministic eval cases for new
+  delegation, batching, parser, completion, cancellation, or cache contracts.
+  If an external judge key is unavailable, preserve the raw artifacts and
+  grade the named rows manually rather than silently omitting them.
+- Every GitHub PR proof/status comment must include the exact tested source SHA,
+  app/vMLX pin, model bundle and generation defaults, suite/eval names, raw
+  scores and denominators, failed-case attribution, and paths or hashes for
+  local evidence. Never post images to the repository. Never report only the
+  favorable model rows or summarize a non-perfect score as passing.
+- Re-run the affected full matrix after rebase, merge-conflict resolution, or
+  any source/config change. If any required source trace, automated score, or
+  live UI row is missing, report `PARTIAL` or `BLOCKED` and do not describe the
+  PR as fixed, proven, release-ready, or regression-free.
+
 ## Model Runtime Non-Negotiables
 
 - Never add forced thinking tags, parser repair, hidden sampler defaults,

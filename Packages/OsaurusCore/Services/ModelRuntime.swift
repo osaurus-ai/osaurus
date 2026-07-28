@@ -2505,6 +2505,37 @@ public actor ModelRuntime {
             "loadContainer: local directory model=\(name, privacy: .public) path=\(localURL.path, privacy: .public)"
         )
 
+        // One-time, idempotent bundle-metadata repair for the Laguna XS 2.1
+        // release that shipped an incorrect/missing top_k in some artifacts.
+        // This happens before both compatibility inspection and
+        // `loadModelContainer`, so Osaurus and vMLX read the same corrected
+        // files. It is intentionally not an in-memory/global sampler override:
+        // explicit request top_k retains precedence after this migration.
+        do {
+            let repairedFiles =
+                try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+                    at: localURL,
+                    modelName: name
+                )
+            if !repairedFiles.isEmpty {
+                genLog.info(
+                    "repaired Laguna XS 2.1 sampling metadata model=\(name, privacy: .public) files=\(repairedFiles.joined(separator: ","), privacy: .public) topK=20"
+                )
+            }
+        } catch {
+            genLog.error(
+                "failed to repair Laguna XS 2.1 sampling metadata model=\(name, privacy: .public): \(String(describing: error), privacy: .public)"
+            )
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 422,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Laguna XS 2.1 requires top_k 20, but Osaurus could not update its generation metadata. \(error.localizedDescription)"
+                ]
+            )
+        }
+
         let installedModel =
             ModelManager.findInstalledMLXModel(named: id)
             ?? ModelManager.findInstalledMLXModel(named: name)

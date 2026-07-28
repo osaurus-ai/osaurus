@@ -2657,6 +2657,52 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     }
 
     public struct SubagentExpectations: Sendable, Codable {
+        /// One child in a heterogeneous model-free scripted batch. Each child
+        /// still runs through the real `SubagentSession` host and admission
+        /// gate; this shape only supplies deterministic eval inputs.
+        public struct ScriptedBatchRun: Sendable, Codable {
+            public let id: String?
+            public let targetType: String?
+            public let target: String?
+            public let input: String?
+            public let needsHandoff: Bool?
+            public let remote: Bool?
+            public let runFailure: String?
+            public let runDelayMs: Int?
+            public let rendezvousArrivals: Int?
+            public let summary: String?
+            public let resultKind: String?
+            public let modelName: String?
+
+            public init(
+                id: String? = nil,
+                targetType: String? = nil,
+                target: String? = nil,
+                input: String? = nil,
+                needsHandoff: Bool? = nil,
+                remote: Bool? = nil,
+                runFailure: String? = nil,
+                runDelayMs: Int? = nil,
+                rendezvousArrivals: Int? = nil,
+                summary: String? = nil,
+                resultKind: String? = nil,
+                modelName: String? = nil
+            ) {
+                self.id = id
+                self.targetType = targetType
+                self.target = target
+                self.input = input
+                self.needsHandoff = needsHandoff
+                self.remote = remote
+                self.runFailure = runFailure
+                self.runDelayMs = runDelayMs
+                self.rendezvousArrivals = rendezvousArrivals
+                self.summary = summary
+                self.resultKind = resultKind
+                self.modelName = modelName
+            }
+        }
+
         /// `"scripted"` | `"spawn"` | `"spawn_model"` | `"image"`. Selects the lane.
         public let lane: String
 
@@ -2683,6 +2729,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// with `needsHandoff` (local-exclusive → must serialize) or `remote`
         /// (fan-out → must overlap).
         public let parallel: Int?
+        /// Scripted lane: heterogeneous child specs for one concurrent batch.
+        /// When present with at least two entries, this takes precedence over
+        /// the uniform `parallel` input.
+        public let scriptedBatch: [ScriptedBatchRun]?
         /// Scripted lane: resolve as a REMOTE model (`isLocal: false`) so the
         /// admission class is `.remote` — the parallel fan-out input.
         public let remote: Bool?
@@ -2847,6 +2897,22 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Parallel-batch lane: exact number of runs that must succeed (the
         /// queued run completes rather than being refused or deadlocking).
         public let expectRunsCompleted: Int?
+        /// Parallel-batch lane: exact number of children that must reach a
+        /// terminal envelope, whether successful or failed.
+        public let expectRunsSettled: Int?
+        /// Parallel-batch lane: ordered terminal envelope kinds for all
+        /// children.
+        public let expectRunEnvelopeKinds: [String]?
+        /// Production spawn_batch aggregate status.
+        public let expectBatchAggregateStatus: String?
+        /// Production spawn_batch caller-stable child ids in result order.
+        public let expectBatchJobIDs: [String]?
+        /// Ordered child summaries returned inside each aggregated envelope.
+        public let expectBatchSummaries: [String]?
+        /// Ordered string payload subsets for each child. Each expected
+        /// key/value must be present; extra production payload fields are
+        /// allowed.
+        public let expectBatchPayloadFields: [[String: String]]?
         /// Assert worker usage was recorded: `prompt_tokens` +
         /// `completion_tokens` present and > 0 (per the proof rule that a
         /// generation row without token accounting is not a pass).
@@ -2878,6 +2944,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             recurse: Bool? = nil,
             phases: [String]? = nil,
             parallel: Int? = nil,
+            scriptedBatch: [ScriptedBatchRun]? = nil,
             remote: Bool? = nil,
             runDelayMs: Int? = nil,
             rendezvous: Bool? = nil,
@@ -2922,6 +2989,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             minImages: Int? = nil,
             expectMaxConcurrent: Int? = nil,
             expectRunsCompleted: Int? = nil,
+            expectRunsSettled: Int? = nil,
+            expectRunEnvelopeKinds: [String]? = nil,
+            expectBatchAggregateStatus: String? = nil,
+            expectBatchJobIDs: [String]? = nil,
+            expectBatchSummaries: [String]? = nil,
+            expectBatchPayloadFields: [[String: String]]? = nil,
             expectUsageRecorded: Bool? = nil,
             expectContextAccounting: Bool? = nil,
             minContextSavedTokens: Int? = nil,
@@ -2937,6 +3010,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.recurse = recurse
             self.phases = phases
             self.parallel = parallel
+            self.scriptedBatch = scriptedBatch
             self.remote = remote
             self.runDelayMs = runDelayMs
             self.rendezvous = rendezvous
@@ -2981,6 +3055,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.minImages = minImages
             self.expectMaxConcurrent = expectMaxConcurrent
             self.expectRunsCompleted = expectRunsCompleted
+            self.expectRunsSettled = expectRunsSettled
+            self.expectRunEnvelopeKinds = expectRunEnvelopeKinds
+            self.expectBatchAggregateStatus = expectBatchAggregateStatus
+            self.expectBatchJobIDs = expectBatchJobIDs
+            self.expectBatchSummaries = expectBatchSummaries
+            self.expectBatchPayloadFields = expectBatchPayloadFields
             self.expectUsageRecorded = expectUsageRecorded
             self.expectContextAccounting = expectContextAccounting
             self.minContextSavedTokens = minContextSavedTokens

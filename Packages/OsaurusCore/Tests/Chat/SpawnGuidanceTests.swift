@@ -2,15 +2,11 @@
 //  SpawnGuidanceTests.swift
 //  OsaurusCoreTests — Subagent framework
 //
-//  The dynamic `spawn` system-prompt block. Two layers are pinned here:
-//   1. `SystemPromptTemplates.spawnGuidance(agents:models:)` — the pure
-//      renderer: each tool's block appears ONLY when its pool is non-empty,
-//      and every descriptor field (locality, provider, size/quant, vision,
-//      agent description, and the user's per-model NOTE) reaches the prose.
-//   2. `SpawnDescriptors.resolve(...)` — the `@MainActor` resolver: an
-//      unknown model id falls back to its short name yet still carries the
-//      user's note through to the descriptor (so the note survives even when
-//      the model isn't in the picker cache).
+//  The dynamic `spawn` system-prompt renderer. Each tool's block appears ONLY
+//  when its request-local runnable pool is non-empty, and every descriptor
+//  field (locality, provider, size/quant, vision, agent description, and the
+//  user's per-model NOTE) reaches the prose. Availability lifecycle coverage
+//  lives in SpawnTargetAvailabilityTests.
 //
 
 import Foundation
@@ -188,7 +184,7 @@ struct SpawnGuidanceTests {
         #expect(text.contains("COMPLETE task as a self-contained prompt"))
         #expect(text.contains("not this conversation"))
         #expect(text.contains("at most 3 jobs in one batch"))
-        #expect(text.contains("at most 3 workers run concurrently"))
+        #expect(text.contains("3 is an upper bound on concurrent workers"))
         #expect(text.contains("SAME model share one load"))
         #expect(text.contains("different local models are serialized"))
     }
@@ -205,31 +201,4 @@ struct SpawnGuidanceTests {
         #expect(!text.contains("`bare-model` (local) —"))
     }
 
-    // MARK: - Resolver: unknown id keeps the note + short display name
-
-    @MainActor
-    @Test("resolve carries a user note through even for a model id not in the picker cache")
-    func resolveKeepsNoteForUnknownModelId() {
-        let bogusModel = "vendor/zzz-not-a-real-model-eval"
-        let bogusAgent = "zzz-not-a-real-agent-eval"
-        let resolved = SpawnDescriptors.resolve(
-            agentNames: [bogusAgent],
-            modelNames: [bogusModel],
-            modelNotes: [bogusModel: "Pinned note for an unknown id"]
-        )
-
-        // Unknown agent → name preserved, no agent detail.
-        #expect(resolved.agents.count == 1)
-        #expect(resolved.agents.first?.name == bogusAgent)
-        #expect(resolved.agents.first?.description == nil)
-        #expect(resolved.agents.first?.modelId == nil)
-
-        // Unknown model → id preserved, display name is the short (post-slash)
-        // name, and the user's note survives the cache miss.
-        #expect(resolved.models.count == 1)
-        let modelDescriptor = resolved.models.first
-        #expect(modelDescriptor?.id == bogusModel)
-        #expect(modelDescriptor?.displayName == "zzz-not-a-real-model-eval")
-        #expect(modelDescriptor?.note == "Pinned note for an unknown id")
-    }
 }

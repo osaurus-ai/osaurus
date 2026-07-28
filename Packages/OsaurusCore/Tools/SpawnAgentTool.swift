@@ -43,6 +43,37 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
 
     public init() {}
 
+    /// Narrow the request-local schema to the launching agent's currently
+    /// runnable agent pool. Execution still enforces the durable allow-list;
+    /// this enum is exact spelling guidance and provider-side validation.
+    static func constrainedSpec(_ tool: Tool, allowedAgentNames: [String]) -> Tool {
+        var seen = Set<String>()
+        let normalized = allowedAgentNames.compactMap { raw -> String? in
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let key = trimmed.lowercased()
+            guard seen.insert(key).inserted else { return nil }
+            return trimmed
+        }
+        guard !normalized.isEmpty,
+            case .object(var root)? = tool.function.parameters,
+            case .object(var properties)? = root["properties"],
+            case .object(var agent)? = properties["agent"]
+        else { return tool }
+
+        agent["enum"] = .array(normalized.map(JSONValue.string))
+        properties["agent"] = .object(agent)
+        root["properties"] = .object(properties)
+        return Tool(
+            type: tool.type,
+            function: ToolFunction(
+                name: tool.function.name,
+                description: tool.function.description,
+                parameters: .object(root)
+            )
+        )
+    }
+
     public func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }

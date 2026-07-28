@@ -12,9 +12,10 @@ Usage:
   scripts/evals/agent-loop-regression-lab.sh --baseline <path> [--suite <dir> ...] [--model <id>]
   scripts/evals/agent-loop-regression-lab.sh --baseline <path> --current <path> [--out-dir <dir>]
 
-By default the CLI runs Packages/OsaurusEvals/Suites/AgentLoop and
-Packages/OsaurusEvals/Suites/AgentLoopFrontier, writes per-suite JSON reports,
-and emits regression-summary.json plus regression-summary.md under
+By default the CLI runs Packages/OsaurusEvals/Suites/AgentLoop,
+Packages/OsaurusEvals/Suites/AgentLoopFrontier, and
+Packages/OsaurusEvals/Suites/Subagent, writes per-suite JSON reports, and emits
+regression-summary.json plus regression-summary.md under
 build/evals/agent-loop-regression-lab/<timestamp>.
 EOF
 }

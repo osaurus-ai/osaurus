@@ -1803,6 +1803,13 @@ struct SpawnBatchToolTests {
 
         #expect(results.count == 2)
         #expect(results.allSatisfy { $0.envelope.contains("cancelled") })
+        #expect(
+            results.allSatisfy {
+                SpawnBatchTool.resultRow($0)["envelope"]
+                    .flatMap { $0 as? [String: Any] }?["kind"] as? String
+                    == "user_denied"
+            }
+        )
         #expect(execution.total == 0)
     }
 
@@ -1854,6 +1861,13 @@ struct SpawnBatchToolTests {
 
         #expect(results.map(\.job.id) == ["a", "b"])
         #expect(results.allSatisfy { $0.envelope.contains(#""ok":false"#) })
+        #expect(
+            results.allSatisfy {
+                SpawnBatchTool.resultRow($0)["envelope"]
+                    .flatMap { $0 as? [String: Any] }?["kind"] as? String
+                    == "user_denied"
+            }
+        )
         #expect(execution.total == 2)
         #expect(execution.maxActive == 2)
         let events = parent.currentEvents()

@@ -40,9 +40,11 @@ import Foundation
 /// The two requirements are met by moving the task from `creating[key]`
 /// (which `value(for:)`'s start-new-task path keys off) into
 /// `draining[key]` (which `value(for:)`'s join path also keys off).
-/// First remover wins the move; the second remover finds `creating[key]`
-/// nil and falls through to `values.removeValue(forKey:)`, which is
-/// also nil during the drain — so the second remover gets `nil`.
+/// First remover wins the move; a second remover that finds
+/// `draining[key]` waits for that same drain to finish, then returns
+/// `nil`. The second remover never receives the value or runs teardown,
+/// preserving sole disposer ownership without letting its caller race
+/// ahead of the in-progress drain.
 ///
 /// **Removal-race invariant**: between the post-await resume of
 /// `value(for:)` and its `values[key] = …` write, a concurrent
@@ -134,10 +136,10 @@ public actor TaskCoalescer<Value: Sendable> {
     ///
     /// Concurrent removers: the first call removes `creating[key]`
     /// (atomic on the actor), tombstones it into `draining[key]`, and
-    /// awaits. A second concurrent `remove(_:)` finds `creating[key]`
-    /// nil and falls through to `values.removeValue(forKey:)`, which is
-    /// also nil during the drain — so the second remover returns
-    /// `nil`. Exclusive ownership transfer prevents double-shutdown.
+    /// awaits. A second concurrent `remove(_:)` joins that same drain
+    /// before returning `nil`. Exclusive ownership transfer prevents
+    /// double-shutdown, while joining prevents the second caller from
+    /// advancing into teardown that assumes the first drain completed.
     @discardableResult
     public func remove(_ key: String) async -> Value? {
         await remove(key, dispose: nil)
@@ -168,6 +170,11 @@ public actor TaskCoalescer<Value: Sendable> {
         _ key: String,
         dispose: (@Sendable (Value) async -> Void)?
     ) async -> Value? {
+        if let existingDrain = draining[key] {
+            _ = await existingDrain.value
+            return nil
+        }
+
         let drainTask: Task<Value, Never>?
         if let creation = creating.removeValue(forKey: key) {
             // In-flight path. Wrap creation + dispose into a single

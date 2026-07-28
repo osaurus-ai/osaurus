@@ -192,13 +192,22 @@ public enum SubagentSession {
         scope explicitScope: SubagentScope? = nil,
         interrupt: InterruptToken? = nil
     ) async -> SubagentPreparationResult {
+        func cancellationEnvelope(_ message: String) -> String {
+            let userInterrupted = interrupt?.isInterrupted == true
+            return ToolEnvelope.failure(
+                kind: userInterrupted ? .userDenied : .executionError,
+                message:
+                    userInterrupted
+                    ? "Run was stopped by the user. \(message)"
+                    : message,
+                tool: tool,
+                retryable: false
+            )
+        }
         if interrupt?.isInterrupted == true || Task.isCancelled {
             return .failure(
-                ToolEnvelope.failure(
-                    kind: .executionError,
-                    message: "Run cancelled before target preparation completed.",
-                    tool: tool,
-                    retryable: false
+                cancellationEnvelope(
+                    "Target preparation did not complete."
                 )
             )
         }
@@ -229,11 +238,8 @@ public enum SubagentSession {
             )
         } catch is CancellationError {
             return .failure(
-                ToolEnvelope.failure(
-                    kind: .executionError,
-                    message: "Run cancelled while resolving the subagent target.",
-                    tool: tool,
-                    retryable: false
+                cancellationEnvelope(
+                    "Target resolution did not complete."
                 )
             )
         } catch {
@@ -241,11 +247,8 @@ public enum SubagentSession {
         }
         if interrupt?.isInterrupted == true || Task.isCancelled {
             return .failure(
-                ToolEnvelope.failure(
-                    kind: .executionError,
-                    message: "Run cancelled while resolving the subagent target.",
-                    tool: tool,
-                    retryable: false
+                cancellationEnvelope(
+                    "Target resolution did not complete."
                 )
             )
         }
@@ -264,11 +267,8 @@ public enum SubagentSession {
             )
         } catch {
             return .failure(
-                ToolEnvelope.failure(
-                    kind: .executionError,
-                    message: "Run cancelled while authorizing the subagent target.",
-                    tool: tool,
-                    retryable: false
+                cancellationEnvelope(
+                    "Target authorization did not complete."
                 )
             )
         }
@@ -294,11 +294,8 @@ public enum SubagentSession {
         }
         if interrupt?.isInterrupted == true || Task.isCancelled {
             return .failure(
-                ToolEnvelope.failure(
-                    kind: .executionError,
-                    message: "Run cancelled while authorizing the subagent target.",
-                    tool: tool,
-                    retryable: false
+                cancellationEnvelope(
+                    "Target authorization did not complete."
                 )
             )
         }
@@ -397,12 +394,13 @@ public enum SubagentSession {
                         retryable: true
                     )
                 case .cancelled:
-                    let message = "Run cancelled while waiting for another subagent to finish."
+                    let message =
+                        "Run stopped by the user while waiting for another subagent to finish."
                     if presentation.finishFeed {
                         feed.finish(success: false, summary: message)
                     }
                     return ToolEnvelope.failure(
-                        kind: .executionError,
+                        kind: .userDenied,
                         message: message,
                         tool: prepared.tool,
                         retryable: false
@@ -434,12 +432,13 @@ public enum SubagentSession {
                         retryable: true
                     )
                 case .cancelled:
-                    let message = "Run cancelled while waiting for another subagent to finish."
+                    let message =
+                        "Run stopped by the user while waiting for another subagent to finish."
                     if presentation.finishFeed {
                         feed.finish(success: false, summary: message)
                     }
                     return ToolEnvelope.failure(
-                        kind: .executionError,
+                        kind: .userDenied,
                         message: message,
                         tool: prepared.tool,
                         retryable: false
@@ -569,7 +568,17 @@ public enum SubagentSession {
                     )
                 }
             }
-            let env = envelope(for: error, tool: prepared.tool)
+            let env: String
+            if error is CancellationError, interrupt.isInterrupted {
+                env = ToolEnvelope.failure(
+                    kind: .userDenied,
+                    message: "Run was stopped by the user.",
+                    tool: prepared.tool,
+                    retryable: false
+                )
+            } else {
+                env = envelope(for: error, tool: prepared.tool)
+            }
             if presentation.finishFeed {
                 feed.finish(success: false, summary: ToolEnvelope.failureMessage(env))
             }

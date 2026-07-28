@@ -258,7 +258,7 @@ public struct AgentLoopRegressionLabSummary: Sendable, Codable, Equatable {
         let verdict =
             hasBlockingRegressions
             ? "REGRESSED: \(regressions.count) regression(s), \(newFailures.count) new failing case(s)"
-            : "PASS: no blocking agent_loop regressions"
+            : "PASS: no blocking agent_loop or subagent regressions"
 
         lines.append("# Agent Loop Regression Lab")
         lines.append("")
@@ -394,6 +394,27 @@ public struct AgentLoopRegressionLabSummary: Sendable, Codable, Equatable {
     }
 }
 
+/// Shared defaults for the PR report and regression lab. Keeping the list in
+/// the kit prevents the two CLI surfaces from silently drifting.
+public enum AgentLoopRegressionDefaults {
+    public static let suiteNames = ["AgentLoop", "AgentLoopFrontier", "Subagent"]
+    public static let trackedDomains: Set<String> = ["agent_loop", "subagent"]
+
+    public static func suiteURLs() -> [URL] {
+        let repoRoot = URL(
+            fileURLWithPath: "Packages/OsaurusEvals/Suites",
+            isDirectory: true
+        )
+        let packageRoot = URL(fileURLWithPath: "Suites", isDirectory: true)
+        let base =
+            FileManager.default.fileExists(
+                atPath: repoRoot.appendingPathComponent("AgentLoop", isDirectory: true).path
+            )
+            ? repoRoot : packageRoot
+        return suiteNames.map { base.appendingPathComponent($0, isDirectory: true) }
+    }
+}
+
 public enum AgentLoopRegressionLab {
     public static func compare(
         baseline: AgentLoopRegressionReportSet,
@@ -490,9 +511,11 @@ public enum AgentLoopRegressionLab {
         guard !selected.isEmpty else {
             throw AgentLoopRegressionLabError.noSelectedCases(suite.directory.path)
         }
-        let nonAgentLoop = selected.filter { $0.domain != "agent_loop" }.map(\.id)
-        guard nonAgentLoop.isEmpty else {
-            throw AgentLoopRegressionLabError.nonAgentLoopCases(nonAgentLoop.sorted())
+        let unsupported = selected.filter {
+            !AgentLoopRegressionDefaults.trackedDomains.contains($0.domain)
+        }.map(\.id)
+        guard unsupported.isEmpty else {
+            throw AgentLoopRegressionLabError.nonAgentLoopCases(unsupported.sorted())
         }
     }
 
@@ -508,12 +531,14 @@ public enum AgentLoopRegressionLab {
         var warnings: [String] = []
 
         for named in set.reports.sorted(by: { $0.name < $1.name }) {
-            for row in named.report.cases where row.domain == "agent_loop" {
+            for row in named.report.cases
+            where AgentLoopRegressionDefaults.trackedDomains.contains(row.domain)
+            {
                 let snapshot = AgentLoopRegressionCaseSnapshot(suite: named.name, row: row)
                 cases.append(snapshot)
                 if let existing = byId[snapshot.id] {
                     warnings.append(
-                        "duplicate agent_loop case id '\(snapshot.id)' in \(existing.suite) and \(snapshot.suite); keeping \(existing.suite)"
+                        "duplicate tracked case id '\(snapshot.id)' in \(existing.suite) and \(snapshot.suite); keeping \(existing.suite)"
                     )
                 } else {
                     byId[snapshot.id] = snapshot
@@ -593,11 +618,11 @@ public enum AgentLoopRegressionLabError: Error, LocalizedError, Equatable {
         case .noReports(let path):
             return "no JSON eval reports found at: \(path)"
         case .noAgentLoopCases(let label):
-            return "\(label) report set has no agent_loop cases"
+            return "\(label) report set has no agent_loop or subagent cases"
         case .noSelectedCases(let path):
             return "suite selection has no cases: \(path)"
         case .nonAgentLoopCases(let ids):
-            return "agent-loop lab only accepts agent_loop cases; non-agent cases: \(ids.joined(separator: ", "))"
+            return "agent-loop lab only accepts agent_loop and subagent cases; unsupported cases: \(ids.joined(separator: ", "))"
         }
     }
 }

@@ -1,0 +1,70 @@
+{
+  "id": "subagent.scripted-batch-one-failure-siblings-settle",
+  "domain": "subagent",
+  "label": "Subagent • one child fails while siblings settle",
+  "query": "One child fails in a three-child remote fan-out and the parent receives the complete aggregate.",
+  "notes": "Model-free. Three remote-class children overlap through the real host. The middle child throws the typed executionFailed error while both siblings succeed. The aggregate must return after all three terminal envelopes settle, preserve both sibling successes in input order, and expose the failure honestly so the caller can continue instead of hanging or dropping sibling results.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "scripted",
+      "decision": "allow",
+      "phases": ["running"],
+      "scriptedBatch": [
+        {
+          "id": "remote-ok-a",
+          "target": "scripted-remote",
+          "summary": "remote A complete",
+          "resultKind": "remote_result",
+          "remote": true,
+          "runDelayMs": 60,
+          "rendezvousArrivals": 3
+        },
+        {
+          "id": "remote-fail",
+          "target": "scripted-remote",
+          "remote": true,
+          "runFailure": "executionFailed",
+          "runDelayMs": 60,
+          "rendezvousArrivals": 3
+        },
+        {
+          "id": "remote-ok-b",
+          "target": "scripted-remote",
+          "summary": "remote B complete",
+          "resultKind": "remote_result",
+          "remote": true,
+          "runDelayMs": 60,
+          "rendezvousArrivals": 3
+        }
+      ],
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "spawn_batch_result",
+      "expectMaxConcurrent": 3,
+      "expectRunsCompleted": 2,
+      "expectRunsSettled": 3,
+      "expectRunEnvelopeKinds": ["success", "execution_error", "success"],
+      "expectBatchAggregateStatus": "partial_failure",
+      "expectBatchJobIDs": ["remote-ok-a", "remote-fail", "remote-ok-b"],
+      "expectBatchSummaries": [
+        "remote A complete",
+        "scripted execution failure (run)",
+        "remote B complete"
+      ],
+      "expectBatchPayloadFields": [
+        {
+          "kind": "remote_result",
+          "model": "scripted-remote",
+          "summary": "remote A complete"
+        },
+        {},
+        {
+          "kind": "remote_result",
+          "model": "scripted-remote",
+          "summary": "remote B complete"
+        }
+      ]
+    }
+  }
+}

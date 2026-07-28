@@ -310,8 +310,9 @@ make evals-pr-report-baseline \
   FRONTIER_MODEL=openai/gpt-4o-mini
 ```
 
-The default report runs `AgentLoop` and `AgentLoopFrontier` for both the local
-and frontier lanes. It writes `build/evals/pr-report/<timestamp>/` unless
+The default report runs `AgentLoop`, `AgentLoopFrontier`, and `Subagent` for
+both the local and frontier lanes. It writes
+`build/evals/pr-report/<timestamp>/` unless
 `EVALS_PR_REPORT_OUT` or `--out-dir` is set:
 
 - `manifest.json` — commit, branch, date, runner version, suites, models,
@@ -416,8 +417,9 @@ swift run --package-path Packages/OsaurusEvals osaurus-evals agent-loop-lab \
   --out-dir build/evals/lab-smoke
 ```
 
-The default run selection is `Suites/AgentLoop` plus `Suites/AgentLoopFrontier`.
-Pass `--suite <dir>` repeatedly to narrow or expand it. Artifacts land under
+The default run selection is `Suites/AgentLoop`, `Suites/AgentLoopFrontier`,
+and `Suites/Subagent`. Pass `--suite <dir>` repeatedly to narrow or expand it.
+Artifacts land under
 `build/evals/agent-loop-regression-lab/<timestamp>/` unless `--out-dir` is set:
 
 - `reports/<Suite>.json` — raw `EvalReport` output for each suite run.

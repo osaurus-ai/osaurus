@@ -512,6 +512,30 @@ struct SubagentAdmissionTests {
 
 @Suite("SubagentSession admission")
 struct SubagentSessionAdmissionTests {
+    @Test("interrupt while queued maps to honest user stop and does not take a slot")
+    func interruptWhileQueuedMapsToUserDenied() async {
+        let admission = SubagentAdmission.shared
+        #expect(
+            await admission.admit(.localExclusive, modelKey: "queue-blocker")
+                == .admitted
+        )
+
+        let transcript = await SubagentJobEvaluator.runScripted(
+            ScriptedSubagentSpec(
+                kindId: "queued-scripted",
+                needsHandoff: true,
+                runDelayMs: 5_000
+            ),
+            interruptAfterMs: 100
+        )
+
+        await admission.release(.localExclusive, modelKey: "queue-blocker")
+
+        #expect(!transcript.succeeded)
+        #expect(transcript.envelopeKind == "user_denied")
+        #expect(transcript.summary.localizedCaseInsensitiveContains("stopped"))
+        #expect(transcript.feedPhases.contains("waiting for local GPU"))
+    }
 
     /// A kind that reports `.localExclusive` and records run overlap.
     private final class ExclusiveKind: SubagentKind, @unchecked Sendable {

@@ -34,6 +34,8 @@ struct SpawnConfigurationEditor: View {
     @State private var modelSearch = ""
     @State private var limitsExpanded = false
     @State private var isRefreshingModels = false
+    @State private var connectedSpawnTargetIndex =
+        RemoteProviderManager.ConnectedSpawnModelTargetIndex.empty
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -54,6 +56,7 @@ struct SpawnConfigurationEditor: View {
             if modelPickerPresented {
                 await refreshModelCandidates()
             } else if modelPickerCache.isLoaded {
+                captureConnectedSpawnTargetIndex()
                 migrateLegacyRemoteSelections()
             }
         }
@@ -148,22 +151,29 @@ struct SpawnConfigurationEditor: View {
         }
         return VStack(alignment: .leading, spacing: 8) {
             AgentSheetSectionLabel("Allowed agents")
-            if agentCandidates.isEmpty {
-                emptyHint("No other agents yet — create another agent to make it spawnable.")
+            if selected.isEmpty {
+                emptyHint(
+                    "None yet. Add an agent to delegate a task to it (using its own prompt + model)."
+                )
             } else {
-                if selected.isEmpty {
-                    emptyHint(
-                        "None yet. Add an agent to delegate a task to it (using its own prompt + model)."
-                    )
-                } else {
-                    FlowLayout(spacing: 6) {
-                        ForEach(selected, id: \.self) { name in
-                            removableChip(label: name) {
-                                setAgent(name, included: false)
-                            }
+                FlowLayout(spacing: 6) {
+                    ForEach(selected, id: \.self) { name in
+                        let available = agentCandidates.contains {
+                            $0.name.caseInsensitiveCompare(name) == .orderedSame
+                        }
+                        removableChip(label: name, unavailable: !available) {
+                            setAgent(name, included: false)
                         }
                     }
                 }
+            }
+            if agentCandidates.isEmpty {
+                emptyHint(
+                    selected.isEmpty
+                        ? "No other agents yet — create another agent to make it spawnable."
+                        : "Configured agents marked unavailable can still be removed."
+                )
+            } else {
                 addButton(
                     title: "Add agent",
                     isPresented: $agentPickerPresented,
@@ -507,7 +517,7 @@ struct SpawnConfigurationEditor: View {
     private func selectionID(for item: ModelPickerItem) -> String? {
         switch item.source {
         case .remote(_, let providerId):
-            return RemoteProviderManager.shared.spawnTargetId(
+            return connectedSpawnTargetIndex.targetID(
                 forPickerModelId: item.id,
                 providerId: providerId
             )
@@ -524,9 +534,7 @@ struct SpawnConfigurationEditor: View {
         let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
-        if let remote = RemoteProviderManager.shared.connectedSpawnModelTarget(
-            forStoredId: trimmed
-        ) {
+        if let remote = connectedSpawnTargetIndex.target(forStoredId: trimmed) {
             return selectableModelCandidates.first { item in
                 guard case .remote(_, let providerId) = item.source else { return false }
                 return providerId == remote.providerId && item.id == remote.pickerModelId
@@ -543,7 +551,14 @@ struct SpawnConfigurationEditor: View {
         defer { isRefreshingModels = false }
         await RemoteProviderManager.shared.refreshConnectedProviders()
         await modelPickerCache.buildModelPickerItems()
+        captureConnectedSpawnTargetIndex()
         migrateLegacyRemoteSelections()
+    }
+
+    @MainActor
+    private func captureConnectedSpawnTargetIndex() {
+        connectedSpawnTargetIndex =
+            RemoteProviderManager.shared.connectedSpawnModelTargetIndex()
     }
 
     /// Upgrade only unambiguous legacy remote ids after the live provider
@@ -568,9 +583,7 @@ struct SpawnConfigurationEditor: View {
                 return nil
             }
             guard
-                let remote = RemoteProviderManager.shared.connectedSpawnModelTarget(
-                    forStoredId: id
-                ),
+                let remote = connectedSpawnTargetIndex.target(forStoredId: id),
                 remote.id != id
             else {
                 return nil
@@ -752,12 +765,21 @@ struct SpawnConfigurationEditor: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func removableChip(label: String, onRemove: @escaping () -> Void) -> some View {
+    private func removableChip(
+        label: String,
+        unavailable: Bool = false,
+        onRemove: @escaping () -> Void
+    ) -> some View {
         HStack(spacing: 6) {
             Text(label)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.primaryText)
                 .lineLimit(1)
+            if unavailable {
+                Text("Unavailable", bundle: .module)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(theme.warningColor)
+            }
             Button(action: onRemove) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))

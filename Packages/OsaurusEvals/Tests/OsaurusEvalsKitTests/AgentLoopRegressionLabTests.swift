@@ -59,6 +59,27 @@ struct AgentLoopRegressionLabTests {
         }
     }
 
+    @Test func defaultRegressionSuitesIncludeSubagentAndTrackItsRows() throws {
+        #expect(
+            AgentLoopRegressionDefaults.suiteNames
+                == ["AgentLoop", "AgentLoopFrontier", "Subagent"]
+        )
+        #expect(
+            AgentLoopRegressionDefaults.suiteURLs().map(\.lastPathComponent)
+                == AgentLoopRegressionDefaults.suiteNames
+        )
+        #expect(
+            AgentLoopRegressionDefaults.trackedDomains
+                == Set(["agent_loop", "subagent"])
+        )
+
+        let suite = EvalSuite(
+            directory: URL(fileURLWithPath: "/tmp/Subagent", isDirectory: true),
+            cases: [makeCase(id: "subagent.batch", domain: "subagent")]
+        )
+        try AgentLoopRegressionLab.validateAgentLoopSuite(suite, filter: nil)
+    }
+
     @Test func suiteValidationHonorsFilterBeforeRejecting() throws {
         let suite = EvalSuite(
             directory: URL(fileURLWithPath: "/tmp/MixedSuite", isDirectory: true),

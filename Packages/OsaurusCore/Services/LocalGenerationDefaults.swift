@@ -101,6 +101,228 @@ enum LocalGenerationDefaults {
         lock.unlock()
     }
 
+    /// Repair the known Laguna XS 2.1 sampling-metadata packaging mistake
+    /// before vMLX constructs the model container.
+    ///
+    /// Laguna XS 2.1 was trained and released with `top_k = 20`, but some
+    /// bundles shipped a missing or different value in one of the two files
+    /// consumed by the app/runtime:
+    ///
+    /// - `generation_config.json`
+    /// - `jang_config.json > chat > sampling_defaults`
+    ///
+    /// This is deliberately a bundle migration, not a hidden sampler clamp.
+    /// It applies only when `config.json` identifies the Laguna runtime and
+    /// either JANG provenance or the resolved model name identifies
+    /// `Laguna-XS-2.1`. Explicit per-request `top_k` still wins later in
+    /// `MLXBatchAdapter.effectiveGenerationSettings`.
+    ///
+    /// Returns the filenames changed. A recognized bundle with malformed or
+    /// unwritable metadata throws so the caller can refuse the load honestly
+    /// instead of silently running with the known-bad sampling contract.
+    static func repairLagunaXS21TopKIfNeeded(
+        at directory: URL,
+        modelName: String
+    ) throws -> [String] {
+        let modelNameMatches = isLagunaXS21Identifier(modelName)
+        let configURL = directory.appendingPathComponent("config.json")
+
+        func requireLagunaRuntimeConfig() throws -> [String: Any] {
+            guard let configData = readSmallConfigFile(configURL) else {
+                throw repairError(
+                    code: 1,
+                    description: "Laguna XS 2.1 config.json is unreadable."
+                )
+            }
+            do {
+                guard
+                    let decoded = try JSONSerialization.jsonObject(with: configData)
+                        as? [String: Any]
+                else {
+                    throw repairError(
+                        code: 1,
+                        description: "Laguna XS 2.1 config.json is malformed."
+                    )
+                }
+                return decoded
+            } catch {
+                throw repairError(
+                    code: 1,
+                    description: "Laguna XS 2.1 config.json is malformed.",
+                    underlying: error
+                )
+            }
+        }
+
+        // The model name alone is insufficient: an unrelated runtime can use
+        // an arbitrary display name. Verify the Laguna architecture before
+        // interpreting any malformed JANG metadata as a Laguna XS load error.
+        var verifiedLagunaRuntime = false
+        if modelNameMatches {
+            let config = try requireLagunaRuntimeConfig()
+            guard (config["model_type"] as? String)?.lowercased() == "laguna" else {
+                return []
+            }
+            verifiedLagunaRuntime = true
+        }
+
+        let jangURL = directory.appendingPathComponent("jang_config.json")
+        let jangExists = FileManager.default.fileExists(atPath: jangURL.path)
+        var jangRoot: [String: Any]?
+        if jangExists {
+            guard let jangData = readSmallConfigFile(jangURL) else {
+                guard modelNameMatches else { return [] }
+                throw repairError(
+                    code: 2,
+                    description: "Laguna XS 2.1 jang_config.json is unreadable."
+                )
+            }
+            do {
+                guard
+                    let decoded = try JSONSerialization.jsonObject(with: jangData)
+                        as? [String: Any]
+                else {
+                    guard modelNameMatches else { return [] }
+                    throw repairError(
+                        code: 2,
+                        description: "Laguna XS 2.1 jang_config.json is malformed."
+                    )
+                }
+                jangRoot = decoded
+            } catch {
+                guard modelNameMatches else { return [] }
+                throw repairError(
+                    code: 2,
+                    description: "Laguna XS 2.1 jang_config.json is malformed.",
+                    underlying: error
+                )
+            }
+        }
+
+        let sourceName =
+            ((jangRoot?["source_model"] as? [String: Any])?["name"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard modelNameMatches || sourceName.map(isLagunaXS21Identifier) == true else {
+            return []
+        }
+
+        if !verifiedLagunaRuntime {
+            let config = try requireLagunaRuntimeConfig()
+            guard (config["model_type"] as? String)?.lowercased() == "laguna" else {
+                return []
+            }
+        }
+
+        let generationURL = directory.appendingPathComponent("generation_config.json")
+        var generation: [String: Any]
+        if FileManager.default.fileExists(atPath: generationURL.path) {
+            guard let generationData = readSmallConfigFile(generationURL) else {
+                throw repairError(
+                    code: 3,
+                    description: "Laguna XS 2.1 generation_config.json is unreadable."
+                )
+            }
+            do {
+                guard
+                    let decoded = try JSONSerialization.jsonObject(with: generationData)
+                        as? [String: Any]
+                else {
+                    throw repairError(
+                        code: 3,
+                        description: "Laguna XS 2.1 generation_config.json is malformed."
+                    )
+                }
+                generation = decoded
+            } catch {
+                throw repairError(
+                    code: 3,
+                    description: "Laguna XS 2.1 generation_config.json is malformed.",
+                    underlying: error
+                )
+            }
+        } else {
+            generation = [:]
+        }
+
+        var writes: [(url: URL, object: [String: Any])] = []
+        if !isExactlyTopK20(generation["top_k"]) {
+            generation["top_k"] = 20
+            writes.append((generationURL, generation))
+        }
+
+        if var jang = jangRoot {
+            var rootSampling = jang["sampling_defaults"] as? [String: Any] ?? [:]
+            var chat = jang["chat"] as? [String: Any] ?? [:]
+            var sampling = chat["sampling_defaults"] as? [String: Any] ?? [:]
+            if !isExactlyTopK20(sampling["top_k"])
+                || !isExactlyTopK20(rootSampling["top_k"])
+            {
+                rootSampling["top_k"] = 20
+                sampling["top_k"] = 20
+                jang["sampling_defaults"] = rootSampling
+                chat["sampling_defaults"] = sampling
+                jang["chat"] = chat
+                writes.append((jangURL, jang))
+            }
+        }
+
+        for write in writes {
+            let data = try JSONSerialization.data(
+                withJSONObject: write.object,
+                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            )
+            try data.write(to: write.url, options: .atomic)
+        }
+
+        if !writes.isEmpty {
+            invalidate()
+        }
+        return writes.map(\.url.lastPathComponent)
+    }
+
+    /// Match the exact Laguna XS 2.1 family boundary while allowing normal
+    /// repository/display suffixes such as JANG_4M, MXFP8, or CRACK.
+    ///
+    /// `Laguna-XS-2.10` and arbitrary names that merely contain the token are
+    /// intentionally excluded. The identifier may be a repository id
+    /// (`org/repo`) or a human-readable picker name.
+    private static func isLagunaXS21Identifier(_ identifier: String) -> Bool {
+        let leaf = identifier.split(separator: "/", omittingEmptySubsequences: true).last
+            .map(String.init) ?? identifier
+        let folded = leaf.lowercased().unicodeScalars.map { scalar -> Character in
+            if CharacterSet.alphanumerics.contains(scalar) || scalar == "." {
+                return Character(String(scalar))
+            }
+            return "-"
+        }
+        let normalized = String(folded)
+            .split(separator: "-", omittingEmptySubsequences: true)
+            .joined(separator: "-")
+        return normalized == "laguna-xs-2.1"
+            || normalized.hasPrefix("laguna-xs-2.1-")
+    }
+
+    private static func isExactlyTopK20(_ value: Any?) -> Bool {
+        guard let number = value as? NSNumber else { return false }
+        return number.doubleValue == 20
+    }
+
+    private static func repairError(
+        code: Int,
+        description: String,
+        underlying: Error? = nil
+    ) -> NSError {
+        var userInfo: [String: Any] = [NSLocalizedDescriptionKey: description]
+        if let underlying {
+            userInfo[NSUnderlyingErrorKey] = underlying
+        }
+        return NSError(
+            domain: "LocalGenerationDefaults",
+            code: code,
+            userInfo: userInfo
+        )
+    }
+
     // MARK: - File loading
 
     private static func load(modelId: String) -> Defaults {

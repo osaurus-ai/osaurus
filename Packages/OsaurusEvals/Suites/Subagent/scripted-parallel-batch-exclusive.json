@@ -1,9 +1,9 @@
 {
   "id": "subagent.scripted-parallel-batch-exclusive",
   "domain": "subagent",
-  "label": "Subagent • parallel batch: two local handoffs serialize, both complete",
-  "query": "One tool batch starts two local-handoff subagents concurrently.",
-  "notes": "Model-free. THE BATCH-RACE GUARD: two scripted kinds that model the local residency handoff (needsHandoff → .localExclusive admission) are started CONCURRENTLY through the real host, like a parallel tool batch. The process-wide SubagentAdmission gate must serialize them — peak overlap of the run bodies is exactly 1 — while the queued run WAITS and then completes (runsCompleted 2, success envelopes for both). A failure here is the historical concurrent-GPU handoff race (BUG G class) resurfacing.",
+  "label": "Subagent • parallel batch: same local model fans out, both complete",
+  "query": "One spawn_batch call starts two children on the same local model.",
+  "notes": "Model-free. Two scripted children share one local model identity and one residency handoff, then execute in the same production local subwave. Peak overlap must be exactly 2, both caller-stable rows must settle successfully, and the production aggregate must be succeeded. The separate heterogeneous fixture proves that different local model identities still serialize while remote work overlaps.",
   "fixtures": {},
   "expect": {
     "subagent": {
@@ -12,10 +12,14 @@
       "needsHandoff": true,
       "parallel": 2,
       "runDelayMs": 150,
+      "rendezvous": true,
       "phases": ["running"],
       "expectSuccess": true,
-      "expectMaxConcurrent": 1,
-      "expectRunsCompleted": 2
+      "expectMaxConcurrent": 2,
+      "expectRunsCompleted": 2,
+      "expectRunsSettled": 2,
+      "expectRunEnvelopeKinds": ["success", "success"],
+      "expectBatchAggregateStatus": "succeeded"
     }
   }
 }

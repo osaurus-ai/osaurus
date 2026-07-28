@@ -43,10 +43,11 @@ struct SubagentModelResolutionTests {
         )
     }
 
-    @Test("an unavailable override (nil) falls back to the default model")
-    func unavailableOverrideFallsBackToDefault() {
-        // `availableOverride` returns nil when the stored id is gone; the
-        // precedence then transparently inherits the kind's default source.
+    @Test("an absent override slot falls back to the default model")
+    func absentOverrideFallsBackToDefault() {
+        // `pickModel` receives nil only when no override is configured. Live
+        // resolution separately fails closed when a configured override is
+        // unavailable.
         #expect(
             SubagentModelResolution.pickModel(
                 evalModel: nil,
@@ -163,6 +164,49 @@ struct SubagentModelResolutionTests {
                 return
             }
             #expect(message == "no model here")
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+    }
+
+    @Test("a removed configured override fails closed instead of running the default model")
+    func removedConfiguredOverrideDoesNotFallback() async {
+        let lease = await acquireSubagentStoreSandbox(
+            "subagent-model-resolution-removed-override"
+        )
+        defer { lease.release() }
+        let removedProviderId = UUID(
+            uuidString: "AF47B570-E129-4B86-A918-D486DAD6F829"
+        )!
+        let removedOverride = SpawnRemoteModelIdentity.make(
+            providerId: removedProviderId,
+            modelId: "vendor/removed-model"
+        )!
+        SubagentConfigurationStore.save(
+            SubagentConfiguration(
+                subagentModelOverrides: [
+                    SubagentCapabilityRegistry.spawn.id: removedOverride
+                ]
+            )
+        )
+
+        do {
+            _ = try await SubagentModelResolution.resolve(
+                capabilityId: SubagentCapabilityRegistry.spawn.id,
+                agentId: Agent.defaultId,
+                evalModel: nil,
+                idleWaitSeconds: 30,
+                deniedMessage: "denied",
+                unavailableMessage: "configured override unavailable",
+                defaultModel: { "local/should-not-run" }
+            )
+            Issue.record("expected the removed configured override to fail closed")
+        } catch let error as SubagentError {
+            guard case .unavailable(let message) = error else {
+                Issue.record("expected .unavailable, got \(error)")
+                return
+            }
+            #expect(message == "configured override unavailable")
         } catch {
             Issue.record("unexpected error: \(error)")
         }

@@ -316,6 +316,52 @@ struct MLXBatchAdapterTests {
         #expect(effective.repetitionPenalty == 1.02)
     }
 
+    @Test func effectiveGenerationSettings_explicitTopKWinsAfterLagunaXS21BundleRepair() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-laguna-xs-effective-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try #"{"model_type":"laguna"}"#.write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"temperature":1.0,"top_p":1.0,"top_k":64}"#.write(
+            to: tmp.appendingPathComponent("generation_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"source_model":{"name":"Laguna-XS-2.1"},"chat":{"sampling_defaults":{"top_k":64}}}"#
+            .write(
+                to: tmp.appendingPathComponent("jang_config.json"),
+                atomically: true,
+                encoding: .utf8
+            )
+
+        _ = try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+            at: tmp,
+            modelName: "Laguna XS 2.1 JANG 4M"
+        )
+        let repairedDefaults = LocalGenerationDefaults.load(fromDirectory: tmp)
+        #expect(repairedDefaults.topK == 20)
+
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "Laguna XS 2.1 JANG 4M",
+            generation: GenerationParameters(
+                temperature: nil,
+                maxTokens: 128,
+                maxTokensExplicit: true,
+                topKOverride: 32
+            ),
+            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            maxBatchSize: 1,
+            modelDefaults: repairedDefaults
+        )
+
+        #expect(effective.topK == 32)
+    }
+
     @Test func effectiveGenerationSettings_nativeMTPPreservesBundleDefaultsWhenRequestIsOmitted() {
         let generation = GenerationParameters(
             temperature: nil,

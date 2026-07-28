@@ -587,9 +587,10 @@ make evals-pr-report-baseline \
 
 The bundle writes `manifest.json`, `summary.md`, `summary.json`, raw
 `reports/<model>/<suite>.json`, and baseline `compare.md` / `compare.json` when
-`BASELINE_DIR` is supplied. Required default suites are `AgentLoop` and
-`AgentLoopFrontier` for both local and frontier lanes. `SandboxFrontier` remains
-off by default because it needs sandbox host prerequisites.
+`BASELINE_DIR` is supplied. Required default suites are `AgentLoop`,
+`AgentLoopFrontier`, and `Subagent` for both local and frontier lanes.
+`SandboxFrontier` remains off by default because it needs sandbox host
+prerequisites.
 
 Use this rule:
 
@@ -627,12 +628,12 @@ scripts/evals/agent-loop-regression-lab.sh \
   --out-dir build/eval-reports/<model>-agent-loop-lab
 ```
 
-The lab runs `AgentLoop` and `AgentLoopFrontier` by default, captures raw
-per-suite JSON under `reports/`, and writes `regression-summary.json` plus
-`regression-summary.md`. Use the Markdown summary as the short proof block for
-new rows; keep the JSON paths for failure attribution and later comparisons. To
-compare already-captured reports without rerunning a model, pass `--current
-<path>` alongside `--baseline <path>`.
+The lab runs `AgentLoop`, `AgentLoopFrontier`, and `Subagent` by default,
+captures raw per-suite JSON under `reports/`, and writes
+`regression-summary.json` plus `regression-summary.md`. Use the Markdown summary
+as the short proof block for new rows; keep the JSON paths for failure
+attribution and later comparisons. To compare already-captured reports without
+rerunning a model, pass `--current <path>` alongside `--baseline <path>`.
 
 Keys ride in ephemeral in-memory providers — never written to disk or
 Keychain. New providers need a preset in

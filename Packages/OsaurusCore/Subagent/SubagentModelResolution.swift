@@ -9,7 +9,8 @@
 //  and stash the plan for `makeHandoff()`. This folds that into one precedence
 //  (`pickModel`) + one availability gate (`availableOverride`) + one live
 //  `resolve`, so a new chat-driven kind gets the whole behaviour for free and
-//  the three kinds can never drift on precedence, the availability fallback, or
+//  the three kinds can never drift on precedence, fail-closed override
+//  availability, or
 //  the eval-bypasses-residency invariant.
 //
 //  Image is deliberately NOT a client: it owns its own model system
@@ -72,9 +73,10 @@ enum SubagentModelResolution {
         return trimmed
     }
 
-    /// The stored override id IF it is still usable, else `nil` so the caller
-    /// falls back to the kind default instead of hard-failing on a model that
-    /// was deleted or whose provider disconnected. Local installs are
+    /// The stored override id IF it is still usable, else `nil`. A caller with
+    /// a non-empty configured override must treat nil as unavailable rather
+    /// than silently running the kind default: that would execute an
+    /// unconfigured model. Local installs are
     /// authoritative (the picker cache may not list every bundle); a remote id
     /// is checked against `ModelPickerItemCache`, which mirrors connected
     /// providers. A cold cache can't disprove availability, so the id is
@@ -103,14 +105,15 @@ enum SubagentModelResolution {
     ///   the uniform eval-bypasses-residency invariant, so a deterministic lane
     ///   never depends on live GPU residency.
     /// - Otherwise: resolves the launching agent's `settings`, reads the
-    ///   per-agent `effectiveSubagentModel` override, drops it through
-    ///   `availableOverride`, falls back to `defaultModel()`, then runs the
+    ///   per-agent `effectiveSubagentModel` override, requires it to pass
+    ///   `availableOverride` when configured, otherwise uses `defaultModel()`,
+    ///   then runs the
     ///   shared `SubagentResidency.resolve` (reject-before-evict).
     ///
     /// `agentId` is the launching agent whose override map + settings are read
     /// (spawn/computer_use pass `scope.agentId`). `defaultModel` is the kind's
-    /// default model source, evaluated on the
-    /// main actor only when no usable override is present.
+    /// default model source, evaluated on the main actor only when no override
+    /// is configured. An unavailable configured override fails closed.
     ///
     /// `requestedModel` is an EXPLICIT run-model target (the `spawn_model`
     /// tool's `model` argument, including each `spawn_batch` model job). Unlike
@@ -145,21 +148,27 @@ enum SubagentModelResolution {
         if trimmedNonEmpty(requestedModel) != nil, requested == nil {
             throw SubagentError.unavailable(unavailableMessage)
         }
-        let model: String? = await MainActor.run {
+        let model: String? = try await MainActor.run {
             // Explicit target (spawn_model) wins over the override/default, but
             // only after current availability was proven above. It still flows
             // into the residency decision below (not a bypass).
             if let requested { return requested }
             let settings = agentId.flatMap { AgentManager.shared.agent(for: $0)?.settings }
-            let override = SubagentToolVisibility.effectiveSubagentModel(
+            let configuredOverride = SubagentToolVisibility.effectiveSubagentModel(
                 capabilityId: capabilityId,
                 isDefault: isDefault,
                 config: config,
                 settings: settings
             )
+            if let configuredOverride = trimmedNonEmpty(configuredOverride) {
+                guard let available = availableOverride(configuredOverride) else {
+                    throw SubagentError.unavailable(unavailableMessage)
+                }
+                return available
+            }
             return pickModel(
                 evalModel: nil,
-                availableOverride: availableOverride(override),
+                availableOverride: nil,
                 defaultModel: defaultModel()
             )
         }

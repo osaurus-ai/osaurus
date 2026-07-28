@@ -521,6 +521,41 @@ public struct SystemPromptComposer: Sendable {
     /// auto-disable, final tool set, always-loaded snapshot, and the frozen
     /// enabled-capabilities manifest.
     @MainActor
+    private static func configuredSpawnPools(
+        snapshot: AgentConfigSnapshot
+    ) -> (
+        agents: [String],
+        models: [String],
+        notes: [String: String],
+        launcherModelOverride: String?
+    ) {
+        let config = SubagentConfigurationStore.snapshot()
+        let isDefault = snapshot.agentId == Agent.defaultId
+        let settings = AgentManager.shared.agent(for: snapshot.agentId)?.settings
+        return (
+            agents: SubagentToolVisibility.effectiveSpawnableAgents(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: snapshot.spawnDelegationEnabled,
+                perAgentTargets: snapshot.spawnableAgentNames
+            ),
+            models: SubagentToolVisibility.effectiveSpawnableModels(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: snapshot.spawnDelegationEnabled,
+                perAgentModelTargets: snapshot.spawnableModelNames
+            ),
+            notes: isDefault ? config.spawnableModelNotes : snapshot.spawnableModelNotes,
+            launcherModelOverride: SubagentToolVisibility.effectiveSubagentModel(
+                capabilityId: SubagentCapabilityRegistry.spawn.id,
+                isDefault: isDefault,
+                config: config,
+                settings: settings
+            )
+        )
+    }
+
+    @MainActor
     private static func resolveToolset(
         snapshot: AgentConfigSnapshot,
         agentId: UUID,
@@ -557,6 +592,16 @@ public struct SystemPromptComposer: Sendable {
         }
 
         let isTrivialInput = isTrivialUserQuery(query)
+        let configuredSpawn = configuredSpawnPools(snapshot: snapshot)
+        let spawnTargets =
+            effectiveToolsOff
+            ? .empty
+            : await SpawnDescriptors.resolveForRequest(
+                agentNames: configuredSpawn.agents,
+                modelNames: configuredSpawn.models,
+                modelNotes: configuredSpawn.notes,
+                launcherModelOverride: configuredSpawn.launcherModelOverride
+            )
 
         trace?.mark("resolve_tools_start")
         let resolvedTools = resolveTools(
@@ -565,7 +610,8 @@ public struct SystemPromptComposer: Sendable {
             toolsDisabled: effectiveToolsOff,
             additionalToolNames: additionalToolNames,
             frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
-            frozenToolSpecs: frozenToolSpecs
+            frozenToolSpecs: frozenToolSpecs,
+            spawnTargets: spawnTargets
         )
         trace?.mark("resolve_tools_done")
         let suppressTrivialToolSchema = shouldSuppressTrivialToolSchema(
@@ -605,6 +651,7 @@ public struct SystemPromptComposer: Sendable {
             sessionBaselineTools: resolvedTools,
             enabledManifest: enabledManifest,
             alwaysLoadedNames: alwaysLoadedNames,
+            spawnTargets: spawnTargets,
             contextDisable: contextDisable,
             sizeClass: window.sizeClass,
             effectiveToolsOff: effectiveToolsOff,
@@ -987,7 +1034,7 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
-        // Spawn guidance is DYNAMIC — it enumerates the launching agent's ACTUAL
+        // Spawn guidance enumerates the launching agent's request-local ACTUAL
         // spawnable agents + models — so it can't ride the generic guidance loop
         // above (whose `spawn` entry intentionally keeps `guidance == nil`).
         // Render a dedicated block whenever either spawn tool reached the schema,
@@ -1007,31 +1054,6 @@ public struct SystemPromptComposer: Sendable {
             if agentToolResolved || modelToolResolved {
                 let config = SubagentConfigurationStore.snapshot()
                 let isDefault = snapshot.agentId == Agent.defaultId
-                let agentNames =
-                    agentToolResolved
-                    ? SubagentToolVisibility.effectiveSpawnableAgents(
-                        isDefault: isDefault,
-                        config: config,
-                        perAgentEnabled: snapshot.spawnDelegationEnabled,
-                        perAgentTargets: snapshot.spawnableAgentNames
-                    )
-                    : []
-                let modelNames =
-                    modelToolResolved
-                    ? SubagentToolVisibility.effectiveSpawnableModels(
-                        isDefault: isDefault,
-                        config: config,
-                        perAgentEnabled: snapshot.spawnDelegationEnabled,
-                        perAgentModelTargets: snapshot.spawnableModelNames
-                    )
-                    : []
-                let modelNotes =
-                    isDefault ? config.spawnableModelNotes : snapshot.spawnableModelNotes
-                let descriptors = SpawnDescriptors.resolve(
-                    agentNames: agentNames,
-                    modelNames: modelNames,
-                    modelNotes: modelNotes
-                )
                 // The worker tool-reach line must match what the runtime will
                 // actually grant, so resolve it through the SAME helper the
                 // spawn kind uses (default agent → global config, custom →
@@ -1051,8 +1073,8 @@ public struct SystemPromptComposer: Sendable {
                         id: "spawn",
                         label: L("Subagents"),
                         content: SystemPromptTemplates.spawnGuidance(
-                            agents: descriptors.agents,
-                            models: descriptors.models,
+                            agents: agentToolResolved ? toolset.spawnTargets.agents : [],
+                            models: modelToolResolved ? toolset.spawnTargets.models : [],
                             toolAccess: toolAccess,
                             maxParallel: maxParallel
                         )
@@ -2052,10 +2074,21 @@ public struct SystemPromptComposer: Sendable {
             agentToolsOff: snapshot.toolsDisabled,
             agentMemoryOff: snapshot.memoryDisabled
         )
+        let configuredSpawn = configuredSpawnPools(snapshot: snapshot)
+        let spawnTargets =
+            effectiveToolsOff
+            ? .empty
+            : SpawnDescriptors.resolveForPreview(
+                agentNames: configuredSpawn.agents,
+                modelNames: configuredSpawn.models,
+                modelNotes: configuredSpawn.notes,
+                launcherModelOverride: configuredSpawn.launcherModelOverride
+            )
         let tools = resolveTools(
             snapshot: snapshot,
             executionMode: executionMode,
-            toolsDisabled: effectiveToolsOff
+            toolsDisabled: effectiveToolsOff,
+            spawnTargets: spawnTargets
         )
         let alwaysLoadedNames = resolveAlwaysLoadedNames(
             tools: tools,
@@ -2078,6 +2111,7 @@ public struct SystemPromptComposer: Sendable {
             sessionBaselineTools: tools,
             enabledManifest: enabledManifest,
             alwaysLoadedNames: alwaysLoadedNames,
+            spawnTargets: spawnTargets,
             contextDisable: contextDisable,
             sizeClass: window.sizeClass,
             effectiveToolsOff: effectiveToolsOff,
@@ -2259,7 +2293,8 @@ public struct SystemPromptComposer: Sendable {
         toolsDisabled: Bool = false,
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
-        frozenToolSpecs: [Tool]? = nil
+        frozenToolSpecs: [Tool]? = nil,
+        spawnTargets: SpawnTargetAvailabilitySnapshot? = nil
     ) -> [Tool] {
         let snapshot = AgentConfigSnapshot.capture(
             agentId: agentId,
@@ -2271,7 +2306,8 @@ public struct SystemPromptComposer: Sendable {
             toolsDisabled: toolsDisabled,
             additionalToolNames: additionalToolNames,
             frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
-            frozenToolSpecs: frozenToolSpecs
+            frozenToolSpecs: frozenToolSpecs,
+            spawnTargets: spawnTargets
         )
     }
 
@@ -2282,7 +2318,8 @@ public struct SystemPromptComposer: Sendable {
         toolsDisabled: Bool = false,
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
-        frozenToolSpecs: [Tool]? = nil
+        frozenToolSpecs: [Tool]? = nil,
+        spawnTargets: SpawnTargetAvailabilitySnapshot? = nil
     ) -> [Tool] {
         guard !toolsDisabled else { return [] }
 
@@ -2628,48 +2665,65 @@ public struct SystemPromptComposer: Sendable {
         // Execution still enforces every allow-list and budget independently;
         // these enums are provider/local-parser guidance, not the security
         // boundary.
+        let config = SubagentConfigurationStore.snapshot()
+        let isDefault = snapshot.agentId == Agent.defaultId
+        let configuredAgentNames = SubagentToolVisibility.effectiveSpawnableAgents(
+            isDefault: isDefault,
+            config: config,
+            perAgentEnabled: snapshot.spawnDelegationEnabled,
+            perAgentTargets: snapshot.spawnableAgentNames
+        )
+        let configuredModelIds = SubagentToolVisibility.effectiveSpawnableModels(
+            isDefault: isDefault,
+            config: config,
+            perAgentEnabled: snapshot.spawnDelegationEnabled,
+            perAgentModelTargets: snapshot.spawnableModelNames
+        )
+        let allowedAgentNames =
+            spawnTargets?.runnableAgentNames ?? configuredAgentNames
+        let allowedModelIds =
+            spawnTargets?.runnableModelIds ?? configuredModelIds
+
+        if let spawnAgent = byName[SubagentCapabilityRegistry.spawnAgentToolName] {
+            if spawnTargets != nil, allowedAgentNames.isEmpty {
+                byName.removeValue(forKey: SubagentCapabilityRegistry.spawnAgentToolName)
+            } else {
+                byName[SubagentCapabilityRegistry.spawnAgentToolName] =
+                    SpawnAgentTool.constrainedSpec(
+                        spawnAgent,
+                        allowedAgentNames: allowedAgentNames
+                    )
+            }
+        }
         if let spawnModel = byName[SubagentCapabilityRegistry.spawnModelToolName] {
-            let config = SubagentConfigurationStore.snapshot()
-            let allowedModelIds = SubagentToolVisibility.effectiveSpawnableModels(
-                isDefault: snapshot.agentId == Agent.defaultId,
-                config: config,
-                perAgentEnabled: snapshot.spawnDelegationEnabled,
-                perAgentModelTargets: snapshot.spawnableModelNames
-            )
-            byName[SubagentCapabilityRegistry.spawnModelToolName] =
-                SpawnModelTool.constrainedSpec(
-                    spawnModel,
-                    allowedModelIds: allowedModelIds
-                )
+            if spawnTargets != nil, allowedModelIds.isEmpty {
+                byName.removeValue(forKey: SubagentCapabilityRegistry.spawnModelToolName)
+            } else {
+                byName[SubagentCapabilityRegistry.spawnModelToolName] =
+                    SpawnModelTool.constrainedSpec(
+                        spawnModel,
+                        allowedModelIds: allowedModelIds
+                    )
+            }
         }
         if let spawnBatch = byName[SubagentCapabilityRegistry.spawnBatchToolName] {
-            let config = SubagentConfigurationStore.snapshot()
-            let isDefault = snapshot.agentId == Agent.defaultId
-            let settings = AgentManager.shared.agent(for: snapshot.agentId)?.settings
-            let allowedAgentNames = SubagentToolVisibility.effectiveSpawnableAgents(
-                isDefault: isDefault,
-                config: config,
-                perAgentEnabled: snapshot.spawnDelegationEnabled,
-                perAgentTargets: snapshot.spawnableAgentNames
-            )
-            let allowedModelIds = SubagentToolVisibility.effectiveSpawnableModels(
-                isDefault: isDefault,
-                config: config,
-                perAgentEnabled: snapshot.spawnDelegationEnabled,
-                perAgentModelTargets: snapshot.spawnableModelNames
-            )
-            let maxParallel = SubagentToolVisibility.effectiveBudgets(
-                isDefault: isDefault,
-                config: config,
-                settings: settings
-            ).normalized.maxParallelSpawns
-            byName[SubagentCapabilityRegistry.spawnBatchToolName] =
-                SpawnBatchTool.constrainedSpec(
-                    spawnBatch,
-                    allowedAgentNames: allowedAgentNames,
-                    allowedModelIds: allowedModelIds,
-                    maxParallel: maxParallel
-                )
+            if spawnTargets != nil, allowedAgentNames.isEmpty, allowedModelIds.isEmpty {
+                byName.removeValue(forKey: SubagentCapabilityRegistry.spawnBatchToolName)
+            } else {
+                let settings = AgentManager.shared.agent(for: snapshot.agentId)?.settings
+                let maxParallel = SubagentToolVisibility.effectiveBudgets(
+                    isDefault: isDefault,
+                    config: config,
+                    settings: settings
+                ).normalized.maxParallelSpawns
+                byName[SubagentCapabilityRegistry.spawnBatchToolName] =
+                    SpawnBatchTool.constrainedSpec(
+                        spawnBatch,
+                        allowedAgentNames: allowedAgentNames,
+                        allowedModelIds: allowedModelIds,
+                        maxParallel: maxParallel
+                    )
+            }
         }
 
         // Eval-scoped ablation hook (nil in production): strip deferred

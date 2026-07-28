@@ -311,9 +311,10 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         }
 
         // One shared path for precedence (eval seam → per-agent `spawn` override
-        // → the target agent's own model), the availability fallback, and the live
-        // residency decision (reject-before-evict). The override is read from the
-        // LAUNCHING agent (`scope.agentId`); the default is the target agent's model.
+        // → the target agent's own model), fail-closed override availability,
+        // and the live residency decision (reject-before-evict). The override
+        // is read from the LAUNCHING agent (`scope.agentId`); the default is
+        // used only when no override is configured.
         let targetAgentId = agent.id
         let resolved = try await SubagentModelResolution.resolve(
             capabilityId: capability.id,
@@ -321,7 +322,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             evalModel: modelOverride,
             idleWaitSeconds: self.budgets.maxElapsedSeconds,
             deniedMessage: residencyDeniedMessage,
-            unavailableMessage: "Agent '\(agentName)' has no model configured.",
+            unavailableMessage: "Agent '\(agentName)' has no available model configured.",
             defaultModel: { AgentManager.shared.effectiveModel(for: targetAgentId) }
         )
         self.residencyPlan = resolved.decision.plan

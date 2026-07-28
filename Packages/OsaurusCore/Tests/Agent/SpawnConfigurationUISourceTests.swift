@@ -65,7 +65,7 @@ struct SpawnConfigurationUISourceTests {
         // The editor derives the displayed ceiling through the exact planner
         // used at run time instead of cloning min/clamp policy in SwiftUI.
         #expect(editor.contains("SubagentBatchAdmissionPlanner.plan("))
-        #expect(editor.contains(#""Current same-model local ceiling""#))
+        #expect(editor.contains(#""Configured same-model local ceiling""#))
         #expect(editor.contains("Different local models run in serial model waves"))
 
         #expect(concurrency.contains("same-model local subagent waves"))
@@ -92,12 +92,30 @@ struct SpawnConfigurationUISourceTests {
     func remoteRowsUseStableSpawnIdentity() throws {
         let editor = try Self.source("Views/Agent/SpawnConfigurationEditor.swift")
 
-        #expect(editor.contains("spawnTargetId("))
+        #expect(editor.contains("ConnectedSpawnModelTargetIndex.empty"))
+        #expect(editor.contains("connectedSpawnModelTargetIndex()"))
+        #expect(editor.contains("connectedSpawnTargetIndex.targetID("))
+        #expect(editor.contains("connectedSpawnTargetIndex.target(forStoredId:"))
         #expect(editor.contains("selectionID(for: item)"))
-        #expect(editor.contains("connectedSpawnModelTarget("))
         #expect(editor.contains("migrateLegacyRemoteSelections()"))
         #expect(editor.contains("migratedNotes.removeValue(forKey: legacy)"))
         #expect(editor.contains("ForEach(group.models, id: \\.self)"))
         #expect(!editor.contains("setModel(item.id, included: true)"))
+        #expect(
+            editor.components(separatedBy: "RemoteProviderManager.shared").count - 1 == 2
+        )
+        #expect(!editor.contains(".spawnTargetId("))
+        #expect(!editor.contains(".connectedSpawnModelTarget(forStoredId:"))
+    }
+
+    @Test("stale configured agents remain visible and removable")
+    func staleAgentRowsRemainRepairable() throws {
+        let editor = try Self.source("Views/Agent/SpawnConfigurationEditor.swift")
+
+        #expect(editor.contains("ForEach(selected, id: \\.self)"))
+        #expect(editor.contains("removableChip(label: name, unavailable: !available)"))
+        #expect(editor.contains("setAgent(name, included: false)"))
+        #expect(editor.contains("Configured agents marked unavailable can still be removed."))
+        #expect(editor.contains(#"Text("Unavailable", bundle: .module)"#))
     }
 }

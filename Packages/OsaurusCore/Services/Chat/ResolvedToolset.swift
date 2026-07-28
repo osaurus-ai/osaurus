@@ -41,6 +41,12 @@ struct ResolvedToolset: Sendable {
     /// the per-session state so subsequent turns can freeze the schema.
     let alwaysLoadedNames: LoadedTools
 
+    /// One request-local view of the user-configured spawn pools filtered to
+    /// targets that can actually execute now. Prompt prose and all three spawn
+    /// schemas consume this same value so provider/discovery changes cannot
+    /// create zombie choices or prompt/schema drift within a request.
+    let spawnTargets: SpawnTargetAvailabilitySnapshot
+
     /// Auto-disable verdict for the resolved model's context window,
     /// or nil for normal-class models. Surfaces through
     /// `ComposedContext.contextDisable` so the budget popover can

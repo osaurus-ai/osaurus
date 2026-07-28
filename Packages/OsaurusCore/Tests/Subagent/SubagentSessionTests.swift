@@ -155,6 +155,17 @@ struct SubagentSessionTests {
         #expect(decode(envelope)["kind"] as? String == "user_denied")
     }
 
+    @Test("cancellation without an explicit user interrupt remains an execution error")
+    func taskCancellationIsNotReportedAsUserStop() async {
+        let kind = ScriptedKind(
+            body: { _, _, _, _ in
+                throw CancellationError()
+            }
+        )
+        let envelope = await SubagentSession.run(kind, tool: "scripted")
+        #expect(decode(envelope)["kind"] as? String == "execution_error")
+    }
+
     @Test("a thrown SubagentError maps to its canonical failure kind (reject-before-evict)")
     func resolveFailureBeforeRun() async {
         let kind = ScriptedKind(resolve: { _ in throw SubagentError.unavailable("no model") })

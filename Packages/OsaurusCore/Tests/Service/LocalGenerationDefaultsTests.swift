@@ -634,4 +634,436 @@ struct LocalGenerationDefaultsTests {
         #expect(d.topK == 64)
         #expect(d.topP == 0.95)
     }
+
+    // MARK: - Laguna XS 2.1 bundle repair
+
+    @Test("Laguna XS 2.1 repair stamps top_k 20 in HF and JANG metadata")
+    func lagunaXS21RepairStampsBothConfigs() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-laguna-xs-repair-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try #"{"model_type":"laguna"}"#.write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"""
+        {"temperature":0.7,"top_p":0.9,"top_k":64}
+        """#.write(
+            to: tmp.appendingPathComponent("generation_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"""
+        {
+          "source_model":{"name":"Laguna-XS-2.1","org":"poolside"},
+          "chat":{"sampling_defaults":{"temperature":1.0,"top_k":64}}
+        }
+        """#.write(
+            to: tmp.appendingPathComponent("jang_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let changed = try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+            at: tmp,
+            modelName: "dealign.ai/Laguna-XS-2.1-JANG_4M"
+        )
+        #expect(Set(changed) == Set(["generation_config.json", "jang_config.json"]))
+
+        let defaults = LocalGenerationDefaults.load(fromDirectory: tmp)
+        #expect(defaults.topK == 20)
+        #expect(defaults.temperature == 1.0)
+        #expect(defaults.topP == 0.9)
+        let repairedJang = try #require(
+            try JSONSerialization.jsonObject(
+                with: Data(contentsOf: tmp.appendingPathComponent("jang_config.json"))
+            ) as? [String: Any]
+        )
+        let rootSampling = try #require(repairedJang["sampling_defaults"] as? [String: Any])
+        let repairedChat = try #require(repairedJang["chat"] as? [String: Any])
+        let chatSampling = try #require(repairedChat["sampling_defaults"] as? [String: Any])
+        #expect((rootSampling["top_k"] as? NSNumber)?.intValue == 20)
+        #expect((chatSampling["top_k"] as? NSNumber)?.intValue == 20)
+
+        // Idempotent: a second load does not rewrite either config.
+        let second = try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+            at: tmp,
+            modelName: "dealign.ai/Laguna-XS-2.1-JANG_4M"
+        )
+        #expect(second.isEmpty)
+    }
+
+    @Test("Laguna XS 2.1 repair creates missing generation config")
+    func lagunaXS21RepairCreatesMissingGenerationConfig() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-laguna-xs-repair-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try #"{"model_type":"laguna"}"#.write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"""
+        {"source_model":{"name":"Laguna-XS-2.1"},"chat":{"sampling_defaults":{}}}
+        """#.write(
+            to: tmp.appendingPathComponent("jang_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let changed = try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+            at: tmp,
+            modelName: "Laguna-XS-2.1-JANG_2L"
+        )
+        #expect(Set(changed) == Set(["generation_config.json", "jang_config.json"]))
+        #expect(LocalGenerationDefaults.load(fromDirectory: tmp).topK == 20)
+    }
+
+    @Test(
+        "Laguna XS 2.1 exact 2L, 4M, and 6M bundle names are repaired",
+        arguments: ["JANG_2L", "JANG_4M", "JANG_6M"]
+    )
+    func lagunaXS21ExactQuantBundleNamesAreRepaired(quant: String) throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-laguna-xs-\(quant)-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try #"{"model_type":"laguna"}"#.write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"temperature":1.0,"top_p":1.0}"#.write(
+            to: tmp.appendingPathComponent("generation_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"source_model":{"name":"Laguna-XS-2.1"},"chat":{"sampling_defaults":{}}}"#
+            .write(
+                to: tmp.appendingPathComponent("jang_config.json"),
+                atomically: true,
+                encoding: .utf8
+            )
+
+        let changed = try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+            at: tmp,
+            modelName: "dealign.ai/Laguna-XS-2.1-\(quant)-CRACK"
+        )
+        #expect(Set(changed) == Set(["generation_config.json", "jang_config.json"]))
+        #expect(LocalGenerationDefaults.load(fromDirectory: tmp).topK == 20)
+    }
+
+    @Test(
+        "Laguna XS 2.1 human-readable 2L, 4M, and 6M display names are recognized",
+        arguments: ["JANG 2L", "JANG 4M", "JANG 6M"]
+    )
+    func lagunaXS21DisplayNameWithSpacesIsRepaired(quant: String) throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(
+                "osaurus-laguna-xs-display-\(quant)-\(UUID().uuidString)"
+            )
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try #"{"model_type":"laguna"}"#.write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"top_k":64}"#.write(
+            to: tmp.appendingPathComponent("generation_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let changed = try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+            at: tmp,
+            modelName: "Laguna XS 2.1 \(quant) CRACK"
+        )
+        #expect(changed == ["generation_config.json"])
+        #expect(LocalGenerationDefaults.load(fromDirectory: tmp).topK == 20)
+    }
+
+    @Test("Laguna XS 2.1 JANG source provenance repairs a generic display name")
+    func lagunaXS21SourceProvenanceRepairsGenericName() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-laguna-xs-source-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try #"{"model_type":"laguna"}"#.write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"top_k":64}"#.write(
+            to: tmp.appendingPathComponent("generation_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"source_model":{"name":"Laguna XS 2.1"},"chat":{"sampling_defaults":{}}}"#
+            .write(
+                to: tmp.appendingPathComponent("jang_config.json"),
+                atomically: true,
+                encoding: .utf8
+            )
+
+        let changed = try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+            at: tmp,
+            modelName: "Friendly Local Alias"
+        )
+        #expect(Set(changed) == Set(["generation_config.json", "jang_config.json"]))
+        #expect(LocalGenerationDefaults.load(fromDirectory: tmp).topK == 20)
+    }
+
+    @Test("Fractional top_k 20.5 is repaired rather than truncated to 20")
+    func lagunaXS21FractionalTopKIsRepaired() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-laguna-xs-fractional-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try #"{"model_type":"laguna"}"#.write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"top_k":20.5}"#.write(
+            to: tmp.appendingPathComponent("generation_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let changed = try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+            at: tmp,
+            modelName: "Laguna-XS-2.1-JANG_2L"
+        )
+        #expect(changed == ["generation_config.json"])
+        #expect(LocalGenerationDefaults.load(fromDirectory: tmp).topK == 20)
+    }
+
+    @Test("Laguna S 2.1 is not changed by the XS repair")
+    func lagunaS21IsNotChanged() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-laguna-s-no-repair-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try #"{"model_type":"laguna"}"#.write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"top_k":64}"#.write(
+            to: tmp.appendingPathComponent("generation_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"""
+        {"source_model":{"name":"Laguna-S-2.1"},"chat":{"sampling_defaults":{"top_k":64}}}
+        """#.write(
+            to: tmp.appendingPathComponent("jang_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let changed = try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+            at: tmp,
+            modelName: "Laguna-S-2.1-JANG_4M"
+        )
+        #expect(changed.isEmpty)
+        #expect(LocalGenerationDefaults.load(fromDirectory: tmp).topK == 64)
+    }
+
+    @Test("Deceptive Laguna XS 2.10 name is not changed")
+    func lagunaXS210SubstringIsNotChanged() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-laguna-xs-210-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try #"{"model_type":"laguna"}"#.write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"top_k":64}"#.write(
+            to: tmp.appendingPathComponent("generation_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let changed = try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+            at: tmp,
+            modelName: "Laguna-XS-2.10-JANG_4M"
+        )
+        #expect(changed.isEmpty)
+        #expect(LocalGenerationDefaults.load(fromDirectory: tmp).topK == 64)
+    }
+
+    @Test("Malformed unrelated Laguna metadata does not enter the XS repair")
+    func malformedUnrelatedLagunaDoesNotThrowXSRepairError() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-laguna-other-malformed-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try #"{"model_type":"laguna"}"#.write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "{not-json".write(
+            to: tmp.appendingPathComponent("jang_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"top_k":64}"#.write(
+            to: tmp.appendingPathComponent("generation_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let changed = try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+            at: tmp,
+            modelName: "Laguna-S-2.1-JANG_4M"
+        )
+        #expect(changed.isEmpty)
+        #expect(LocalGenerationDefaults.load(fromDirectory: tmp).topK == 64)
+    }
+
+    @Test("Malformed unrelated config does not become a Laguna XS load error")
+    func malformedUnrelatedConfigDoesNotThrowXSRepairError() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-other-malformed-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try "{not-json".write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let changed = try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+            at: tmp,
+            modelName: "Completely-Other-Model"
+        )
+        #expect(changed.isEmpty)
+    }
+
+    @Test("Known Laguna XS 2.1 with malformed runtime config fails honestly")
+    func lagunaXS21MalformedRuntimeConfigThrows() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-laguna-xs-malformed-config-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try "{not-json".write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        #expect(throws: (any Error).self) {
+            _ = try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+                at: tmp,
+                modelName: "Laguna XS 2.1 JANG 2L"
+            )
+        }
+    }
+
+    @Test("Non-Laguna runtime with deceptive XS display name ignores malformed JANG metadata")
+    func nonLagunaRuntimeWithXSDisplayNameIsUntouched() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-non-laguna-xs-name-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try #"{"model_type":"qwen3"}"#.write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "{not-json".write(
+            to: tmp.appendingPathComponent("jang_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"top_k":64}"#.write(
+            to: tmp.appendingPathComponent("generation_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let changed = try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+            at: tmp,
+            modelName: "Laguna XS 2.1 JANG 4M"
+        )
+        #expect(changed.isEmpty)
+        #expect(LocalGenerationDefaults.load(fromDirectory: tmp).topK == 64)
+    }
+
+    @Test("Known Laguna XS 2.1 with malformed JANG config fails honestly")
+    func lagunaXS21MalformedJangConfigThrows() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-laguna-xs-malformed-jang-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try #"{"model_type":"laguna"}"#.write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "{not-json".write(
+            to: tmp.appendingPathComponent("jang_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        #expect(throws: (any Error).self) {
+            _ = try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+                at: tmp,
+                modelName: "Laguna XS 2.1 JANG 6M"
+            )
+        }
+    }
+
+    @Test("Known Laguna XS 2.1 with malformed generation config fails honestly")
+    func lagunaXS21MalformedGenerationConfigThrows() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-laguna-xs-malformed-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try #"{"model_type":"laguna"}"#.write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"source_model":{"name":"Laguna-XS-2.1"}}"#.write(
+            to: tmp.appendingPathComponent("jang_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "{not-json".write(
+            to: tmp.appendingPathComponent("generation_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        #expect(throws: (any Error).self) {
+            _ = try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+                at: tmp,
+                modelName: "Laguna-XS-2.1-JANG_6M"
+            )
+        }
+    }
 }

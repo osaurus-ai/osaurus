@@ -67,6 +67,21 @@ struct SpawnRemoteProviderIdentityTests {
             let firstTarget = try #require(targets.first { $0.providerId == first.id })
             let secondTarget = try #require(targets.first { $0.providerId == second.id })
             #expect(firstTarget.id != secondTarget.id)
+            let index = manager.connectedSpawnModelTargetIndex()
+            #expect(index.target(forStoredId: firstTarget.id) == firstTarget)
+            #expect(index.target(forStoredId: secondTarget.id) == secondTarget)
+            #expect(
+                index.targetID(
+                    forPickerModelId: firstTarget.pickerModelId,
+                    providerId: first.id
+                ) == firstTarget.id
+            )
+            #expect(
+                index.targetID(
+                    forPickerModelId: secondTarget.pickerModelId,
+                    providerId: second.id
+                ) == secondTarget.id
+            )
             #expect(firstService.handles(requestedModel: firstTarget.id))
             #expect(!firstService.handles(requestedModel: secondTarget.id))
             #expect(secondService.handles(requestedModel: secondTarget.id))
@@ -83,11 +98,11 @@ struct SpawnRemoteProviderIdentityTests {
                     forStoredId: "duplicate/org/shared-model"
                 ) == nil
             )
+            #expect(index.target(forStoredId: "duplicate/org/shared-model") == nil)
             manager._testRemoveProviders(ids: [second.id])
+            let unambiguousIndex = manager.connectedSpawnModelTargetIndex()
             let migrated = try #require(
-                manager.connectedSpawnModelTarget(
-                    forStoredId: "duplicate/org/shared-model"
-                )
+                unambiguousIndex.target(forStoredId: "duplicate/org/shared-model")
             )
             #expect(migrated.id == firstTarget.id)
         }
