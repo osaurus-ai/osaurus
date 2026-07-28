@@ -147,18 +147,21 @@ public enum GlobalProxySettings {
     /// Resolved config-file URL, memoized because `resolvePath` performs two
     /// `fileExists` stats per call and proxy lookups run on the main thread
     /// (session builds, tunnel connects). Legacy-vs-new resolution is a
-    /// one-time migration decision, so first-call resolution is stable for
-    /// the process lifetime.
-    private static let resolvedConfigURLBox = OSAllocatedUnfairLock<URL?>(initialState: nil)
+    /// one-time migration decision per storage root, so the memo is keyed on
+    /// the un-resolved path — cheap pure path math — which also keeps tests
+    /// honest when they repoint `OsaurusPaths.overrideRoot` between runs.
+    private static let resolvedConfigURLBox =
+        OSAllocatedUnfairLock<(key: String, url: URL)?>(initialState: nil)
 
     static func diskBackedServerConfiguration() -> ServerConfiguration? {
+        let newPath = OsaurusPaths.serverConfigFile()
         let url = resolvedConfigURLBox.withLock { cached in
-            if let cached { return cached }
+            if let cached, cached.key == newPath.path { return cached.url }
             let resolved = OsaurusPaths.resolvePath(
-                new: OsaurusPaths.serverConfigFile(),
+                new: newPath,
                 legacy: "ServerConfiguration.json"
             )
-            cached = resolved
+            cached = (key: newPath.path, url: resolved)
             return resolved
         }
         // Only the mtime is needed for cache validation. `attributesOfItem`
