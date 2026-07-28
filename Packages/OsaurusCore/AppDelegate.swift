@@ -365,13 +365,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         }
 
         Task { @MainActor in
+            // Await the identity-existence seed before the first
+            // `RemoteProviderManager.shared` touch below: its cold init
+            // runs the managed-router gate, and racing the fire-and-forget
+            // warm above means that gate can still pay a synchronous
+            // keychain probe on the main thread (a reported launch hang).
+            // Its own guard (rather than folding into the block below) keeps
+            // the exact provider-connect gate the keychain-disabled source
+            // policy asserts on.
             if !keychainDisabledTestMode {
-                // Await the identity-existence seed before the first
-                // `RemoteProviderManager.shared` touch below: its cold init
-                // runs the managed-router gate, and racing the fire-and-forget
-                // warm above means that gate can still pay a synchronous
-                // keychain probe on the main thread (a reported launch hang).
                 await MasterKey.seedExistsCacheOffMainActor()
+            }
+            if !keychainDisabledTestMode {
                 await MCPProviderManager.shared.connectEnabledProviders()
                 await RemoteProviderManager.shared.connectEnabledProviders()
                 // Touch the search-provider manager so its one-time migration

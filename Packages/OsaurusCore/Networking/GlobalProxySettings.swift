@@ -151,19 +151,24 @@ public enum GlobalProxySettings {
     /// the un-resolved path — cheap pure path math — which also keeps tests
     /// honest when they repoint `OsaurusPaths.overrideRoot` between runs.
     private static let resolvedConfigURLBox =
-        OSAllocatedUnfairLock<(key: String, url: URL)?>(initialState: nil)
+        OSAllocatedUnfairLock<(key: String, path: String)?>(initialState: nil)
 
     static func diskBackedServerConfiguration() -> ServerConfiguration? {
         let newPath = OsaurusPaths.serverConfigFile()
-        let url = resolvedConfigURLBox.withLock { cached in
-            if let cached, cached.key == newPath.path { return cached.url }
+        let resolvedPath = resolvedConfigURLBox.withLock { cached in
+            if let cached, cached.key == newPath.path { return cached.path }
             let resolved = OsaurusPaths.resolvePath(
                 new: newPath,
                 legacy: "ServerConfiguration.json"
             )
-            cached = (key: newPath.path, url: resolved)
-            return resolved
+            cached = (key: newPath.path, path: resolved.path)
+            return resolved.path
         }
+        // A FRESH URL per lookup is load-bearing: Foundation caches resource
+        // values per URL instance, so statting a memoized URL can return a
+        // stale modification date and pin the decoded-config cache to an old
+        // file — observed as proxy changes never being picked up.
+        let url = URL(fileURLWithPath: resolvedPath)
         // Only the mtime is needed for cache validation. `attributesOfItem`
         // builds the full attribute dictionary, whose owner/group-name fields
         // resolve through an opendirectoryd XPC round-trip (getgrgid_r) that
