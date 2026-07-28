@@ -3485,7 +3485,9 @@
         /// every event without thrashing SwiftUI.
         private func setActivity(_ text: String?) async {
             await MainActor.run {
-                State.shared.currentActivity = text
+                if State.shared.currentActivity != text {
+                    State.shared.currentActivity = text
+                }
             }
         }
 
@@ -3498,12 +3500,30 @@
         /// emits steady ~10–30 Hz updates, and the noisier full-history
         /// rate makes the ETA decay more predictably than a windowed
         /// estimate spiking near the tail of the download.
+        /// Last time a byte-progress event for each step was reflected into
+        /// the published journey. Byte callbacks arrive per network chunk —
+        /// far faster than the UI can meaningfully display — and every
+        /// publish re-renders every provisioning observer (the settings
+        /// journey view, the composer's sandbox chip), which surfaced as
+        /// visible flicker during runtime downloads. Coalesced to 10 Hz;
+        /// a step's first event and its terminal event always pass.
+        private var lastByteProgressPublish: [ProvisioningStepID: Date] = [:]
+
         private func applyByteProgress(
             stepID: ProvisioningStepID,
             bytes: Int64,
             total: Int64,
             detail: String? = nil
         ) async {
+            let now = Date()
+            let isTerminal = total > 0 && bytes >= total
+            if !isTerminal,
+                let last = lastByteProgressPublish[stepID],
+                now.timeIntervalSince(last) < 0.1
+            {
+                return
+            }
+            lastByteProgressPublish[stepID] = now
             await MainActor.run {
                 var activityLine: String?
                 Self.mutateJourney(stepID: stepID) { journey, step in
@@ -3539,7 +3559,9 @@
                         )
                     }
                 }
-                if let activityLine { State.shared.currentActivity = activityLine }
+                if let activityLine, State.shared.currentActivity != activityLine {
+                    State.shared.currentActivity = activityLine
+                }
             }
         }
 
@@ -3633,12 +3655,24 @@
                 }
                 return journey.steps.first { $0.status == .inProgress }
             }()
+            // Skip equal writes: `@Published` fires `objectWillChange` on
+            // every assignment, and re-setting the same phase string on each
+            // byte event re-rendered every provisioning observer.
             if let step = activeStep {
-                State.shared.provisioningPhase = step.label + "…"
-                State.shared.provisioningProgress = step.progress
+                let phase = step.label + "…"
+                if State.shared.provisioningPhase != phase {
+                    State.shared.provisioningPhase = phase
+                }
+                if State.shared.provisioningProgress != step.progress {
+                    State.shared.provisioningProgress = step.progress
+                }
             } else if journey.finishedAt != nil {
-                State.shared.provisioningPhase = nil
-                State.shared.provisioningProgress = nil
+                if State.shared.provisioningPhase != nil {
+                    State.shared.provisioningPhase = nil
+                }
+                if State.shared.provisioningProgress != nil {
+                    State.shared.provisioningProgress = nil
+                }
             }
         }
 
