@@ -98,6 +98,20 @@ public enum ChatSessionExporter {
         }
     }
 
+    /// Writes one chat turn using the same Markdown schema as a full-session
+    /// export. The surrounding session metadata is retained, while unrelated
+    /// conversation turns are intentionally omitted.
+    public static func writeMarkdown(
+        turn: ChatTurnData,
+        from session: ChatSessionData,
+        options: ChatExportOptions = ChatExportOptions(),
+        to url: URL
+    ) throws {
+        var singleTurnSession = session
+        singleTurnSession.turns = [turn]
+        try writeMarkdown(session: singleTurnSession, options: options, to: url)
+    }
+
     // MARK: - PDF
 
     /// `NSPrintOperation` save-to-file gives page-broken output instead of

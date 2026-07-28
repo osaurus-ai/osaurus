@@ -12,6 +12,33 @@ import UniformTypeIdentifiers
 
 @MainActor
 enum ChatSessionExportCoordinator {
+    static func exportMarkdown(
+        turn: ChatTurnData,
+        from session: ChatSessionData,
+        scope _: ThemedAlertScope
+    ) {
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = "\(suggestedFilename(for: session, format: .markdown).dropLast(3))-message.md"
+        panel.allowedContentTypes = [contentType(for: .markdown)]
+        panel.title = L("Export Message as Markdown")
+
+        Task { @MainActor in
+            guard await panel.beginModal() == .OK, let url = panel.url else { return }
+            do {
+                try ChatSessionExporter.writeMarkdown(turn: turn, from: session, to: url)
+                ToastManager.shared.action(
+                    L("Export complete"),
+                    message: url.lastPathComponent,
+                    action: .revealInFinder(url),
+                    buttonTitle: L("Reveal in Finder")
+                )
+            } catch {
+                presentError(error)
+            }
+        }
+    }
+
     static func run(
         metadataSession: ChatSessionData,
         format: ChatSessionSidebar.ExportFormat,
