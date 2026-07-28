@@ -205,7 +205,19 @@ public final class OnboardingService: ObservableObject {
         // couple of seconds, but it's a deliberate, app-ending operation — not a
         // defect — so pause hang tracking around it to avoid a false-positive
         // app-hang report. (No resume needed; the process is exiting.)
-        await MainActor.run {
+        // Schedule the terminate as a plain run-loop callout, NOT from this
+        // task. This function runs as a MainActor job — a block on the main
+        // dispatch queue — and `NSApplication.terminate` does not return for
+        // `.terminateLater`: AppKit spins a nested run loop until
+        // `reply(toApplicationShouldTerminate:)`. GCD's main-queue drain is
+        // not reentrant, so a nested run loop entered from inside a
+        // main-queue block can never run further main-queue work — and the
+        // quit teardown chain, its 22s watchdog, and the reply are all
+        // MainActor tasks (main-queue blocks). Calling terminate from here
+        // deadlocks the entire quit (the "Quitting Osaurus" hang). From a
+        // run-loop callout, AppKit's nested wait still drains the main
+        // queue and the teardown completes normally.
+        RunLoop.main.perform(inModes: [.common]) {
             CrashReportingService.shared.withAppHangTrackingPaused {
                 NSApplication.shared.terminate(nil)
             }
