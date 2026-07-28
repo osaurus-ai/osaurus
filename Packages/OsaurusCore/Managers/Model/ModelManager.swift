@@ -1931,6 +1931,16 @@ extension ModelManager {
             localModelsCacheGen &+= 1
             localModelsCacheCondition.broadcast()
             localModelsCacheCondition.unlock()
+
+            // Warm the per-model capability caches while still on the scan
+            // queue. Both are lazily computed from on-disk config files, and a
+            // cold lookup otherwise happens on the main thread the first time
+            // a model is clicked or rendered (chat-template read, config.json
+            // vision probe) — an observed hang under disk pressure.
+            for model in scanned {
+                _ = LocalReasoningCapability.capability(forModelId: model.id)
+                _ = VLMDetection.isVLM(modelId: model.id)
+            }
         }
     }
 
