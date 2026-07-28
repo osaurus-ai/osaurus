@@ -60,6 +60,13 @@ struct OpenAICompatibleTTSClient: Sendable {
     /// real headers (ffmpeg's canonical or LIST-prefixed) fit in well under 1 KB.
     private static let maxWavHeaderBytes = 8192
 
+    /// Exposed separately from `synthesizeStreaming` so tests can inspect the
+    /// session's proxy configuration directly, matching the pattern used by
+    /// the other `GlobalProxySettings`-backed call sites.
+    static func makeSession() -> URLSession {
+        GlobalProxySettings.sharedSession()
+    }
+
     /// Ceiling for buffering a compressed (MP3/FLAC) body before decoding.
     /// 32 MB of MP3 is over an hour of speech; anything bigger is not TTS.
     private static let maxCompressedBytes = 32 * 1024 * 1024
@@ -229,7 +236,7 @@ struct OpenAICompatibleTTSClient: Sendable {
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                    let (bytes, response) = try await Self.makeSession().bytes(for: request)
                     if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                         var body = ""
                         for try await line in bytes.lines {

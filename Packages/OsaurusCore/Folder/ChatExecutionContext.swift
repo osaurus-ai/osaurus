@@ -9,6 +9,31 @@
 
 import Foundation
 
+/// Mutable marker shared by every tool execution in one canonical agent-loop
+/// run. The visible Todo remains session-scoped, but terminal semantics must
+/// not be: an unchecked checklist from a previous user turn cannot turn an
+/// unrelated later `complete` call into a blocked completion.
+///
+/// `AgentToolLoop` creates one scope per `run(...)` and binds it around both
+/// serial and batched tool execution. Task-group children inherit the TaskLocal
+/// reference, and the lock makes simultaneous sibling calls safe.
+final class AgentTodoRunScope: @unchecked Sendable {
+    private let lock = NSLock()
+    private var wroteTodo = false
+
+    var hasCurrentRunTodo: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return wroteTodo
+    }
+
+    func markTodoWritten() {
+        lock.lock()
+        wroteTodo = true
+        lock.unlock()
+    }
+}
+
 /// TaskLocal storage carrying the active chat session / agent / batch ids
 /// down through tool execution. The chat engine seeds these in
 /// `ChatSession.send` (and equivalent headless paths) so any tool reading
@@ -18,6 +43,10 @@ public enum ChatExecutionContext {
     /// need per-conversation state (todo store, file-op undo log, method
     /// telemetry) key off this.
     @TaskLocal public static var currentSessionId: String?
+
+    /// One logical AgentToolLoop run's Todo marker. Nil outside the canonical
+    /// loop preserves direct/bare tool-call compatibility.
+    @TaskLocal static var agentTodoRunScope: AgentTodoRunScope?
 
     /// The current batch ID for grouped operations (nil for non-batch operations).
     @TaskLocal public static var currentBatchId: UUID?
@@ -197,6 +226,20 @@ public enum ChatExecutionContext {
     /// relaxation can't be reached from an untrusted surface. Module-internal
     /// so out-of-module callers cannot bind it.
     @TaskLocal static var authenticatedHostFolderRoot: URL?
+
+    /// Typed provenance of the session driving the current execution —
+    /// chat UI, plugin, HTTP, inbound channel dispatch, recurring schedule,
+    /// watcher, or self-scheduled wake-up. Bound by
+    /// `BackgroundTaskManager.dispatchChat` (from the dispatch request) and
+    /// re-bound by `ChatSession.send` (from the session's own persisted
+    /// source), so tools that make source-scoped authorization decisions
+    /// (e.g. proactive channel publishing) read a typed value instead of
+    /// inferring provenance from `isExternalSurface` / `isUnattendedDispatch`
+    /// alone. `nil` means no surface published a source; source-gated
+    /// capabilities must treat that as "not authorized" rather than
+    /// defaulting to a permissive value. Module-internal so out-of-module
+    /// callers cannot rebind provenance.
+    @TaskLocal static var currentSessionSource: SessionSource?
 
     /// True when the current execution is an UNATTENDED, app-authored
     /// background dispatch — a recurring schedule, a self-scheduled

@@ -855,12 +855,14 @@ public final class BackgroundTaskManager: ObservableObject {
                 && (request.source == .schedule
                     || request.source == .selfSchedule
                     || request.source == .watcher)
-            await ChatExecutionContext.$isUnattendedDispatch.withValue(unattended) {
-                await ChatExecutionContext.$isExternalSurface.withValue(externalSurface) {
-                    await ChatExecutionContext.$currentRunId.withValue(boundRunId) {
-                        await ChatExecutionContext.$currentRunActor.withValue(boundActor) {
-                            await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {
-                                await context.start(prompt: request.prompt)
+            await ChatExecutionContext.$currentSessionSource.withValue(request.source) {
+                await ChatExecutionContext.$isUnattendedDispatch.withValue(unattended) {
+                    await ChatExecutionContext.$isExternalSurface.withValue(externalSurface) {
+                        await ChatExecutionContext.$currentRunId.withValue(boundRunId) {
+                            await ChatExecutionContext.$currentRunActor.withValue(boundActor) {
+                                await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {
+                                    await context.start(prompt: request.prompt)
+                                }
                             }
                         }
                     }

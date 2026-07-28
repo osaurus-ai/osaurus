@@ -234,6 +234,8 @@ public enum AgentChannelEvalHarness {
             )
         case "mcp_denial":
             runMCPDenial(expect: expect)
+        case "proactive_publish":
+            await runProactivePublish(expect: expect)
         default:
             expect(false, "unknown agent_channels scenario '\(scenario)'")
         }
@@ -591,6 +593,428 @@ public enum AgentChannelEvalHarness {
             client.sendRequests.count == 1,
             "provider client recorded exactly one send (\(client.sendRequests.count))"
         )
+    }
+
+    /// Proactive-publish policy pins over the REAL `AgentChannelPublishService`
+    /// with an isolated in-memory ledger and a fake provider sender:
+    /// no binding means no publish capability and no prompt payload;
+    /// external/channel-triggered runs can never publish; an autonomous
+    /// scheduled run can send only to its OWN binding; a repeated intent key
+    /// produces exactly one provider write; draft and unattended-confirm
+    /// modes never silently send.
+    private static func runProactivePublish(expect: (Bool, String) -> Void) async {
+        let ownerAgent = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
+        let otherAgent = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
+
+        final class SendRecorder: @unchecked Sendable {
+            private let lock = NSLock()
+            private var _count = 0
+            var sendCount: Int { lock.withLock { _count } }
+            func record() { lock.withLock { _count += 1 } }
+        }
+
+        func binding(
+            id: String,
+            agentId: UUID,
+            mode: AgentChannelBindingOutboundMode
+        ) -> AgentChannelBinding {
+            AgentChannelBinding(
+                id: id,
+                agentId: agentId,
+                connectionId: "eval-conn",
+                roomId: "R-EVAL",
+                label: "Eval destination",
+                guidance: "Use for eval reports.",
+                allowedSources: [.chat, .schedule],
+                outboundMode: mode
+            )
+        }
+
+        let configuration = AgentChannelConfiguration(
+            bindings: [
+                binding(id: "own-autonomous", agentId: ownerAgent, mode: .autonomous),
+                binding(id: "other-agents", agentId: otherAgent, mode: .autonomous),
+                binding(id: "own-draft", agentId: ownerAgent, mode: .draft),
+                binding(id: "own-confirm", agentId: ownerAgent, mode: .confirm),
+            ]
+        )
+        let connection = AgentChannelConnection(
+            id: "eval-conn",
+            name: "Eval Connection",
+            kind: .customHTTP,
+            writeRoomAllowlist: ["R-EVAL"],
+            writeEnabled: true
+        )
+
+        let recorder = SendRecorder()
+        let store = AgentChannelMessageStore()
+        try? store.openInMemory()
+        let service = AgentChannelPublishService(
+            loadConfiguration: { configuration },
+            resolveConnection: { _ in connection },
+            killSwitchSnapshot: { ChannelWriteKillSwitchSnapshot(writeEnabled: true) },
+            sender: { _, _ in
+                recorder.record()
+                return "eval-msg-1"
+            },
+            store: store
+        )
+
+        func context(
+            agentId: UUID? = nil,
+            source: SessionSource?,
+            isExternalSurface: Bool = false,
+            isUnattendedDispatch: Bool = false
+        ) -> AgentChannelPublishContext {
+            AgentChannelPublishContext(
+                agentId: agentId ?? ownerAgent,
+                source: source,
+                isExternalSurface: isExternalSurface,
+                isUnattendedDispatch: isUnattendedDispatch
+            )
+        }
+
+        func deniedCode(_ outcome: AgentChannelPublishOutcome) -> String? {
+            if case .denied(let code, _, _) = outcome { return code }
+            return nil
+        }
+
+        // 1. No binding → no publish capability and no prompt payload.
+        let noBindingSection = SystemPromptComposer.channelDestinationsSection(
+            bindings: [],
+            source: .chat
+        )
+        expect(noBindingSection == nil, "agent without bindings gets no Channel Destinations prompt")
+        let ghost = await service.publish(
+            AgentChannelPublishRequest(bindingId: "ghost", content: "x", intentKey: "k-ghost"),
+            context: context(source: .schedule)
+        )
+        expect(
+            deniedCode(ghost) == "binding_not_found",
+            "publish to an unconfigured binding denied (got \(ghost.statusLabel))"
+        )
+
+        // 2. External / channel-triggered runs can never publish.
+        let external = await service.publish(
+            AgentChannelPublishRequest(bindingId: "own-autonomous", content: "x", intentKey: "k-ext"),
+            context: context(source: .chat, isExternalSurface: true)
+        )
+        expect(
+            deniedCode(external) == "external_surface_denied",
+            "external surface publish denied (got \(external.statusLabel))"
+        )
+        let channelRun = await service.publish(
+            AgentChannelPublishRequest(bindingId: "own-autonomous", content: "x", intentKey: "k-chan"),
+            context: context(source: .channel)
+        )
+        expect(
+            deniedCode(channelRun) == "run_source_not_allowed",
+            "channel-triggered run publish denied (got \(channelRun.statusLabel))"
+        )
+        expect(recorder.sendCount == 0, "no provider writes before authorized sends (\(recorder.sendCount))")
+
+        // 3. Autonomous scheduled run: own binding sends, another agent's does not.
+        let ownSend = await service.publish(
+            AgentChannelPublishRequest(bindingId: "own-autonomous", content: "report", intentKey: "k-own"),
+            context: context(source: .schedule, isUnattendedDispatch: true)
+        )
+        if case .sent = ownSend {
+            expect(true, "autonomous scheduled run sent to its own binding")
+        } else {
+            expect(false, "autonomous scheduled run sent to its own binding (got \(ownSend.statusLabel))")
+        }
+        let notOwned = await service.publish(
+            AgentChannelPublishRequest(bindingId: "other-agents", content: "x", intentKey: "k-other"),
+            context: context(source: .schedule, isUnattendedDispatch: true)
+        )
+        expect(
+            deniedCode(notOwned) == "binding_not_owned",
+            "another agent's binding denied (got \(notOwned.statusLabel))"
+        )
+
+        // 4. Repeating an intent key never produces a second provider write.
+        let replay = await service.publish(
+            AgentChannelPublishRequest(bindingId: "own-autonomous", content: "report", intentKey: "k-own"),
+            context: context(source: .schedule, isUnattendedDispatch: true)
+        )
+        if case .duplicate = replay {
+            expect(true, "replayed intent key reported as duplicate")
+        } else {
+            expect(false, "replayed intent key reported as duplicate (got \(replay.statusLabel))")
+        }
+        expect(recorder.sendCount == 1, "exactly one provider write for the repeated intent (\(recorder.sendCount))")
+
+        // 5. Draft and unattended confirm never silently send.
+        let draft = await service.publish(
+            AgentChannelPublishRequest(bindingId: "own-draft", content: "draft body", intentKey: "k-draft"),
+            context: context(source: .chat)
+        )
+        if case .draftRecorded = draft {
+            expect(true, "draft mode recorded a draft")
+        } else {
+            expect(false, "draft mode recorded a draft (got \(draft.statusLabel))")
+        }
+        let queued = await service.publish(
+            AgentChannelPublishRequest(bindingId: "own-confirm", content: "confirm body", intentKey: "k-confirm"),
+            context: context(source: .schedule, isUnattendedDispatch: true)
+        )
+        if case .queuedForApproval = queued {
+            expect(true, "unattended confirm queued for approval")
+        } else {
+            expect(false, "unattended confirm queued for approval (got \(queued.statusLabel))")
+        }
+        expect(
+            recorder.sendCount == 1,
+            "draft/confirm modes performed no provider writes (\(recorder.sendCount))"
+        )
+
+        // 6. An ambiguous provider failure (the message MAY have reached the
+        // provider) parks the intent as delivery_unknown; replaying the same
+        // intent key after the provider "recovers" must never resend.
+        let ambiguousRecorder = SendRecorder()
+        let ambiguousStore = AgentChannelMessageStore()
+        try? ambiguousStore.openInMemory()
+        let failOnce = SendRecorder()
+        let ambiguousService = AgentChannelPublishService(
+            loadConfiguration: { configuration },
+            resolveConnection: { _ in connection },
+            killSwitchSnapshot: { ChannelWriteKillSwitchSnapshot(writeEnabled: true) },
+            sender: { _, _ in
+                if failOnce.sendCount == 0 {
+                    failOnce.record()
+                    throw URLError(.timedOut)
+                }
+                ambiguousRecorder.record()
+                return "eval-msg-ambiguous"
+            },
+            store: ambiguousStore
+        )
+        let ambiguous = await ambiguousService.publish(
+            AgentChannelPublishRequest(
+                bindingId: "own-autonomous", content: "maybe sent", intentKey: "k-ambiguous"
+            ),
+            context: context(source: .schedule, isUnattendedDispatch: true)
+        )
+        expect(
+            deniedCode(ambiguous) == "delivery_unknown",
+            "ambiguous provider failure reports delivery_unknown (got \(ambiguous.statusLabel))"
+        )
+        let ambiguousReplay = await ambiguousService.publish(
+            AgentChannelPublishRequest(
+                bindingId: "own-autonomous", content: "maybe sent", intentKey: "k-ambiguous"
+            ),
+            context: context(source: .schedule, isUnattendedDispatch: true)
+        )
+        if case .duplicate(_, let status) = ambiguousReplay, status == .deliveryUnknown {
+            expect(true, "replay of an unknown delivery reported as duplicate, not resent")
+        } else {
+            expect(
+                false,
+                "replay of an unknown delivery reported as duplicate, not resent (got \(ambiguousReplay.statusLabel))"
+            )
+        }
+        expect(
+            ambiguousRecorder.sendCount == 0,
+            "no provider write after an unresolved unknown delivery (\(ambiguousRecorder.sendCount))"
+        )
+        ambiguousStore.close()
+
+        // 7. A queued approval whose binding was repointed since must be
+        // refused: the operator approved the STORED destination, not the
+        // edited one.
+        let staleRecorder = SendRecorder()
+        let staleStore = AgentChannelMessageStore()
+        try? staleStore.openInMemory()
+        final class ConfigurationBox: @unchecked Sendable {
+            private let lock = NSLock()
+            private var _configuration: AgentChannelConfiguration
+            init(_ configuration: AgentChannelConfiguration) { _configuration = configuration }
+            var configuration: AgentChannelConfiguration {
+                get { lock.withLock { _configuration } }
+                set { lock.withLock { _configuration = newValue } }
+            }
+        }
+        let configurationBox = ConfigurationBox(configuration)
+        let staleService = AgentChannelPublishService(
+            loadConfiguration: { configurationBox.configuration },
+            resolveConnection: { _ in
+                AgentChannelConnection(
+                    id: "eval-conn",
+                    name: "Eval Connection",
+                    kind: .customHTTP,
+                    writeRoomAllowlist: ["R-EVAL", "R-ELSEWHERE"],
+                    writeEnabled: true
+                )
+            },
+            killSwitchSnapshot: { ChannelWriteKillSwitchSnapshot(writeEnabled: true) },
+            sender: { _, _ in
+                staleRecorder.record()
+                return "eval-msg-stale"
+            },
+            store: staleStore
+        )
+        let staleQueued = await staleService.publish(
+            AgentChannelPublishRequest(
+                bindingId: "own-confirm", content: "queued body", intentKey: "k-stale"
+            ),
+            context: context(source: .schedule, isUnattendedDispatch: true)
+        )
+        if case .queuedForApproval(let staleIntentId) = staleQueued {
+            expect(true, "confirm intent queued for stale-approval pin")
+            var repointed = configuration
+            repointed.bindings = repointed.bindings.map { binding in
+                guard binding.id == "own-confirm" else { return binding }
+                var edited = binding
+                edited.roomId = "R-ELSEWHERE"
+                return edited
+            }
+            configurationBox.configuration = repointed
+            let staleApproval = await staleService.approvePendingIntent(id: staleIntentId)
+            expect(
+                deniedCode(staleApproval) == "binding_route_changed",
+                "approval after a binding repoint refused (got \(staleApproval.statusLabel))"
+            )
+        } else {
+            expect(false, "confirm intent queued for stale-approval pin (got \(staleQueued.statusLabel))")
+        }
+        expect(
+            staleRecorder.sendCount == 0,
+            "no provider write through a repointed approval (\(staleRecorder.sendCount))"
+        )
+        staleStore.close()
+
+        // Prompt payload: only the owner's usable bindings for the source,
+        // and the publish tool is in the external-surface deny family.
+        let section = SystemPromptComposer.channelDestinationsSection(
+            bindings: configuration.usableBindings(agentId: ownerAgent),
+            source: .schedule
+        )
+        expect(
+            section?.contains("own-autonomous") == true,
+            "prompt section lists the agent's own binding"
+        )
+        expect(
+            section?.contains("other-agents") != true,
+            "prompt section never lists another agent's binding"
+        )
+        expect(
+            ToolRegistry.externallyDeniedToolNames.contains(AgentChannelPublishTool.toolName),
+            "agent_channel_publish is externally denied"
+        )
+
+        // 8. Zero-config derived destinations: a native channel with a
+        // writable room and an answering agent yields a confirm-only
+        // automatic binding; removing the room from the allowlist makes a
+        // queued approval refuse; a stored customization suppresses it.
+        final class SourcesBox: @unchecked Sendable {
+            private let lock = NSLock()
+            private var _sources: [AgentChannelAutoDestinationSource]
+            init(_ sources: [AgentChannelAutoDestinationSource]) { _sources = sources }
+            var sources: [AgentChannelAutoDestinationSource] {
+                get { lock.withLock { _sources } }
+                set { lock.withLock { _sources = newValue } }
+            }
+        }
+        func derivedSource(rooms: [String]) -> AgentChannelAutoDestinationSource {
+            AgentChannelAutoDestinationSource(
+                connectionId: "eval-conn",
+                displayName: "Eval Connection",
+                hasCredential: true,
+                writeEnabled: true,
+                writableRoomIds: rooms,
+                dispatch: AgentChannelInboundDispatchConfiguration(
+                    enabled: true,
+                    targetAgentId: ownerAgent
+                )
+            )
+        }
+        let sourcesBox = SourcesBox([derivedSource(rooms: ["R-EVAL"])])
+        let derivedAutoId = AgentChannelAutoDestinationResolver.automaticBindingId(
+            connectionId: "eval-conn",
+            roomId: "R-EVAL",
+            agentId: ownerAgent
+        )
+        let derivedOnly = AgentChannelAutoDestinationResolver.effectiveConfiguration(
+            stored: AgentChannelConfiguration(),
+            sources: sourcesBox.sources
+        )
+        expect(
+            derivedOnly.binding(id: derivedAutoId)?.outboundMode == .confirm,
+            "derived destination exists and is confirm-only"
+        )
+        let derivedSection = SystemPromptComposer.channelDestinationsSection(
+            bindings: derivedOnly.usableBindings(agentId: ownerAgent),
+            source: .schedule
+        )
+        expect(
+            derivedSection?.contains(derivedAutoId) == true,
+            "prompt section lists the derived destination"
+        )
+        let derivedRecorder = SendRecorder()
+        let derivedStore = AgentChannelMessageStore()
+        try? derivedStore.openInMemory()
+        let derivedService = AgentChannelPublishService(
+            loadConfiguration: {
+                AgentChannelAutoDestinationResolver.effectiveConfiguration(
+                    stored: AgentChannelConfiguration(),
+                    sources: sourcesBox.sources
+                )
+            },
+            resolveConnection: { _ in connection },
+            killSwitchSnapshot: { ChannelWriteKillSwitchSnapshot(writeEnabled: true) },
+            sender: { _, _ in
+                derivedRecorder.record()
+                return "eval-msg-derived"
+            },
+            store: derivedStore
+        )
+        let derivedQueued = await derivedService.publish(
+            AgentChannelPublishRequest(
+                bindingId: derivedAutoId, content: "derived body", intentKey: "k-derived"
+            ),
+            context: context(source: .schedule, isUnattendedDispatch: true)
+        )
+        if case .queuedForApproval(let derivedIntentId) = derivedQueued {
+            expect(true, "unattended publish to a derived destination queued for approval")
+            sourcesBox.sources = [derivedSource(rooms: [])]
+            let refusedApproval = await derivedService.approvePendingIntent(id: derivedIntentId)
+            expect(
+                deniedCode(refusedApproval) == "binding_removed",
+                "approval refused after the room left the write allowlist (got \(refusedApproval.statusLabel))"
+            )
+        } else {
+            expect(
+                false,
+                "unattended publish to a derived destination queued for approval (got \(derivedQueued.statusLabel))"
+            )
+        }
+        expect(
+            derivedRecorder.sendCount == 0,
+            "no provider write through a vanished derived destination (\(derivedRecorder.sendCount))"
+        )
+        derivedStore.close()
+        let customizedOff = AgentChannelAutoDestinationResolver.effectiveConfiguration(
+            stored: AgentChannelConfiguration(
+                bindings: [
+                    AgentChannelBinding(
+                        id: "custom-eval",
+                        agentId: ownerAgent,
+                        connectionId: "eval-conn",
+                        roomId: "R-EVAL",
+                        allowedSources: AgentChannelBindingRunSource.allCases,
+                        outboundMode: .off
+                    )
+                ]
+            ),
+            sources: [derivedSource(rooms: ["R-EVAL"])]
+        )
+        expect(
+            customizedOff.binding(id: derivedAutoId) == nil
+                && customizedOff.usableBindings(agentId: ownerAgent).isEmpty,
+            "a stored customization (off) suppresses the derived destination"
+        )
+
+        store.close()
     }
 
     /// Every agent_channel_* tool must be in the external-surface deny set

@@ -64,7 +64,7 @@ public enum SystemPromptTemplates {
         ## Agent loop
 
         - Always answer the user in plain text once the requested work is complete. Todo is advisory progress metadata and never overrides a final response.
-        - `todo(markdown)` — OPTIONAL, multi-step (3+) only: create it before starting, then re-send it only after a task or checkbox actually changes. Never repeat an unchanged checklist. Unchecked items remain visible but do not keep the turn open; if the requested work is complete, answer once and stop. Skip direct/single-step work.
+        - `todo(markdown)` — OPTIONAL, multi-step (3+) only: create it before starting, then re-send it only after a task or checkbox actually changes. Never repeat an unchanged checklist or mark verification done before running it. Before the final answer, if task status changed since the last todo call, re-send the full checklist once with every actually finished item checked through the tool, not as prose. Then answer exactly once and stop; unchecked items remain visible but never keep the turn open. Skip direct/single-step work.
         - `complete(summary)` — OPTIONAL early closure for honestly blocked `todo` work. A fully checked todo needs no complete call: answer the user normally and stop. Invoke complete only as a structured tool call; never type `complete(...)` into the answer.
         - `clarify(question)` — pause and ask exactly one concrete question only when guessing wrong would change the result. For minor preferences pick a sensible default and proceed.
         - `share_artifact(path | content+filename)` — the only way the user sees a generated image, chart, report, code blob, or any file. **The file MUST exist before this call.** Sandbox: save under your home dir (default cwd), not `/tmp`. For inline text/markdown, pass `content`+`filename` and skip the file write.
@@ -87,7 +87,7 @@ public enum SystemPromptTemplates {
         ## Agent loop
 
         - Answer the user in plain text once the requested work is complete. Todo is advisory and never overrides a final response.
-        - `todo(markdown)` — OPTIONAL for 3+ steps: create once and re-send only after an actual task or checkbox change. Never repeat it unchanged. Unchecked items stay visible but do not keep the turn open. Skip direct/single-step work.
+        - `todo(markdown)` — OPTIONAL for 3+ steps: create once and re-send only after an actual task or checkbox change. Never repeat it unchanged or check verification before running it. Before the final answer, send one last tool update if status changed; do not print the checklist as prose. Then answer once and stop. Unchecked items never keep the turn open. Skip direct/single-step work.
         - `complete(summary)` — OPTIONAL early closure for blocked `todo` work. For success, check every box, answer normally, and stop. Invoke it as a tool only; never print `complete(...)` in the answer.
         - `clarify(question)` — last resort; a fully specified task is not ambiguous, just do it. Ask ONE question only when the user asks or a required input is missing/contradictory with no sensible default.
         - `share_artifact(path | content+filename)` — the only way the user sees a file/image; it MUST exist first. Sandbox: save under home, not `/tmp`.

@@ -29,6 +29,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule/Schedule.swift, Views/Schedule/SchedulesView.swift      |
 | Watchers                         | Stable    | "Watchers"         | WATCHERS.md                   | Managers/WatcherManager.swift, Models/Watcher/Watcher.swift, Views/Watcher/WatchersView.swift         |
 | Agent Loop & Folder Context      | Stable    | "Agent Loop"       | AGENT_LOOP.md                 | Services/Chat/AgentToolLoop.swift, Services/Chat/AgentTaskState.swift, Folder/, Tools/AgentLoopTools.swift, Tools/FolderToolManager.swift, Models/Chat/AgentTodo.swift, Models/Chat/AgentTodoStore.swift, Models/Chat/SharedArtifact.swift |
+| Agent Channels (Slack / Discord / Telegram) | Beta | -           | AGENT_CHANNELS.md             | Services/AgentChannel/, Models/AgentChannel/, Tools/AgentChannelTools.swift, Storage/AgentChannelMessageStore.swift, Views/Settings/AgentChannelConnectionCenterView.swift, Views/Settings/AgentChannelDestinationViews.swift |
 | Developer Tools: Insights        | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/Insights/InsightsView.swift, Managers/InsightsService.swift                              |
 | Developer Tools: Server Explorer | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/Settings/ServerView.swift                                                                |
 | Apple Foundation Models          | macOS 26+ | "What is Osaurus?" | (in README)                   | Services/Inference/FoundationModelService.swift                                                 |
@@ -634,6 +635,34 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 | `settling`  | Waiting for self-caused FSEvents to flush       |
 
 **Storage:** `~/.osaurus/watchers/{uuid}.json`
+
+---
+
+### Agent Channels
+
+**Purpose:** Connect agents to Slack, Discord, and Telegram natively — inbound messages dispatch to an answering agent, and agents can proactively post back to rooms they answer on.
+
+**Inbound:** Per-provider connections (Settings → Channels) with credential storage, readable-room and sender allowlists, and a dispatch configuration that routes rooms to agents. Inbound events land in the Agent Channel message store and run through the standard agent loop.
+
+**Proactive posting (outbound):**
+
+- **Zero-config destinations** — when a channel has a credential, write access to a room, and inbound dispatch enabled, a confirm-only "automatic" posting destination is derived for each writable room × answering agent (`AgentChannelAutoDestinationResolver`). No manual setup; a stored customization for the same route always takes precedence, and derived destinations disappear the moment a room leaves the write allowlist.
+- **Modes per destination** — Ask first (queue for operator approval), Auto-send (host-enforced rate limits), Drafts only, or Off. Derived destinations can never be autonomous.
+- **Durable outbox** — every proactive send is recorded as an outbound intent with an idempotent `intent_key` (queued → approved → sending → sent / failed / delivery-unknown), with crash recovery, per-destination serialization, retention pruning, and a global channel-write kill switch.
+- **Prompt/tool wiring** — the `agent_channel_publish` tool and the destinations prompt section appear only when the agent has usable destinations; destinations are referenced by `binding_id` only, never raw room ids.
+
+**Components:**
+
+- `Services/AgentChannel/AgentChannelAutoDestinationResolver.swift` — derived destinations + stored-binding precedence
+- `Services/AgentChannel/AgentChannelPublishService.swift` — outbound intent ledger, approval, delivery state machine
+- `Services/AgentChannel/AgentChannelConnectionManager.swift` — connection/binding CRUD and validation
+- `Tools/AgentChannelTools.swift` — `agent_channel_publish` (contextual permissions: confirm → ask when attended, queue when unattended)
+- `Storage/AgentChannelMessageStore.swift` — inbound messages + outbound intents
+- `Views/Settings/AgentChannelConnectionCenterView.swift`, `Views/Settings/AgentChannelDestinationViews.swift` — Channels center, Channel Posting cards, Customize sheet, outbox review
+
+**Documentation:** [AGENT_CHANNELS.md](AGENT_CHANNELS.md) (architecture and flows), [AGENT_CHANNEL_SECURITY.md](AGENT_CHANNEL_SECURITY.md) (security model), [AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md](AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md) (setup guide)
+
+**Storage:** `~/.osaurus/config/agent-channels.json` (connections + bindings), Agent Channel message store (messages + outbound intents)
 
 ---
 
@@ -1414,6 +1443,8 @@ The post-scrub invariant only re-scans categories whose built-in regex toggle is
 | [MODEL_COMPATIBILITY_RESEARCH.md](MODEL_COMPATIBILITY_RESEARCH.md) | Local model compatibility research and rollout plan |
 | [WATCHERS.md](WATCHERS.md)                                     | Watchers and folder monitoring guide              |
 | [AGENT_LOOP.md](AGENT_LOOP.md)                                 | Agent loop, folder context, and `todo`/`complete`/`clarify` |
+| [AGENT_CHANNELS.md](AGENT_CHANNELS.md)                         | Native Slack/Discord/Telegram channels and proactive posting |
+| [AGENT_CHANNEL_SECURITY.md](AGENT_CHANNEL_SECURITY.md)         | Agent channel security model and outbound write gates    |
 | [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md)                     | Remote provider setup and configuration           |
 | [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                         |
 | [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                |

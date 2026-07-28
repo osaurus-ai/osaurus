@@ -273,7 +273,7 @@ struct SelectableTextView: NSViewRepresentable {
         }
 
         // Render and append changed/new blocks
-        let scale = Typography.scale(for: baseWidth)
+        let scale = Typography.scale(for: Typography.baseWidth)
         let bodyFontSize = CGFloat(theme.bodySize) * scale
 
         for i in diffIndex ..< newBlocks.count {
@@ -320,7 +320,7 @@ struct SelectableTextView: NSViewRepresentable {
 
     func buildAttributedString(coordinator: Coordinator) -> NSMutableAttributedString {
         let result = NSMutableAttributedString()
-        let scale = Typography.scale(for: baseWidth)
+        let scale = Typography.scale(for: Typography.baseWidth)
         let bodyFontSize = CGFloat(theme.bodySize) * scale
         var lengths: [Int] = []
 

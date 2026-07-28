@@ -34,9 +34,11 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
         + "before starting, then re-send it only after a task or checkbox actually changes. "
         + "Every item is a line "
         + "starting with `- [ ]` (pending) or `- [x]` (done); each call replaces the entire "
-        + "list. Do not repeat an unchanged checklist. Once the requested work is complete, "
-        + "answer the user exactly once and stop even if an item was left unchecked. Skip Todo "
-        + "for a direct question or single-step task."
+        + "list. Do not repeat an unchanged checklist or mark verification done before running "
+        + "it. Before the final answer, if task status changed since the last call, re-send the "
+        + "full checklist once with every actually finished item checked through this tool, not "
+        + "as prose. Then answer the user exactly once and stop even if an item remains "
+        + "unchecked. Skip Todo for a direct question or single-step task."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -113,6 +115,11 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
             markdown: trimmed,
             for: sessionId
         )
+        // The checklist is visible for the whole session, but completion
+        // semantics are scoped to this logical run. Mark even an unchanged
+        // valid checklist: explicitly re-sending it this turn makes it the
+        // current run's task state.
+        ChatExecutionContext.agentTodoRunScope?.markTodoWritten()
         let stored = update.todo
         if !update.changed {
             return ToolEnvelope.success(
@@ -120,8 +127,9 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
                 text:
                     "Todo unchanged: \(stored.doneCount)/\(stored.totalCount) complete. "
                     + "Do not call `todo` again until a task or checkbox changes. Execute the "
-                    + "next concrete pending action now, or answer the user once and stop if "
-                    + "the requested work is already complete."
+                    + "next concrete pending action now. Before the final answer, send one last "
+                    + "tool update only if status changed; never print the checklist as prose. "
+                    + "Then answer the user once and stop."
             )
         }
         return ToolEnvelope.success(
@@ -129,8 +137,10 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
             text:
                 "Todo updated: \(stored.doneCount)/\(stored.totalCount) complete. "
                 + "Continue with the next concrete pending action. Re-send the full checklist "
-                + "only after its status changes. When the requested work is complete, answer "
-                + "the user once and stop; Todo never keeps the turn open."
+                + "only after its status changes. Before the final answer, send one last tool "
+                + "update if status changed, with every actually finished item checked; never "
+                + "print the checklist as prose. Then answer once and stop; Todo never keeps "
+                + "the turn open."
         )
     }
 }
@@ -141,6 +151,7 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
 /// intercepts this call, ends the loop, and surfaces the summary to the UI.
 public final class CompleteTool: OsaurusTool, @unchecked Sendable {
     public let name = "complete"
+    static let staleSessionTodoReason = "stale_session_todo"
     public let description =
         "OPTIONAL early closure for a multi-step task tracked with `todo` that is honestly "
         + "blocked or cannot be finished. A successful task does not need this tool: first mark "
@@ -188,6 +199,29 @@ public final class CompleteTool: OsaurusTool, @unchecked Sendable {
                 field: "summary",
                 expected: "≥30 chars of meaningful prose; not a placeholder",
                 tool: name
+            )
+        }
+
+        // A session Todo is intentionally persistent UI state. It is not
+        // permission for an unrelated later turn to close as BLOCKED. Under
+        // the canonical loop, `complete` is valid only after this same run
+        // executed a valid Todo call. Bare/direct tool callers do not publish
+        // a run scope and retain their historical behavior.
+        if let runScope = ChatExecutionContext.agentTodoRunScope,
+            !runScope.hasCurrentRunTodo
+        {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message:
+                    "`complete` is only valid after this current run called `todo`. "
+                    + "A checklist from an earlier user turn does not apply. Answer the "
+                    + "current request normally and stop.",
+                tool: name,
+                retryable: true,
+                metadata: [
+                    "reason": Self.staleSessionTodoReason,
+                    "executed": false,
+                ]
             )
         }
 

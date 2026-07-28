@@ -1,0 +1,14 @@
+{
+  "id": "agent_channels.proactive-publish-policy",
+  "domain": "agent_channels",
+  "label": "agent channels • proactive publish binding policy matrix",
+  "query": "deterministic policy pin — no model involved",
+  "notes": "Proactive publishing pins over the real AgentChannelPublishService with an isolated in-memory ledger and a fake sender: no binding means no publish capability and no prompt payload; external and channel-triggered runs are always denied; an autonomous scheduled run sends only to its own binding; a repeated intent_key yields exactly one provider write; draft and unattended-confirm modes never silently send; an ambiguous provider failure parks as delivery_unknown and a replayed key never resends; an approval whose binding was repointed since queuing is refused with binding_route_changed; agent_channel_publish stays in the external-surface deny family; zero-config derived destinations are confirm-only, surface in the prompt, queue unattended sends for approval, refuse a queued approval with binding_removed once the room leaves the write allowlist, and are suppressed by a stored customization. CI-safe: no network, no model, no keychain.",
+  "fixtures": {},
+  "expect": {
+    "agentChannels": {
+      "scenario": "proactive_publish",
+      "provider": "slack"
+    }
+  }
+}

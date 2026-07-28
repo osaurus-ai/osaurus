@@ -156,6 +156,12 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// is what tells the model WHAT the granted corpora contain.
     public let knowledgeCollections: [KnowledgeGrantDescriptor]
 
+    /// True when this agent owns at least one usable proactive channel
+    /// destination binding (enabled, outbound mode != off). Gates the
+    /// narrow `agent_channel_publish` tool into the schema; the broad
+    /// `agent_channel_*` catalog stays deferred behind `capabilities_load`.
+    public let hasChannelPublishDestinations: Bool
+
     public init(
         agentId: UUID,
         toolsDisabled: Bool,
@@ -183,7 +189,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         spawnableModelNotes: [String: String] = [:],
         knowledgeEnabled: Bool = false,
         knowledgeCuratorEnabled: Bool = false,
-        knowledgeCollections: [KnowledgeGrantDescriptor] = []
+        knowledgeCollections: [KnowledgeGrantDescriptor] = [],
+        hasChannelPublishDestinations: Bool = false
     ) {
         self.agentId = agentId
         self.toolsDisabled = toolsDisabled
@@ -212,6 +219,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.knowledgeEnabled = knowledgeEnabled
         self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
         self.knowledgeCollections = knowledgeCollections
+        self.hasChannelPublishDestinations = hasChannelPublishDestinations
     }
 
     /// Read every `effective*` field in one MainActor batch.
@@ -269,7 +277,16 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             // (`effectiveKnowledgeCollections`), captured here so the
             // prompt section can't race a mid-compose grant edit.
             knowledgeCollections: mgr.effectiveKnowledgeCollections(for: agentId)
-                .map(\.grantDescriptor)
+                .map(\.grantDescriptor),
+            // Usable = enabled with outbound mode != off, including
+            // automatic destinations derived from the channel setup the
+            // user already completed. Captured per compose so a binding
+            // (or a newly writable room) surfaces the publish tool on the
+            // next turn.
+            hasChannelPublishDestinations: !AgentChannelAutoDestinationResolver
+                .effectiveConfiguration()
+                .usableBindings(agentId: agentId)
+                .isEmpty
         )
     }
 }

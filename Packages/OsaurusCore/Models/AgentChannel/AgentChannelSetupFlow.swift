@@ -98,7 +98,7 @@ enum AgentChannelProviderSetupSection: String, CaseIterable, Sendable {
         switch self {
         case .connect: return L("Connect")
         case .access: return L("Access")
-        case .behavior: return L("Behavior")
+        case .behavior: return L("Replies & Sending")
         case .verify: return L("Verify")
         }
     }
@@ -116,7 +116,7 @@ enum AgentChannelProviderSetupSection: String, CaseIterable, Sendable {
         switch self {
         case .connect: return L("Bot and tokens")
         case .access: return L("Rooms and people")
-        case .behavior: return L("Optional")
+        case .behavior: return L("Who replies, who may send")
         case .verify: return L("Live check")
         }
     }

@@ -45,7 +45,7 @@ struct AgentChannelDispatchRoutingEditor: View {
 
             if !routes.isEmpty {
                 Text(
-                    "Routing rules run first: a leading name (\u{201C}sales: \u{2026}\u{201D}) picks its agent, then the \(roomNoun) rule, then the default agent.",
+                    "Rules run first: a leading name (\u{201C}sales: \u{2026}\u{201D}) picks its agent, then the \(roomNoun) rule, then the agent above.",
                     bundle: .module
                 )
                 .font(.system(size: 10))
@@ -70,7 +70,7 @@ struct AgentChannelDispatchRoutingEditor: View {
                 }
             } label: {
                 Label {
-                    Text("Add Routing Rule", bundle: .module)
+                    Text("Add Rule", bundle: .module)
                 } icon: {
                     Image(systemName: "plus.circle")
                 }
@@ -82,7 +82,7 @@ struct AgentChannelDispatchRoutingEditor: View {
 
             if routes.isEmpty {
                 Text(
-                    "Optional: add routing rules to answer different \(roomNoun)s with different agents, or let a name prefix pick an agent inside a shared \(roomNoun).",
+                    "Optional: add rules to reply in different \(roomNoun)s with different agents, or let a name prefix pick an agent inside a shared \(roomNoun).",
                     bundle: .module
                 )
                 .font(.system(size: 10))
@@ -99,12 +99,12 @@ struct AgentChannelDispatchRoutingEditor: View {
 
     private var defaultAgentPicker: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Default agent", bundle: .module)
+            Text("Agent that replies", bundle: .module)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
             Picker("", selection: $defaultAgentId) {
                 Text(
-                    routes.isEmpty ? L("Select an agent") : L("None (only routed rooms answer)")
+                    routes.isEmpty ? L("Choose an agent") : L("None (reply only where a rule matches)")
                 ).tag(UUID?.none)
                 ForEach(selectableAgents) { agent in
                     Text(agent.name).tag(Optional(agent.id))
@@ -112,7 +112,7 @@ struct AgentChannelDispatchRoutingEditor: View {
             }
             .labelsHidden()
             Text(
-                "Answers messages no routing rule claims.",
+                "Replies to every message no rule below claims.",
                 bundle: .module
             )
             .font(.system(size: 10))

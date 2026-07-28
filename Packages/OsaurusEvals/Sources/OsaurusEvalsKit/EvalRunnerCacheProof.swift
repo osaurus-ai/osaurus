@@ -40,20 +40,59 @@ extension EvalRunner {
 
         // Minimal prefix-sharing shape when the case doesn't author turns:
         // the same query twice under one session.
-        let queries: [String]
+        let authoredQueries: [String]
         if let followUps = exp.followUpTurns, !followUps.isEmpty {
-            queries = [testCase.query] + followUps
+            authoredQueries = [testCase.query] + followUps
         } else {
-            queries = [testCase.query, testCase.query]
+            authoredQueries = [testCase.query, testCase.query]
         }
+
+        let sessionBoundaries = Set(
+            (exp.startNewSessionBeforeTurns ?? []).filter {
+                $0 > 1 && $0 <= authoredQueries.count
+            }
+        )
+        let expectedSessionCount = 1 + sessionBoundaries.count
+        if exp.systemPrompt != nil, exp.systemPromptsPerSession != nil {
+            return Self.errored(
+                testCase, label: label, modelId: modelId,
+                note: "cache proof must set either systemPrompt or "
+                    + "systemPromptsPerSession, not both"
+            )
+        }
+        if let prompts = exp.systemPromptsPerSession,
+            prompts.count != expectedSessionCount
+        {
+            return Self.errored(
+                testCase, label: label, modelId: modelId,
+                note: "systemPromptsPerSession has \(prompts.count) entries; "
+                    + "\(expectedSessionCount) session(s) are configured"
+            )
+        }
+
+        // `--repeat N` executes case trials in one warm process. Persistent
+        // L2 entries from trial 1 must not turn trials 2...N into exact warm
+        // replays, otherwise a longest-candidate assertion measures earlier
+        // trials instead of the current trial's own store/restore lifecycle.
+        // Namespace authored system prompts when present; otherwise namespace
+        // each authored query. The same marker is retained across every turn
+        // inside one trial, so all intended intra-trial prefix relationships
+        // remain real while prior trials are content-address incompatible.
+        let isolatedInputs = cacheProofTrialInputs(
+            queries: authoredQueries,
+            systemPrompt: exp.systemPrompt,
+            systemPromptsPerSession: exp.systemPromptsPerSession,
+            nonce: UUID().uuidString
+        )
 
         let sampler = ResourceSampler.start()
         let started = Date()
         let transcript = await CacheProofEvaluator.run(
-            queries: queries,
+            queries: isolatedInputs.queries,
             maxTokens: exp.maxTokens ?? 128,
             thinkingPerTurn: exp.thinkingPerTurn,
-            systemPrompt: exp.systemPrompt,
+            systemPrompt: isolatedInputs.systemPrompt,
+            systemPromptsPerSession: isolatedInputs.systemPromptsPerSession,
             startNewSessionBeforeTurns: exp.startNewSessionBeforeTurns ?? []
         )
         let elapsedMs = Date().timeIntervalSince(started) * 1000
@@ -83,6 +122,7 @@ extension EvalRunner {
         }
 
         var notes: [String] = [
+            "repeat isolation: unique content-addressed cache namespace for this trial",
             "turns: \(transcript.visibleTurns.count) · topology: "
                 + (transcript.hybridTopology ? "hybrid-SSM" : "full-attention"),
             "deltas: kvHits +\(transcript.kvPrefixHitsDelta) · kvMisses +\(transcript.kvPrefixMissesDelta) · "
@@ -100,6 +140,12 @@ extension EvalRunner {
                     + "prefill=\(turn.prefillTokensPerSecond.map { String(format: "%.1f tok/s", $0) } ?? "unknown") "
                     + "stop=\(turn.stopReason ?? "unknown")"
             )
+            if let progress = turn.prefillProgressEvents, !progress.isEmpty {
+                notes.append(
+                    "turn \(turn.turnNumber) progress: "
+                        + compactProgressSummary(progress)
+                )
+            }
         }
         var passed = true
         func check(_ ok: Bool, pass: String, fail: String) {
@@ -193,6 +239,107 @@ extension EvalRunner {
                 disk != nil,
                 pass: "structured disk restore proved on turn \(disk?.turnNumber ?? 0)",
                 fail: "no post-first cacheRestore event identified tier=disk"
+            )
+        }
+        if let floor = exp.minStructuredCacheRestoreTurns {
+            let restoredTurns = postFirstTurns.filter {
+                ($0.cacheRestoredTokens ?? 0) > 0
+            }
+            check(
+                restoredTurns.count >= floor,
+                pass: "\(restoredTurns.count) post-first turn(s) carried typed cache restore "
+                    + "≥ \(floor)",
+                fail: "only \(restoredTurns.count) post-first turn(s) carried typed cache "
+                    + "restore; need \(floor)"
+            )
+        }
+        if exp.requireFinalDiskCacheRestore == true {
+            let final = turnMetrics.last
+            let restored = final?.cacheRestoredTokens ?? 0
+            let tier = final?.cacheRestoreDetail?.lowercased()
+            check(
+                restored > 0 && tier == "disk",
+                pass: "final turn restored \(restored) tokens from disk",
+                fail: "final turn did not carry a nonzero tier=disk restore "
+                    + "(restore=\(restored), tier=\(tier ?? "none"))"
+            )
+        }
+        for turnNumber in exp.requireNoCacheRestoreOnTurns ?? [] {
+            let turn = turnMetrics.first { $0.turnNumber == turnNumber }
+            let restored = turn?.cacheRestoredTokens ?? 0
+            check(
+                turn != nil && restored == 0,
+                pass: "turn \(turnNumber) rejected incompatible cached prompt state",
+                fail: turn == nil
+                    ? "turn \(turnNumber) has no typed metrics"
+                    : "turn \(turnNumber) restored \(restored) token(s) despite an "
+                        + "incompatible prompt revision"
+            )
+        }
+        for turnNumber in exp.requireDiskCacheRestoreOnTurns ?? [] {
+            let turn = turnMetrics.first { $0.turnNumber == turnNumber }
+            let restored = turn?.cacheRestoredTokens ?? 0
+            let tier = turn?.cacheRestoreDetail?.lowercased()
+            check(
+                turn != nil && restored > 0 && tier == "disk",
+                pass: "turn \(turnNumber) restored \(restored) tokens from disk",
+                fail: turn == nil
+                    ? "turn \(turnNumber) has no typed metrics"
+                    : "turn \(turnNumber) did not restore from disk "
+                        + "(restore=\(restored), tier=\(tier ?? "none"))"
+            )
+        }
+        for turnNumber in exp.requirePartialCacheRestoreOnTurns ?? [] {
+            let turn = turnMetrics.first { $0.turnNumber == turnNumber }
+            let restored = turn?.cacheRestoredTokens ?? 0
+            let remaining = turn?.remainingPrefillTokens ?? 0
+            check(
+                turn != nil && restored > 0 && remaining > 0,
+                pass: "turn \(turnNumber) partially restored \(restored) tokens and "
+                    + "prefilled \(remaining)",
+                fail: turn == nil
+                    ? "turn \(turnNumber) has no typed metrics"
+                    : "turn \(turnNumber) lacked a partial restore "
+                        + "(restore=\(restored), remaining=\(remaining))"
+            )
+        }
+        if let floor = exp.minFinalRestoreGainTokens {
+            let previous = turnMetrics.dropLast().last?.cacheRestoredTokens
+            let final = turnMetrics.last?.cacheRestoredTokens
+            if let previous, let final {
+                let gain = final - previous
+                check(
+                    gain >= floor,
+                    pass: "final restore gain \(gain) tokens "
+                        + "(\(previous) → \(final)) ≥ \(floor)",
+                    fail: "final restore gain \(gain) tokens "
+                        + "(\(previous) → \(final)) below \(floor)"
+                )
+            } else {
+                check(
+                    false,
+                    pass: "",
+                    fail: "minFinalRestoreGainTokens requires typed restore counts on "
+                        + "the final two turns"
+                )
+            }
+        }
+        if exp.requirePrefillProgressAccounting == true {
+            let failures = turnMetrics.compactMap { turn -> String? in
+                guard let problem = prefillProgressAccountingProblem(for: turn) else {
+                    return nil
+                }
+                return "turn \(turn.turnNumber): \(problem)"
+            }
+            check(
+                turnMetrics.count == transcript.visibleTurns.count
+                    && !turnMetrics.isEmpty
+                    && failures.isEmpty,
+                pass: "typed prefill progress is monotonic, total-consistent, and complete "
+                    + "on every turn",
+                fail: failures.isEmpty
+                    ? "turn metrics missing for one or more visible turns"
+                    : failures.joined(separator: "; ")
             )
         }
         if exp.requireNonEmptyVisibleTurns == true {
@@ -395,5 +542,153 @@ extension EvalRunner {
                 diskL2StoresDelta: transcript.diskL2StoresDelta
             )
         )
+    }
+
+    static func cacheProofTrialInputs(
+        queries: [String],
+        systemPrompt: String?,
+        systemPromptsPerSession: [String]?,
+        nonce: String
+    ) -> (
+        queries: [String],
+        systemPrompt: String?,
+        systemPromptsPerSession: [String]?
+    ) {
+        let marker =
+            "OsaurusEval cache-proof trial \(nonce). "
+            + "This identifier is test metadata; do not repeat it."
+        if let systemPrompt {
+            return (
+                queries,
+                systemPrompt + "\n\n" + marker,
+                nil
+            )
+        }
+        if let systemPromptsPerSession {
+            return (
+                queries,
+                nil,
+                systemPromptsPerSession.map { $0 + "\n\n" + marker }
+            )
+        }
+        return (
+            queries.map { $0 + "\n\n" + marker },
+            nil,
+            nil
+        )
+    }
+
+    /// Deterministic validation of the production progress stream. Returning
+    /// nil means the turn has a stable total, bounded/monotonic completed
+    /// counts, a restore-to-prefill handoff, and a terminal complete frame.
+    static func prefillProgressAccountingProblem(
+        for turn: CacheProofTurnMetrics
+    ) -> String? {
+        guard let events = turn.prefillProgressEvents, !events.isEmpty else {
+            return "no typed progress events"
+        }
+        let positiveTotals = events.map(\.totalUnitCount).filter { $0 > 0 }
+        guard let total = positiveTotals.first else {
+            return "no positive prompt total"
+        }
+        guard positiveTotals.allSatisfy({ $0 == total }) else {
+            return "prompt total changed within the turn"
+        }
+        if let promptTokenCount = turn.promptTokenCount, promptTokenCount != total {
+            return "metric prompt total \(promptTokenCount) != progress total \(total)"
+        }
+
+        let stageOrder = [
+            "queued": 0,
+            "cacheLookup": 1,
+            "cacheRestore": 2,
+            "prefill": 3,
+            "complete": 4,
+        ]
+        var previousCompleted = 0
+        var previousStage = 0
+        for event in events {
+            guard let stage = stageOrder[event.stage] else {
+                return "unknown progress stage '\(event.stage)'"
+            }
+            guard stage >= previousStage else {
+                return "progress stage regressed at \(event.stage)"
+            }
+            guard event.completedUnitCount >= 0,
+                event.completedUnitCount <= event.totalUnitCount
+            else {
+                return "completed count \(event.completedUnitCount) outside "
+                    + "0...\(event.totalUnitCount)"
+            }
+            guard event.completedUnitCount >= previousCompleted else {
+                return "completed count regressed "
+                    + "\(previousCompleted) → \(event.completedUnitCount)"
+            }
+            previousStage = stage
+            previousCompleted = event.completedUnitCount
+        }
+
+        guard let final = events.last,
+            final.stage == "complete",
+            final.completedUnitCount == total
+        else {
+            return "missing terminal complete=\(total) frame"
+        }
+        let restored =
+            events.filter { $0.stage == "cacheRestore" }
+            .map(\.completedUnitCount)
+            .max() ?? 0
+        if let metricRestored = turn.cacheRestoredTokens, metricRestored != restored {
+            return "metric restore \(metricRestored) != progress restore \(restored)"
+        }
+        if let remaining = turn.remainingPrefillTokens,
+            remaining != max(0, total - restored)
+        {
+            return "remaining prefill \(remaining) != total-restored "
+                + "\(max(0, total - restored))"
+        }
+        if restored > 0,
+            let firstPrefill = events.first(where: { $0.stage == "prefill" }),
+            firstPrefill.completedUnitCount < restored
+        {
+            return "prefill restarted below restored boundary "
+                + "\(firstPrefill.completedUnitCount) < \(restored)"
+        }
+        return nil
+    }
+
+    /// Keep report notes readable even when chunked prefill emits hundreds of
+    /// frames: collapse contiguous stages to first…last completed counts.
+    private static func compactProgressSummary(
+        _ events: [CacheProofProgressEvent]
+    ) -> String {
+        var groups: [(stage: String, first: Int, last: Int, total: Int, detail: String?)] = []
+        for event in events {
+            if let lastIndex = groups.indices.last,
+                groups[lastIndex].stage == event.stage,
+                groups[lastIndex].total == event.totalUnitCount,
+                groups[lastIndex].detail == event.detail
+            {
+                groups[lastIndex].last = event.completedUnitCount
+            } else {
+                groups.append(
+                    (
+                        event.stage,
+                        event.completedUnitCount,
+                        event.completedUnitCount,
+                        event.totalUnitCount,
+                        event.detail
+                    )
+                )
+            }
+        }
+        return groups.map { group in
+            let count =
+                group.first == group.last
+                ? "\(group.last)"
+                : "\(group.first)…\(group.last)"
+            let detail = group.detail.map { "(\($0))" } ?? ""
+            return "\(group.stage):\(count)/\(group.total)\(detail)"
+        }.joined(separator: " → ")
     }
 }

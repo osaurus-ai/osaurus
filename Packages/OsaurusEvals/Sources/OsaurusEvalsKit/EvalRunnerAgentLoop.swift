@@ -306,6 +306,7 @@ extension EvalRunner {
             agentId: evalAgentId,
             maxIterations: exp.maxIterations ?? 10,
             contextWindowOverride: exp.contextWindowOverride,
+            enableThinking: exp.enableThinking,
             stopOnToolRejection: exp.stopOnToolRejection ?? false,
             sandbox: sandboxMode,
             hostFolderWritesEnabled: sandboxFixture?.allowHostFolderWrites == true,
@@ -967,6 +968,44 @@ extension EvalRunner {
                 fail: "no todo call with a checked box before complete/run end"
             )
         }
+        if exp.todoCompletedBeforeFinal == true {
+            let todo = lastTodoBeforeTerminal(in: transcript.toolCalls)
+            let total = todo?.totalCount ?? 0
+            let done = todo?.doneCount ?? 0
+            let complete = total > 0 && done == total
+            score.check(
+                complete,
+                pass: "final Todo complete: \(done)/\(total) checked",
+                fail: todo == nil
+                    ? "no parseable successful Todo call before complete/run end"
+                    : "final Todo incomplete: \(done)/\(total) checked"
+            )
+        }
+    }
+
+    /// Return the last successful, parseable Todo snapshot before the first
+    /// explicit `complete` call (or before run end for ordinary final text).
+    ///
+    /// This is intentionally a scorer helper, not production-loop policy:
+    /// pending Todo remains advisory and can never reopen an already-final
+    /// model response.
+    static func lastTodoBeforeTerminal(
+        in calls: [AgentLoopTranscript.ToolInvocation]
+    ) -> AgentTodo? {
+        let terminalIndex =
+            calls.firstIndex(where: { $0.name == "complete" })
+            ?? calls.endIndex
+        for call in calls[..<terminalIndex].reversed()
+        where call.name == "todo" && !call.wasError {
+            guard let data = call.arguments.data(using: .utf8),
+                let object = try? JSONSerialization.jsonObject(with: data),
+                let arguments = object as? [String: Any],
+                let markdown = arguments["markdown"] as? String
+            else { continue }
+            let todo = AgentTodo.parse(markdown)
+            if todo.totalCount > 0 { return todo }
+        }
+        return nil
     }
 
     /// Ordered-subsequence assertion: `ordered` must appear in the

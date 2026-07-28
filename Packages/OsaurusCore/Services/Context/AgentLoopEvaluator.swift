@@ -199,6 +199,8 @@ public enum AgentLoopEvaluator {
     ///   - streaming: when true (default, matching the chat surface) each
     ///     model step uses the streaming path — where the delta routing,
     ///     tool-call assembly, and most local-model parser bugs live.
+    ///   - enableThinking: explicit chat-toggle choice copied to every model
+    ///     step. nil preserves the production unspecified-agent policy.
     ///   - maxTokens: per-step response cap; falls back to the user's
     ///     chat configuration, then 2048.
     ///   - sandbox: non-nil switches the run into live-sandbox mode —
@@ -225,6 +227,7 @@ public enum AgentLoopEvaluator {
         contextWindowOverride: Int? = nil,
         streaming: Bool = true,
         maxTokens: Int? = nil,
+        enableThinking: Bool? = nil,
         stopOnToolRejection: Bool = false,
         sandbox: AgentLoopSandboxMode? = nil,
         hostFolderWritesEnabled: Bool = false,
@@ -460,6 +463,7 @@ public enum AgentLoopEvaluator {
                 session_id: sessionId
             )
             request.samplingParametersAreImplicit = true
+            request.enable_thinking = enableThinking
             return request
         }
 

@@ -17,6 +17,31 @@
 
 import Foundation
 
+/// One typed prefill-progress frame observed on the production streaming path.
+///
+/// The stage is stored as its wire value so this public proof artifact does
+/// not expose the app-internal UI enum. Keeping every frame lets the eval
+/// distinguish a real monotonic restore → prefill → complete lifecycle from a
+/// single aggregate cache-hit counter.
+public struct CacheProofProgressEvent: Sendable, Codable, Equatable {
+    public let stage: String
+    public let completedUnitCount: Int
+    public let totalUnitCount: Int
+    public let detail: String?
+
+    public init(
+        stage: String,
+        completedUnitCount: Int,
+        totalUnitCount: Int,
+        detail: String?
+    ) {
+        self.stage = stage
+        self.completedUnitCount = completedUnitCount
+        self.totalUnitCount = totalUnitCount
+        self.detail = detail
+    }
+}
+
 /// Structured per-turn proof emitted by the real local streaming path.
 ///
 /// `cacheRestoredTokens` and `remainingPrefillTokens` come from vMLX's
@@ -35,6 +60,9 @@ public struct CacheProofTurnMetrics: Sendable, Codable {
     public let unclosedReasoning: Bool
     public let visibleCharacterCount: Int
     public let reasoningCharacterCount: Int
+    /// Every typed progress frame in stream order. Optional so transcripts
+    /// recorded before this field was introduced remain decodable.
+    public let prefillProgressEvents: [CacheProofProgressEvent]?
 
     public init(
         turnNumber: Int,
@@ -48,7 +76,8 @@ public struct CacheProofTurnMetrics: Sendable, Codable {
         stopReason: String?,
         unclosedReasoning: Bool,
         visibleCharacterCount: Int,
-        reasoningCharacterCount: Int
+        reasoningCharacterCount: Int,
+        prefillProgressEvents: [CacheProofProgressEvent]? = nil
     ) {
         self.turnNumber = turnNumber
         self.sessionNumber = sessionNumber
@@ -62,6 +91,7 @@ public struct CacheProofTurnMetrics: Sendable, Codable {
         self.unclosedReasoning = unclosedReasoning
         self.visibleCharacterCount = visibleCharacterCount
         self.reasoningCharacterCount = reasoningCharacterCount
+        self.prefillProgressEvents = prefillProgressEvents
     }
 }
 
@@ -162,6 +192,7 @@ public enum CacheProofEvaluator {
         maxTokens: Int = 128,
         thinkingPerTurn: [Bool]? = nil,
         systemPrompt: String? = nil,
+        systemPromptsPerSession: [String]? = nil,
         startNewSessionBeforeTurns: [Int] = []
     ) async -> CacheProofTranscript {
         let resolvedModel =
@@ -175,12 +206,20 @@ public enum CacheProofEvaluator {
 
         let before = await ModelRuntime.batchDiagnosticsSnapshot()
 
-        func freshHistory() -> [ChatMessage] {
-            guard let systemPrompt, !systemPrompt.isEmpty else { return [] }
-            return [ChatMessage(role: "system", content: systemPrompt)]
+        func freshHistory(for sessionNumber: Int) -> [ChatMessage] {
+            let sessionPrompt: String?
+            if let systemPromptsPerSession,
+                systemPromptsPerSession.indices.contains(sessionNumber - 1)
+            {
+                sessionPrompt = systemPromptsPerSession[sessionNumber - 1]
+            } else {
+                sessionPrompt = systemPrompt
+            }
+            guard let sessionPrompt, !sessionPrompt.isEmpty else { return [] }
+            return [ChatMessage(role: "system", content: sessionPrompt)]
         }
 
-        var history = freshHistory()
+        var history = freshHistory(for: sessionNumber)
         var visibleTurns: [String] = []
         var runError: String?
         var lastDecodeTps: Double?
@@ -190,9 +229,9 @@ public enum CacheProofEvaluator {
         for (turnIndex, query) in queries.enumerated() {
             let turnNumber = turnIndex + 1
             if turnNumber > 1, sessionBoundaryTurns.contains(turnNumber) {
-                history = freshHistory()
                 sessionId = UUID().uuidString
                 sessionNumber += 1
+                history = freshHistory(for: sessionNumber)
             }
             history.append(ChatMessage(role: "user", content: query))
             var request = ChatCompletionRequest(
@@ -223,10 +262,19 @@ public enum CacheProofEvaluator {
             var prefillTokensPerSecond: Double?
             var stopReason: String?
             var unclosedReasoning = false
+            var prefillProgressEvents: [CacheProofProgressEvent] = []
             do {
                 let stream = try await engine.streamChat(request: request)
                 for try await delta in stream {
                     if let progress = StreamingPrefillProgressHint.decode(delta) {
+                        prefillProgressEvents.append(
+                            CacheProofProgressEvent(
+                                stage: progress.stage.rawValue,
+                                completedUnitCount: progress.completedUnitCount,
+                                totalUnitCount: progress.totalUnitCount,
+                                detail: progress.detail
+                            )
+                        )
                         if progress.totalUnitCount > 0 {
                             promptTokenCount = max(
                                 promptTokenCount ?? 0,
@@ -292,7 +340,8 @@ public enum CacheProofEvaluator {
                     stopReason: stopReason,
                     unclosedReasoning: unclosedReasoning,
                     visibleCharacterCount: visible.count,
-                    reasoningCharacterCount: reasoning.count
+                    reasoningCharacterCount: reasoning.count,
+                    prefillProgressEvents: prefillProgressEvents
                 )
             )
             if let footprint = ProcessMemoryProbe.currentPhysFootprintMB() {

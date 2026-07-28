@@ -359,6 +359,9 @@ public final class ToolRegistry: ObservableObject {
         AgentChannelAddReactionTool(),
         AgentChannelRemoveReactionTool(),
         AgentChannelSendTypingTool(),
+        // Proactive, binding-scoped publish. Joins the family deny list
+        // below automatically, so it can never run from external surfaces.
+        AgentChannelPublishTool(),
     ]
 
     nonisolated static let agentChannelToolNames: Set<String> = [
@@ -377,6 +380,7 @@ public final class ToolRegistry: ObservableObject {
         "agent_channel_add_reaction",
         "agent_channel_remove_reaction",
         "agent_channel_send_typing",
+        "agent_channel_publish",
     ]
 
     /// Register a plain (non-bucketed) tool. Used by built-in registration
@@ -625,7 +629,19 @@ public final class ToolRegistry: ObservableObject {
             }
 
             let defaultPolicy = permissioned.defaultPermissionPolicy
-            let effectivePolicy = configuration.policy[name] ?? defaultPolicy
+            var effectivePolicy = configuration.policy[name] ?? defaultPolicy
+            // Argument-aware narrowing (strictest wins): a contextual tool
+            // resolves this specific invocation's policy from its arguments
+            // (e.g. the destination binding's outbound mode for
+            // `agent_channel_publish`). The configured/user policy can narrow
+            // the contextual result and the contextual result can narrow the
+            // configured policy; neither can loosen the other.
+            if let contextual = tool as? ContextualPermissionedTool {
+                let resolved = await contextual.resolveContextualPermissionPolicy(
+                    argumentsJSON: argumentsJSON
+                )
+                effectivePolicy = ToolPermissionPolicy.strictest(effectivePolicy, resolved)
+            }
             switch effectivePolicy {
             case .deny:
                 throw NSError(
@@ -650,6 +666,19 @@ public final class ToolRegistry: ObservableObject {
                     // Unattended schedule/watcher run with no user to click the
                     // card. Approved only for tools whose real human gate is
                     // downstream (see `unattendedAutoApprovableToolNames`).
+                    approved = true
+                } else if ChatExecutionContext.isUnattendedDispatch,
+                    let contextual = tool as? ContextualPermissionedTool,
+                    await contextual.unattendedAskQueuesForApproval(argumentsJSON: argumentsJSON)
+                {
+                    // Unattended run, `.ask` effective policy, and the tool
+                    // declares it converts unanswerable asks into a QUEUED
+                    // operator approval inside its body (e.g.
+                    // `agent_channel_publish` records a pending outbox item
+                    // instead of writing to the provider). Proceeding here is
+                    // NOT an approval of the side effect — the human gate
+                    // moves into the outbox rather than blocking the run on a
+                    // card nobody can answer.
                     approved = true
                 } else {
                     approved = await ToolPermissionPromptService.requestApproval(

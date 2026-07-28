@@ -571,6 +571,11 @@ public final class AgentManager: ObservableObject {
         // Done only AFTER plugin teardown completed (see above).
         ToolSecretsKeychain.deleteAllSecrets(forAgent: id)
 
+        // Remove the agent's proactive channel destinations. Agent UUIDs
+        // are never reused, so leaving the bindings behind would only
+        // create permanent orphans in `agent-channels.json`.
+        try? AgentChannelConnectionManager.shared.deleteBindings(agentId: id)
+
         // Drop any greetings the pool was holding for this agent. We
         // can't rely on per-agent settings drift here (the agent is
         // gone) — explicit invalidation prevents the orphaned entries

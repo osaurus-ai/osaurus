@@ -595,18 +595,20 @@ struct MLXModel: Identifiable, Codable {
         return .tooLarge
     }
 
-    /// Compact "MMM yyyy" form of `releasedAt`, e.g. "Apr 2026". Locale
-    /// is pinned to `en_US_POSIX` so the format stays stable; the
-    /// localized prefix ("Released …") lives at the call site.
+    /// Compact month-and-year form of `releasedAt`, e.g. "Apr 2026" in English
+    /// and "2026年4月" in Chinese. The localized prefix ("Released …") lives at
+    /// the call site, so this half has to follow the same locale or the two
+    /// halves disagree.
     var formattedReleaseMonth: String? {
         guard let date = releasedAt else { return nil }
         return MLXModel.releaseMonthFormatter.string(from: date)
     }
 
+    /// Localized template so month name, order and separators follow the locale.
+    /// Mirrors `NativeMessageCellView.timestampFormatter`.
     private static let releaseMonthFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "MMM yyyy"
+        f.setLocalizedDateFormatFromTemplate("MMMyyyy")
         return f
     }()
 }

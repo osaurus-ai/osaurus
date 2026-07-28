@@ -492,9 +492,12 @@ public enum SettingsSearchIndex {
         .init(
             id: "agentChannels.globalWrites",
             tab: .agentChannels,
-            section: "Global Channel Safety",
-            title: "Global Channel Writes",
-            keywords: ["kill switch", "disable writes", "remote writes", "channel writes"]
+            section: "Sending",
+            title: "Allow Agents to Send Messages",
+            keywords: [
+                "kill switch", "disable writes", "remote writes", "channel writes",
+                "sending", "read-only", "pause sending",
+            ]
         ),
         .init(
             id: "agentChannels.discord",
@@ -530,6 +533,27 @@ public enum SettingsSearchIndex {
             section: "Custom JSON Connections",
             title: "Custom HTTP Connections",
             keywords: ["custom json channels", "webhook", "agent-channels.json", "secret references"]
+        ),
+        .init(
+            id: "agentChannels.destinations",
+            tab: .agentChannels,
+            section: "New Messages",
+            title: "New Messages",
+            keywords: [
+                "proactive", "publish", "destination", "binding", "outbound",
+                "autonomous", "draft", "confirm", "agent destinations",
+                "new messages", "agent posting", "post", "room", "auto-send",
+            ]
+        ),
+        .init(
+            id: "agentChannels.outbox",
+            tab: .agentChannels,
+            section: "Outbox",
+            title: "Channel Outbox",
+            keywords: [
+                "outbox", "pending approval", "approve message", "queued messages",
+                "outbound activity", "drafts",
+            ]
         ),
 
         // MARK: Image Generation tab (subTab values are ImageGenerationTab raw values)

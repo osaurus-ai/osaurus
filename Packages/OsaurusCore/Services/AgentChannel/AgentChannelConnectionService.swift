@@ -750,6 +750,13 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         )
     }
 
+    /// Resolved read-only view of a connection id (native projection or
+    /// custom JSON row). Used by the proactive publish path to re-validate
+    /// a binding's destination without duplicating the projection logic.
+    func resolvedConnectionView(id: String) throws -> AgentChannelConnection {
+        try resolveConnection(id)
+    }
+
     private func requireAction(
         _ action: AgentChannelAction,
         connectionId: String?

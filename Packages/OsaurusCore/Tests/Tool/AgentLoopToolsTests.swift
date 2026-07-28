@@ -251,6 +251,67 @@ struct AgentLoopToolsTests {
         }
     }
 
+    @Test("prior-turn todo cannot make an unrelated current run blocked")
+    func complete_rejectsStaleSessionTodoInsideCanonicalRun() async throws {
+        try await withSession { sessionId in
+            // Simulate the prior user turn: the checklist remains visible in
+            // the session store after that turn returns a normal final answer.
+            _ = try await TodoTool().execute(
+                argumentsJSON: #"{"markdown": "- [x] report result\n- [ ] optional review"}"#
+            )
+            #expect(await AgentTodoStore.shared.todo(for: sessionId) != nil)
+
+            // A new canonical run gets a fresh marker. It did not call Todo,
+            // so an old unchecked checklist cannot authorize `complete` or
+            // turn this unrelated response into a BLOCKED banner.
+            let runScope = AgentTodoRunScope()
+            let result =
+                try await ChatExecutionContext.$agentTodoRunScope.withValue(runScope) {
+                    try await CompleteTool().execute(
+                        argumentsJSON: #"""
+                            {"summary": "STALE_TODO_FOLLOWUP_OK - verified as the requested exact follow-up."}
+                            """#
+                    )
+                }
+
+            #expect(ToolEnvelope.isError(result))
+            #expect(result.contains("current run called `todo`"))
+            #expect(result.contains("earlier user turn does not apply"))
+        }
+    }
+
+    @Test("an explicit unchanged todo still belongs to the current run")
+    func complete_acceptsReaffirmedCurrentRunTodo() async throws {
+        try await withSession { _ in
+            let argumentsJSON =
+                "{\"markdown\":\"- [x] report result\\n- [ ] optional review\"}"
+            // Seed the same semantic checklist in a prior turn.
+            _ = try await TodoTool().execute(
+                argumentsJSON: argumentsJSON
+            )
+
+            let runScope = AgentTodoRunScope()
+            let result =
+                try await ChatExecutionContext.$agentTodoRunScope.withValue(runScope) {
+                    // This is intentionally unchanged in the session store,
+                    // but the explicit valid call must mark it current-run.
+                    let todoResult = try await TodoTool().execute(
+                        argumentsJSON: argumentsJSON
+                    )
+                    #expect(todoResult.contains("Todo unchanged"))
+                    return try await CompleteTool().execute(
+                        argumentsJSON: #"""
+                            {"summary": "The requested work is blocked; verified the remaining review is still pending."}
+                            """#
+                    )
+                }
+
+            #expect(ToolEnvelope.isSuccess(result))
+            #expect(result.contains("\"outcome\":\"blocked\""))
+            #expect(result.contains("\"pending_todo_items\":1"))
+        }
+    }
+
     @Test
     func complete_validateHelperMatchesExecuteOutput() {
         // The intercept path in ChatView calls validate() directly; ensure

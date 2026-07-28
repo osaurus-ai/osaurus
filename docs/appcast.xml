@@ -3,6 +3,51 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.11</title>
+            <pubDate>Mon, 27 Jul 2026 20:47:16 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.11</sparkle:version>
+            <sparkle:shortVersionString>0.22.11</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.11/Osaurus-0.22.11.dmg" length="68244091" type="application/octet-stream" sparkle:edSignature="EmCSGl0tW54Jzkr8nX3XlmoSzixhWAzabWoFEH2nMKeke4aHpM0+wBsO39ReiCR9p9Nmg+pxLHr+k03YS0wIAw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Fix stale Todo agent-loop completion and strengthen cache proof (#2192) by @jjang-ai
+- i18n(zh-Hans): quality pass — 859 fixes across eight defect classes + style linter (#2188) by @YspritanHyzygy
+- Add scored agent-loop and disk-cache proof gates (#2179) by @jjang-ai
+- Update Traditional Chinese translations (#2178) by @ftzahao
+- Stop completed agent runs from reopening on stale todos (#2175) by @jjang-ai
+- Update Simplified Chinese and Traditional Chinese translations (#2172) by @ftzahao
+- Fix tracked tool completion and prompt cache stability (#2171) by @jjang-ai
+- fix: don't install CLI symlink into Homebrew's managed bin directory (#2166) by @peterlodri-sec
+- Add connectivity-driven offline mode for chat (#2170) by @tpae
+- Unify runtime policy and bounded subagent delegation (#2165) by @jjang-ai
+- Redact secret tool arguments across agent surfaces (#2157) by @mimeding
+- Report MCP tool envelope failures (#2156) by @mimeding
+- Preserve SSD warmup across chat lifecycle transitions (#2161) by @jjang-ai
+
+## 🚀 Features
+
+- inject current date and timezone into the latest user turn (#2173) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- fix factory reset hanging indefinitely and add reset progress ui (#2191) by @RaajeevChandran
+- Fix Gemma and Qwen post-tool completion (#2167) by @jjang-ai
+
+## 🧰 Maintenance
+
+- Add proactive agent channel publishing with zero-config destinations (#2190) by @tpae
+- Channels: focused setup UX, scalable access lists, and autosave (#2164) by @tpae
+- improved chat UX (#2163) by @RaajeevChandran
+- Channels: multi-agent routing and guided setup across all providers (#2162) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.10...0.22.11
+]]></description>
+        </item>
+        <item>
             <title>0.22.10</title>
             <pubDate>Fri, 24 Jul 2026 17:32:03 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

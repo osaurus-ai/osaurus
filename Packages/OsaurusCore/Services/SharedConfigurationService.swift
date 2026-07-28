@@ -98,14 +98,17 @@ final class SharedConfigurationService {
     }
 
     /// Drain the I/O queue so pending writes/removals land before process exit.
-    /// The wait is bounded: an unbounded `sync {}` here ran inside
-    /// `applicationWillTerminate` and tripped the 3s main-thread watchdog when
-    /// the disk was slow. Losing a shared-config touch at quit is harmless —
-    /// the file is rewritten on next launch.
+    /// Bounded: this runs on the main thread during `applicationWillTerminate`,
+    /// and an unbounded `sync {}` there blocks the quit forever if any queued
+    /// filesystem op wedges (the queue writes under ~/.osaurus, which a factory
+    /// reset deletes out from under it). Losing a pending runtime-discovery
+    /// write is harmless; a hung quit is not.
     func flushPendingWork() {
         let drained = DispatchSemaphore(value: 0)
         Self.ioQueue.async { drained.signal() }
-        _ = drained.wait(timeout: .now() + 2)
+        if drained.wait(timeout: .now() + 2) == .timedOut {
+            print("[Osaurus] SharedConfigurationService: flush timed out; abandoning pending I/O")
+        }
     }
 
     /// Remove this instance's shared files

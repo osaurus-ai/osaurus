@@ -424,7 +424,7 @@ struct TelegramSettingsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 SettingsToggle(
                     title: L("Allow Sending on Telegram"),
-                    description: L("Let agents post to write-allowlisted Telegram chats. Channel writes must also be on globally."),
+                    description: L("Let agents post to write-allowlisted Telegram chats. The global Sending switch in Channels must also be on."),
                     isOn: $writeEnabled.animation(.easeOut(duration: 0.2))
                 )
 
@@ -460,7 +460,7 @@ struct TelegramSettingsView: View {
 
             if !longPollingEnabled {
                 Text(
-                    "Receiving is off: agents will not see new Telegram messages and nothing can be dispatched.",
+                    "Receiving is off: agents will not see new Telegram messages and no agent can reply.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
@@ -474,12 +474,12 @@ struct TelegramSettingsView: View {
 
     private var stepDispatchSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AgentChannelSectionHeading(L("Send incoming messages to an agent"))
+            AgentChannelSectionHeading(L("Reply to incoming messages"))
 
             SettingsToggle(
-                title: L("Dispatch Incoming Messages to an Agent"),
+                title: L("Reply with an Agent"),
                 description: L(
-                    "Run verified, allowlisted Telegram messages in a private channel session. External-surface tool restrictions still apply."
+                    "Choose which agent answers verified, allowlisted Telegram messages. Replies run in a private channel session; external-surface tool restrictions still apply."
                 ),
                 isOn: $inboundDispatchEnabled.animation(.easeOut(duration: 0.2))
             )
@@ -703,7 +703,7 @@ struct TelegramSettingsView: View {
     private func validationFailure() -> (message: String, section: AgentChannelProviderSetupSection)? {
         if inboundDispatchEnabled, inboundAgentId == nil, inboundRoutes.isEmpty {
             return (
-                L("Select a default agent or add a routing rule for incoming Telegram messages."),
+                L("Choose an agent to reply, or add a rule for incoming Telegram messages."),
                 .behavior
             )
         }

@@ -194,17 +194,20 @@ struct AgentChannelInboundActivityTests {
             AgentChannelConnectionCenterView.routingSummary(dispatch) { names[$0] }
         }
 
-        // Dispatch off → no routing line at all.
-        #expect(summary(AgentChannelInboundDispatchConfiguration(enabled: false)) == nil)
+        // Replying off is stated explicitly on a configured channel rather
+        // than hiding the state behind a missing line.
+        #expect(summary(AgentChannelInboundDispatchConfiguration(enabled: false)) == "Replies off")
 
-        // Enabled but nothing selected → honest empty state.
-        #expect(summary(AgentChannelInboundDispatchConfiguration(enabled: true)) == "No agent assigned")
+        // Enabled but nothing selected → honest call to action.
+        #expect(
+            summary(AgentChannelInboundDispatchConfiguration(enabled: true))
+                == "Replies on — choose an agent")
 
         // Single default agent.
         #expect(
             summary(
                 AgentChannelInboundDispatchConfiguration(enabled: true, targetAgentId: agentA)
-            ) == "Answers as Sales")
+            ) == "Replies: Sales")
 
         // Default + a route to a second agent → multi-agent summary.
         let multi = AgentChannelInboundDispatchConfiguration(
@@ -212,14 +215,14 @@ struct AgentChannelInboundActivityTests {
             targetAgentId: agentA,
             routes: [AgentChannelDispatchRoute(roomId: "C1", agentId: agentB)]
         )
-        #expect(summary(multi) == "Routes to 2 agents: Sales, Support")
+        #expect(summary(multi) == "Replies: 2 agents — Sales, Support")
 
         // A routed agent that no longer exists is still surfaced.
         let missing = AgentChannelInboundDispatchConfiguration(
             enabled: true,
             targetAgentId: UUID()
         )
-        #expect(summary(missing) == "Answers as Unknown agent")
+        #expect(summary(missing) == "Replies: Unknown agent")
     }
 
     // MARK: - Custom channel badge honesty

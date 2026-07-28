@@ -94,9 +94,19 @@ let package = Package(
         // chat's warm-start checkpoint. vmlx-swift#189 makes the solo
         // TokenIterator path report an accepted disk/paged restore only after
         // path-dependent rollback checks, with exact restored/total counts.
+        // vmlx-swift#190 captures the exact prompt-minus-one SSD seed while the real
+        // prefill crosses it for standalone rotating/SWA cache topologies.
+        // This preserves the existing fail-closed post-hoc rederive guard
+        // while allowing a later compatible turn to restore the longer seed.
+        // vmlx-swift#191 preserves canonical scalar content for Gemma 4
+        // text-only system/developer turns. Real bundle templates otherwise
+        // omit prompt-affecting settings text and can accept an incompatible
+        // SSD checkpoint because distinct revisions tokenize identically.
+        // vmlx-swift#192 adds Nanbeige 4.2's looped-transformer runtime with
+        // 44 loop-layer KV slots and fail-closed runtime-contract validation.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "64b6ca2433c12af2dd6955f317366f0f9626e061"
+            revision: "7300afaa764f50743b11d8f7f8ececf0100731a2"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

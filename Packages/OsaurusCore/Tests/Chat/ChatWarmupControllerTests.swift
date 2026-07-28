@@ -33,6 +33,108 @@ struct ChatConfigurationWarmModelsOnLoadTests {
     }
 }
 
+@Suite("ChatWarmupController prompt-shape rewarm")
+@MainActor
+struct ChatWarmupControllerPromptShapeTests {
+
+    @Test("settings prompt change survives send cancellation and warms the newest payload")
+    func settingsPromptChangeWarmsNewestPayload() async throws {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [ChatMessage(role: "system", content: "settings revision A")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|settings-a"
+        )
+
+        let controller = ChatWarmupController()
+        controller.scheduleWarmup(session: session, debounce: .zero)
+        for _ in 0 ..< 100 {
+            if controller.state == .warm { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        await controller.awaitInFlightWarmup()
+        #expect(engine.requestCount == 1)
+
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [ChatMessage(role: "system", content: "settings revision B")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|settings-b"
+        )
+        controller.handleContextShapeChange(session: session)
+
+        // `ChatSession.send` cancels ordinary scheduled warm-up work before
+        // its handshake. The settings rewarm is required work and must
+        // survive that exact operation.
+        controller.cancelScheduledWarmup()
+        await controller.awaitRequiredContextWarmup()
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.requestCount == 2)
+        let request = try #require(engine.lastRequest)
+        #expect(request.messages.first?.content == "settings revision B")
+        #expect(controller.state == .warm)
+        #expect(!controller.needsPreSendHandshake)
+    }
+
+    @Test("chat prompt-shape signal inventory includes app configuration changes")
+    func appConfigurationChangeIsPromptShapeSignal() {
+        #expect(
+            ChatSession.promptShapeNotificationNames.contains(
+                .appConfigurationChanged
+            )
+        )
+    }
+}
+
+@Suite("ChatSession immediate prompt-shape reconciliation", .serialized)
+@MainActor
+struct ChatSessionImmediatePromptShapeTests {
+
+    @Test("first preview primes a baseline without creating a required rewarm")
+    func firstPreviewIsInitializationNotRevision() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            session.agentId = Agent.defaultId
+
+            #expect(!session.reconcilePromptShapeBeforeSendForTests())
+            #expect(!session.warmupController.needsPreSendHandshake)
+        }
+    }
+
+    @Test("Settings Save then immediate Send sees the newest rendered prompt before debounce")
+    func immediateSendReconcilesCurrentPrompt() async throws {
+        try await ChatHistoryTestStorage.run {
+            var configuration = DefaultAgentConfigurationStore.load()
+            configuration.systemPrompt = "settings revision A"
+            DefaultAgentConfigurationStore.save(configuration)
+
+            let session = ChatSession()
+            session.agentId = Agent.defaultId
+
+            // Seed the same cached preview that made the live chip green.
+            _ = session.resyncBudgetEstimateForTests()
+
+            configuration.systemPrompt = "settings revision B"
+            DefaultAgentConfigurationStore.save(configuration)
+
+            // Do not flush the main queue or wait for the 80 ms Combine
+            // debounce. Production `send()` calls this exact reconciliation
+            // before checking whether it needs a warm-up handshake.
+            #expect(session.reconcilePromptShapeBeforeSendForTests())
+
+            // The delayed notification will see identical bytes and remain a
+            // no-op rather than scheduling duplicate required warm-up work.
+            #expect(!session.reconcilePromptShapeBeforeSendForTests())
+        }
+    }
+}
+
 @Suite("ChatWarmupController immediate model switch")
 @MainActor
 struct ChatWarmupControllerModelSwitchTests {

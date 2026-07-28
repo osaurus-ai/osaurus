@@ -481,7 +481,7 @@ struct SlackSettingsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 SettingsToggle(
                     title: L("Allow Sending on Slack"),
-                    description: L("Let agents post to write-allowlisted Slack channels. Channel writes must also be on globally."),
+                    description: L("Let agents post to write-allowlisted Slack channels. The global Sending switch in Channels must also be on."),
                     isOn: $writeEnabled.animation(.easeOut(duration: 0.2))
                 )
 
@@ -501,12 +501,12 @@ struct SlackSettingsView: View {
 
     private var stepDispatchSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AgentChannelSectionHeading(L("Send incoming messages to an agent"))
+            AgentChannelSectionHeading(L("Reply to incoming messages"))
 
             SettingsToggle(
-                title: L("Dispatch Incoming Messages to an Agent"),
+                title: L("Reply with an Agent"),
                 description: L(
-                    "Run verified, allowlisted Slack messages in a private channel session. External-surface tool restrictions still apply."
+                    "Choose which agent answers verified, allowlisted Slack messages. Replies run in a private channel session; external-surface tool restrictions still apply."
                 ),
                 isOn: $inboundDispatchEnabled.animation(.easeOut(duration: 0.2))
             )
@@ -681,7 +681,7 @@ struct SlackSettingsView: View {
                     title: L("Writable Channel IDs"),
                     text: $writableChannelIdsText,
                     placeholder: L("C0123ABC — one per line"),
-                    help: L("Channels agents may post to when Slack and global channel writes are enabled.")
+                    help: L("Channels agents may post to when Slack sending and the global Sending switch are on.")
                 )
                 AgentChannelMultilineSettingsField(
                     title: L("Authorized Sender IDs"),
@@ -1444,7 +1444,7 @@ struct SlackSettingsView: View {
         }
         if inboundDispatchEnabled, inboundAgentId == nil, inboundRoutes.isEmpty {
             return (
-                L("Select a default agent or add a routing rule for incoming Slack messages."),
+                L("Choose an agent to reply, or add a rule for incoming Slack messages."),
                 .behavior
             )
         }

@@ -2108,21 +2108,34 @@ struct DiscordConnectionTests {
     }
 
     private func withIsolatedDiscordStores(
-        _ body: (any DiscordCredentialStorage) async throws -> Void
+        _ body: @Sendable (any DiscordCredentialStorage) async throws -> Void
     ) async throws {
-        let previousDirectory = DiscordConnectionConfigurationStore.overrideDirectory
-        let previousChannelDirectory = AgentChannelConfigurationStore.overrideDirectory
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("osaurus-discord-tests-\(UUID().uuidString)", isDirectory: true)
-        let credentials = FakeDiscordCredentialStore()
-        DiscordConnectionConfigurationStore.overrideDirectory = directory
-        AgentChannelConfigurationStore.overrideDirectory = directory
-        defer {
-            DiscordConnectionConfigurationStore.overrideDirectory = previousDirectory
-            AgentChannelConfigurationStore.overrideDirectory = previousChannelDirectory
-            try? FileManager.default.removeItem(at: directory)
+        // BOTH process-wide locks (fixed order: StoragePaths →
+        // AgentChannelConfiguration): this helper mutates
+        // `AgentChannelConfigurationStore.overrideDirectory`, a global also
+        // guarded by these locks in the runner/coexistence/hardening suites;
+        // holding neither raced them and intermittently pointed mid-test
+        // reads at a foreign temp directory.
+        try await StoragePathsTestLock.shared.run {
+            try await AgentChannelConfigurationTestLock.shared.run {
+                let previousDirectory = DiscordConnectionConfigurationStore.overrideDirectory
+                let previousChannelDirectory = AgentChannelConfigurationStore.overrideDirectory
+                let directory = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(
+                        "osaurus-discord-tests-\(UUID().uuidString)",
+                        isDirectory: true
+                    )
+                let credentials = FakeDiscordCredentialStore()
+                DiscordConnectionConfigurationStore.overrideDirectory = directory
+                AgentChannelConfigurationStore.overrideDirectory = directory
+                defer {
+                    DiscordConnectionConfigurationStore.overrideDirectory = previousDirectory
+                    AgentChannelConfigurationStore.overrideDirectory = previousChannelDirectory
+                    try? FileManager.default.removeItem(at: directory)
+                }
+                try await body(credentials)
+            }
         }
-        try await body(credentials)
     }
 
     private func policy(named action: String, in policies: [[String: Any]]) -> [String: Any]? {

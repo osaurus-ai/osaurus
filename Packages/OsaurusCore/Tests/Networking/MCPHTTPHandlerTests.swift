@@ -32,6 +32,7 @@ struct MCPHTTPHandlerTests {
         "agent_channel_add_reaction",
         "agent_channel_remove_reaction",
         "agent_channel_send_typing",
+        "agent_channel_publish",
     ]
 
     @Test func mcp_health_returns_ok() async throws {

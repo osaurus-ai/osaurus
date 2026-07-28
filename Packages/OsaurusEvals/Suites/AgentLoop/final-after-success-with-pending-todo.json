@@ -2,8 +2,8 @@
   "id": "agent_loop.final-after-success-with-pending-todo",
   "domain": "agent_loop",
   "label": "agent loop • a successful side effect followed by final prose stops exactly once despite a pending todo",
-  "query": "Use the todo tool to track exactly these two items: (1) write receipt.txt containing exactly REMINDER_CREATED, and (2) optional future review. Complete item 1 now by calling file_write with the relative path receipt.txt. Leave the optional future review unchecked, report REMINDER_CREATED to me once, and stop.",
-  "notes": "Regression for the Qwen/Ornith reminder loop: a successful side effect was followed by valid final prose, but an unchecked Todo kept the run alive and the model repeated the same confirmation. Todo is display/progress state, never a control-flow owner. The six-step ceiling allows benign pre-final planning or verification differences while still failing the old behavior, which reopened the run until the ten-step safety cap.",
+  "query": "Track exactly these three items. First call todo with all three items unchecked: (1) write receipt.txt containing exactly REMINDER_CREATED, (2) optional future review, and (3) optional future archival check. Next call file_write with the relative path receipt.txt and the exact content REMINDER_CREATED. After file_write succeeds, call todo once more with only item 1 checked and both optional future items still unchecked. Then report REMINDER_CREATED to me once and stop.",
+  "notes": "Regression for the Qwen/Ornith reminder loop: a successful side effect was followed by valid final prose, but an unchecked Todo kept the run alive and the model repeated the same confirmation. Todo is display/progress state, never a control-flow owner. The explicit three-item task matches the product prompt's 3+ item Todo threshold, so the fixture does not contradict the model-facing contract. The six-step ceiling allows benign pre-final planning or verification differences while still failing the old behavior, which reopened the run until the ten-step safety cap.",
   "fixtures": {},
   "expect": {
     "agentLoop": {
