@@ -127,6 +127,7 @@ enum SubagentModelResolution {
         agentId: UUID?,
         evalModel: String?,
         requestedModel: String? = nil,
+        invokingParentModelName: String? = nil,
         idleWaitSeconds: Int,
         deniedMessage: String,
         unavailableMessage: String,
@@ -180,7 +181,8 @@ enum SubagentModelResolution {
             modelName: model,
             config: config,
             idleWaitSeconds: idleWaitSeconds,
-            deniedMessage: deniedMessage
+            deniedMessage: deniedMessage,
+            invokingParentModelName: invokingParentModelName
         )
         let installedModelID =
             decision.isLocal ? ModelManager.findInstalledModel(named: model)?.id : nil

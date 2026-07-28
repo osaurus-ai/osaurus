@@ -1170,9 +1170,9 @@ struct AgentDetailView: View {
     private var imageEnabled: Bool { subagentToggles[.image] ?? false }
     private var appleScriptEnabled: Bool { subagentToggles[.appleScript] ?? false }
     /// Per-agent `spawn_agent` allow-list (which agents this agent may spawn).
-    /// Mirrored from / into `AgentSettings.spawnableAgentNames`; empty hides the
+    /// Mirrored from / into `AgentSettings.spawnableAgentIDs`; empty hides the
     /// `spawn_agent` tool.
-    @State private var spawnableAgentNames: [String] = []
+    @State private var spawnableAgentIDs: [UUID] = []
     /// Per-agent `spawn_model` allow-list (raw model ids this agent may spawn).
     /// Mirrored from / into `AgentSettings.spawnableModelNames`; empty hides the
     /// `spawn_model` tool.
@@ -1519,6 +1519,17 @@ struct AgentDetailView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .watchersChanged)) { _ in
             refreshDetailCaches()
+        }
+        // The Spawn editor reads Local Orchestrator Handoff from the shared
+        // global store. Keep an already-open custom agent in sync when the
+        // setting changes elsewhere, matching ConfigurationView's
+        // notification-driven refresh instead of requiring the user to close
+        // and reopen this detail view.
+        .onReceive(
+            NotificationCenter.default.publisher(for: .subagentConfigurationChanged)
+        ) { _ in
+            let latest = SubagentConfigurationStore.snapshot()
+            if latest != globalSubagentConfig { globalSubagentConfig = latest }
         }
         .onChange(of: selfSchedulingEnabled) { _, newValue in
             // The master Self-scheduling switch owns the on/off state, so the
@@ -3821,7 +3832,7 @@ struct AgentDetailView: View {
                 excludedAgentID: agent.id,
                 localHandoffEnabled: globalSubagentConfig.localTextDelegationEnabled,
                 modelOverride: spawnModelOverrideBinding,
-                spawnableAgentNames: $spawnableAgentNames,
+                spawnableAgentIDs: $spawnableAgentIDs,
                 spawnableModelNames: $spawnableModelNames,
                 spawnableModelNotes: $spawnableModelNotes,
                 permissionDefaults: $subagentPermissions,
@@ -6035,7 +6046,7 @@ struct AgentDetailView: View {
         }
         computerUseCeiling = agent.settings.computerUseCeiling
         screenContextEnabled = agent.settings.screenContextEnabled
-        spawnableAgentNames = agent.settings.spawnableAgentNames
+        spawnableAgentIDs = agent.settings.spawnableAgentIDs
         spawnableModelNames = agent.settings.spawnableModelNames
         spawnableModelNotes = agent.settings.spawnableModelNotes
         imageGenerationModelId = agent.settings.imageGenerationModelId
@@ -6285,7 +6296,7 @@ struct AgentDetailView: View {
                 // capability flag still hides/refuses the tools, while a later
                 // re-enable restores the user's deliberate agents, models, and
                 // routing notes instead of silently destroying them.
-                spawnableAgentNames: spawnableAgentNames,
+                spawnableAgentIDs: spawnableAgentIDs,
                 spawnableModelNames: SubagentConfiguration.normalizedSpawnableModelNames(
                     spawnableModelNames
                 ),

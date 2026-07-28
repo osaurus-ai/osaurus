@@ -27,6 +27,7 @@ struct AppleScriptModelsView: View {
     /// main chat and "choose automatically" agents fall back to). Persisted to
     /// the shared `SubagentConfiguration` store on edit.
     @State private var configuration = SubagentConfigurationStore.snapshot()
+    @State private var configurationBaseline = SubagentConfigurationStore.snapshot()
 
     /// Gates persist-on-change until the initial snapshot has landed so loading
     /// the tab never round-trips a default back through `save()`. Mirrors the
@@ -73,18 +74,31 @@ struct AppleScriptModelsView: View {
             refreshInstalled()
         }
         .onAppear {
-            configuration = SubagentConfigurationStore.snapshot()
+            let latest = SubagentConfigurationStore.snapshot()
+            configurationBaseline = latest
+            configuration = latest
             DispatchQueue.main.async { hasLoaded = true }
         }
         .onChange(of: configuration) { _, newValue in
             guard hasLoaded else { return }
-            SubagentConfigurationStore.save(newValue)
+            let saved = SubagentConfigurationStore.saveEditorSnapshot(
+                newValue,
+                loadedBaseline: configurationBaseline
+            )
+            configurationBaseline = saved
+            if saved != newValue { configuration = saved }
         }
         .onReceive(
             NotificationCenter.default.publisher(for: .subagentConfigurationChanged)
         ) { _ in
             let latest = SubagentConfigurationStore.snapshot()
-            if latest != configuration { configuration = latest }
+            let reconciled = SubagentConfiguration.mergingEditorSnapshot(
+                configuration,
+                loadedBaseline: configurationBaseline,
+                live: latest
+            )
+            configurationBaseline = latest
+            if reconciled != configuration { configuration = reconciled }
         }
     }
 

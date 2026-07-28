@@ -369,17 +369,23 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// model; an explicit id lets one case exercise different-local
         /// residency waves. Sampling remains bundle-driven in either case.
         public struct SpawnAgentFixture: Sendable, Codable {
+            /// Stable identity exposed to the orchestrator and accepted by the
+            /// production spawn tools. Omit outside contract-focused cases to
+            /// receive an isolated random UUID.
+            public let id: UUID?
             public let name: String
             public let description: String?
             public let systemPrompt: String?
             public let modelId: String?
 
             public init(
+                id: UUID? = nil,
                 name: String,
                 description: String? = nil,
                 systemPrompt: String? = nil,
                 modelId: String? = nil
             ) {
+                self.id = id
                 self.name = name
                 self.description = description
                 self.systemPrompt = systemPrompt
@@ -400,7 +406,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Expose `applescript` / `mac_query` delegation tools (requires an
         /// installed AppleScript model at run time).
         public let appleScriptEnabled: Bool?
-        /// Temporary worker agents the orchestrator may select by exact name.
+        /// Temporary worker agents the orchestrator may select by exact UUID.
         public let spawnAgents: [SpawnAgentFixture]?
         /// Per-call/concurrency ceiling applied to the temporary orchestrator.
         public let maxParallelSpawns: Int?
@@ -1335,17 +1341,41 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let requireFinalAfterToolResults: Bool?
         /// Default true: every tool result must match a prior tool call by id.
         public let requireMatchedResults: Bool?
+        /// Exact tool-call sequence in transcript order. Unlike an ordered
+        /// subsequence assertion, this also rejects duplicate/reopened calls.
+        public let expectedToolSequence: [String]?
+        /// Require exactly one assistant final in the committed transcript.
+        public let requireSingleFinalAssistant: Bool?
+        /// Require the final assistant message to follow every tool result.
+        public let requireFinalAfterAllToolResults: Bool?
+        /// Require the final assistant message to be the transcript's last
+        /// event, so a tool loop cannot silently reopen after finalization.
+        public let requireFinalIsLastEvent: Bool?
+        /// Optional production-shaped `spawn_batch` aggregate assertion. The
+        /// grounding runner parses every matching result with the canonical
+        /// AgentLoop parser and reuses the structured AgentLoop scorer.
+        public let spawnBatch: AgentLoopExpectations.SpawnBatchAssertion?
 
         public init(
             events: [Event],
             assertions: [Assertion],
             requireFinalAfterToolResults: Bool? = nil,
-            requireMatchedResults: Bool? = nil
+            requireMatchedResults: Bool? = nil,
+            expectedToolSequence: [String]? = nil,
+            requireSingleFinalAssistant: Bool? = nil,
+            requireFinalAfterAllToolResults: Bool? = nil,
+            requireFinalIsLastEvent: Bool? = nil,
+            spawnBatch: AgentLoopExpectations.SpawnBatchAssertion? = nil
         ) {
             self.events = events
             self.assertions = assertions
             self.requireFinalAfterToolResults = requireFinalAfterToolResults
             self.requireMatchedResults = requireMatchedResults
+            self.expectedToolSequence = expectedToolSequence
+            self.requireSingleFinalAssistant = requireSingleFinalAssistant
+            self.requireFinalAfterAllToolResults = requireFinalAfterAllToolResults
+            self.requireFinalIsLastEvent = requireFinalIsLastEvent
+            self.spawnBatch = spawnBatch
         }
 
         public struct Event: Sendable, Codable {
@@ -1382,19 +1412,25 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             public let resultMustContain: [String]?
             /// Every fragment must be absent from the original tool arguments.
             public let argumentsMustNotContain: [String]?
+            /// The asserted tool call must occur after this named prior tool
+            /// result, pinning result-driven continuation rather than a
+            /// pre-result or parallel call.
+            public let callMustFollowResultOf: String?
 
             public init(
                 callId: String,
                 answerMustContain: [String]? = nil,
                 answerMustNotContain: [String]? = nil,
                 resultMustContain: [String]? = nil,
-                argumentsMustNotContain: [String]? = nil
+                argumentsMustNotContain: [String]? = nil,
+                callMustFollowResultOf: String? = nil
             ) {
                 self.callId = callId
                 self.answerMustContain = answerMustContain
                 self.answerMustNotContain = answerMustNotContain
                 self.resultMustContain = resultMustContain
                 self.argumentsMustNotContain = argumentsMustNotContain
+                self.callMustFollowResultOf = callMustFollowResultOf
             }
         }
     }

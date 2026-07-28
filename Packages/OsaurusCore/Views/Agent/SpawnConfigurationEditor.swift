@@ -20,7 +20,7 @@ struct SpawnConfigurationEditor: View {
     let excludedAgentID: UUID?
     let localHandoffEnabled: Bool
     @Binding var modelOverride: String?
-    @Binding var spawnableAgentNames: [String]
+    @Binding var spawnableAgentIDs: [UUID]
     @Binding var spawnableModelNames: [String]
     @Binding var spawnableModelNotes: [String: String]
     @Binding var permissionDefaults: SubagentPermissionDefaults
@@ -145,9 +145,9 @@ struct SpawnConfigurationEditor: View {
     // MARK: - Allowed agents
 
     private var allowedAgents: some View {
-        let selected = spawnableAgentNames
+        let selected = spawnableAgentIDs
         let addable = agentCandidates.filter { candidate in
-            !selected.contains { $0.caseInsensitiveCompare(candidate.name) == .orderedSame }
+            !selected.contains(candidate.id)
         }
         return VStack(alignment: .leading, spacing: 8) {
             AgentSheetSectionLabel("Allowed agents")
@@ -157,12 +157,13 @@ struct SpawnConfigurationEditor: View {
                 )
             } else {
                 FlowLayout(spacing: 6) {
-                    ForEach(selected, id: \.self) { name in
-                        let available = agentCandidates.contains {
-                            $0.name.caseInsensitiveCompare(name) == .orderedSame
-                        }
-                        removableChip(label: name, unavailable: !available) {
-                            setAgent(name, included: false)
+                    ForEach(selected, id: \.self) { id in
+                        let candidate = agentCandidates.first { $0.id == id }
+                        removableChip(
+                            label: candidate?.name ?? id.uuidString,
+                            unavailable: candidate == nil
+                        ) {
+                            setAgent(id, included: false)
                         }
                     }
                 }
@@ -186,10 +187,10 @@ struct SpawnConfigurationEditor: View {
     }
 
     private var agentAddList: some View {
-        let selected = spawnableAgentNames
+        let selected = spawnableAgentIDs
         let query = agentSearch.trimmingCharacters(in: .whitespacesAndNewlines)
         let filtered = agentCandidates.filter { candidate in
-            !selected.contains { $0.caseInsensitiveCompare(candidate.name) == .orderedSame }
+            !selected.contains(candidate.id)
                 && (query.isEmpty
                     || candidate.name.localizedCaseInsensitiveContains(query)
                     || candidate.description.localizedCaseInsensitiveContains(query))
@@ -212,7 +213,7 @@ struct SpawnConfigurationEditor: View {
                                 subtitle: candidate.description.isEmpty
                                     ? nil : candidate.description
                             ) {
-                                setAgent(candidate.name, included: true)
+                                setAgent(candidate.id, included: true)
                             }
                         }
                     }
@@ -691,12 +692,10 @@ struct SpawnConfigurationEditor: View {
         )
     }
 
-    private func setAgent(_ name: String, included: Bool) {
-        var names = spawnableAgentNames.filter {
-            $0.caseInsensitiveCompare(name) != .orderedSame
-        }
-        if included { names.append(name) }
-        spawnableAgentNames = names
+    private func setAgent(_ id: UUID, included: Bool) {
+        var ids = spawnableAgentIDs.filter { $0 != id }
+        if included { ids.append(id) }
+        spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(ids)
         onChange()
     }
 

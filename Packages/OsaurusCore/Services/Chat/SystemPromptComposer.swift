@@ -524,11 +524,19 @@ public struct SystemPromptComposer: Sendable {
     private static func configuredSpawnPools(
         snapshot: AgentConfigSnapshot
     ) -> (
-        agents: [String],
+        agents: [UUID],
         models: [String],
         notes: [String: String],
         launcherModelOverride: String?
     ) {
+        if let frozen = snapshot.spawnConfiguration {
+            return (
+                agents: frozen.agentIDs,
+                models: frozen.modelNames,
+                notes: frozen.modelNotes,
+                launcherModelOverride: frozen.launcherModelOverride
+            )
+        }
         let config = SubagentConfigurationStore.snapshot()
         let isDefault = snapshot.agentId == Agent.defaultId
         let settings = AgentManager.shared.agent(for: snapshot.agentId)?.settings
@@ -537,7 +545,7 @@ public struct SystemPromptComposer: Sendable {
                 isDefault: isDefault,
                 config: config,
                 perAgentEnabled: snapshot.spawnDelegationEnabled,
-                perAgentTargets: snapshot.spawnableAgentNames
+                perAgentTargets: snapshot.spawnableAgentIDs
             ),
             models: SubagentToolVisibility.effectiveSpawnableModels(
                 isDefault: isDefault,
@@ -597,7 +605,7 @@ public struct SystemPromptComposer: Sendable {
             effectiveToolsOff
             ? .empty
             : await SpawnDescriptors.resolveForRequest(
-                agentNames: configuredSpawn.agents,
+                agentIDs: configuredSpawn.agents,
                 modelNames: configuredSpawn.models,
                 modelNotes: configuredSpawn.notes,
                 launcherModelOverride: configuredSpawn.launcherModelOverride
@@ -1037,7 +1045,7 @@ public struct SystemPromptComposer: Sendable {
         // Spawn guidance enumerates the launching agent's request-local ACTUAL
         // spawnable agents + models — so it can't ride the generic guidance loop
         // above (whose `spawn` entry intentionally keeps `guidance == nil`).
-        // Render a dedicated block whenever either spawn tool reached the schema,
+        // Render a dedicated block whenever any spawn tool reached the schema,
         // listing only the tool(s) that resolved and reading the same pools
         // (`SubagentToolVisibility` + the snapshot/config) the visibility gate
         // used, so the prompt and the callable tools can never disagree. It joins
@@ -1051,30 +1059,38 @@ public struct SystemPromptComposer: Sendable {
             let modelToolResolved = resolvedNames.contains(
                 SubagentCapabilityRegistry.spawnModelToolName
             )
-            if agentToolResolved || modelToolResolved {
-                let config = SubagentConfigurationStore.snapshot()
-                let isDefault = snapshot.agentId == Agent.defaultId
+            let batchToolResolved = resolvedNames.contains(
+                SubagentCapabilityRegistry.spawnBatchToolName
+            )
+            if agentToolResolved || modelToolResolved || batchToolResolved {
                 // The worker tool-reach line must match what the runtime will
                 // actually grant, so resolve it through the SAME helper the
                 // spawn kind uses (default agent → global config, custom →
                 // its own settings).
-                let toolAccess = SubagentToolVisibility.effectiveSpawnToolAccess(
-                    isDefault: isDefault,
-                    config: config,
-                    settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings
-                )
-                let maxParallel = SubagentToolVisibility.effectiveBudgets(
-                    isDefault: isDefault,
-                    config: config,
-                    settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings
-                ).normalized.maxParallelSpawns
+                let toolAccess =
+                    snapshot.spawnConfiguration?.toolAccess
+                    ?? SubagentToolVisibility.effectiveSpawnToolAccess(
+                        isDefault: snapshot.agentId == Agent.defaultId,
+                        config: SubagentConfigurationStore.snapshot(),
+                        settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings
+                    )
+                let maxParallel =
+                    snapshot.spawnConfiguration?.budgets.maxParallelSpawns
+                    ?? SubagentToolVisibility.effectiveBudgets(
+                        isDefault: snapshot.agentId == Agent.defaultId,
+                        config: SubagentConfigurationStore.snapshot(),
+                        settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings
+                    ).normalized.maxParallelSpawns
                 composer.append(
                     .static(
                         id: "spawn",
                         label: L("Subagents"),
                         content: SystemPromptTemplates.spawnGuidance(
-                            agents: agentToolResolved ? toolset.spawnTargets.agents : [],
-                            models: modelToolResolved ? toolset.spawnTargets.models : [],
+                            agents: (agentToolResolved || batchToolResolved)
+                                ? toolset.spawnTargets.agents : [],
+                            models: (modelToolResolved || batchToolResolved)
+                                ? toolset.spawnTargets.models : [],
+                            availableToolNames: resolvedNames,
                             toolAccess: toolAccess,
                             maxParallel: maxParallel
                         )
@@ -2079,7 +2095,7 @@ public struct SystemPromptComposer: Sendable {
             effectiveToolsOff
             ? .empty
             : SpawnDescriptors.resolveForPreview(
-                agentNames: configuredSpawn.agents,
+                agentIDs: configuredSpawn.agents,
                 modelNames: configuredSpawn.models,
                 modelNotes: configuredSpawn.notes,
                 launcherModelOverride: configuredSpawn.launcherModelOverride
@@ -2667,31 +2683,36 @@ public struct SystemPromptComposer: Sendable {
         // boundary.
         let config = SubagentConfigurationStore.snapshot()
         let isDefault = snapshot.agentId == Agent.defaultId
-        let configuredAgentNames = SubagentToolVisibility.effectiveSpawnableAgents(
-            isDefault: isDefault,
-            config: config,
-            perAgentEnabled: snapshot.spawnDelegationEnabled,
-            perAgentTargets: snapshot.spawnableAgentNames
-        )
-        let configuredModelIds = SubagentToolVisibility.effectiveSpawnableModels(
-            isDefault: isDefault,
-            config: config,
-            perAgentEnabled: snapshot.spawnDelegationEnabled,
-            perAgentModelTargets: snapshot.spawnableModelNames
-        )
-        let allowedAgentNames =
-            spawnTargets?.runnableAgentNames ?? configuredAgentNames
+        let configuredAgentIDs =
+            snapshot.spawnConfiguration?.agentIDs
+            ?? SubagentToolVisibility.effectiveSpawnableAgents(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: snapshot.spawnDelegationEnabled,
+                perAgentTargets: snapshot.spawnableAgentIDs
+            )
+        let configuredModelIds =
+            snapshot.spawnConfiguration?.modelNames
+            ?? SubagentToolVisibility.effectiveSpawnableModels(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: snapshot.spawnDelegationEnabled,
+                perAgentModelTargets: snapshot.spawnableModelNames
+            )
+        let allowedAgentIDs =
+            (spawnTargets?.runnableAgentIDs ?? configuredAgentIDs)
+            .filter { $0 != snapshot.agentId }
         let allowedModelIds =
             spawnTargets?.runnableModelIds ?? configuredModelIds
 
         if let spawnAgent = byName[SubagentCapabilityRegistry.spawnAgentToolName] {
-            if spawnTargets != nil, allowedAgentNames.isEmpty {
+            if spawnTargets != nil, allowedAgentIDs.isEmpty {
                 byName.removeValue(forKey: SubagentCapabilityRegistry.spawnAgentToolName)
             } else {
                 byName[SubagentCapabilityRegistry.spawnAgentToolName] =
                     SpawnAgentTool.constrainedSpec(
                         spawnAgent,
-                        allowedAgentNames: allowedAgentNames
+                        allowedAgentIDs: allowedAgentIDs
                     )
             }
         }
@@ -2707,19 +2728,20 @@ public struct SystemPromptComposer: Sendable {
             }
         }
         if let spawnBatch = byName[SubagentCapabilityRegistry.spawnBatchToolName] {
-            if spawnTargets != nil, allowedAgentNames.isEmpty, allowedModelIds.isEmpty {
+            if spawnTargets != nil, allowedAgentIDs.isEmpty, allowedModelIds.isEmpty {
                 byName.removeValue(forKey: SubagentCapabilityRegistry.spawnBatchToolName)
             } else {
-                let settings = AgentManager.shared.agent(for: snapshot.agentId)?.settings
-                let maxParallel = SubagentToolVisibility.effectiveBudgets(
-                    isDefault: isDefault,
-                    config: config,
-                    settings: settings
-                ).normalized.maxParallelSpawns
+                let maxParallel =
+                    snapshot.spawnConfiguration?.budgets.maxParallelSpawns
+                    ?? SubagentToolVisibility.effectiveBudgets(
+                        isDefault: isDefault,
+                        config: config,
+                        settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings
+                    ).normalized.maxParallelSpawns
                 byName[SubagentCapabilityRegistry.spawnBatchToolName] =
                     SpawnBatchTool.constrainedSpec(
                         spawnBatch,
-                        allowedAgentNames: allowedAgentNames,
+                        allowedAgentIDs: allowedAgentIDs,
                         allowedModelIds: allowedModelIds,
                         maxParallel: maxParallel
                     )

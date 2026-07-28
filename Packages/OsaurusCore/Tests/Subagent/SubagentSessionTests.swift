@@ -248,8 +248,20 @@ struct SubagentSessionTests {
         #expect(phases?.keys.contains("unloading_chat_models") == true)
         #expect(phases?.keys.contains("restoring_chat_models") == true)
         let order = residency?["phase_order"] as? [String]
+        // A parallel test (or a real concurrent caller) may legitimately hold
+        // the process-wide local admission slot first. That telemetry belongs
+        // before the handoff phases; it must not make this handoff-order check
+        // depend on whether another local run happened to overlap.
+        if let waitingIndex = order?.firstIndex(of: "waiting for local GPU") {
+            #expect(waitingIndex == 0)
+        }
+        let handoffOrder = order?.filter {
+            $0 == "waiting_for_chat_idle"
+                || $0 == "unloading_chat_models"
+                || $0 == "restoring_chat_models"
+        }
         #expect(
-            order == [
+            handoffOrder == [
                 "waiting_for_chat_idle", "unloading_chat_models", "restoring_chat_models",
             ]
         )

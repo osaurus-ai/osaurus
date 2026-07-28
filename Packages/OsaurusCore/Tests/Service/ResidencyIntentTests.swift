@@ -172,6 +172,7 @@ struct ResidencyIntentTests {
             from: Data(wire.utf8)
         )
         #expect(request.backgroundModelLoad == false)
+        #expect(request.preserveExistingResidencyOwner == false)
     }
 
     @Test("Background housekeeping actually reaches the runtime as background")
@@ -211,6 +212,10 @@ struct ResidencyIntentTests {
         // here undoes the entire guard, quietly, with no failing test anywhere.
         let copies = src.components(separatedBy: "copy.backgroundModelLoad = backgroundModelLoad")
             .count - 1
+        let ownerCopies = src.components(
+            separatedBy:
+                "copy.preserveExistingResidencyOwner = preserveExistingResidencyOwner"
+        ).count - 1
         let helpers = src.components(separatedBy: "copy.warmupPrefill = warmupPrefill").count - 1
         #expect(helpers == 2, "expected withModel + withContext to copy local-only flags")
         #expect(
@@ -221,6 +226,63 @@ struct ResidencyIntentTests {
             housekeeping back into an eviction-entitled interactive request.
             """
         )
+        #expect(
+            ownerCopies == helpers,
+            "every request-copy helper must preserve the nested residency-owner policy"
+        )
+    }
+
+    @Test("nested requests preserve an existing non-chat residency owner")
+    func nestedRequestPreservesExistingResidencyOwner() {
+        #expect(ModelRuntime.isChatOwnedResidencySource(nil))
+        #expect(ModelRuntime.isChatOwnedResidencySource(.chatUI))
+        #expect(!ModelRuntime.isChatOwnedResidencySource(.httpAPI))
+        #expect(!ModelRuntime.isChatOwnedResidencySource(.plugin))
+        #expect(!ModelRuntime.isChatOwnedResidencySource(.p2p))
+        #expect(!ModelRuntime.isChatOwnedResidencySource(.scheduled))
+
+        #expect(
+            ModelRuntime.resolvedResidencySource(
+                existing: .httpAPI,
+                incoming: .chatUI,
+                preserveExisting: true
+            ) == .httpAPI
+        )
+        #expect(
+            ModelRuntime.resolvedResidencySource(
+                existing: nil,
+                incoming: .chatUI,
+                preserveExisting: true
+            ) == .chatUI
+        )
+        #expect(
+            ModelRuntime.resolvedResidencySource(
+                existing: .httpAPI,
+                incoming: .chatUI,
+                preserveExisting: false
+            ) == .chatUI
+        )
+    }
+
+    @Test("subagent loads preserve ownership and reclaim only the invoking source")
+    func subagentLoadsUseProtectedRuntimeIntent() throws {
+        let runner = try Self.source(
+            "Services/AgentDelegation/AgentSubagentRunner.swift"
+        )
+        #expect(runner.contains("request.backgroundModelLoad = true"))
+        #expect(runner.contains("request.preserveExistingResidencyOwner = true"))
+
+        let handoff = try Self.source(
+            "Services/AgentDelegation/ChatResidencyHandoff.swift"
+        )
+        #expect(handoff.contains("ChatExecutionContext.currentSessionSource?.inferenceSource"))
+        #expect(handoff.contains("ownedBy: currentInferenceSource"))
+        #expect(handoff.contains("isChatOwnedResident("))
+
+        let residency = try Self.source("Subagent/SubagentResidency.swift")
+        #expect(residency.contains("ChatExecutionContext.currentSessionSource?.inferenceSource"))
+        #expect(residency.contains("ownedBy: inferenceSource"))
+        #expect(residency.contains("protectedResidentModels"))
     }
 
     @Test("The user's warm-up privilege is one-shot, not permanent")

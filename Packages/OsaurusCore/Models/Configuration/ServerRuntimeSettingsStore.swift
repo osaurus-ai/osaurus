@@ -22,6 +22,14 @@ import os
 
 /// Centralized persistence for `VMLXServerRuntimeSettings`.
 public enum ServerRuntimeSettingsStore {
+    /// Emitted after `server-runtime.json` and the hot snapshot have both been
+    /// updated successfully. `ServerController` observes this so non-UI
+    /// writers (notably `/admin/runtime-settings`) publish the same live value
+    /// the runtime consumes.
+    static let didSaveNotification = Notification.Name(
+        "ai.osaurus.serverRuntimeSettings.didSave"
+    )
+
     /// When set, configuration reads/writes use this directory instead
     /// of the default. Used by tests.
     /// Note: nonisolated(unsafe) since this is only set during test
@@ -112,6 +120,10 @@ public enum ServerRuntimeSettingsStore {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(settings).write(to: url, options: [.atomic])
             cachedSnapshot = settings
+            NotificationCenter.default.post(
+                name: didSaveNotification,
+                object: nil
+            )
         } catch {
             print("[Osaurus] Failed to save ServerRuntimeSettings: \(error)")
         }
@@ -228,6 +240,29 @@ public enum ServerRuntimeSettingsStore {
         }
         plan.displaySummary = memorySafetyDisplaySummary(settings: settings, plan: plan)
         return plan
+    }
+
+    /// Effective resident `BatchEngine` capacity. This deliberately resolves
+    /// through the same Memory Safety plan displayed by Server Settings, so
+    /// profile defaults and explicit overrides cannot disagree with the
+    /// engine allocation:
+    ///
+    /// Memory Safety custom override → Server concurrency override → profile.
+    ///
+    /// Continuous Batching off always pins the engine to one slot. A profile
+    /// with no automatic concurrency cap (the dangerous diagnostic mode)
+    /// likewise uses the compile-friendly one-slot floor until the user sets
+    /// an explicit value.
+    public nonisolated static func resolvedBatchEngineMaxBatchSize(
+        for settings: VMLXServerRuntimeSettings? = nil
+    ) -> Int {
+        let settings = settings ?? snapshot()
+        guard settings.concurrency.continuousBatching else { return 1 }
+        let resolved =
+            resolvedMemorySafetyPlan(for: settings)
+            .concurrency.maxConcurrentSequences
+            ?? 1
+        return min(max(resolved, 1), 32)
     }
 
     /// Canonicalize the single user-owned KV-retention override.
@@ -458,6 +493,32 @@ public enum ServerRuntimeSettingsStore {
         serverConfiguration: ServerConfiguration,
         userDefaults: UserDefaults
     ) -> VMLXServerRuntimeSettings {
+        let rawMaxBatch = userDefaults.integer(
+            forKey: "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
+        )
+        return initialSettings(
+            serverConfiguration: serverConfiguration,
+            legacyMaxBatchSize: rawMaxBatch > 0 ? min(rawMaxBatch, 32) : nil
+        )
+    }
+
+    /// Product defaults for an explicit Settings-panel reset. Unlike the
+    /// one-time missing-file migration, reset never consults the retired
+    /// BatchEngine `UserDefaults` key and therefore cannot resurrect an old
+    /// pre-`server-runtime.json` override.
+    public nonisolated static func resetDefaults(
+        serverConfiguration: ServerConfiguration = .default
+    ) -> VMLXServerRuntimeSettings {
+        initialSettings(
+            serverConfiguration: serverConfiguration,
+            legacyMaxBatchSize: nil
+        )
+    }
+
+    private nonisolated static func initialSettings(
+        serverConfiguration: ServerConfiguration,
+        legacyMaxBatchSize: Int?
+    ) -> VMLXServerRuntimeSettings {
         var settings = VMLXServerRuntimeSettings()
 
         // Network: project port + exposeToNetwork + CORS into vmlx
@@ -493,14 +554,12 @@ public enum ServerRuntimeSettingsStore {
         settings.generation.diffusionMaxDenoisingSteps = 16
         writeDiffusionDefaultsMigrationMarker()
 
-        // Concurrency: legacy UserDefaults key for BatchEngine max
-        // batch size. Falls back to nil so vmlx's coordinator chooses
-        // the default when the user never set anything.
-        let rawMaxBatch = userDefaults.integer(
-            forKey: "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
-        )
+        // Concurrency: the legacy UserDefaults key is supplied only by the
+        // first-run migration above. All normal runtime reads and explicit
+        // resets use `server-runtime.json` plus Memory Safety profile
+        // resolution.
         settings.concurrency = VMLXServerConcurrencySettings(
-            maxConcurrentSequences: rawMaxBatch > 0 ? min(rawMaxBatch, 32) : nil,
+            maxConcurrentSequences: legacyMaxBatchSize,
             prefillBatchSize: nil,
             prefillStepSize: nil,
             completionBatchSize: nil,

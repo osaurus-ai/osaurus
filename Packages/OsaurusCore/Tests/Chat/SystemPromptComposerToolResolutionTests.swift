@@ -87,7 +87,7 @@ struct SystemPromptComposerToolResolutionTests {
         browserUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
-        spawnableAgentNames: [String] = [],
+        spawnableAgentIDs: [UUID] = [],
         spawnableModelNames: [String] = []
     ) -> AgentConfigSnapshot {
         AgentConfigSnapshot(
@@ -104,7 +104,7 @@ struct SystemPromptComposerToolResolutionTests {
             browserUseEnabled: browserUseEnabled,
             spawnDelegationEnabled: spawnDelegationEnabled,
             imageEnabled: imageEnabled,
-            spawnableAgentNames: spawnableAgentNames,
+            spawnableAgentIDs: spawnableAgentIDs,
             spawnableModelNames: spawnableModelNames
         )
     }
@@ -1079,12 +1079,13 @@ struct SystemPromptComposerToolResolutionTests {
     @Test
     func autoMode_customAgentSurfacesSpawnOnlyWithToggleAndTargets() async {
         await withSubagentSandbox {
+            let helperID = UUID(uuidString: "40000000-0000-4000-8000-000000000001")!
             // Agent pool only → spawn_agent, not spawn_model.
             let withAgents = Set(
                 SystemPromptComposer.resolveTools(
                     snapshot: makeSnapshot(
                         spawnDelegationEnabled: true,
-                        spawnableAgentNames: ["Helper"]
+                        spawnableAgentIDs: [helperID]
                     ),
                     executionMode: .none
                 ).map { $0.function.name }
@@ -1117,7 +1118,7 @@ struct SystemPromptComposerToolResolutionTests {
                 SystemPromptComposer.resolveTools(
                     snapshot: makeSnapshot(
                         spawnDelegationEnabled: true,
-                        spawnableAgentNames: []
+                        spawnableAgentIDs: []
                     ),
                     executionMode: .none
                 ).map { $0.function.name }
@@ -1157,8 +1158,9 @@ struct SystemPromptComposerToolResolutionTests {
     @Test("frozen delegation schema stays byte-stable while launcher settings are unchanged")
     func frozenDelegationSchemaIsStableForUnchangedSettings() async {
         await withSubagentSandbox {
+            let researcherID = Agent.builtInAgents.first!.id
             let config = SubagentConfiguration(
-                spawnableAgentNames: ["Researcher"],
+                spawnableAgentIDs: [researcherID],
                 budgets: SubagentBudgets(maxParallelSpawns: 4),
                 spawnableModelNames: [
                     "anthropic/claude-opus-4-8",
@@ -1196,8 +1198,19 @@ struct SystemPromptComposerToolResolutionTests {
     @Test("current delegation constraints override stale frozen spawn schemas")
     func currentDelegationConstraintsOverrideFrozenSpecs() async {
         await withSubagentSandbox {
+            let manager = AgentManager.shared
+            let oldAgent = Agent(
+                name: "Stale delegation target",
+                defaultModel: "local/old-agent-model"
+            )
+            let newAgent = Agent(
+                name: "Fresh delegation target",
+                defaultModel: "local/new-agent-model"
+            )
+            manager.add(oldAgent)
+            manager.add(newAgent)
             let original = SubagentConfiguration(
-                spawnableAgentNames: ["Old Helper"],
+                spawnableAgentIDs: [oldAgent.id],
                 budgets: SubagentBudgets(maxParallelSpawns: 2),
                 spawnableModelNames: ["local/old-model"]
             )
@@ -1209,11 +1222,11 @@ struct SystemPromptComposerToolResolutionTests {
                 executionMode: .none
             )
             #expect(spawnModelEnum(frozen) == ["local/old-model"])
-            #expect(spawnBatchTargetEnum(frozen) == ["Old Helper", "local/old-model"])
+            #expect(spawnBatchTargetEnum(frozen) == [oldAgent.id.uuidString, "local/old-model"])
             #expect(spawnBatchMaxItems(frozen) == 2)
 
             let updated = SubagentConfiguration(
-                spawnableAgentNames: ["New Helper"],
+                spawnableAgentIDs: [newAgent.id],
                 budgets: SubagentBudgets(maxParallelSpawns: 6),
                 spawnableModelNames: [
                     "anthropic/claude-opus-4-8",
@@ -1236,18 +1249,20 @@ struct SystemPromptComposerToolResolutionTests {
             #expect(
                 spawnBatchTargetEnum(refreshed)
                     == [
-                        "New Helper",
+                        newAgent.id.uuidString,
                         "anthropic/claude-opus-4-8",
                         "local/new-model",
                     ]
             )
             #expect(spawnBatchMaxItems(refreshed) == 6)
-            #expect(!spawnBatchTargetEnum(refreshed).contains("Old Helper"))
+            #expect(!spawnBatchTargetEnum(refreshed).contains(oldAgent.id.uuidString))
             #expect(!spawnBatchTargetEnum(refreshed).contains("local/old-model"))
             #expect(
                 PromptPrefixHasher.hash(systemContent: "prefix", tools: refreshed)
                     != PromptPrefixHasher.hash(systemContent: "prefix", tools: frozen)
             )
+            _ = await manager.delete(id: oldAgent.id)
+            _ = await manager.delete(id: newAgent.id)
         }
     }
 
@@ -1260,14 +1275,14 @@ struct SystemPromptComposerToolResolutionTests {
         let lease = await acquireSubagentStoreSandbox("composer-no-optin")
         defer { lease.release() }
         SubagentConfigurationStore.save(
-            SubagentConfiguration(spawnableAgentNames: ["Helper"], imageDelegationEnabled: true)
+            SubagentConfiguration(spawnableAgentIDs: [UUID()], imageDelegationEnabled: true)
         )
         let names = Set(
             SystemPromptComposer.resolveTools(
                 snapshot: makeSnapshot(
                     spawnDelegationEnabled: false,
                     imageEnabled: false,
-                    spawnableAgentNames: []
+                    spawnableAgentIDs: []
                 ),
                 executionMode: .none
             ).map { $0.function.name }

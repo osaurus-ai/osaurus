@@ -2,12 +2,14 @@
 
 ## Status
 
-`PARTIAL` at the start of this campaign.
+`PARTIAL` — automated gates pass on the current dirty campaign, but the
+rebased Release-app UI matrix has not run yet.
 
-- Osaurus source: `92353afead3eb580ba00ca9c022e17544db28e6d`
-- Current upstream target: `c8be96cceec820d220adc1f513604451d454233b`
-  (PR #2203 app-hang fixes; rebase and re-verification required)
-- vMLX Swift pin: `7300afaa`
+- Osaurus campaign HEAD: `887104298d04c32c36817645c231c58841067681`
+  plus the dirty campaign diff recorded below.
+- Current upstream target: `e294c616d3e0688d4fd5a26d0cd1c9f2e62252ab`
+  (channel-presence and appcast updates; rebase and re-verification required)
+- vMLX Swift pin: `d7483a88668bb3ec70e0ea7f8423a5f684084c28`
 - Worktree: `/private/tmp/osaurus-subagent-batching-complete-20260727`
 - Branch: `codex/subagent-batching-complete-20260727`
 
@@ -300,6 +302,27 @@ Release-app matrix below.
 - Still pending before any merge-ready claim: combined related suites,
   OsaurusEvals model-backed scoring, rebase onto current `osaurus/main`, and
   every applicable live Release-app row.
+- Final pre-rebase focused verification on the exact dirty campaign source
+  passed **341/341** with zero failures and zero skips. It covers the twelve
+  batching, permission, persistence, residency, diagnostics, runtime-policy,
+  admission, feed, and cancellation suites named in the evidence ledger.
+  `RuntimePolicySourceTests` also passed **99/99** independently after updating
+  stale pin/source-contract expectations. These are deterministic
+  source/runtime-unit gates, not Release-app proof.
+- The pre-final full `OsaurusEvals` package run passed **296/296** across
+  35 suites before the last source-contract and already-resident RAM reuse
+  fixes. It must be rerun after the upstream rebase; it is not the final score.
+- The exact pinned vMLX `BatchEngineIntegrationTests` passed **28/28** at
+  `d7483a88668bb3ec70e0ea7f8423a5f684084c28`, including atomic capacity
+  snapshots, hot resize, two-active/third-pending admission, cancellation,
+  single-slot behavior, shutdown, and cache store/prefill behavior. The
+  synthetic throughput row measured 467.2 tok/s serial versus 669.6 tok/s
+  batched (1.43x). This is engine proof only.
+- Adversarial RAM review found one real false refusal: cold-load Memory Safety
+  was applied to a target that was already resident. The owning residency fit
+  policy now bypasses only that cold-load verdict for the already-resident
+  target; the regression remains within the shared bundle-aware memory
+  profile. Live RAM refusal/reuse behavior is still pending.
 
 ## Current-head live Release-app matrix
 
@@ -379,3 +402,8 @@ whole lifecycle through final unlock and a follow-up.
 | 2026-07-28 strict same-model eval | `92353afe` + campaign diff | Nanbeige JANG 4M, two configured same-model workers | PASS (model-backed, stale-base until rebase) | Report `/private/tmp/osaurus-subagent-batching-evals-20260728/nanbeige-same-model-exact-wave-configured.json`, SHA-256 `eddab4a10365223222efd469084b278f64612879e86a8353ad6d831a056b31f7`; Continuous Batching on, sessions 2, effective slots 2, one local subwave `[2]`, both child streams overlap at first delta, 2/2 ordered, one parent final, 47.3 tok/s, TTFT 2.151 s, peak physical footprint 3,481 MB, L2 +1 hit/+17 misses/+12 stores |
 | 2026-07-28 Laguna XS config audit | local bundles | 2L/4M/6M `generation_config.json` | PARTIAL | All three local `/Users/eric/models/dealign.ai/Laguna-XS-2.1-JANG_*-CRACK` bundles currently contain `top_k: 20`; migration behavior and effective chat/spawn requests are not yet proven |
 | 2026-07-28 teardown audit | `92353afe` + campaign diff | Concurrent unload/drain ownership | BROKEN | BATCH-24: `TaskCoalescer.remove` does not join an existing tombstoned drain; deterministic regression and owning-layer fix required |
+| 2026-07-28 pinned vMLX verification | `d7483a88668bb3ec70e0ea7f8423a5f684084c28` | Atomic BatchEngine capacity, resize, admission, cancellation, shutdown, cache | PASS (engine automated only) | `BatchEngineIntegrationTests` 28/28; synthetic serial 467.2 tok/s, batch 669.6 tok/s (1.43x); no Osaurus UI claim |
+| 2026-07-28 pre-final eval run | `88710429` + campaign diff | Full OsaurusEvals package | PASS (stale pre-rebase automated only) | 296/296 tests across 35 suites; rerun required after final rebase/source freeze |
+| 2026-07-28 RuntimePolicy source contracts | `88710429` + campaign diff | Runtime-policy contracts and exact vMLX pin | PASS (automated only) | xcresult `Test-OsaurusCoreTests-2026.07.28_11-02-09--0700.xcresult`: 99/99, zero failures/skips |
+| 2026-07-28 final focused pre-rebase matrix | `88710429` + campaign diff | Permission, config, UI source, residency, health, runtime policy, batch, adapter, server settings, admission, feed, cancellation | PASS (automated only) | xcresult `Test-OsaurusCoreTests-2026.07.28_11-03-21--0700.xcresult`: 341/341, zero failures/skips |
+| 2026-07-28 RAM adversarial review | `88710429` + campaign diff | Already-resident target under tightened Memory Safety | FIXED IN SOURCE / LIVE PENDING | Cold-load denial no longer rejects an already-resident target; focused regression is included in the 341-test matrix; Release-app RAM rows remain unrun |

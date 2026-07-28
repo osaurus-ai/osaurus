@@ -246,10 +246,14 @@ extension EvalRunner {
         if let sandboxFixture {
             evalAgentId = installEvalAgent(
                 testCase.fixtures.agentCapabilities,
+                spawnableAgentIDs: evalSpawnTargetIds,
                 autonomousExec: autonomousExecConfig(from: sandboxFixture)
             )
         } else if let caps = testCase.fixtures.agentCapabilities, caps.requestsAnyCapability {
-            evalAgentId = installEvalAgent(caps)
+            evalAgentId = installEvalAgent(
+                caps,
+                spawnableAgentIDs: evalSpawnTargetIds
+            )
         }
         defer {
             if let evalAgentId {
@@ -682,6 +686,7 @@ extension EvalRunner {
     /// quiet-hours-clamped depending on when the eval runs.
     static func installEvalAgent(
         _ caps: EvalCase.AgentCapabilitiesFixture?,
+        spawnableAgentIDs: [UUID] = [],
         autonomousExec: AutonomousExecConfig? = nil
     ) -> UUID {
         let agent = Agent(
@@ -698,7 +703,7 @@ extension EvalRunner {
                 selfSchedulingEnabled: caps?.selfSchedulingEnabled ?? false,
                 spawnDelegationEnabled: !(caps?.spawnAgents?.isEmpty ?? true),
                 appleScriptEnabled: caps?.appleScriptEnabled ?? false,
-                spawnableAgentNames: caps?.spawnAgents?.map(\.name) ?? [],
+                spawnableAgentIDs: spawnableAgentIDs,
                 subagentBudgets: SubagentBudgets(
                     maxParallelSpawns: caps?.maxParallelSpawns
                         ?? SubagentBudgets().maxParallelSpawns
@@ -723,9 +728,12 @@ extension EvalRunner {
                 $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             }
         )
+        let existingIDs = Set(AgentStore.loadAll().map(\.id))
         var fixtureNames = Set<String>()
+        var fixtureIDs = Set<UUID>()
         var agents: [Agent] = []
         for fixture in fixtures {
+            let id = fixture.id ?? UUID()
             let name = fixture.name.trimmingCharacters(in: .whitespacesAndNewlines)
             let canonical = name.lowercased()
             let explicitModel = fixture.modelId?
@@ -739,11 +747,18 @@ extension EvalRunner {
             guard fixtureNames.insert(canonical).inserted else {
                 return ([], "spawn fixture repeats agent name '\(name)'")
             }
+            guard fixtureIDs.insert(id).inserted else {
+                return ([], "spawn fixture repeats agent id '\(id.uuidString)'")
+            }
             guard !existingNames.contains(canonical) else {
                 return ([], "spawn fixture collides with existing agent '\(name)'")
             }
+            guard !existingIDs.contains(id) else {
+                return ([], "spawn fixture collides with existing agent id '\(id.uuidString)'")
+            }
             agents.append(
                 Agent(
+                    id: id,
                     name: name,
                     description: fixture.description
                         ?? "Temporary spawn worker registered by OsaurusEvals.",

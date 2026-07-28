@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import OsaurusCore
 
 extension EvalRunner {
     static func runToolResultGroundingCase(_ testCase: EvalCase, modelId: String) -> EvalCaseReport {
@@ -36,6 +37,8 @@ extension EvalRunner {
         }
 
         var notes: [String] = []
+        var passNotes: [String] = []
+        let orderedCalls = parsed.calls.values.sorted(by: { $0.index < $1.index })
         let requireMatchedResults = exp.requireMatchedResults ?? true
         if requireMatchedResults {
             for result in parsed.results.values.sorted(by: { $0.index < $1.index }) {
@@ -54,6 +57,19 @@ extension EvalRunner {
             }
         }
 
+        if let expected = exp.expectedToolSequence {
+            let observed = orderedCalls.map(\.tool)
+            if observed != expected {
+                notes.append("tool sequence \(observed) != \(expected)")
+            }
+        }
+
+        if exp.requireSingleFinalAssistant == true, parsed.assistants.count != 1 {
+            notes.append(
+                "assistant final count \(parsed.assistants.count) != 1"
+            )
+        }
+
         guard let final = parsed.finalAssistant else {
             return .terminal(
                 id: testCase.id,
@@ -70,6 +86,26 @@ extension EvalRunner {
             if !anyPriorResult {
                 notes.append("final answer appeared before any tool result")
             }
+        }
+
+        if exp.requireFinalAfterAllToolResults == true {
+            let laterResultIDs = parsed.results.values
+                .filter { $0.index > final.index }
+                .sorted(by: { $0.index < $1.index })
+                .map(\.callId)
+            if !laterResultIDs.isEmpty {
+                notes.append(
+                    "final answer appeared before tool result(s) \(laterResultIDs)"
+                )
+            }
+        }
+
+        if exp.requireFinalIsLastEvent == true,
+            final.index != exp.events.count - 1
+        {
+            notes.append(
+                "final answer at event \(final.index) was not the last event"
+            )
         }
 
         for assertion in exp.assertions {
@@ -112,6 +148,63 @@ extension EvalRunner {
                     notes.append("tool call \(assertion.callId) arguments contain forbidden fragment `\(fragment)`")
                 }
             }
+            if let priorCallID = assertion.callMustFollowResultOf {
+                guard let call else {
+                    notes.append(
+                        "continuation assertion references missing tool call \(assertion.callId)"
+                    )
+                    continue
+                }
+                guard let priorResult = parsed.results[priorCallID] else {
+                    notes.append(
+                        "continuation assertion references missing prior result \(priorCallID)"
+                    )
+                    continue
+                }
+                if call.index <= priorResult.index {
+                    notes.append(
+                        "tool call \(assertion.callId) did not follow result \(priorCallID)"
+                    )
+                }
+            }
+        }
+
+        if let spawnBatchAssertion = exp.spawnBatch {
+            let invocations = orderedCalls.map { call in
+                let result = parsed.results[call.callId]
+                let observation =
+                    call.tool == "spawn_batch"
+                    ? result.flatMap {
+                        AgentLoopTranscript.spawnBatchObservation(from: $0.content)
+                    }
+                    : nil
+                return AgentLoopTranscript.ToolInvocation(
+                    name: call.tool,
+                    arguments: call.arguments ?? "",
+                    resultPreview: String((result?.content ?? "").prefix(300)),
+                    wasDeduped: false,
+                    wasError: result.map { ToolEnvelope.isError($0.content) } ?? false,
+                    spawnBatch: observation
+                )
+            }
+            let transcript = AgentLoopTranscript(
+                toolCalls: invocations,
+                finalText: final.content,
+                iterations: invocations.count + 1,
+                exit: "finalResponse",
+                systemPrompt: "tool_result_grounding fixture",
+                toolSchemaNames: orderedCalls.map(\.tool),
+                error: nil
+            )
+            let structured = scoreSpawnBatch(
+                spawnBatchAssertion,
+                transcript: transcript
+            )
+            if structured.passed {
+                passNotes.append(structured.note)
+            } else {
+                notes.append(structured.note)
+            }
         }
 
         let passed = notes.isEmpty
@@ -121,7 +214,10 @@ extension EvalRunner {
             domain: testCase.domain,
             outcome: passed ? .passed : .failed,
             notes: passed
-                ? ["grounded \(exp.assertions.count) assertion(s) across \(parsed.results.count) tool result(s)"]
+                ? [
+                    "grounded \(exp.assertions.count) assertion(s) across "
+                        + "\(parsed.results.count) tool result(s)"
+                ] + passNotes
                 : notes,
             modelId: modelId
         )
@@ -132,7 +228,7 @@ extension EvalRunner {
     ) -> GroundingParse {
         var calls: [String: GroundingCall] = [:]
         var results: [String: GroundingResult] = [:]
-        var finalAssistant: GroundingAssistant?
+        var assistants: [GroundingAssistant] = []
         var errors: [String] = []
 
         for (index, event) in events.enumerated() {
@@ -172,7 +268,7 @@ extension EvalRunner {
                     errors.append("event \(index) assistant needs content")
                     continue
                 }
-                finalAssistant = GroundingAssistant(content: content, index: index)
+                assistants.append(GroundingAssistant(content: content, index: index))
             default:
                 errors.append("event \(index) has unknown kind `\(event.kind)`")
             }
@@ -181,7 +277,7 @@ extension EvalRunner {
         return GroundingParse(
             calls: calls,
             results: results,
-            finalAssistant: finalAssistant,
+            assistants: assistants,
             errors: errors
         )
     }
@@ -200,8 +296,12 @@ extension EvalRunner {
     private struct GroundingParse {
         var calls: [String: GroundingCall]
         var results: [String: GroundingResult]
-        var finalAssistant: GroundingAssistant?
+        var assistants: [GroundingAssistant]
         var errors: [String]
+
+        var finalAssistant: GroundingAssistant? {
+            assistants.last
+        }
     }
 
     private struct GroundingCall {

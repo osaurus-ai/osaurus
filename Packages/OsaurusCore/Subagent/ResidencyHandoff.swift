@@ -80,7 +80,11 @@ struct ResidencyHandoff: SubagentHandoff {
         @Sendable (_ requiredBytes: Int64, _ enabled: Bool, _ onPhase: (String, String) -> Void) async throws -> Void
     /// Unload resident chat models; returns the lease to restore.
     typealias Unload =
-        @Sendable (_ maxElapsedSeconds: Int, _ onPhase: (String, String) -> Void) async throws -> ChatResidencyLease
+        @Sendable (
+            _ parentModelName: String?,
+            _ maxElapsedSeconds: Int,
+            _ onPhase: (String, String) -> Void
+        ) async throws -> ChatResidencyLease
     /// Restore an unload lease. Unlike image-result preservation, text
     /// delegation cannot report success while its orchestrator remains
     /// unloaded, so restore failure is part of this handoff's outcome.
@@ -116,8 +120,9 @@ struct ResidencyHandoff: SubagentHandoff {
                     onPhase: onPhase
                 )
             },
-            unload: { maxElapsedSeconds, onPhase in
+            unload: { parentModelName, maxElapsedSeconds, onPhase in
                 try await ChatResidencyHandoff.unloadResidentChatModels(
+                    parentModelName: parentModelName,
                     maxElapsedSeconds: maxElapsedSeconds,
                     onPhase: onPhase
                 )
@@ -149,10 +154,18 @@ struct ResidencyHandoff: SubagentHandoff {
             return try await body()
         }
 
-        let lease = try await unload(plan.maxElapsedSeconds, emit)
+        let lease = try await unload(
+            scope.parentModelName,
+            plan.maxElapsedSeconds,
+            emit
+        )
         let result: SubagentResult
         do {
-            result = try await body()
+            result = try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(
+                lease.childOwnershipToken
+            ) {
+                try await body()
+            }
         } catch let bodyError {
             // Restore on the failure path too so the orchestrator is never left
             // unloaded with no diagnostic. This cleanup must not inherit the
@@ -209,6 +222,49 @@ enum ResidencyHandoffFailure: Error, LocalizedError, Sendable, Equatable {
             return
                 "The subagent failed and its orchestrator could not be restored. "
                 + "Subagent failure: \(body). Restore failure: \(restore)."
+        }
+    }
+}
+
+/// Attach one exact ownership token to cold model loads performed by an
+/// otherwise non-evicting handoff. Batch sequences use this wrapper when there
+/// is no parent model to unload, or when children may coexist with the parent.
+///
+/// The runtime records the token only on a cold-published residency. Reusing a
+/// pre-existing local/API/plugin resident does not acquire ownership, so later
+/// transitions and final cleanup remain fail-closed for unrelated models.
+struct ResidencyOwnershipHandoff: SubagentHandoff {
+    let wrapped: any SubagentHandoff
+    let ownershipToken: ModelResidencyOwnershipToken
+
+    init(
+        wrapping wrapped: any SubagentHandoff,
+        ownershipToken: ModelResidencyOwnershipToken = ModelResidencyOwnershipToken()
+    ) {
+        self.wrapped = wrapped
+        self.ownershipToken = ownershipToken
+    }
+
+    func around(
+        scope: SubagentScope,
+        resolved: ResolvedModel,
+        feed: SubagentFeed,
+        run body: () async throws -> SubagentResult
+    ) async throws -> SubagentResult {
+        // A future nested fan-out must remain in the outer handoff's exact
+        // ownership domain. Replacing an inherited token would let the inner
+        // scope clear the outer owner's cleanup claim.
+        let scopedToken =
+            ModelResidencyOwnershipContext.childOwnershipToken ?? ownershipToken
+        return try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(
+            scopedToken
+        ) {
+            try await wrapped.around(
+                scope: scope,
+                resolved: resolved,
+                feed: feed,
+                run: body
+            )
         }
     }
 }

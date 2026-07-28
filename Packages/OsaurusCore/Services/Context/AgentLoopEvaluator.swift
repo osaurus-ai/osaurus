@@ -164,13 +164,14 @@ public struct AgentLoopTranscript: Sendable, Codable {
     }
 
     /// Parse the stable aggregate fields and ordered child rows from a
-    /// production `spawn_batch` envelope. Returns nil for every other tool
-    /// result and for malformed/non-success envelopes.
+    /// production `spawn_batch` envelope. Failed all-child aggregates retain
+    /// their structured result payload so evals can inspect settled rows and
+    /// terminal status instead of losing them behind the outer failure.
     public static func spawnBatchObservation(
         from result: String
     ) -> SpawnBatchObservation? {
-        guard ToolEnvelope.isSuccess(result),
-            let payload = ToolEnvelope.successPayload(result) as? [String: Any],
+        guard
+            let payload = ToolEnvelope.resultPayload(result) as? [String: Any],
             payload["kind"] as? String == "spawn_batch_result",
             let rows = payload["results"] as? [[String: Any]]
         else { return nil }

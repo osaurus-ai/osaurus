@@ -38,6 +38,41 @@ struct SpawnConfigurationUISourceTests {
         #expect(editor.contains("modelPickerCache.items.chatModelCandidates"))
     }
 
+    @Test("open custom-agent editor refreshes shared handoff state")
+    func customAgentEditorObservesGlobalSubagentChanges() throws {
+        let agents = try Self.source("Views/Agent/AgentsView.swift")
+
+        #expect(
+            agents.contains(
+                "NotificationCenter.default.publisher(for: .subagentConfigurationChanged)"
+            )
+        )
+        #expect(agents.contains("let latest = SubagentConfigurationStore.snapshot()"))
+        #expect(
+            agents.contains(
+                "if latest != globalSubagentConfig { globalSubagentConfig = latest }"
+            )
+        )
+    }
+
+    @Test("shared global editors use revision-safe three-way store saves")
+    func globalEditorsDoNotReplaceStaleSharedSnapshots() throws {
+        let paths = [
+            "Views/Settings/ConfigurationView.swift",
+            "Views/Model/AppleScriptModelsView.swift",
+            "Views/ImageGeneration/ImageGenerationView.swift",
+        ]
+
+        for path in paths {
+            let source = try Self.source(path)
+            #expect(source.contains("Baseline"))
+            #expect(source.contains("SubagentConfigurationStore.saveEditorSnapshot("))
+            #expect(source.contains("loadedBaseline:"))
+            #expect(source.contains("SubagentConfiguration.mergingEditorSnapshot("))
+            #expect(!source.contains("SubagentConfigurationStore.save(newValue)"))
+        }
+    }
+
     @Test("model picker refresh, target status, and capacity contract stay in the shared editor")
     func sharedEditorOwnsRefreshStatusAndCapacityCopy() throws {
         let editor = try Self.source("Views/Agent/SpawnConfigurationEditor.swift")
@@ -78,13 +113,13 @@ struct SpawnConfigurationUISourceTests {
     func disabledSpawnKeepsConfiguredPolicyInSavePath() throws {
         let agents = try Self.source("Views/Agent/AgentsView.swift")
 
-        #expect(agents.contains("spawnableAgentNames: spawnableAgentNames"))
+        #expect(agents.contains("spawnableAgentIDs: spawnableAgentIDs"))
         #expect(
             agents.contains(
                 "spawnableModelNames: SubagentConfiguration.normalizedSpawnableModelNames("
             )
         )
-        #expect(!agents.contains("spawnDelegationEnabled ? spawnableAgentNames : []"))
+        #expect(!agents.contains("spawnDelegationEnabled ? spawnableAgentIDs : []"))
         #expect(!agents.contains("Persist the allow-lists only while spawn is on"))
     }
 
@@ -112,9 +147,12 @@ struct SpawnConfigurationUISourceTests {
     func staleAgentRowsRemainRepairable() throws {
         let editor = try Self.source("Views/Agent/SpawnConfigurationEditor.swift")
 
+        #expect(editor.contains("let selected = spawnableAgentIDs"))
         #expect(editor.contains("ForEach(selected, id: \\.self)"))
-        #expect(editor.contains("removableChip(label: name, unavailable: !available)"))
-        #expect(editor.contains("setAgent(name, included: false)"))
+        #expect(editor.contains("let candidate = agentCandidates.first { $0.id == id }"))
+        #expect(editor.contains("label: candidate?.name ?? id.uuidString"))
+        #expect(editor.contains("unavailable: candidate == nil"))
+        #expect(editor.contains("setAgent(id, included: false)"))
         #expect(editor.contains("Configured agents marked unavailable can still be removed."))
         #expect(editor.contains(#"Text("Unavailable", bundle: .module)"#))
     }

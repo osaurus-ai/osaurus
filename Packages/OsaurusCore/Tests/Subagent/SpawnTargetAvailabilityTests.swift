@@ -14,6 +14,8 @@ import Testing
 @Suite("Spawn target availability")
 @MainActor
 struct SpawnTargetAvailabilityTests {
+    private let researcherID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+
     private func localModel(_ id: String) -> MLXModel {
         MLXModel(
             id: id,
@@ -27,28 +29,28 @@ struct SpawnTargetAvailabilityTests {
     func requestDiscoveryCoverage() {
         #expect(
             SpawnDescriptors.requiresLocalDiscovery(
-                agentNames: ["Researcher"],
+                agentIDs: [researcherID],
                 modelNames: [],
                 launcherModelOverride: nil
             )
         )
         #expect(
             SpawnDescriptors.requiresLocalDiscovery(
-                agentNames: [],
+                agentIDs: [],
                 modelNames: ["local/model"],
                 launcherModelOverride: nil
             )
         )
         #expect(
             SpawnDescriptors.requiresLocalDiscovery(
-                agentNames: [],
+                agentIDs: [],
                 modelNames: [],
                 launcherModelOverride: "local/override"
             )
         )
         #expect(
             !SpawnDescriptors.requiresLocalDiscovery(
-                agentNames: [],
+                agentIDs: [],
                 modelNames: [],
                 launcherModelOverride: " \n "
             )
@@ -56,7 +58,7 @@ struct SpawnTargetAvailabilityTests {
     }
 
     private func resolve(
-        agents: [String] = [],
+        agents: [UUID] = [],
         models: [String] = [],
         notes: [String: String] = [:],
         sources: [SpawnDescriptors.AgentSource] = [],
@@ -68,7 +70,7 @@ struct SpawnTargetAvailabilityTests {
         launcherOverride: String? = nil
     ) -> SpawnTargetAvailabilitySnapshot {
         SpawnDescriptors.resolve(
-            agentNames: agents,
+            agentIDs: agents,
             modelNames: models,
             modelNotes: notes,
             agentSources: sources,
@@ -156,13 +158,14 @@ struct SpawnTargetAvailabilityTests {
     @Test("agent follows launcher override precedence and target model availability")
     func agentAvailabilityTracksEffectiveRunModel() {
         let source = SpawnDescriptors.AgentSource(
+            id: researcherID,
             name: "Researcher",
             description: "Research helper",
             modelId: "local/missing-own-model"
         )
 
         let missingOwnModel = resolve(
-            agents: ["Researcher"],
+            agents: [researcherID],
             sources: [source],
             localAuthoritative: true
         )
@@ -171,18 +174,18 @@ struct SpawnTargetAvailabilityTests {
 
         let overrideId = "local/runnable-override"
         let runnableOverride = resolve(
-            agents: ["Researcher"],
+            agents: [researcherID],
             sources: [source],
             locals: [localModel(overrideId)],
             localAuthoritative: true,
             launcherOverride: overrideId
         )
         #expect(runnableOverride.agentTargets.first?.state == .runnable)
-        #expect(runnableOverride.runnableAgentNames == ["Researcher"])
+        #expect(runnableOverride.runnableAgentIDs == [researcherID])
         #expect(runnableOverride.agents.first?.modelId == overrideId)
 
         let missingOverride = resolve(
-            agents: ["Researcher"],
+            agents: [researcherID],
             sources: [source],
             localAuthoritative: true,
             launcherOverride: "local/removed-override"
@@ -202,9 +205,10 @@ struct SpawnTargetAvailabilityTests {
         )
         let ownModel = "local/runnable-own-model"
         let snapshot = resolve(
-            agents: ["Researcher"],
+            agents: [researcherID],
             sources: [
                 .init(
+                    id: researcherID,
                     name: "Researcher",
                     description: "Research helper",
                     modelId: ownModel
@@ -223,7 +227,10 @@ struct SpawnTargetAvailabilityTests {
 
     @Test("one availability snapshot drives exact single, batch, and prompt targets")
     func snapshotKeepsPromptAndSchemasInParity() throws {
+        let runnableAgentID = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        let staleAgentID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
         let runnableAgent = SpawnAgentDescriptor(
+            id: runnableAgentID,
             name: "Researcher",
             description: "Runnable agent",
             modelId: "local/agent-model",
@@ -231,6 +238,7 @@ struct SpawnTargetAvailabilityTests {
             providerName: nil
         )
         let staleAgent = SpawnAgentDescriptor(
+            id: staleAgentID,
             name: "Deleted Agent",
             description: nil,
             modelId: nil,
@@ -270,7 +278,7 @@ struct SpawnTargetAvailabilityTests {
 
         let agentTool = SpawnAgentTool.constrainedSpec(
             SpawnAgentTool().asOpenAITool(),
-            allowedAgentNames: snapshot.runnableAgentNames
+            allowedAgentIDs: snapshot.runnableAgentIDs
         )
         let modelTool = SpawnModelTool.constrainedSpec(
             SpawnModelTool().asOpenAITool(),
@@ -278,7 +286,7 @@ struct SpawnTargetAvailabilityTests {
         )
         let batchTool = SpawnBatchTool.constrainedSpec(
             SpawnBatchTool().asOpenAITool(),
-            allowedAgentNames: snapshot.runnableAgentNames,
+            allowedAgentIDs: snapshot.runnableAgentIDs,
             allowedModelIds: snapshot.runnableModelIds,
             maxParallel: 2
         )
@@ -309,11 +317,11 @@ struct SpawnTargetAvailabilityTests {
             }
         }
 
-        #expect(directEnum(agentTool, field: "agent") == ["Researcher"])
+        #expect(directEnum(agentTool, field: "agent") == [runnableAgentID.uuidString])
         #expect(directEnum(modelTool, field: "model") == ["local/direct-model"])
         #expect(
             Set(batchEnum(batchTool))
-                == Set(["Researcher", "local/direct-model"])
+                == Set([runnableAgentID.uuidString, "local/direct-model"])
         )
 
         let guidance = SystemPromptTemplates.spawnGuidance(
@@ -321,7 +329,8 @@ struct SpawnTargetAvailabilityTests {
             models: snapshot.models,
             maxParallel: 2
         )
-        #expect(guidance.contains("`Researcher`"))
+        #expect(guidance.contains("`\(runnableAgentID.uuidString)`"))
+        #expect(guidance.contains("Researcher"))
         #expect(guidance.contains("`local/direct-model`"))
         #expect(!guidance.contains("Deleted Agent"))
         #expect(!guidance.contains("local/deleted-model"))
@@ -329,12 +338,46 @@ struct SpawnTargetAvailabilityTests {
 
     @Test("missing configured agent remains visible in state but never runnable")
     func missingAgentIsRetainedForRepair() {
+        let deletedID = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
         let snapshot = resolve(
-            agents: ["Deleted Agent"],
+            agents: [deletedID],
             localAuthoritative: true
         )
-        #expect(snapshot.agentTargets.first?.descriptor.name == "Deleted Agent")
+        #expect(snapshot.agentTargets.first?.descriptor.id == deletedID)
+        #expect(snapshot.agentTargets.first?.descriptor.name == deletedID.uuidString)
         #expect(snapshot.agentTargets.first?.state == .missing)
         #expect(snapshot.agents.isEmpty)
+    }
+
+    @Test("case-colliding display names remain distinct by UUID")
+    func caseCollidingNamesResolveExactIdentity() {
+        let upperID = UUID(uuidString: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA")!
+        let lowerID = UUID(uuidString: "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB")!
+        let upper = SpawnDescriptors.AgentSource(
+            id: upperID,
+            name: "Helper",
+            description: "Read-only helper",
+            modelId: "local/helper-read"
+        )
+        let lower = SpawnDescriptors.AgentSource(
+            id: lowerID,
+            name: "helper",
+            description: "Writable helper",
+            modelId: "local/helper-write"
+        )
+        let snapshot = resolve(
+            agents: [lowerID, upperID],
+            sources: [upper, lower],
+            locals: [
+                localModel("local/helper-read"),
+                localModel("local/helper-write"),
+            ],
+            localAuthoritative: true
+        )
+
+        #expect(snapshot.runnableAgentIDs == [lowerID, upperID])
+        #expect(snapshot.agents.map(\.name) == ["helper", "Helper"])
+        #expect(snapshot.agents.map(\.modelId) == ["local/helper-write", "local/helper-read"])
+        #expect(snapshot.agents.map(\.description) == ["Writable helper", "Read-only helper"])
     }
 }

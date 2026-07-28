@@ -54,6 +54,11 @@ public enum ChatExecutionContext {
     /// The agent ID whose context is active for the current execution.
     @TaskLocal public static var currentAgentId: UUID?
 
+    /// Exact model selected for the parent turn that dispatched the current
+    /// tool. Residency handoff uses this identity instead of treating every
+    /// chat-owned resident in the process as the invoking orchestrator.
+    @TaskLocal public static var currentModelName: String?
+
     /// Explicit Thinking choice frozen for the logical parent turn. Nested
     /// Computer Use, AppleScript, Browser Use, and spawn loops reconstruct their
     /// own requests, so they read this value through `SubagentScope` instead of

@@ -219,17 +219,38 @@ extension EvalRunner {
         let interruptAfterMs = exp.interruptAfterMs
         let transcript: SubagentJobTranscript
         if exp.seedSpawnableAgent == true {
-            transcript = await SubagentJobEvaluator.withSpawnableAgent(name: agent) {
+            transcript = await SubagentJobEvaluator.withSpawnableAgent(name: agent) { agentID in
                 await SubagentJobEvaluator.runSpawn(
-                    agent: agent,
+                    agentID: agentID,
                     input: input,
                     modelId: modelId,
                     interruptAfterMs: interruptAfterMs
                 )
             }
         } else {
+            let configuredAgentID = UUID(uuidString: agent)
+            let uniqueNamedAgentID: UUID? =
+                configuredAgentID == nil
+                ? await MainActor.run {
+                        let matches = AgentManager.shared.agents.filter {
+                            $0.name.caseInsensitiveCompare(agent) == .orderedSame
+                        }
+                        return matches.count == 1 ? matches[0].id : nil
+                    }
+                : nil
+            guard let agentID = configuredAgentID ?? uniqueNamedAgentID
+            else {
+                return .terminal(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    outcome: .errored,
+                    notes: ["spawn lane agent target is missing or ambiguous: \(agent)"],
+                    modelId: modelId
+                )
+            }
             transcript = await SubagentJobEvaluator.runSpawn(
-                agent: agent,
+                agentID: agentID,
                 input: input,
                 modelId: modelId,
                 interruptAfterMs: interruptAfterMs

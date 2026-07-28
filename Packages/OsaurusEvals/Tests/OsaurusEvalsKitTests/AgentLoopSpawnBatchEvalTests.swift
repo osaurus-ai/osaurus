@@ -398,6 +398,10 @@ struct AgentLoopSpawnBatchEvalTests {
             "Osaurus Eval Batch Math",
             "Osaurus Eval Batch Writing",
         ])
+        #expect(capabilities.spawnAgents?.compactMap { $0.id?.uuidString } == [
+            "A11CE001-0000-4000-8000-000000000001",
+            "A11CE001-0000-4000-8000-000000000002",
+        ])
         #expect(capabilities.maxParallelSpawns == 2)
         #expect(capabilities.requestsAnyCapability)
         #expect(runtimeConcurrency.continuousBatching == true)
@@ -435,6 +439,10 @@ struct AgentLoopSpawnBatchEvalTests {
             "Osaurus Eval Nanbeige Worker",
             "Osaurus Eval Ornith Worker",
         ])
+        #expect(workers.compactMap { $0.id?.uuidString } == [
+            "A11CE001-0000-4000-8000-000000000101",
+            "A11CE001-0000-4000-8000-000000000102",
+        ])
         #expect(workers.map(\.modelId) == [
             "JANGQ-AI/Nanbeige4.2-3B-JANG_4M",
             "JANGQ-AI/Ornith-1.0-9B-JANG_4M",
@@ -445,6 +453,10 @@ struct AgentLoopSpawnBatchEvalTests {
         #expect(expectation.spawnBatch?.expectedRows?.map(\.model) == [
             "JANGQ-AI/Nanbeige4.2-3B-JANG_4M",
             "JANGQ-AI/Ornith-1.0-9B-JANG_4M",
+        ])
+        #expect(expectation.spawnBatch?.expectedRows?.map(\.target) == [
+            "A11CE001-0000-4000-8000-000000000101",
+            "A11CE001-0000-4000-8000-000000000102",
         ])
         #expect(expectation.spawnBatch?.expectedRows?.map(\.summaryContains) == [
             ["DIFFERENT_LOCAL_ALPHA"],

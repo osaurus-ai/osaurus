@@ -256,7 +256,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             warmupPrefill: request.warmupPrefill,
             cacheStableSystemPrefix: request.cacheStableSystemPrefix,
             requestSource: inferenceSource,
-            loadIntent: request.backgroundModelLoad ? .background : .interactive
+            loadIntent: request.backgroundModelLoad ? .background : .interactive,
+            preserveExistingResidencyOwner: request.preserveExistingResidencyOwner
         )
 
         // Mode 2 (remote agent run): route to the *selected agent's provider*,

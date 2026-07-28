@@ -35,7 +35,7 @@ struct SubagentSettingsSection: View {
                             excludedAgentID: nil,
                             localHandoffEnabled: configuration.localTextDelegationEnabled,
                             modelOverride: mainChatSpawnModelOverride,
-                            spawnableAgentNames: $configuration.spawnableAgentNames,
+                            spawnableAgentIDs: $configuration.spawnableAgentIDs,
                             spawnableModelNames: $configuration.spawnableModelNames,
                             spawnableModelNotes: $configuration.spawnableModelNotes,
                             permissionDefaults: $configuration.permissionDefaults,

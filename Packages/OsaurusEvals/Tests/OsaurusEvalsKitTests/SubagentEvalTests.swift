@@ -333,13 +333,13 @@ struct SubagentEvalTests {
                     ),
                 ],
                 interruptAfterMs: 100,
-                expectSuccess: true,
-                expectEnvelopeKind: "success",
+                expectSuccess: false,
+                expectEnvelopeKind: "user_denied",
                 expectResultKind: "spawn_batch_result",
                 expectRunsCompleted: 0,
                 expectRunsSettled: 2,
                 expectRunEnvelopeKinds: ["user_denied", "user_denied"],
-                expectBatchAggregateStatus: "all_failed",
+                expectBatchAggregateStatus: "all_cancelled",
                 expectBatchJobIDs: ["slow-a", "slow-b"]
             )
         )
@@ -671,6 +671,12 @@ struct SubagentEvalTests {
         #expect(
             suite.cases.count >= 12,
             "Expected the full Subagent suite; got \(suite.cases.count)"
+        )
+        #expect(
+            suite.cases.contains {
+                $0.id == "subagent.scripted-batch-user-stop-all-cancelled"
+            },
+            "Missing deterministic all-cancelled batch fixture"
         )
 
         // Every model-free scenario must pass deterministically: the `scripted`

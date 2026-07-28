@@ -4550,6 +4550,9 @@ final class ChatSession: ObservableObject {
             await ChatExecutionContext.$currentUserRequest.withValue(
                 trimmed.isEmpty ? nil : trimmed
             ) { [self] in
+            await ChatExecutionContext.$currentModelName.withValue(
+                self.selectedModel
+            ) { [self] in
             await ChatExecutionContext.$currentEnableThinking.withValue(
                 turnGenerationControls.enableThinking
             ) { [self] in
@@ -6199,6 +6202,7 @@ final class ChatSession: ObservableObject {
                     noteInsufficientFundsIfNeeded(error: error, blockedTurn: assistantTurn)
                 }
             }  // ChatExecutionContext.$currentEnableThinking.withValue
+            }  // ChatExecutionContext.$currentModelName.withValue
             }  // ChatExecutionContext.$currentUserRequest.withValue
             }  // ChatExecutionContext.$currentAgentId.withValue
             }  // ChatExecutionContext.$currentSessionSource.withValue

@@ -496,6 +496,7 @@
       "subagent.residency-matrix-remote-remote",
       "subagent.residency-phase-telemetry",
       "subagent.scripted-batch-one-failure-siblings-settle",
+      "subagent.scripted-batch-user-stop-all-cancelled",
       "subagent.scripted-handoff-and-recursion",
       "subagent.scripted-handoff-passthrough",
       "subagent.scripted-handoff-wraps",
@@ -545,6 +546,10 @@
       "tool_result_grounding.pick-right-record-from-list",
       "tool_result_grounding.quote-exact-string-from-result",
       "tool_result_grounding.result-continuation",
+      "tool_result_grounding.spawn-batch-all-cancelled-finalizes-once",
+      "tool_result_grounding.spawn-batch-partial-failure-parent-continuation",
+      "tool_result_grounding.spawn-batch-pending-todo-finalizes-once",
+      "tool_result_grounding.spawn-batch-second-tool-then-final",
       "tool_result_grounding.stale-result-not-cited",
       "tool_result_grounding.unit-preserved-from-result"
     ]

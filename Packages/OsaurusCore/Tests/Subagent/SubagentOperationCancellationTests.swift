@@ -77,7 +77,7 @@ struct SubagentOperationCancellationTests {
             Issue.record("Expected cancelled preparation failure")
             return
         }
-        #expect(ToolEnvelope.failureMessage(envelope).contains("while resolving"))
+        #expect(ToolEnvelope.failureMessage(envelope).contains("resolution"))
         #expect(await probe.sawCancellation)
         #expect(await probe.finished)
     }
@@ -88,7 +88,7 @@ struct SubagentOperationCancellationTests {
         let handoff = ResidencyHandoff(
             plan: { _ in ResidencyPlan(shouldUnload: true) },
             preflight: { _, _, _ in },
-            unload: { _, _ in
+            unload: { _, _, _ in
                 ChatResidencyLease(unloadedModelNames: ["parent-local"])
             },
             restore: { lease, _ in

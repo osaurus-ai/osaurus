@@ -110,6 +110,14 @@ enum AgentSubagentRunner {
     /// current step and the last reported decode speed (nil until the runtime
     /// reports one).
     typealias Progress = @Sendable (_ completionTokens: Int, _ tokensPerSecond: Double?) -> Void
+    /// One real model-channel delta in producer order. Reasoning is emitted
+    /// only when the runtime supplied `reasoning_content`; visible content is
+    /// never folded into or out of that channel.
+    enum ChannelDelta: Sendable, Equatable {
+        case reasoning(String)
+        case content(String)
+    }
+    typealias ChannelObserver = @Sendable (ChannelDelta) -> Void
     /// Injectable stream producer used by deterministic runner regressions.
     /// Production callers omit it and continue through `ChatEngine`.
     typealias StreamProvider =
@@ -151,6 +159,7 @@ enum AgentSubagentRunner {
         isInterrupted: @escaping @Sendable () -> Bool = { false },
         toolset: AgentSubagentToolset? = nil,
         onProgress: Progress? = nil,
+        onChannelDelta: ChannelObserver? = nil,
         streamProvider: StreamProvider? = nil
     ) async throws -> AgentSubagentRunResult {
         var messages = seedMessages
@@ -227,6 +236,13 @@ enum AgentSubagentRunner {
                 request.samplingParametersAreImplicit = true
                 request.isAgentRequest = isAgentRequest
                 request.enable_thinking = enableThinking
+                // A child is user-visible work, but its cold load must not
+                // evict an unrelated resident owned by HTTP/plugin traffic.
+                // The runtime's background intent is atomic: same-model cache
+                // hits and empty/flexible slots proceed, conflicting strict or
+                // over-budget loads fail honestly before eviction.
+                request.backgroundModelLoad = true
+                request.preserveExistingResidencyOwner = true
 
                 let stepStarted = Date()
                 let stream: AsyncThrowingStream<String, Error>
@@ -238,7 +254,8 @@ enum AgentSubagentRunner {
                 let outcome = try await Self.consumeStream(
                     stream,
                     cancelCause: cancelCause,
-                    onProgress: onProgress
+                    onProgress: onProgress,
+                    onChannelDelta: onChannelDelta
                 )
                 // A Stop can land after the producer's final delta but before
                 // this model-step hook classifies the accumulated text. Never
@@ -442,7 +459,8 @@ enum AgentSubagentRunner {
     private static func consumeStream(
         _ stream: AsyncThrowingStream<String, Error>,
         cancelCause: @escaping @Sendable () -> SubagentCancelCause?,
-        onProgress: Progress?
+        onProgress: Progress?,
+        onChannelDelta: ChannelObserver?
     ) async throws -> StepOutcome {
         try await withThrowingTaskGroup(of: StepOutcome?.self) { group in
             group.addTask {
@@ -466,6 +484,7 @@ enum AgentSubagentRunner {
                         if let reasoningDelta = StreamingReasoningHint.decode(delta) {
                             outcome.reasoning += reasoningDelta
                             visibleChars += reasoningDelta.count
+                            onChannelDelta?(.reasoning(reasoningDelta))
                         } else if StreamingToolHint.isSentinel(delta) {
                             // Other in-band hints (tool/args fragments, prefill
                             // progress, billing) — not visible text.
@@ -473,6 +492,9 @@ enum AgentSubagentRunner {
                         } else {
                             outcome.text += delta
                             visibleChars += delta.count
+                            if !delta.isEmpty {
+                                onChannelDelta?(.content(delta))
+                            }
                         }
                         if !sawStats {
                             outcome.completionTokens =

@@ -60,22 +60,29 @@ struct SubagentBatchAdmissionInput: Sendable, Equatable {
 }
 
 struct SubagentBatchAdmissionPlan: Sendable, Equatable {
-    let verdict: SubagentBatchAdmissionVerdict
+    var verdict: SubagentBatchAdmissionVerdict
     /// Process-wide same-model sequence ceiling from agent policy, the active
     /// server BatchEngine setting, and RAM safety. Unlike
     /// `localParallelism`, this is not capped by this call's job count.
-    let localCapacity: Int
+    var localCapacity: Int
     /// Width this specific call may schedule.
-    let localParallelism: Int
-    let remoteParallelism: Int
-    let localSubwaveSizes: [Int]
-    let engineSlots: Int
-    let ramSlots: Int?
-    let incrementalWeightChargeBytes: UInt64?
-    let perActiveChildHeadroomBytes: UInt64?
-    let projectedIncrementalPeakBytes: UInt64?
-    let projectedModelWorkingSetBytes: UInt64?
-    let limitingFactors: Set<SubagentBatchLimitingFactor>
+    var localParallelism: Int
+    var remoteParallelism: Int
+    var localSubwaveSizes: [Int]
+    var engineSlots: Int
+    var ramSlots: Int?
+    var incrementalWeightChargeBytes: UInt64?
+    var perActiveChildHeadroomBytes: UInt64?
+    var projectedIncrementalPeakBytes: UInt64?
+    var projectedModelWorkingSetBytes: UInt64?
+    var limitingFactors: Set<SubagentBatchLimitingFactor>
+    /// Atomic vMLX occupancy observed immediately before planning this wave.
+    /// It is diagnostic context, never a reservation.
+    var engineOccupancy: ModelBatchCapacitySnapshot? = nil
+    /// True when no slot was nominally free (or earlier engine work was already
+    /// queued), so this wave deliberately submits only one request and lets
+    /// BatchEngine own the queue.
+    var engineQueuedAtAdmission = false
 }
 
 enum SubagentBatchAdmissionPlanner {

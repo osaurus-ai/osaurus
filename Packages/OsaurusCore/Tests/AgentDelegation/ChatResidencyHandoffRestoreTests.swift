@@ -47,6 +47,88 @@ struct ChatResidencyHandoffRestoreTests {
             busy.localizedDescription
                 == "local chat generation did not become idle before the subagent memory handoff"
         )
+
+        let blocked = ChatResidencyHandoff.HandoffError.restoreBlocked(
+            parent: "parent-local",
+            protectedResidents: ["api-owned-child"]
+        )
+        #expect(blocked.localizedDescription.contains("parent-local"))
+        #expect(blocked.localizedDescription.contains("api-owned-child"))
+        #expect(blocked.localizedDescription.contains("protected"))
+    }
+
+    @Test("a failed cold-load request never publishes child ownership")
+    func failedLoadDoesNotPublishOwnership() async {
+        let token = ModelResidencyOwnershipToken()
+        let before = await ModelRuntime.shared.childOwnedResidentNames(by: token)
+        do {
+            try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(token) {
+                try await ModelRuntime.shared.preload(
+                    name: Self.unresolvable,
+                    intent: .background
+                )
+            }
+            Issue.record("the unresolvable model unexpectedly loaded")
+        } catch {
+            // Expected: preload rejects before a resident is published.
+        }
+        let after = await ModelRuntime.shared.childOwnedResidentNames(by: token)
+        #expect(before.isEmpty)
+        #expect(after.isEmpty)
+    }
+
+    @Test("cold publication and exact unload retain ownership and ABA guards")
+    func coldPublicationAndABAGuardsAreWired() throws {
+        let here = URL(fileURLWithPath: #filePath)
+        let packageRoot = here
+            .deletingLastPathComponent()  // AgentDelegation/
+            .deletingLastPathComponent()  // Tests/
+            .deletingLastPathComponent()  // OsaurusCore/
+        let source = try String(
+            contentsOf: packageRoot.appendingPathComponent("Services/ModelRuntime.swift"),
+            encoding: .utf8
+        )
+
+        let finishStart = try #require(
+            source.range(of: "private func finishLoadedContainer(")
+        )
+        let finishEnd = try #require(
+            source.range(
+                of: "\n    /// Unload `name`",
+                range: finishStart.upperBound ..< source.endIndex
+            )
+        )
+        let finish = String(source[finishStart.lowerBound ..< finishEnd.lowerBound])
+        let cachePublication = try #require(finish.range(of: "modelCache[name] = holder"))
+        let ownershipPublication = try #require(
+            finish.range(of: "residentMetadata[name] = ResidentMetadata(")
+        )
+        #expect(cachePublication.lowerBound < ownershipPublication.lowerBound)
+        #expect(finish.contains("generation: UUID()"))
+        #expect(finish.contains("loadingRecord.childOwnershipToken"))
+
+        let unloadStart = try #require(source.range(of: "private func unloadClaimed("))
+        let unloadEnd = try #require(
+            source.range(
+                of: "\n    func clearAll(",
+                range: unloadStart.upperBound ..< source.endIndex
+            )
+        )
+        let unload = String(source[unloadStart.lowerBound ..< unloadEnd.lowerBound])
+        #expect(
+            unload.components(
+                separatedBy: "residentMetadata[name]?.identity != expectedIdentity"
+            ).count >= 4,
+            "exact generation must be rechecked before and after every suspension boundary"
+        )
+        #expect(
+            unload.components(
+                separatedBy:
+                    "residentMetadata[name]?.childOwnershipToken != expectedOwnershipToken"
+            ).count >= 4,
+            "child ownership must be rechecked before and after every suspension boundary"
+        )
+        #expect(unload.contains("residencyUnloadClaims[name] = claim"))
     }
 
     @Test("restore throws restoreFailed when a model can't be made resident")

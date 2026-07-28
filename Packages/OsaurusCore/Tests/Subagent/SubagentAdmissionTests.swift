@@ -510,8 +510,146 @@ struct SubagentAdmissionTests {
 
 // MARK: - Session-level serialization
 
+private actor AdmissionAuthorityProbe {
+    private var validations = 0
+    private var revoked = false
+    private var runs = 0
+
+    func validate() throws {
+        validations += 1
+        if revoked {
+            throw SubagentError.denied(
+                "authority revoked while waiting for admission"
+            )
+        }
+    }
+
+    func revoke() {
+        revoked = true
+    }
+
+    func recordRun() {
+        runs += 1
+    }
+
+    func snapshot() -> (validations: Int, runs: Int) {
+        (validations, runs)
+    }
+}
+
+private final class AdmissionAuthorityKind: SubagentKind, @unchecked Sendable {
+    let capability = SubagentCapability(
+        id: "admission-authority-test",
+        toolNames: ["admission-authority-test"],
+        gate: .delegation
+    )
+    let probe: AdmissionAuthorityProbe
+
+    init(probe: AdmissionAuthorityProbe) {
+        self.probe = probe
+    }
+
+    func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
+        ResolvedModel(
+            name: "admission-authority-local",
+            id: "admission-authority-local",
+            isLocal: true
+        )
+    }
+
+    func permission(
+        _ scope: SubagentScope,
+        _ resolved: ResolvedModel
+    ) async -> SubagentDecision {
+        .allow
+    }
+
+    func validateExecutionAuthority(
+        _ scope: SubagentScope,
+        resolved: ResolvedModel
+    ) async throws {
+        try await probe.validate()
+    }
+
+    func admissionClass(
+        _ resolved: ResolvedModel
+    ) -> SubagentAdmissionClass {
+        .localExclusive
+    }
+
+    func run(
+        _ scope: SubagentScope,
+        _ resolved: ResolvedModel,
+        feed: SubagentFeed,
+        interrupt: InterruptToken
+    ) async throws -> SubagentResult {
+        await probe.recordRun()
+        return SubagentResult(payload: ["summary": "unexpected run"])
+    }
+}
+
 @Suite("SubagentSession admission")
 struct SubagentSessionAdmissionTests {
+    @Test("authority revoked while queued is rejected after admission without running")
+    func postAdmissionAuthorityRevalidation() async {
+        let admission = SubagentAdmission(pollNanoseconds: 1_000_000)
+        #expect(
+            await admission.admit(
+                .localExclusive,
+                modelKey: "authority-blocker"
+            ) == .admitted
+        )
+
+        let probe = AdmissionAuthorityProbe()
+        let scope = SubagentScope(
+            sessionId: "post-admission-authority",
+            toolCallId: "post-admission-authority-\(UUID().uuidString)",
+            agentId: Agent.defaultId
+        )
+        let preparation = await SubagentSession.prepare(
+            AdmissionAuthorityKind(probe: probe),
+            tool: "admission-authority-test",
+            scope: scope
+        )
+        guard case .ready(let prepared) = preparation else {
+            Issue.record("Expected authority test kind to prepare")
+            await admission.release(
+                .localExclusive,
+                modelKey: "authority-blocker"
+            )
+            return
+        }
+
+        let task = Task {
+            await SubagentSession.runPrepared(
+                prepared,
+                admissionController: admission
+            )
+        }
+        let deadline = Date().addingTimeInterval(2)
+        while (await probe.snapshot()).validations < 1,
+            Date() < deadline
+        {
+            try? await Task.sleep(nanoseconds: 1_000_000)
+        }
+        await probe.revoke()
+        await admission.release(
+            .localExclusive,
+            modelKey: "authority-blocker"
+        )
+
+        let result = await task.value
+        let snapshot = await probe.snapshot()
+        #expect(ToolEnvelope.isError(result))
+        #expect(
+            ToolEnvelope.failureMessage(result).contains(
+                "revoked while waiting for admission"
+            )
+        )
+        #expect(snapshot.validations == 2)
+        #expect(snapshot.runs == 0)
+    }
+
     @Test("interrupt while queued maps to honest user stop and does not take a slot")
     func interruptWhileQueuedMapsToUserDenied() async {
         let admission = SubagentAdmission.shared

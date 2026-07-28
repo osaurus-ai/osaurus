@@ -5,7 +5,7 @@
 //  The text/coding/analysis subagent kind behind the spawn family. It serves
 //  BOTH spawn tools through one bounded text loop:
 //
-//   • `spawn_agent` → `.agent(name:)`: resolve a user-configured spawnable
+//   • `spawn_agent` → `.agent(id:)`: resolve a user-configured spawnable
 //     Agent and run on ITS system prompt + model.
 //   • `spawn_model` → `.model(id:)`: run on a bare spawnable model id with NO
 //     agent/system prompt attached.
@@ -33,8 +33,8 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// each — there is no agent+model combination, so the contract stays a single
     /// required target per tool.
     enum Target: Sendable {
-        /// `spawn_agent`: a spawnable agent by name (its prompt + model).
-        case agent(name: String)
+        /// `spawn_agent`: a spawnable agent by stable UUID (its prompt + model).
+        case agent(id: UUID)
         /// `spawn_model`: a bare spawnable model id (no agent).
         case model(id: String)
     }
@@ -52,6 +52,25 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// Individual children still re-read and enforce a newly changed `.deny`
     /// policy during resolution, but do not present N duplicate panels.
     private let permissionPreauthorized: Bool
+
+    /// Mutable spawn authority captured around the direct Ask boundary.
+    ///
+    /// The permission field itself is normalized out because choosing
+    /// "Always Allow" legitimately persists that one field while the panel is
+    /// open. Every other launcher/target/config value remains part of the
+    /// semantic fingerprint. The configuration revision separately catches an
+    /// ABA save/restore of byte-identical global settings.
+    private struct AuthoritySnapshot: Sendable, Equatable {
+        let configurationRevision: UInt64
+        let configuration: SubagentConfiguration
+        let launcher: Agent?
+        let target: Agent?
+        let isDefaultLauncher: Bool
+        let effectivePermission: SubagentPermissionPolicy
+    }
+
+    private var approvalAuthority: AuthoritySnapshot?
+    private var executionAuthority: AuthoritySnapshot?
 
     /// Cap on the digest handed back to the parent.
     private static let digestMaxChars = 8_000
@@ -89,6 +108,10 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// The residency plan resolved at `resolveModel` time (reject-before-evict),
     /// consumed by `makeHandoff()`. `.none` when no swap is needed.
     private var residencyPlan: ResidencyPlan = .none
+    /// Exact parent model captured from the launching turn. Batch preparation
+    /// re-resolves residency after admission and must keep the same parent
+    /// identity instead of falling back to every chat-owned process resident.
+    private var invokingParentModelName: String?
     /// Snapshot resolved before model lookup. `.deny` is rejected immediately;
     /// `.ask` is handled by `permission` unless the enclosing batch already
     /// received one approval for all of its jobs.
@@ -129,7 +152,8 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             modelName: installed.id,
             config: SubagentConfigurationStore.snapshot(),
             idleWaitSeconds: budgets.normalized.maxElapsedSeconds,
-            deniedMessage: residencyDeniedMessage
+            deniedMessage: residencyDeniedMessage,
+            invokingParentModelName: invokingParentModelName
         )
         guard decision.isLocal else {
             throw SubagentError.unavailable(
@@ -143,12 +167,12 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// `spawn_agent` entry point (agent context). The optional `modelOverride`
     /// is the eval seam.
     init(
-        agentName: String,
+        agentID: UUID,
         input: String,
         modelOverride: String? = nil,
         permissionPreauthorized: Bool = false
     ) {
-        self.target = .agent(name: agentName)
+        self.target = .agent(id: agentID)
         self.input = input
         self.modelOverride = modelOverride
         self.permissionPreauthorized = permissionPreauthorized
@@ -174,7 +198,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// id in model mode.
     private var targetLabel: String {
         switch target {
-        case .agent(let name): return resolvedAgentName.isEmpty ? name : resolvedAgentName
+        case .agent(let id): return resolvedAgentName.isEmpty ? id.uuidString : resolvedAgentName
         case .model(let id): return id
         }
     }
@@ -194,12 +218,26 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
 
     var feedTitle: String {
         switch target {
-        case .agent(let name): return "spawn → \(name)"
+        case .agent(let id): return "spawn → \(resolvedAgentName.isEmpty ? id.uuidString : resolvedAgentName)"
         case .model(let id): return "spawn → \(id)"
         }
     }
 
     func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
+        let resolved = try await resolveCurrentModel(scope)
+        if permissionPreauthorized {
+            // The enclosing batch owns the one interactive permission gate,
+            // but each prepared child still needs a current authority snapshot
+            // for the post-admission execution boundary.
+            executionAuthority = await authoritySnapshot(for: scope)
+        } else if approvalAuthority == nil {
+            approvalAuthority = await authoritySnapshot(for: scope)
+        }
+        return resolved
+    }
+
+    private func resolveCurrentModel(_ scope: SubagentScope) async throws -> ResolvedModel {
+        invokingParentModelName = scope.parentModelName
         let config = SubagentConfigurationStore.snapshot()
         // Per-agent allow-lists: the Default / main chat uses its own pools
         // (edited in Settings → Subagents); a custom agent uses its own
@@ -239,9 +277,9 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         )
 
         switch target {
-        case .agent(let agentName):
+        case .agent(let agentID):
             return try await resolveAgentTarget(
-                agentName,
+                agentID,
                 scope: scope,
                 isDefault: isDefault,
                 config: config,
@@ -263,33 +301,48 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// through the shared precedence (eval seam → per-agent override → the
     /// target agent's own model) + live residency decision.
     private func resolveAgentTarget(
-        _ agentName: String,
+        _ agentID: UUID,
         scope: SubagentScope,
         isDefault: Bool,
         config: SubagentConfiguration,
         settings: AgentSettings?
     ) async throws -> ResolvedModel {
-        let perAgentTargets = settings?.spawnableAgentNames ?? []
-        guard
-            SubagentToolVisibility.spawnTargetAllowed(
-                agentName,
+        guard agentID != scope.agentId else {
+            throw SubagentError.denied(
+                "An agent cannot spawn itself. Choose a different configured agent or a bare model."
+            )
+        }
+
+        let perAgentTargets = settings?.spawnableAgentIDs ?? []
+        let allowedAgentTargets =
+            SubagentToolVisibility.effectiveSpawnableAgents(
                 isDefault: isDefault,
                 config: config,
+                perAgentEnabled: settings?.spawnDelegationEnabled ?? false,
                 perAgentTargets: perAgentTargets
+            )
+        guard
+            SubagentToolVisibility.spawnTargetAllowed(
+                agentID,
+                isDefault: isDefault,
+                config: config,
+                perAgentTargets: allowedAgentTargets
             )
         else {
             throw SubagentError.denied(
-                Self.notSpawnableMessage(kind: "Agent", name: agentName, isDefault: isDefault)
+                Self.notSpawnableMessage(
+                    kind: "Agent",
+                    name: agentID.uuidString,
+                    isDefault: isDefault
+                )
             )
         }
 
         let agent = await MainActor.run {
-            AgentManager.shared.agents.first {
-                $0.name.caseInsensitiveCompare(agentName) == .orderedSame
-            }
+            AgentManager.shared.agent(for: agentID)
         }
         guard let agent else {
-            throw SubagentError.unavailable("Agent '\(agentName)' not found.")
+            throw SubagentError.unavailable("Agent '\(agentID.uuidString)' not found.")
         }
 
         self.resolvedAgentName = agent.name
@@ -320,9 +373,10 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             capabilityId: capability.id,
             agentId: scope.agentId,
             evalModel: modelOverride,
+            invokingParentModelName: scope.parentModelName,
             idleWaitSeconds: self.budgets.maxElapsedSeconds,
             deniedMessage: residencyDeniedMessage,
-            unavailableMessage: "Agent '\(agentName)' has no available model configured.",
+            unavailableMessage: "Agent '\(agent.name)' has no available model configured.",
             defaultModel: { AgentManager.shared.effectiveModel(for: targetAgentId) }
         )
         self.residencyPlan = resolved.decision.plan
@@ -381,6 +435,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             agentId: scope.agentId,
             evalModel: modelOverride,
             requestedModel: modelId,
+            invokingParentModelName: scope.parentModelName,
             idleWaitSeconds: self.budgets.maxElapsedSeconds,
             deniedMessage: residencyDeniedMessage,
             unavailableMessage: "Model '\(modelId)' is not available.",
@@ -408,6 +463,144 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         )
     }
 
+    func revalidateAfterPermission(
+        _ scope: SubagentScope,
+        approved resolved: ResolvedModel
+    ) async throws -> ResolvedModel {
+        // spawn_batch owns one enclosing approval, re-prepares every child, and
+        // performs its own ABA-safe batch fingerprint immediately before
+        // execution. Do not add a duplicate child boundary there.
+        guard !permissionPreauthorized else { return resolved }
+        guard let approvedAuthority = approvalAuthority else {
+            throw SubagentError.denied(
+                "Spawn authorization state was not captured. No subagent was started."
+            )
+        }
+
+        let afterPermission = await authoritySnapshot(for: scope)
+        guard Self.matchesApprovedAuthority(
+            approvedAuthority,
+            current: afterPermission
+        ) else {
+            throw SubagentError.denied(
+                "Spawn settings, launcher, or target agent changed while approval was open. "
+                    + "No subagent was started; review the current Subagents settings and retry."
+            )
+        }
+
+        let currentResolved = try await resolveCurrentModel(scope)
+        let afterResolution = await authoritySnapshot(for: scope)
+        guard afterResolution == afterPermission,
+            currentResolved == resolved
+        else {
+            throw SubagentError.denied(
+                "Spawn settings, target, or resolved model changed after approval. "
+                    + "No subagent was started; review the current Subagents settings and retry."
+            )
+        }
+        executionAuthority = afterResolution
+        return currentResolved
+    }
+
+    func validateExecutionAuthority(
+        _ scope: SubagentScope,
+        resolved: ResolvedModel
+    ) async throws {
+        guard let approved = executionAuthority else {
+            throw SubagentError.denied(
+                "Spawn execution authority was not captured. No subagent was started."
+            )
+        }
+        let current = await authoritySnapshot(for: scope)
+        guard current == approved else {
+            throw SubagentError.denied(
+                "Spawn settings, launcher, or target agent changed before execution. "
+                    + "No subagent was started; review the current Subagents settings and retry."
+            )
+        }
+    }
+
+    private func authoritySnapshot(
+        for scope: SubagentScope
+    ) async -> AuthoritySnapshot {
+        // Materialize the store before reading its monotonic revision. A cold
+        // load increments the revision once and must not look like a mutation.
+        var configuration = SubagentConfigurationStore.snapshot()
+        let revision = SubagentConfigurationStore.revision()
+        let isDefault = scope.agentId == Agent.defaultId
+        let targetAgentID: UUID? = {
+            guard case .agent(let id) = target else { return nil }
+            return id
+        }()
+        var pair = await MainActor.run {
+            (
+                launcher: AgentManager.shared.agent(for: scope.agentId),
+                target: targetAgentID.flatMap {
+                    AgentManager.shared.agent(for: $0)
+                }
+            )
+        }
+
+        let effectivePermission = SubagentToolVisibility.effectivePermission(
+            capabilityId: capability.id,
+            isDefault: isDefault,
+            config: configuration,
+            settings: pair.launcher?.settings
+        )
+
+        // "Always Allow" is the permission panel's own expected write. Strip
+        // only this capability's permission from semantic comparison; every
+        // other field remains authoritative.
+        configuration.permissionDefaults.setPolicy(
+            .ask,
+            for: capability.id
+        )
+        if var launcher = pair.launcher {
+            launcher.settings.subagentPermissions.setPolicy(
+                .ask,
+                for: capability.id
+            )
+            // AgentManager.update advances this metadata timestamp for the
+            // permission panel's own Ask → Always Allow persistence. All
+            // semantic launcher fields remain in the fingerprint; normalizing
+            // only the timestamp prevents that legitimate write from
+            // invalidating itself.
+            launcher.updatedAt = .distantPast
+            pair.launcher = launcher
+        }
+
+        return AuthoritySnapshot(
+            configurationRevision: revision,
+            configuration: configuration,
+            launcher: pair.launcher,
+            target: pair.target,
+            isDefaultLauncher: isDefault,
+            effectivePermission: effectivePermission
+        )
+    }
+
+    private static func matchesApprovedAuthority(
+        _ approved: AuthoritySnapshot,
+        current: AuthoritySnapshot
+    ) -> Bool {
+        guard approved.configuration == current.configuration,
+            approved.launcher == current.launcher,
+            approved.target == current.target,
+            approved.isDefaultLauncher == current.isDefaultLauncher
+        else { return false }
+
+        // Direct approval may legitimately persist Ask → Always Allow exactly
+        // once. Any other global-store generation change is an ABA-safe
+        // authority mutation and must reject.
+        if approved.isDefaultLauncher,
+            approved.effectivePermission == .ask,
+            current.effectivePermission == .alwaysAllow
+        {
+            return current.configurationRevision == approved.configurationRevision &+ 1
+        }
+        return current.configurationRevision == approved.configurationRevision
+    }
+
     private var toolName: String {
         switch target {
         case .agent: return SubagentCapabilityRegistry.spawnAgentToolName
@@ -426,9 +619,9 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         let targetType: String
         let targetValue: String
         switch target {
-        case .agent(let name):
+        case .agent(let id):
             targetType = "agent"
-            targetValue = name
+            targetValue = id.uuidString
         case .model(let id):
             targetType = "model"
             targetValue = id
@@ -509,6 +702,22 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
                         detail += String(format: " · %.1f tok/s", tokensPerSecond)
                     }
                     feed.emitProgress("generating", step: tokens, detail: detail)
+                },
+                onChannelDelta: { [feed] delta in
+                    switch delta {
+                    case .reasoning(let fragment):
+                        feed.emitStreamDelta(
+                            kind: .reasoning,
+                            title: "reasoning",
+                            delta: fragment
+                        )
+                    case .content(let fragment):
+                        feed.emitStreamDelta(
+                            kind: .response,
+                            title: "response",
+                            delta: fragment
+                        )
+                    }
                 }
             )
         }
@@ -537,7 +746,10 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
                 "elapsed_seconds": elapsed,
                 "handoff": residencyPlan.shouldUnload,
             ]
-            if case .agent = target { payload["agent"] = resolvedAgentName }
+            if case .agent = target {
+                payload["agent"] = resolvedAgentName
+                payload["agent_id"] = resolvedAgentId?.uuidString ?? NSNull()
+            }
 
             // Usage + context-saved accounting: what the worker consumed vs
             // what the digest costs the parent — the measurable "context

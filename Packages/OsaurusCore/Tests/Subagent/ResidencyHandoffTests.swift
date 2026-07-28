@@ -50,7 +50,7 @@ private func makeHandoff(
             log.add("preflight")
             if preflightThrows { throw PreflightRefused() }
         },
-        unload: { _, _ in
+        unload: { _, _, _ in
             log.add("unload")
             return ChatResidencyLease(unloadedModelNames: ["chat-model"])
         },
@@ -62,7 +62,12 @@ private func makeHandoff(
     )
 }
 
-private let scope = SubagentScope(sessionId: "s", toolCallId: "t", agentId: Agent.defaultId)
+private let scope = SubagentScope(
+    sessionId: "s",
+    toolCallId: "t",
+    agentId: Agent.defaultId,
+    parentModelName: "exact-parent"
+)
 private let resolved = ResolvedModel(name: "m", id: "m", isLocal: true)
 private func feed() -> SubagentFeed { SubagentFeed(toolCallId: "t", kindId: "k", title: "x") }
 
@@ -72,8 +77,26 @@ struct ResidencyHandoffTests {
     @Test("unload path: preflight → unload → body → restore, in order")
     func unloadPathOrder() async throws {
         let log = OpLog()
-        let handoff = makeHandoff(log: log, plan: ResidencyPlan(shouldUnload: true))
+        let token = ModelResidencyOwnershipToken()
+        let handoff = ResidencyHandoff(
+            plan: { _ in ResidencyPlan(shouldUnload: true) },
+            preflight: { _, _, _ in log.add("preflight") },
+            unload: { parent, _, _ in
+                #expect(parent == "exact-parent")
+                log.add("unload")
+                return ChatResidencyLease(
+                    unloadedModelNames: ["chat-model"],
+                    childOwnershipToken: token
+                )
+            },
+            restore: { lease, _ in
+                #expect(lease.childOwnershipToken == token)
+                log.add("restore")
+                return lease.unloadedModelNames
+            }
+        )
         let result = try await handoff.around(scope: scope, resolved: resolved, feed: feed()) {
+            #expect(ModelResidencyOwnershipContext.childOwnershipToken == token)
             log.add("body")
             return SubagentResult(payload: ["kind": "k", "summary": "ok"], summary: "ok")
         }
@@ -180,7 +203,7 @@ struct ResidencyHandoffTests {
         let handoff = ResidencyHandoff(
             plan: { _ in ResidencyPlan(shouldUnload: true) },
             preflight: { _, _, _ in log.add("preflight") },
-            unload: { _, _ in
+            unload: { _, _, _ in
                 log.add("unload")
                 return ChatResidencyLease(unloadedModelNames: ["chat-model"])
             },
@@ -212,5 +235,34 @@ struct ResidencyHandoffTests {
                     "restore-cancelled=false",
                 ]
         )
+    }
+
+    @Test("nested ownership wrapper preserves and restores the outer token")
+    func nestedOwnershipWrapperPreservesOuterToken() async throws {
+        let outer = ModelResidencyOwnershipToken()
+        let inner = ModelResidencyOwnershipToken()
+        let handoff = ResidencyOwnershipHandoff(
+            wrapping: PassthroughHandoff(),
+            ownershipToken: inner
+        )
+
+        #expect(ModelResidencyOwnershipContext.childOwnershipToken == nil)
+        try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(outer) {
+            #expect(ModelResidencyOwnershipContext.childOwnershipToken == outer)
+
+            let result = try await handoff.around(
+                scope: scope,
+                resolved: resolved,
+                feed: feed()
+            ) {
+                #expect(ModelResidencyOwnershipContext.childOwnershipToken == outer)
+                #expect(ModelResidencyOwnershipContext.childOwnershipToken != inner)
+                return SubagentResult(payload: ["summary": "owned"], summary: "owned")
+            }
+
+            #expect(result.summary == "owned")
+            #expect(ModelResidencyOwnershipContext.childOwnershipToken == outer)
+        }
+        #expect(ModelResidencyOwnershipContext.childOwnershipToken == nil)
     }
 }

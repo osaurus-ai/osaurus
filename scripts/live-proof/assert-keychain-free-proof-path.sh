@@ -50,6 +50,12 @@ check_absent_regex "$LAUNCHER" '(^|[^[:alnum:]_])(open|security|codesign|notaryt
 
 check_contains "$UI_LAUNCHER" "launchctl setenv OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS 1" "UI launcher disables keychain via launchd env"
 check_contains "$UI_LAUNCHER" 'launchctl setenv OSAURUS_TEST_ROOT "$TEST_ROOT"' "UI launcher isolates test root via launchd env"
+check_contains "$UI_LAUNCHER" 'launchctl setenv OSU_MODELS_DIR "$MODELS_DIR"' "UI launcher sets explicit models directory"
+check_contains "$UI_LAUNCHER" "launchctl unsetenv OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS" "UI launcher clears keychain test env"
+check_contains "$UI_LAUNCHER" "launchctl unsetenv OSAURUS_TEST_ROOT" "UI launcher clears test-root env"
+check_contains "$UI_LAUNCHER" "launchctl unsetenv OSU_MODELS_DIR" "UI launcher clears models env"
+check_contains "$UI_LAUNCHER" '/usr/bin/defaults delete "$BUNDLE_ID"' "UI launcher clears isolated UserDefaults domain"
+check_contains "$UI_LAUNCHER" 'APP_BUNDLE_ID="$(' "UI launcher verifies app bundle id"
 check_contains "$UI_LAUNCHER" "/usr/bin/open -n" "UI launcher uses LaunchServices for foreground app"
 check_absent_regex "$UI_LAUNCHER" '(^|[^[:alnum:]_])(security|notarytool|xcodebuild)([[:space:]]|$)' "keychain/build command"
 
@@ -60,6 +66,8 @@ check_contains "$BUILDER" "CODE_SIGNING_REQUIRED=NO" "builder disables required 
 check_contains "$BUILDER" "CODE_SIGN_IDENTITY=" "builder clears signing identity"
 check_contains "$BUILDER" "AD_HOC_CODE_SIGNING_ALLOWED=NO" "builder disables ad-hoc signing"
 check_contains "$BUILDER" "ENABLE_USER_SCRIPT_SANDBOXING=NO" "builder disables user script sandboxing"
+check_contains "$BUILDER" 'PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID"' "builder applies caller-provided proof bundle id"
+check_contains "$BUILDER" 'BUILT_BUNDLE_ID="$(' "builder verifies built bundle id"
 check_contains "$BUILDER" "/usr/bin/codesign --force --deep --sign - --timestamp=none" "builder applies keychain-free ad-hoc seal"
 check_absent_regex "$BUILDER" '(^|[^[:alnum:]_])(open|security|notarytool)([[:space:]]|$)' "keychain/LaunchServices command"
 

@@ -50,6 +50,7 @@ final class ServerController: ObservableObject {
     private var serverChannel: Channel?
     private var serverActor: OsaurusServer?
     private var agentsCancellable: AnyCancellable?
+    private var runtimeSettingsCancellable: AnyCancellable?
 
     /// Flipped once `applicationDidFinishLaunching` finishes its server
     /// wiring. The Bonjour-expose Combine sink consults this so it never
@@ -249,6 +250,21 @@ final class ServerController: ObservableObject {
         // until the AppDelegate explicitly runs it during launch.
         if let existing = ServerRuntimeSettingsStore.load() {
             self.runtimeSettings = existing
+        }
+        // `server-runtime.json` is also writable through the admin HTTP
+        // endpoint. Observe every successful store save so the published
+        // controller value and any open Settings form follow the exact
+        // snapshot consumed by runtime code.
+        runtimeSettingsCancellable = NotificationCenter.default.publisher(
+            for: ServerRuntimeSettingsStore.didSaveNotification
+        )
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] _ in
+            let latest = ServerRuntimeSettingsStore.snapshot()
+            Task { @MainActor [weak self] in
+                guard let self, self.runtimeSettings != latest else { return }
+                self.runtimeSettings = latest
+            }
         }
         // Keep exposeToNetwork in sync with Bonjour-enabled agents.
         // Only turn ON when a Bonjour agent requires it — never force

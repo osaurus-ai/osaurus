@@ -966,7 +966,8 @@ public enum SystemPromptTemplates {
     /// either spawn tool resolves into the schema. Unlike the static capability
     /// guidance, this enumerates the launching agent's ACTUAL spawnable targets
     /// (resolved into `SpawnAgentDescriptor` / `SpawnModelDescriptor`) so the
-    /// model sees what `spawn_agent` / `spawn_model` can reach — names, locality,
+    /// model sees what `spawn_agent` / `spawn_model` can reach — stable agent
+    /// UUIDs plus display names, locality,
     /// provider, size/quant, vision, the agent description, and the user's
     /// per-model note. Each tool's block is included only when that tool is
     /// available (its pool is non-empty), so the prompt never advertises a spawn
@@ -975,9 +976,19 @@ public enum SystemPromptTemplates {
     public static func spawnGuidance(
         agents: [SpawnAgentDescriptor],
         models: [SpawnModelDescriptor],
+        availableToolNames: Set<String>? = nil,
         toolAccess: SpawnToolAccess = .none,
         maxParallel: Int = 1
     ) -> String {
+        let agentToolAvailable =
+            availableToolNames?.contains(SubagentCapabilityRegistry.spawnAgentToolName)
+            ?? !agents.isEmpty
+        let modelToolAvailable =
+            availableToolNames?.contains(SubagentCapabilityRegistry.spawnModelToolName)
+            ?? !models.isEmpty
+        let batchToolAvailable =
+            availableToolNames?.contains(SubagentCapabilityRegistry.spawnBatchToolName)
+            ?? true
         var lines: [String] = ["## Delegating subtasks (spawn)", ""]
         lines.append(
             "- You can hand a bounded, self-contained subtask to a worker and get back ONLY a "
@@ -992,28 +1003,39 @@ public enum SystemPromptTemplates {
                 + "and the final answer to the user here."
         )
         if !agents.isEmpty {
-            lines.append(
-                "- `spawn_agent(input, agent)` runs the task on a configured agent (its own system "
-                    + "prompt + model). Available agents:"
-            )
+            if agentToolAvailable {
+                lines.append(
+                    "- `spawn_agent(input, agent)` runs the task on a configured agent (its own system "
+                        + "prompt + model). Pass the exact UUID shown first, not the display name. "
+                        + "Available agents:"
+                )
+            } else if batchToolAvailable {
+                lines.append("- Available agent targets for `spawn_batch`:")
+            }
             for agent in agents { lines.append("  - " + agentLine(agent)) }
         }
         if !models.isEmpty {
-            lines.append(
-                "- `spawn_model(input, model)` runs the task on a bare model id, no agent attached. "
-                    + "Available models:"
-            )
+            if modelToolAvailable {
+                lines.append(
+                    "- `spawn_model(input, model)` runs the task on a bare model id, no agent attached. "
+                        + "Available models:"
+                )
+            } else if batchToolAvailable {
+                lines.append("- Available model targets for `spawn_batch`:")
+            }
             for model in models { lines.append("  - " + modelLine(model)) }
         }
-        lines.append(
-            "- `spawn_batch(jobs)` fans out INDEPENDENT work across the same allowed agents/models. "
-                + "Each job needs a unique `id`, `target_type` (`agent` or `model`), exact `target`, "
-                + "and complete `input`. This agent allows at most \(maxParallel) jobs in one batch; "
-                + "\(maxParallel) is an upper bound on concurrent workers, while engine occupancy "
-                + "and RAM safety may queue or split local work. Results "
-                + "come back in input order. Use one batch instead of emitting several separate "
-                + "spawn calls when the subtasks do not depend on each other."
-        )
+        if batchToolAvailable {
+            lines.append(
+                "- `spawn_batch(jobs)` fans out INDEPENDENT work across the same allowed agents/models. "
+                    + "Each job needs a unique `id`, `target_type` (`agent` or `model`), exact `target`, "
+                    + "and complete `input`. This agent allows at most \(maxParallel) jobs in one batch; "
+                    + "\(maxParallel) is an upper bound on concurrent workers, while engine occupancy "
+                    + "and RAM safety may queue or split local work. Results "
+                    + "come back in input order. Use one batch instead of emitting several separate "
+                    + "spawn calls when the subtasks do not depend on each other."
+            )
+        }
         switch toolAccess {
         case .readOnly:
             lines.append(
@@ -1050,9 +1072,9 @@ public enum SystemPromptTemplates {
         return lines.joined(separator: "\n")
     }
 
-    /// One `spawn_agent` target line: `` `name` `` — description (meta).
+    /// One `spawn_agent` target line: `` `uuid` — name `` — description (meta).
     private static func agentLine(_ agent: SpawnAgentDescriptor) -> String {
-        var line = "`\(agent.name)`"
+        var line = "`\(agent.id.uuidString)` — \(agent.name)"
         if let description = agent.description, !description.isEmpty {
             line += " — \(description)"
         }

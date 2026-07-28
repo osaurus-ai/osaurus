@@ -18,12 +18,14 @@ struct SpawnGuidanceTests {
 
     private func agent(
         _ name: String,
+        id: UUID = UUID(uuidString: "5E80D9D2-B821-4B43-AE3B-8C0C7F83E005")!,
         description: String? = nil,
         modelId: String? = nil,
         isLocal: Bool? = nil,
         provider: String? = nil
     ) -> SpawnAgentDescriptor {
         SpawnAgentDescriptor(
+            id: id,
             name: name,
             description: description,
             modelId: modelId,
@@ -92,8 +94,9 @@ struct SpawnGuidanceTests {
         #expect(text.contains("`spawn_model(input, model)`"))
         #expect(text.contains("`spawn_batch(jobs)`"))
 
-        // Agent descriptor: name, description, locality, model id.
-        #expect(text.contains("`sparky`"))
+        // Agent descriptor: canonical UUID, display name, description,
+        // locality, and model id.
+        #expect(text.contains("`5E80D9D2-B821-4B43-AE3B-8C0C7F83E005` — sparky"))
         #expect(text.contains("Concise helper"))
         #expect(text.contains("local"))
         #expect(text.contains("model: qwen3-4b-4bit"))
@@ -132,6 +135,39 @@ struct SpawnGuidanceTests {
         #expect(!agentsOnly.contains("`spawn_model(input, model)`"))
         #expect(modelsOnly.contains("`spawn_batch(jobs)`"))
         #expect(agentsOnly.contains("`spawn_batch(jobs)`"))
+    }
+
+    @Test("batch-only composition advertises both frozen target pools without single-spawn tools")
+    func batchOnlyCompositionUsesBothTargetPools() {
+        let agentID = UUID(uuidString: "4A78F152-34AC-4867-AD7C-CB5FB6905E70")!
+        let text = SystemPromptTemplates.spawnGuidance(
+            agents: [
+                agent(
+                    "Helper",
+                    id: agentID,
+                    description: "Reads source",
+                    modelId: "local/helper"
+                )
+            ],
+            models: [
+                model(
+                    "remote/reviewer",
+                    displayName: "Reviewer",
+                    isLocal: false,
+                    provider: "Remote"
+                )
+            ],
+            availableToolNames: [SubagentCapabilityRegistry.spawnBatchToolName],
+            maxParallel: 2
+        )
+
+        #expect(text.contains("`spawn_batch(jobs)`"))
+        #expect(text.contains("Available agent targets for `spawn_batch`"))
+        #expect(text.contains(agentID.uuidString))
+        #expect(text.contains("Available model targets for `spawn_batch`"))
+        #expect(text.contains("`remote/reviewer`"))
+        #expect(!text.contains("`spawn_agent(input, agent)`"))
+        #expect(!text.contains("`spawn_model(input, model)`"))
     }
 
     // MARK: - Renderer: tool reach + parallelism policy

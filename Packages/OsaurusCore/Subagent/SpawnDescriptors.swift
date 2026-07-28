@@ -4,7 +4,7 @@
 //
 //  Rich, render-ready descriptions of an agent's spawnable targets, used to
 //  build the dynamic `spawn` system-prompt block. The composer resolves the
-//  launching agent's spawnable AGENT names + MODEL ids (from
+//  launching agent's spawnable AGENT UUIDs + MODEL ids (from
 //  `SubagentToolVisibility`) into these descriptors so the prompt can enumerate
 //  what `spawn_agent` / `spawn_model` can actually reach — with locality
 //  (local/remote), provider, size/quant, vision, the agent's description, and
@@ -57,6 +57,8 @@ enum SpawnInputContract {
 
 /// One spawnable agent (`spawn_agent` target), resolved for the prompt.
 public struct SpawnAgentDescriptor: Sendable, Equatable {
+    /// Stable execution/authorization identity.
+    public let id: UUID
     public let name: String
     /// The agent's own description (trimmed; nil when blank).
     public let description: String?
@@ -69,12 +71,14 @@ public struct SpawnAgentDescriptor: Sendable, Equatable {
     public let providerName: String?
 
     public init(
+        id: UUID,
         name: String,
         description: String?,
         modelId: String?,
         isLocal: Bool?,
         providerName: String?
     ) {
+        self.id = id
         self.name = name
         self.description = description
         self.modelId = modelId
@@ -154,13 +158,14 @@ struct SpawnTargetAvailabilitySnapshot: Sendable, Equatable {
         modelTargets.compactMap { $0.state == .runnable ? $0.descriptor : nil }
     }
 
-    var runnableAgentNames: [String] { agents.map(\.name) }
+    var runnableAgentIDs: [UUID] { agents.map(\.id) }
     var runnableModelIds: [String] { models.map(\.id) }
 }
 
 /// Resolves configured spawn pools against current execution truth.
 public enum SpawnDescriptors {
     struct AgentSource: Sendable, Equatable {
+        let id: UUID
         let name: String
         let description: String
         let modelId: String?
@@ -171,13 +176,13 @@ public enum SpawnDescriptors {
     /// a valid bundle as removed.
     @MainActor
     static func resolveForRequest(
-        agentNames: [String],
+        agentIDs: [UUID],
         modelNames: [String],
         modelNotes: [String: String],
         launcherModelOverride: String?
     ) async -> SpawnTargetAvailabilitySnapshot {
         let shouldDiscoverLocalModels = requiresLocalDiscovery(
-            agentNames: agentNames,
+            agentIDs: agentIDs,
             modelNames: modelNames,
             launcherModelOverride: launcherModelOverride
         )
@@ -186,7 +191,7 @@ public enum SpawnDescriptors {
             ? await ModelManager.discoverLocalModelsOffMain()
             : []
         return resolve(
-            agentNames: agentNames,
+            agentIDs: agentIDs,
             modelNames: modelNames,
             modelNotes: modelNotes,
             agentSources: liveAgentSources(),
@@ -212,11 +217,11 @@ public enum SpawnDescriptors {
     /// effective model can be local; a launcher override needs the same check
     /// even when no bare-model targets are configured.
     static func requiresLocalDiscovery(
-        agentNames: [String],
+        agentIDs: [UUID],
         modelNames: [String],
         launcherModelOverride: String?
     ) -> Bool {
-        !agentNames.isEmpty
+        !agentIDs.isEmpty
             || !modelNames.isEmpty
             || !(launcherModelOverride?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -227,14 +232,14 @@ public enum SpawnDescriptors {
     /// are not advertised; the real request above completes discovery.
     @MainActor
     static func resolveForPreview(
-        agentNames: [String],
+        agentIDs: [UUID],
         modelNames: [String],
         modelNotes: [String: String],
         launcherModelOverride: String?
     ) -> SpawnTargetAvailabilitySnapshot {
         let authoritative = ModelManager.isLocalModelsCacheWarm
         return resolve(
-            agentNames: agentNames,
+            agentIDs: agentIDs,
             modelNames: modelNames,
             modelNotes: modelNotes,
             agentSources: liveAgentSources(),
@@ -259,12 +264,12 @@ public enum SpawnDescriptors {
     /// so cold local discovery is completed before the schema is frozen.
     @MainActor
     public static func resolve(
-        agentNames: [String],
+        agentIDs: [UUID],
         modelNames: [String],
         modelNotes: [String: String]
     ) -> (agents: [SpawnAgentDescriptor], models: [SpawnModelDescriptor]) {
         let snapshot = resolveForPreview(
-            agentNames: agentNames,
+            agentIDs: agentIDs,
             modelNames: modelNames,
             modelNotes: modelNotes,
             launcherModelOverride: nil
@@ -278,7 +283,7 @@ public enum SpawnDescriptors {
     /// Pure classification seam used by focused lifecycle tests.
     @MainActor
     static func resolve(
-        agentNames: [String],
+        agentIDs: [UUID],
         modelNames: [String],
         modelNotes: [String: String],
         agentSources: [AgentSource],
@@ -290,15 +295,14 @@ public enum SpawnDescriptors {
         foundationAvailable: Bool,
         launcherModelOverride: String? = nil
     ) -> SpawnTargetAvailabilitySnapshot {
-        let agentTargets = agentNames.map { configuredName -> SpawnAgentTarget in
+        let agentTargets = agentIDs.map { configuredID -> SpawnAgentTarget in
             guard
-                let source = agentSources.first(where: {
-                    $0.name.caseInsensitiveCompare(configuredName) == .orderedSame
-                })
+                let source = agentSources.first(where: { $0.id == configuredID })
             else {
                 return SpawnAgentTarget(
                     descriptor: SpawnAgentDescriptor(
-                        name: configuredName,
+                        id: configuredID,
+                        name: configuredID.uuidString,
                         description: nil,
                         modelId: nil,
                         isLocal: nil,
@@ -333,6 +337,7 @@ public enum SpawnDescriptors {
             )
             return SpawnAgentTarget(
                 descriptor: SpawnAgentDescriptor(
+                    id: source.id,
                     name: source.name,
                     description: description.isEmpty ? nil : description,
                     modelId: locality.normalizedId,
@@ -459,6 +464,7 @@ public enum SpawnDescriptors {
     private static func liveAgentSources() -> [AgentSource] {
         AgentManager.shared.agents.map { agent in
             AgentSource(
+                id: agent.id,
                 name: agent.name,
                 description: agent.description,
                 modelId: AgentManager.shared.effectiveModel(for: agent.id)

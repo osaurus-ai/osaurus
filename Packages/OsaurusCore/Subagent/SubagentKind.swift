@@ -36,6 +36,28 @@ public protocol SubagentKind: Sendable {
     /// Each kind owns its consent UX; the host only needs the verdict.
     func permission(_ scope: SubagentScope, _ resolved: ResolvedModel) async -> SubagentDecision
 
+    /// Re-read any mutable execution authority after an interactive permission
+    /// boundary and before a prepared run is returned. Most subagent kinds have
+    /// no request-local mutable authority and use the default passthrough.
+    ///
+    /// Spawn overrides this narrowly: an Ask panel can stay open while its
+    /// allow-list, budgets, target agent, tool grant, or model changes. Those
+    /// values must be re-resolved without admitting/loading a model, and the
+    /// approved target must remain identical.
+    func revalidateAfterPermission(
+        _ scope: SubagentScope,
+        approved resolved: ResolvedModel
+    ) async throws -> ResolvedModel
+
+    /// Final execution-authority check immediately before process-wide
+    /// admission/residency work. This closes the small prepare→execute race for
+    /// kinds whose authorization comes from mutable settings. The default is a
+    /// no-op; only the owning kind should opt in.
+    func validateExecutionAuthority(
+        _ scope: SubagentScope,
+        resolved: ResolvedModel
+    ) async throws
+
     /// Run the inner loop, emitting progress to `feed` and honoring
     /// `interrupt`. Returns the compact result or throws `SubagentError`.
     func run(
@@ -64,6 +86,18 @@ extension SubagentKind {
 
     /// Default: no residency change. Model-swapping kinds override.
     public func makeHandoff() -> SubagentHandoff { PassthroughHandoff() }
+
+    public func revalidateAfterPermission(
+        _ scope: SubagentScope,
+        approved resolved: ResolvedModel
+    ) async throws -> ResolvedModel {
+        resolved
+    }
+
+    public func validateExecutionAuthority(
+        _ scope: SubagentScope,
+        resolved: ResolvedModel
+    ) async throws {}
 
     /// Default: a local model runs in place; a remote model doesn't touch the
     /// GPU. Kinds whose plan unloads resident models override to

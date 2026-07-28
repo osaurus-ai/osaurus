@@ -63,7 +63,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                         "target": .object([
                             "type": .string("string"),
                             "description": .string(
-                                "Exact allowed agent name or model id for target_type."
+                                "Exact allowed agent UUID or model id for target_type."
                             ),
                         ]),
                         "input": .object([
@@ -137,6 +137,30 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         let envelope: String
     }
 
+    enum BatchPreparationResult: Sendable {
+        case ready([PreparedJob])
+        case failures([(id: String, envelope: String)])
+        case cancelled
+    }
+
+    struct BatchAgentAuthority: Sendable, Equatable {
+        let id: UUID
+        let agent: Agent?
+    }
+
+    struct BatchAuthorityFingerprint: Sendable, Equatable {
+        let configurationRevision: UInt64
+        let configuration: SubagentConfiguration
+        let agents: [BatchAgentAuthority]
+        let isDefaultLauncher: Bool
+        let effectivePermission: SubagentPermissionPolicy
+    }
+
+    struct EngineAdmissionWindow: Sendable, Equatable {
+        let parallelLimit: Int
+        let queued: Bool
+    }
+
     /// Multiplex one private child feed into the batch's visible parent row.
     ///
     /// Child feeds cannot be registered independently because their tool-call
@@ -150,7 +174,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         private let parent: SubagentFeed
         private let jobID: String
         private let lock = NSLock()
-        private var relayedEventIDs = Set<UUID>()
+        private var relayedEvents: [UUID: SubagentActivityEvent] = [:]
         private var relayedTerminalStatus = false
         private var eventSubscription: AnyCancellable?
         private var statusSubscription: AnyCancellable?
@@ -184,10 +208,14 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
 
         private func relay(_ events: [SubagentActivityEvent]) {
             lock.lock()
-            let fresh = events.filter { relayedEventIDs.insert($0.id).inserted }
+            let changed = events.filter { event in
+                guard relayedEvents[event.id] != event else { return false }
+                relayedEvents[event.id] = event
+                return true
+            }
             lock.unlock()
-            for event in fresh {
-                parent.emit(
+            for event in changed {
+                parent.upsert(
                     SubagentActivityEvent(
                         id: event.id,
                         timestamp: event.timestamp,
@@ -236,6 +264,42 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         let verdict: String
         let admissionWaitSeconds: Double?
         let residencyMode: String?
+        let engineOccupancy: ModelBatchCapacitySnapshot?
+        let engineQueuedAtAdmission: Bool
+
+        init(
+            wave: Int,
+            jobs: Int,
+            remoteJobs: Int,
+            localJobs: Int,
+            localModelKey: String?,
+            effectiveLocalSlots: Int,
+            engineSlots: Int?,
+            ramSlots: Int?,
+            localSubwaveSizes: [Int],
+            limitingFactors: [String],
+            verdict: String,
+            admissionWaitSeconds: Double?,
+            residencyMode: String?,
+            engineOccupancy: ModelBatchCapacitySnapshot? = nil,
+            engineQueuedAtAdmission: Bool = false
+        ) {
+            self.wave = wave
+            self.jobs = jobs
+            self.remoteJobs = remoteJobs
+            self.localJobs = localJobs
+            self.localModelKey = localModelKey
+            self.effectiveLocalSlots = effectiveLocalSlots
+            self.engineSlots = engineSlots
+            self.ramSlots = ramSlots
+            self.localSubwaveSizes = localSubwaveSizes
+            self.limitingFactors = limitingFactors
+            self.verdict = verdict
+            self.admissionWaitSeconds = admissionWaitSeconds
+            self.residencyMode = residencyMode
+            self.engineOccupancy = engineOccupancy
+            self.engineQueuedAtAdmission = engineQueuedAtAdmission
+        }
 
         var payload: [String: Any] {
             [
@@ -256,6 +320,19 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 "residency_mode": residencyMode ?? NSNull(),
                 "capacity_snapshot":
                     localJobs > 0 ? "post_admission_capacity_plan" : "not_applicable",
+                "engine_capacity_source":
+                    engineOccupancy == nil ? "configured_cold_start" : "atomic_live",
+                "engine_configured_max":
+                    engineOccupancy?.configuredMaximum ?? NSNull(),
+                "engine_active_at_admission":
+                    engineOccupancy?.activeCount ?? NSNull(),
+                "engine_pending_at_admission":
+                    engineOccupancy?.pendingCount ?? NSNull(),
+                "engine_nominal_available_at_admission":
+                    engineOccupancy?.nominalAvailableCount ?? NSNull(),
+                "engine_accepting_at_admission":
+                    engineOccupancy?.isAcceptingRequests ?? NSNull(),
+                "engine_queued_at_admission": engineQueuedAtAdmission,
             ]
         }
     }
@@ -358,9 +435,10 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             _ tool: String
         ) async -> String?
 
-    /// Owned cleanup for the final DIFFERENT local child before the aggregate
-    /// handoff restores the parent. Coexistence and same-parent groups do not
-    /// bind this operation because their resident model is intentionally kept.
+    /// Owned cleanup for the final cold-loaded local child in a sequence. An
+    /// exact ownership token makes this safe for swapped, coexistence, and
+    /// no-parent batches: a pre-existing resident returns `.notOwned` and is
+    /// intentionally preserved.
     typealias FinalLocalModelCleanup =
         @Sendable (
             _ current: PreparedSubagentRun,
@@ -385,15 +463,15 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
 
         let parentScope = SubagentScope.current()
         let evaluationOverrides = Self.evaluationOverrides
-        let maxParallel: Int
+        let preflightMaxParallel: Int
         if let evaluationOverrides {
-            maxParallel = evaluationOverrides.maxParallel
+            preflightMaxParallel = evaluationOverrides.maxParallel
         } else {
-            maxParallel = await Self.effectiveMaxParallel(scope: parentScope)
+            preflightMaxParallel = await Self.effectiveMaxParallel(scope: parentScope)
         }
         if let limitFailure = Self.batchLimitFailure(
             jobCount: jobs.count,
-            maxJobs: maxParallel,
+            maxJobs: preflightMaxParallel,
             tool: name
         ) {
             return limitFailure
@@ -423,7 +501,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
 
         feed.emitPhase(
             "validating targets",
-            detail: "\(jobs.count) jobs · fan-out limit \(maxParallel)"
+            detail: "\(jobs.count) jobs · fan-out limit \(preflightMaxParallel)"
         )
 
         // A persisted deny is cheaper and stronger than target lookup, so
@@ -457,67 +535,58 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         // Reject-before-load: resolve EVERY job before one child can acquire
         // admission or change local residency. Child permission is owned by
         // the one batch gate below, so preparation never shows N panels.
-        var prepared: [PreparedJob] = []
-        prepared.reserveCapacity(jobs.count)
-        var preparationFailures: [(id: String, envelope: String)] = []
-        for job in jobs {
-            if interrupt.isInterrupted || Task.isCancelled {
-                let message =
-                    "Batch preparation was cancelled before any jobs started."
-                feed.finish(success: false, summary: message)
-                return ToolEnvelope.failure(
-                    kind: interrupt.isInterrupted ? .userDenied : .executionError,
-                    message: message,
-                    tool: name,
-                    retryable: false
-                )
-            }
-            let childScope = SubagentScope(
-                sessionId: parentScope.sessionId,
-                toolCallId: "\(parentScope.toolCallId):\(job.id)",
-                agentId: parentScope.agentId,
-                enableThinking: parentScope.enableThinking
-            )
-            let kind: any SubagentKind
-            if let evaluationOverrides {
-                kind = evaluationOverrides.kindForJob(job)
-            } else {
-                switch job.targetType {
-                case .agent:
-                    kind = TextSubagentKind(
-                        agentName: job.target,
-                        input: job.input,
-                        modelOverride: Self.modelOverrideForTests,
-                        permissionPreauthorized: true
-                    )
-                case .model:
-                    kind = TextSubagentKind(
-                        model: job.target,
-                        input: job.input,
-                        modelOverride: Self.modelOverrideForTests,
-                        permissionPreauthorized: true
-                    )
-                }
-            }
-            switch await SubagentSession.prepare(
-                kind,
+        switch await Self.prepareJobs(
+            jobs,
+            parentScope: parentScope,
+            interrupt: interrupt,
+            tool: name,
+            evaluationOverrides: evaluationOverrides
+        ) {
+        case .ready:
+            break
+        case .failures(let failures):
+            let message = Self.preparationFailureMessage(failures)
+            feed.finish(success: false, summary: message)
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message: message,
                 tool: name,
-                scope: childScope,
-                interrupt: interrupt
-            ) {
-            case .ready(let run):
-                prepared.append(PreparedJob(job: job, run: run))
-            case .failure(let envelope):
-                preparationFailures.append((job.id, envelope))
-            }
+                retryable: false
+            )
+        case .cancelled:
+            let message =
+                "Batch preparation was cancelled before any jobs started."
+            feed.finish(success: false, summary: message)
+            return Self.earlyCancellationEnvelope(
+                tool: name,
+                userInterrupted: interrupt.isInterrupted
+            )
         }
 
-        guard preparationFailures.isEmpty else {
-            let details = preparationFailures.map { failure in
-                "\(failure.id): \(ToolEnvelope.failureMessage(failure.envelope))"
-            }.joined(separator: "; ")
+        feed.emitPhase(
+            "authorizing batch",
+            detail: "\(jobs.count) validated jobs · max \(preflightMaxParallel) parallel"
+        )
+
+        // Capture the exact authority on both sides of the policy read. A
+        // setting may change while provider/target validation is suspended;
+        // rejecting a torn policy/fingerprint pair is safer than showing a
+        // panel for one policy and later executing under another.
+        let authorityBeforePolicyRead = await Self.authorityFingerprint(
+            jobs: jobs,
+            parentScope: parentScope
+        )
+        let batchPolicy = await SpawnPermissionGate.effectivePolicy(
+            for: parentScope
+        )
+        let approvalAuthority = await Self.authorityFingerprint(
+            jobs: jobs,
+            parentScope: parentScope
+        )
+        guard approvalAuthority == authorityBeforePolicyRead else {
             let message =
-                "No batch jobs were started because target validation failed. \(details)"
+                "Batch settings, launcher, or target agents changed before approval. "
+                + "No jobs were started; review the current Subagents settings and retry."
             feed.finish(success: false, summary: message)
             return ToolEnvelope.failure(
                 kind: .rejected,
@@ -527,18 +596,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             )
         }
 
-        feed.emitPhase(
-            "authorizing batch",
-            detail: "\(jobs.count) validated jobs · max \(maxParallel) parallel"
-        )
-
-        // Re-read policy after validation so a settings change made while a
-        // provider/target was resolving is honored. This is the batch's one
-        // permission decision: Ask presents exactly one panel; Always Allow
-        // skips it; Deny rejects. No admission or residency handoff has begun.
-        let batchPolicy = await SpawnPermissionGate.effectivePolicy(
-            for: parentScope
-        )
+        // This is the batch's one permission decision: Ask presents exactly
+        // one panel; Always Allow skips it; Deny rejects. No admission or
+        // residency handoff has begun.
         let batchDecision = await SpawnPermissionGate.authorize(
             scope: parentScope,
             policy: batchPolicy,
@@ -567,12 +627,94 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 ? "Batch preparation was cancelled before any jobs started."
                 : reason
             feed.finish(success: false, summary: message)
+            if cancelled {
+                return Self.earlyCancellationEnvelope(
+                    tool: name,
+                    userInterrupted: interrupt.isInterrupted
+                )
+            }
             return ToolEnvelope.failure(
-                kind: cancelled && !interrupt.isInterrupted
-                    ? .executionError : .userDenied,
+                kind: .userDenied,
+                message: reason,
+                tool: name,
+                retryable: false
+            )
+        }
+
+        let approvedAuthority = await Self.authorityFingerprint(
+            jobs: jobs,
+            parentScope: parentScope
+        )
+        guard Self.matchesApprovedAuthority(
+            approvalAuthority,
+            current: approvedAuthority
+        ) else {
+            let message =
+                "Batch settings, launcher, or target agents changed while approval was open. "
+                + "No jobs were started; review the current Subagents settings and retry."
+            feed.finish(success: false, summary: message)
+            return ToolEnvelope.failure(
+                kind: .rejected,
                 message: message,
                 tool: name,
                 retryable: false
+            )
+        }
+
+        // The approval panel is an asynchronous trust boundary. A user may
+        // remove a target, reduce the fan-out limit, or revoke child tools
+        // while it is open. Re-resolve every target from the latest persisted
+        // settings after approval and before admission/model loading; prepared
+        // values intentionally do not survive this boundary.
+        let maxParallel: Int
+        if let evaluationOverrides {
+            maxParallel = evaluationOverrides.maxParallel
+        } else {
+            maxParallel = await Self.effectiveMaxParallel(scope: parentScope)
+        }
+        if let limitFailure = Self.batchLimitFailure(
+            jobCount: jobs.count,
+            maxJobs: maxParallel,
+            tool: name
+        ) {
+            feed.finish(
+                success: false,
+                summary: "Batch settings changed before execution; revalidation failed."
+            )
+            return limitFailure
+        }
+        feed.emitPhase(
+            "revalidating approved batch",
+            detail: "\(jobs.count) jobs · current fan-out limit \(maxParallel)"
+        )
+        let prepared: [PreparedJob]
+        switch await Self.prepareJobs(
+            jobs,
+            parentScope: parentScope,
+            interrupt: interrupt,
+            tool: name,
+            evaluationOverrides: evaluationOverrides
+        ) {
+        case .ready(let current):
+            prepared = current
+        case .failures(let failures):
+            let message =
+                "Batch settings or targets changed before execution. "
+                + Self.preparationFailureMessage(failures)
+            feed.finish(success: false, summary: message)
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message: message,
+                tool: name,
+                retryable: false
+            )
+        case .cancelled:
+            let message =
+                "Batch preparation was cancelled before any jobs started."
+            feed.finish(success: false, summary: message)
+            return Self.earlyCancellationEnvelope(
+                tool: name,
+                userInterrupted: interrupt.isInterrupted
             )
         }
 
@@ -583,6 +725,22 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
 
         let diagnostics = BatchDiagnosticsCollector()
         let cacheBefore = await ModelRuntime.batchDiagnosticsSnapshot()
+        let executionAuthority = await Self.authorityFingerprint(
+            jobs: jobs,
+            parentScope: parentScope
+        )
+        guard executionAuthority == approvedAuthority else {
+            let message =
+                "Batch settings, launcher, or target agents changed after approval. "
+                + "No jobs were started; review the current Subagents settings and retry."
+            feed.finish(success: false, summary: message)
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message: message,
+                tool: name,
+                retryable: false
+            )
+        }
         let localAdmissionPlanOverride:
             (@Sendable () async -> SubagentBatchAdmissionPlan)?
         if let plan = evaluationOverrides?.localAdmissionPlan {
@@ -607,35 +765,254 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         let succeeded = rows.reduce(0) { count, row in
             count + ((row["ok"] as? Bool) == true ? 1 : 0)
         }
+        // A child that was already running when the batch Stop control fired
+        // returns the host's honest `user_denied` envelope; a child that had
+        // not started yet carries the explicit `cancelled` marker. Count both
+        // only when this batch's interrupt token was actually tripped so an
+        // unrelated child refusal can never be mislabeled as cancellation.
+        let batchWasInterrupted = interrupt.isInterrupted
+        let cancelled = rows.reduce(0) { count, row in
+            let envelope = row["envelope"] as? [String: Any]
+            let explicitlyCancelled = envelope?["cancelled"] as? Bool == true
+            let runningChildStopped =
+                batchWasInterrupted
+                && envelope?["kind"] as? String
+                    == ToolEnvelope.Kind.userDenied.rawValue
+            return count + (explicitlyCancelled || runningChildStopped ? 1 : 0)
+        }
         let failed = rows.count - succeeded
         let aggregateStatus = Self.aggregateStatus(
             succeeded: succeeded,
-            failed: failed
+            failed: failed,
+            cancelled: cancelled
         )
         let summary =
             "\(rows.count) batch jobs finished: \(succeeded) succeeded, \(failed) failed."
         feed.finish(success: failed == 0, summary: summary)
 
-        return ToolEnvelope.success(
+        let payload: [String: Any] = [
+            "kind": "spawn_batch_result",
+            "summary": summary,
+            "max_parallel": maxParallel,
+            "succeeded": succeeded,
+            "failed": failed,
+            "cancelled": cancelled,
+            "aggregate_status": aggregateStatus,
+            "execution": [
+                "configured_max_subagents": maxParallel,
+                "waves": executionWaves.map(\.payload),
+                "cache": BatchCacheDiagnostic(
+                    before: cacheBefore,
+                    after: cacheAfter
+                ).payload,
+            ],
+            "results": rows,
+        ]
+        return Self.aggregateEnvelope(
             tool: name,
-            result: [
-                "kind": "spawn_batch_result",
-                "summary": summary,
-                "max_parallel": maxParallel,
-                "succeeded": succeeded,
-                "failed": failed,
-                "aggregate_status": aggregateStatus,
-                "execution": [
-                    "configured_max_subagents": maxParallel,
-                    "waves": executionWaves.map(\.payload),
-                    "cache": BatchCacheDiagnostic(
-                        before: cacheBefore,
-                        after: cacheAfter
-                    ).payload,
-                ],
-                "results": rows,
-            ]
+            payload: payload,
+            rows: rows,
+            succeeded: succeeded,
+            failed: failed
         )
+    }
+
+    /// Canonical pre-execution cancellation envelope. Keep user Stop classified
+    /// as `user_denied` and parent-task cancellation as `execution_error`, while
+    /// giving both paths the same machine-readable cancellation marker.
+    static func earlyCancellationEnvelope(
+        tool: String,
+        userInterrupted: Bool
+    ) -> String {
+        ToolEnvelope.failure(
+            kind: userInterrupted ? .userDenied : .executionError,
+            message: "Batch preparation was cancelled before any jobs started.",
+            tool: tool,
+            retryable: false,
+            metadata: ["cancelled": true]
+        )
+    }
+
+    private static func prepareJobs(
+        _ jobs: [Job],
+        parentScope: SubagentScope,
+        interrupt: InterruptToken,
+        tool: String,
+        evaluationOverrides: EvaluationOverrides?
+    ) async -> BatchPreparationResult {
+        var prepared: [PreparedJob] = []
+        prepared.reserveCapacity(jobs.count)
+        var failures: [(id: String, envelope: String)] = []
+
+        for job in jobs {
+            if interrupt.isInterrupted || Task.isCancelled {
+                return .cancelled
+            }
+            let childScope = SubagentScope(
+                sessionId: parentScope.sessionId,
+                toolCallId: "\(parentScope.toolCallId):\(job.id)",
+                agentId: parentScope.agentId,
+                parentModelName: parentScope.parentModelName,
+                enableThinking: parentScope.enableThinking
+            )
+            let kind: any SubagentKind
+            if let evaluationOverrides {
+                kind = evaluationOverrides.kindForJob(job)
+            } else {
+                switch job.targetType {
+                case .agent:
+                    guard let agentID = UUID(uuidString: job.target) else {
+                        failures.append(
+                            (
+                                id: job.id,
+                                envelope: ToolEnvelope.failure(
+                                    kind: .invalidArgs,
+                                    message:
+                                        "Agent job '\(job.id)' has a target that is not a UUID.",
+                                    field: "jobs[\(job.index)].target",
+                                    expected: "spawnable agent UUID",
+                                    tool: tool,
+                                    retryable: true
+                                )
+                            )
+                        )
+                        continue
+                    }
+                    kind = TextSubagentKind(
+                        agentID: agentID,
+                        input: job.input,
+                        modelOverride: Self.modelOverrideForTests,
+                        permissionPreauthorized: true
+                    )
+                case .model:
+                    kind = TextSubagentKind(
+                        model: job.target,
+                        input: job.input,
+                        modelOverride: Self.modelOverrideForTests,
+                        permissionPreauthorized: true
+                    )
+                }
+            }
+            switch await SubagentSession.prepare(
+                kind,
+                tool: tool,
+                scope: childScope,
+                interrupt: interrupt
+            ) {
+            case .ready(let run):
+                prepared.append(PreparedJob(job: job, run: run))
+            case .failure(let envelope):
+                failures.append((job.id, envelope))
+            }
+        }
+
+        return failures.isEmpty ? .ready(prepared) : .failures(failures)
+    }
+
+    private static func authorityFingerprint(
+        jobs: [Job],
+        parentScope: SubagentScope
+    ) async -> BatchAuthorityFingerprint {
+        // Materialize a cold on-disk snapshot before capturing its monotonic
+        // revision. Otherwise the first resolve could load the same unchanged
+        // file and look like an authority mutation.
+        var configuration = SubagentConfigurationStore.snapshot()
+        let revision = SubagentConfigurationStore.revision()
+        let isDefaultLauncher = parentScope.agentId == Agent.defaultId
+        var agentIDs = Set<UUID>()
+        agentIDs.insert(parentScope.agentId)
+        for job in jobs where job.targetType == .agent {
+            if let id = UUID(uuidString: job.target) {
+                agentIDs.insert(id)
+            }
+        }
+        let sortedIDs = agentIDs.sorted {
+            $0.uuidString < $1.uuidString
+        }
+        var agents = await MainActor.run {
+            sortedIDs.map { id in
+                BatchAgentAuthority(
+                    id: id,
+                    agent: AgentManager.shared.agent(for: id)
+                )
+            }
+        }
+        let launcherSettings = agents.first {
+            $0.id == parentScope.agentId
+        }?.agent?.settings
+        let effectivePermission =
+            SubagentToolVisibility.effectivePermission(
+                capabilityId: SubagentCapabilityRegistry.spawn.id,
+                isDefault: isDefaultLauncher,
+                config: configuration,
+                settings: launcherSettings
+            )
+
+        // Choosing Always Allow legitimately persists exactly this permission
+        // while the panel is open. Normalize only that field and the custom
+        // launcher's persistence timestamp; all other authority stays exact.
+        configuration.permissionDefaults.setPolicy(
+            .ask,
+            for: SubagentCapabilityRegistry.spawn.id
+        )
+        if let launcherIndex = agents.firstIndex(where: {
+            $0.id == parentScope.agentId
+        }), var launcher = agents[launcherIndex].agent {
+            launcher.settings.subagentPermissions.setPolicy(
+                .ask,
+                for: SubagentCapabilityRegistry.spawn.id
+            )
+            launcher.updatedAt = .distantPast
+            agents[launcherIndex] = BatchAgentAuthority(
+                id: parentScope.agentId,
+                agent: launcher
+            )
+        }
+
+        return BatchAuthorityFingerprint(
+            configurationRevision: revision,
+            configuration: configuration,
+            agents: agents,
+            isDefaultLauncher: isDefaultLauncher,
+            effectivePermission: effectivePermission
+        )
+    }
+
+    private static func matchesApprovedAuthority(
+        _ approved: BatchAuthorityFingerprint,
+        current: BatchAuthorityFingerprint
+    ) -> Bool {
+        guard approved.configuration == current.configuration,
+            approved.agents == current.agents,
+            approved.isDefaultLauncher == current.isDefaultLauncher
+        else { return false }
+
+        if approved.effectivePermission == current.effectivePermission {
+            return current.configurationRevision
+                == approved.configurationRevision
+        }
+
+        // The permission panel's own Ask → Always Allow write is the sole
+        // permitted semantic transition. Default/main chat persists it in the
+        // global store (one revision); custom agents persist it on the launcher.
+        guard approved.effectivePermission == .ask,
+            current.effectivePermission == .alwaysAllow
+        else { return false }
+        if approved.isDefaultLauncher {
+            return current.configurationRevision
+                == approved.configurationRevision &+ 1
+        }
+        return current.configurationRevision
+            == approved.configurationRevision
+    }
+
+    private static func preparationFailureMessage(
+        _ failures: [(id: String, envelope: String)]
+    ) -> String {
+        let details = failures.map { failure in
+            "\(failure.id): \(ToolEnvelope.failureMessage(failure.envelope))"
+        }.joined(separator: "; ")
+        return "No batch jobs were started because target validation failed. \(details)"
     }
 
     static func parseJobs(
@@ -777,6 +1154,15 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                     )
                 )
             }
+            if targetType == .agent, UUID(uuidString: target) == nil {
+                return .failure(
+                    SpawnBatchParseError.invalidJob(
+                        index: index,
+                        message: "needs an exact agent UUID in `target`",
+                        tool: tool
+                    )
+                )
+            }
             jobs.append(
                 Job(
                     index: index,
@@ -817,10 +1203,55 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         return nil
     }
 
-    static func aggregateStatus(succeeded: Int, failed: Int) -> String {
+    static func aggregateStatus(
+        succeeded: Int,
+        failed: Int,
+        cancelled: Int = 0
+    ) -> String {
         if failed == 0 { return "succeeded" }
+        if succeeded == 0, cancelled == failed { return "all_cancelled" }
         if succeeded == 0 { return "all_failed" }
         return "partial_failure"
+    }
+
+    static func aggregateEnvelope(
+        tool: String,
+        payload: [String: Any],
+        rows: [[String: Any]],
+        succeeded: Int,
+        failed: Int
+    ) -> String {
+        guard failed > 0, succeeded == 0 else {
+            return ToolEnvelope.success(tool: tool, result: payload)
+        }
+
+        let envelopes = rows.compactMap { $0["envelope"] as? [String: Any] }
+        let kinds = Set(envelopes.compactMap { $0["kind"] as? String })
+        let kind: ToolEnvelope.Kind
+        if kinds.count == 1,
+            let raw = kinds.first,
+            let exact = ToolEnvelope.Kind(rawValue: raw)
+        {
+            kind = exact
+        } else {
+            kind = .executionError
+        }
+        // Retrying the whole batch is safe only when every child explicitly
+        // reported a retryable failure. One non-retryable child makes an
+        // aggregate retry liable to repeat a denied or invalid side effect.
+        let retryable =
+            !envelopes.isEmpty
+            && envelopes.allSatisfy { $0["retryable"] as? Bool == true }
+        let summary =
+            payload["summary"] as? String
+            ?? "\(failed) batch jobs failed."
+        return ToolEnvelope.failure(
+            kind: kind,
+            message: summary,
+            tool: tool,
+            retryable: retryable,
+            metadata: ["result": payload]
+        )
     }
 
     @MainActor
@@ -1010,9 +1441,17 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         }
 
         let runtime = ServerRuntimeSettingsStore.snapshot()
-        let engineSlots = InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
+        let configuredEngineSlots = InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
             in: .standard,
             runtime: runtime
+        )
+        let engineOccupancy = await ModelRuntime.shared.batchEngineCapacitySnapshot(
+            for: first.run.resolved.name,
+            reconcilingTo: configuredEngineSlots
+        )
+        let engineWindow = engineAdmissionWindow(
+            configuredMaximum: configuredEngineSlots,
+            snapshot: engineOccupancy
         )
         let residencyPlan = residencyPlanOverride ?? first.run.textResidencyPlan
         let memoryFacts: SubagentBatchMemoryFacts?
@@ -1028,15 +1467,51 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             memoryFacts = nil
         }
 
-        return makeLocalAdmissionPlan(
+        var plan = makeLocalAdmissionPlan(
             localJobCount: localJobs.count,
             remoteJobCount: remoteJobCount,
             maxParallel: maxParallel,
-            engineParallelLimit: engineSlots,
+            engineParallelLimit: engineWindow.parallelLimit,
             continuousBatchingEnabled: runtime.concurrency.continuousBatching,
             residencyPlan: residencyPlan,
             memoryFacts: memoryFacts,
             failClosedWhenEstimateUnknown: true
+        )
+        plan.engineOccupancy = engineOccupancy
+        plan.engineQueuedAtAdmission = engineWindow.queued
+        return plan
+    }
+
+    /// Bound only this caller's new submissions from an actor-consistent vMLX
+    /// snapshot. This is deliberately not a reservation: BatchEngine remains
+    /// the final admission authority if another chat/API/tool request races
+    /// after the observation.
+    static func engineAdmissionWindow(
+        configuredMaximum: Int,
+        snapshot: ModelBatchCapacitySnapshot?
+    ) -> EngineAdmissionWindow {
+        let configured = max(1, configuredMaximum)
+        guard let snapshot else {
+            return EngineAdmissionWindow(
+                parallelLimit: configured,
+                queued: false
+            )
+        }
+        let queued =
+            !snapshot.isAcceptingRequests
+            || snapshot.pendingCount > 0
+            || snapshot.nominalAvailableCount == 0
+        guard !queued else {
+            // Keep one explicit queued child rather than enqueueing the whole
+            // wave behind unrelated chat/API/tool work.
+            return EngineAdmissionWindow(parallelLimit: 1, queued: true)
+        }
+        return EngineAdmissionWindow(
+            parallelLimit: max(
+                1,
+                min(configured, snapshot.nominalAvailableCount)
+            ),
+            queued: false
         )
     }
 
@@ -1101,6 +1576,27 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         )
         relay.stop()
         return RawJobResult(job: job.job, envelope: envelope)
+    }
+
+    /// Re-check every prepared child's mutable launcher/target/config
+    /// authority at a batch-owned execution boundary. Text children captured
+    /// this fingerprint during the post-approval prepare pass; other kinds use
+    /// the protocol's no-op default.
+    private static func executionAuthorityFailure(
+        for jobs: [PreparedJob],
+        tool: String
+    ) async -> String? {
+        for job in jobs {
+            do {
+                try await job.run.kind.validateExecutionAuthority(
+                    job.run.scope,
+                    resolved: job.run.resolved
+                )
+            } catch {
+                return SubagentSession.envelope(for: error, tool: tool)
+            }
+        }
+        return nil
     }
 
     /// Run every local target in one process-wide residency sequence.
@@ -1222,6 +1718,19 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             }
         }
 
+        if let authorityFailure = await executionAuthorityFailure(
+            for: jobs,
+            tool: tool
+        ) {
+            await admissionController.release(
+                admissionClass,
+                modelKey: sequenceModelKey
+            )
+            return jobs.map {
+                RawJobResult(job: $0.job, envelope: authorityFailure)
+            }
+        }
+
         // Resolve all plans only after admission. This preserves the existing
         // reject-before-load phase while ensuring settings, parent residency,
         // and RAM pressure are current when the one sequence begins.
@@ -1292,22 +1801,32 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                     $0.initialResidencyPlan.shouldUnload
                 }
 
-                results.append(
-                    contentsOf: await runAdmittedLocalGroups(
-                        inPlace,
-                        firstGroupIndex: firstGroupIndex,
-                        remoteJobCount: remoteJobCount,
-                        maxParallel: maxParallel,
-                        localParallelismOverride: localParallelismOverride,
-                        admissionWaitSeconds: admissionWaitSeconds,
-                        feed: feed,
-                        interrupt: interrupt,
-                        tool: tool,
-                        diagnostics: diagnostics,
-                        localAdmissionPlanOverride: localAdmissionPlanOverride,
-                        localModelTransition: nil
+                if !inPlace.isEmpty {
+                    results.append(
+                        contentsOf: await runLocalGroups(
+                            inPlace,
+                            around: ResidencyOwnershipHandoff(
+                                wrapping: PassthroughHandoff()
+                            ),
+                            firstGroupIndex: firstGroupIndex,
+                            remoteJobCount: remoteJobCount,
+                            maxParallel: maxParallel,
+                            localParallelismOverride: localParallelismOverride,
+                            admissionWaitSeconds: admissionWaitSeconds,
+                            feed: feed,
+                            interrupt: interrupt,
+                            tool: tool,
+                            diagnostics: diagnostics,
+                            localAdmissionPlanOverride: localAdmissionPlanOverride,
+                            localModelTransition:
+                                localModelTransitionOverride
+                                ?? productionLocalModelTransition,
+                            finalLocalModelCleanup:
+                                finalLocalModelCleanupOverride
+                                ?? productionFinalLocalModelCleanup
+                        )
                     )
-                )
+                }
                 if !coexist.isEmpty {
                     let plan = aggregateResidencyPlan(
                         coexist.map(\.initialResidencyPlan),
@@ -1317,7 +1836,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                     results.append(
                         contentsOf: await runLocalGroups(
                             coexist,
-                            around: SubagentResidency.handoff(for: plan),
+                            around: ResidencyOwnershipHandoff(
+                                wrapping: SubagentResidency.handoff(for: plan)
+                            ),
                             firstGroupIndex: firstGroupIndex + inPlace.count,
                             remoteJobCount: remoteJobCount,
                             maxParallel: maxParallel,
@@ -1331,7 +1852,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                             localModelTransition:
                                 localModelTransitionOverride
                                 ?? productionLocalModelTransition,
-                            finalLocalModelCleanup: nil
+                            finalLocalModelCleanup:
+                                finalLocalModelCleanupOverride
+                                ?? productionFinalLocalModelCleanup
                         )
                     )
                 }
@@ -1504,7 +2027,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                         initialPlan.limitingFactors.map(\.rawValue).sorted(),
                     verdict: "admission_timed_out",
                     admissionWaitSeconds: admissionWaitSeconds,
-                    residencyMode: residencyMode(initialResidency)
+                    residencyMode: residencyMode(initialResidency),
+                    engineOccupancy: initialPlan.engineOccupancy,
+                    engineQueuedAtAdmission: initialPlan.engineQueuedAtAdmission
                 )
             )
             return groupJobs.map {
@@ -1536,6 +2061,19 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                     tool: tool,
                     userInterrupted: interrupt.isInterrupted
                 )
+            }
+        }
+
+        if let authorityFailure = await executionAuthorityFailure(
+            for: groupJobs,
+            tool: tool
+        ) {
+            await admissionController.releaseLocalInPlace(
+                modelKey: first.run.admissionModelKey,
+                slots: grantedSlots
+            )
+            return groupJobs.map {
+                RawJobResult(job: $0.job, envelope: authorityFailure)
             }
         }
 
@@ -1618,7 +2156,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                         livePlan.limitingFactors.map(\.rawValue).sorted(),
                     verdict: "rejected:capacity_changed",
                     admissionWaitSeconds: admissionWaitSeconds,
-                    residencyMode: residencyMode(liveResidency)
+                    residencyMode: residencyMode(liveResidency),
+                    engineOccupancy: livePlan.engineOccupancy,
+                    engineQueuedAtAdmission: livePlan.engineQueuedAtAdmission
                 )
             )
             return groupJobs.map {
@@ -1707,7 +2247,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 limitingFactors: plan.limitingFactors.map(\.rawValue).sorted(),
                 verdict: "rejected:\(reason.rawValue)",
                 admissionWaitSeconds: admissionWaitSeconds,
-                residencyMode: residencyMode(group.initialResidencyPlan)
+                residencyMode: residencyMode(group.initialResidencyPlan),
+                engineOccupancy: plan.engineOccupancy,
+                engineQueuedAtAdmission: plan.engineQueuedAtAdmission
             )
         )
         return group.jobs.map {
@@ -1779,6 +2321,15 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         finalLocalModelCleanup: FinalLocalModelCleanup?
     ) async -> [RawJobResult] {
         guard let first = groups.first?.jobs.first else { return [] }
+        let allJobs = groups.flatMap(\.jobs)
+        if let authorityFailure = await executionAuthorityFailure(
+            for: allJobs,
+            tool: tool
+        ) {
+            return allJobs.map {
+                RawJobResult(job: $0.job, envelope: authorityFailure)
+            }
+        }
         let box = SpawnBatchResultBox()
         do {
             _ = try await handoff.around(
@@ -1988,7 +2539,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                     limitingFactors: plan.limitingFactors.map(\.rawValue).sorted(),
                     verdict: "rejected:\(reason.rawValue)",
                     admissionWaitSeconds: admissionWaitSeconds,
-                    residencyMode: residencyMode(group.initialResidencyPlan)
+                    residencyMode: residencyMode(group.initialResidencyPlan),
+                    engineOccupancy: plan.engineOccupancy,
+                    engineQueuedAtAdmission: plan.engineQueuedAtAdmission
                 )
             )
             return group.jobs.map {
@@ -2038,7 +2591,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 limitingFactors: plan.limitingFactors.map(\.rawValue).sorted(),
                 verdict: "admitted",
                 admissionWaitSeconds: admissionWaitSeconds,
-                residencyMode: residencyMode(group.initialResidencyPlan)
+                residencyMode: residencyMode(group.initialResidencyPlan),
+                engineOccupancy: plan.engineOccupancy,
+                engineQueuedAtAdmission: plan.engineQueuedAtAdmission
             )
         )
 
@@ -2168,16 +2723,28 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             Double(run.textResidencyPlan?.maxElapsedSeconds ?? 300),
             5.0
         )
+        guard let ownershipToken = ModelResidencyOwnershipContext.childOwnershipToken else {
+            // No aggregate handoff means this batch did not cold-load and own
+            // a swappable child. Never fall back to unloading by model name.
+            return true
+        }
         let operation = Task.detached(priority: .userInitiated) {
-            let unloaded = await ModelRuntime.shared.unload(
+            let result = await ModelRuntime.shared.unloadChildOwned(
                 name: name,
+                by: ownershipToken,
                 leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds
             )
-            let residents = await ModelRuntime.shared.cachedModelSummaries()
-            let stillResident = residents.contains {
-                $0.name.caseInsensitiveCompare(name) == .orderedSame
+            switch result {
+            case .unloaded, .notResident:
+                return true
+            case .notOwned:
+                // A pre-existing API/plugin/local target is intentionally
+                // preserved. The next load/parent restore will either coexist
+                // under policy or fail closed; this cleanup never steals it.
+                return true
+            case .identityChanged, .drainTimedOut:
+                return false
             }
-            return unloaded && !stillResident
         }
         return await operation.value
     }
@@ -2255,7 +2822,8 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 kind: userInterrupted ? .userDenied : .executionError,
                 message: "Batch job was cancelled before it started.",
                 tool: tool,
-                retryable: false
+                retryable: false,
+                metadata: ["cancelled": true]
             )
         )
     }
@@ -2289,21 +2857,13 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
     /// express a target_type-dependent enum portably.
     static func constrainedSpec(
         _ tool: Tool,
-        allowedAgentNames: [String],
+        allowedAgentIDs: [UUID],
         allowedModelIds: [String],
         maxParallel: Int
     ) -> Tool {
-        let agents = Array(
-            Dictionary(
-                allowedAgentNames
-                    .map {
-                        $0.trimmingCharacters(in: .whitespacesAndNewlines)
-                    }
-                    .filter { !$0.isEmpty }
-                    .map { ($0.lowercased(), $0) },
-                uniquingKeysWith: { first, _ in first }
-            ).values
-        ).sorted()
+        let agents = SpawnableAgentIdentity.normalizedIDs(allowedAgentIDs)
+            .map(\.uuidString)
+            .sorted()
         let models = SubagentConfiguration.normalizedSpawnableModelNames(
             allowedModelIds
         )
@@ -2319,7 +2879,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
 
         target["enum"] = .array(targets.map(JSONValue.string))
         target["description"] = .string(
-            "Exact allowed target. Agents: \(agents.joined(separator: ", ")). "
+            "Exact allowed target. Agent UUIDs: \(agents.joined(separator: ", ")). "
                 + "Models: \(models.joined(separator: ", "))."
         )
         jobProperties["target"] = .object(target)

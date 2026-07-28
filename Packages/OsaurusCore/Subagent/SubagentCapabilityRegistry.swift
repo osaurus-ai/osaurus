@@ -369,9 +369,9 @@ public enum SubagentToolVisibility {
         isDefault: Bool,
         config: SubagentConfiguration,
         perAgentEnabled: Bool,
-        perAgentTargets: [String]
-    ) -> [String] {
-        if isDefault { return config.spawnableAgentNames }
+        perAgentTargets: [UUID]
+    ) -> [UUID] {
+        if isDefault { return config.spawnableAgentIDs }
         return perAgentEnabled ? perAgentTargets : []
     }
 
@@ -396,7 +396,7 @@ public enum SubagentToolVisibility {
         isDefault: Bool,
         config: SubagentConfiguration,
         perAgentEnabled: Bool,
-        perAgentTargets: [String]
+        perAgentTargets: [UUID]
     ) -> Bool {
         !effectiveSpawnableAgents(
             isDefault: isDefault,
@@ -449,15 +449,15 @@ public enum SubagentToolVisibility {
     /// Whether a specific `spawn_agent` TARGET agent is reachable from a
     /// launching agent — the execution-time check the spawn kind enforces.
     /// Default / main chat uses its own pool; a custom agent its own allow-list.
-    /// Agent names match case-insensitively (display names are user-facing prose).
+    /// UUID identity is exact; display names are never authorization keys.
     static func spawnTargetAllowed(
-        _ name: String,
+        _ id: UUID,
         isDefault: Bool,
         config: SubagentConfiguration,
-        perAgentTargets: [String]
+        perAgentTargets: [UUID]
     ) -> Bool {
-        if isDefault { return config.isAgentSpawnable(name) }
-        return perAgentTargets.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
+        if isDefault { return config.isAgentSpawnable(id) }
+        return perAgentTargets.contains(id)
     }
 
     /// Whether a specific `spawn_model` TARGET model id is reachable from a
@@ -500,18 +500,22 @@ public enum SubagentToolVisibility {
         var names = Set<String>()
         // The two compatibility tools gate independently; the batch tool is
         // available whenever either exact target pool is non-empty.
-        let hasAgents = spawnAgentAvailable(
-            isDefault: isDefault,
-            config: config,
-            perAgentEnabled: snapshot.spawnDelegationEnabled,
-            perAgentTargets: snapshot.spawnableAgentNames
-        )
-        let hasModels = spawnModelAvailable(
-            isDefault: isDefault,
-            config: config,
-            perAgentEnabled: snapshot.spawnDelegationEnabled,
-            perAgentModelTargets: snapshot.spawnableModelNames
-        )
+        let hasAgents =
+            snapshot.spawnConfiguration.map { !$0.agentIDs.isEmpty }
+            ?? spawnAgentAvailable(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: snapshot.spawnDelegationEnabled,
+                perAgentTargets: snapshot.spawnableAgentIDs
+            )
+        let hasModels =
+            snapshot.spawnConfiguration.map { !$0.modelNames.isEmpty }
+            ?? spawnModelAvailable(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: snapshot.spawnDelegationEnabled,
+                perAgentModelTargets: snapshot.spawnableModelNames
+            )
         if hasAgents {
             names.insert(SubagentCapabilityRegistry.spawnAgentToolName)
         }

@@ -62,6 +62,7 @@ struct ConfigurationView: View {
     /// their own policy in their Subagents tab. Saved immediately on change
     /// (like the toast toggles), not through the debounced configuration path.
     @State private var subagentConfiguration = SubagentConfigurationStore.snapshot()
+    @State private var subagentConfigurationBaseline = SubagentConfigurationStore.snapshot()
 
     // Search (passed from sidebar)
     @Binding var searchText: String
@@ -543,7 +544,9 @@ struct ConfigurationView: View {
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             loadConfiguration()
-            subagentConfiguration = SubagentConfigurationStore.snapshot()
+            let latest = SubagentConfigurationStore.snapshot()
+            subagentConfigurationBaseline = latest
+            subagentConfiguration = latest
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
@@ -555,13 +558,26 @@ struct ConfigurationView: View {
         // `saveConfiguration`). The re-snapshot on the change notification keeps
         // this in sync if an agent's Subagents tab edits the shared store.
         .onChange(of: subagentConfiguration) { _, newValue in
-            SubagentConfigurationStore.save(newValue)
+            let saved = SubagentConfigurationStore.saveEditorSnapshot(
+                newValue,
+                loadedBaseline: subagentConfigurationBaseline
+            )
+            subagentConfigurationBaseline = saved
+            if saved != newValue { subagentConfiguration = saved }
         }
         .onReceive(
             NotificationCenter.default.publisher(for: .subagentConfigurationChanged)
         ) { _ in
             let latest = SubagentConfigurationStore.snapshot()
-            if latest != subagentConfiguration { subagentConfiguration = latest }
+            let reconciled = SubagentConfiguration.mergingEditorSnapshot(
+                subagentConfiguration,
+                loadedBaseline: subagentConfigurationBaseline,
+                live: latest
+            )
+            subagentConfigurationBaseline = latest
+            if reconciled != subagentConfiguration {
+                subagentConfiguration = reconciled
+            }
         }
         // Any edit to a save-relevant field reschedules the debounced save.
         // `currentFormState` is the same snapshot the dirty check uses, so

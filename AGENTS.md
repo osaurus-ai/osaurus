@@ -148,6 +148,21 @@ sufficient:
   If settings conflict or do not compose for a model family, question the
   compatibility contract, fix the real wiring, or document the row as
   `PARTIAL`/`BLOCKED` with the exact incompatible setting combination.
+- Treat every implementation change as a cross-function and cross-settings
+  compatibility change until proven otherwise. Trace every shared value from
+  persisted global and per-agent configuration through UI editing, save and
+  relaunch, request/schema composition, runtime admission, execution,
+  telemetry, cancellation, and finalization. Test precedence and composition
+  with adjacent controls (including model defaults, explicit request
+  overrides, reasoning, tools, cache, batching, concurrency, and RAM safety)
+  and remove duplicate, stale, or unwired consumers instead of adding a second
+  source of truth. A direct unit test of the changed function is not sufficient
+  when another consumer or setting can alter the effective behavior.
+- For every touched or behaviorally related user setting, use the real built
+  app to change or toggle it, save it, exercise the affected workflow, and
+  visually inspect the complete result. Relaunch when persistence or
+  next-load-only behavior is part of the contract. Reading a stored value,
+  source default, or test fixture is never a substitute for this live proof.
 - Tool, memory, and cache setting proof must exercise the live user flow after
   the setting changes. Required tool proof includes exact tool args, tool-result
   history grounding, a second tool call after history, and no parser/protocol

@@ -15,67 +15,37 @@ import Foundation
 @preconcurrency import MLXLMCommon
 
 public enum InferenceFeatureFlags {
-    private enum Keys {
-        static let mlxBatchEngineMaxSize = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
-    }
-
     /// Maximum number of sequences `BatchEngine` decodes simultaneously per
     /// model. Higher values increase total throughput but also wired-memory
     /// footprint and per-token latency for any single request.
     ///
-    /// Defaults to **1** so the vmlx compile path engages on Mistral 3 / 4,
-    /// Qwen 3.5/3.6, MiniMax, NemotronH, and DSV4 (all the families where
-    /// `CompilableKVCache` / `CompilableTurboQuantKVCache` /
-    /// `CompilableRotatingKVCache` Stage 1B.3 / Stage 2 / Stage 3 promotion
-    /// is shipped). Per vmlx's `OSAURUS-PRODUCTION-REFERENCE-2026-05-01.md`
-    /// §8 + §15 invariant 13: compile only engages when `maxBatchSize == 1`
-    /// (Stage 1B.4 — per-bucket shared `[B, H, maxLen, D]` buffers — is
-    /// pending). With `maxBatchSize > 1` every promotion gate fails and the
-    /// model runs the uncompiled decode loop, losing the documented 9× TTFT
-    /// speedup vmlx measured on `BENCH_VL_BATCH_CHAT` Mistral 3.5 (24.8s
-    /// → 2.7s).
-    ///
-    /// Osaurus's primary use case is single-user chat through the macOS app,
-    /// where only one slot is active at a time anyway. For server-style
-    /// deployments serving multiple concurrent users, override:
-    ///
-    ///   `defaults write ai.osaurus ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize -int 8`
-    ///
-    /// — at the cost of compile being permanently disabled for that
-    /// process. The rate-display rolling tok/s ramp + tooltip alert
-    /// surfaces this trade-off in the chat UI when a non-default value is
-    /// detected.
-    ///
-    /// Capped at 32 to match BatchEngine's documented per-engine slot
-    /// ceiling. Values <=0 fall back to the compile-friendly 1.
+    /// The value comes exclusively from the canonical
+    /// `server-runtime.json` snapshot. Resolution order is Memory Safety's
+    /// explicit sequence override, the explicit Server concurrency override,
+    /// then the selected Memory Safety profile. Continuous Batching off pins
+    /// the capacity to one. The result is clamped to BatchEngine's 1...32
+    /// documented ceiling.
     public static var mlxBatchEngineMaxBatchSize: Int {
-        mlxBatchEngineMaxBatchSize(
-            in: .standard,
-            runtime: ServerRuntimeSettingsStore.snapshot()
+        mlxBatchEngineMaxBatchSize(runtime: ServerRuntimeSettingsStore.snapshot())
+    }
+
+    /// Testable/runtime-explicit entry point that does not depend on global
+    /// persisted state.
+    static func mlxBatchEngineMaxBatchSize(
+        runtime: VMLXServerRuntimeSettings
+    ) -> Int {
+        ServerRuntimeSettingsStore.resolvedBatchEngineMaxBatchSize(
+            for: runtime
         )
     }
 
-    /// Legacy entry point used by tests that exercise the
-    /// UserDefaults fallback directly.
-    static func mlxBatchEngineMaxBatchSize(in userDefaults: UserDefaults) -> Int {
-        let raw = userDefaults.integer(forKey: Keys.mlxBatchEngineMaxSize)
-        return raw > 0 ? min(raw, 32) : 1
-    }
-
-    /// Preferred entry point. The Server → Settings panel writes
-    /// `concurrency.continuousBatching` and
-    /// `concurrency.maxConcurrentSequences`; the former gates the multi-slot
-    /// scheduler and the latter wins over the legacy `UserDefaults` key.
-    /// Tests that have a runtime override pass it explicitly so we don't
-    /// depend on `ServerRuntimeSettingsStore`'s on-disk state.
+    /// Source-compatible bridge for existing admission call sites. The
+    /// `UserDefaults` argument is intentionally ignored: that store is a
+    /// one-way first-run migration source, never a live runtime authority.
     static func mlxBatchEngineMaxBatchSize(
-        in userDefaults: UserDefaults,
+        in _: UserDefaults,
         runtime: VMLXServerRuntimeSettings
     ) -> Int {
-        guard runtime.concurrency.continuousBatching else { return 1 }
-        if let value = runtime.concurrency.maxConcurrentSequences, value > 0 {
-            return min(value, 32)
-        }
-        return mlxBatchEngineMaxBatchSize(in: userDefaults)
+        mlxBatchEngineMaxBatchSize(runtime: runtime)
     }
 }

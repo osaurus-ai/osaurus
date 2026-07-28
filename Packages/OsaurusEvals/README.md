@@ -640,6 +640,19 @@ The non-LLM domains are pure-data and run in single-digit ms each — safe to ke
 
 A case with empty `expect: {}` is a valid smoke test — it records what the runner observed without scoring. Useful while bootstrapping.
 
+### `tool_result_grounding` domain
+
+This model-free lane scores a frozen ordered transcript. In addition to
+per-result grounding assertions, cases can pin an exact `expectedToolSequence`,
+require one assistant final with `requireSingleFinalAssistant`, require that
+final to follow every result and remain the last event, and require a later
+tool call to follow a named result via `callMustFollowResultOf`. A `spawnBatch`
+assertion reuses the typed AgentLoop aggregate parser/scorer, so committed
+fixtures can check exact job IDs and UUID targets, settled child rows, reported
+counts, aggregate status, execution waves, and cache diagnostics without a
+model call. These fixtures prove transcript/scorer contracts; they do not
+replace a live AgentLoop or app-UI run.
+
 ### `capability_search` domain
 
 Index-only recall measurements over the tools / methods / skills lanes. No LLM, fast (~10 ms/case), deterministic. Drives `CapabilitySearchEvaluator.evaluate` and pins recall + abstain behaviour against `expect.capabilitySearch`. The CLI initializes only the selected index lanes for this domain and does not load installed native plugins by default; pass `--bootstrap-plugins` when you intentionally want local plugin tools included.

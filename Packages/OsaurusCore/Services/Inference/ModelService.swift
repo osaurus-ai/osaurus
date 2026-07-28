@@ -96,6 +96,10 @@ struct GenerationParameters: Sendable {
     /// argument so it survives the whole ChatEngine → MLXService → ModelRuntime
     /// path without every layer having to re-plumb it.
     let loadIntent: ModelLoadIntent
+    /// Preserve a non-nil residency owner when this request reuses an already
+    /// resident model. Nested subagents set this so using an API/plugin-owned
+    /// resident cannot silently convert it into a chat-owned unload target.
+    let preserveExistingResidencyOwner: Bool
 
     init(
         temperature: Float?,
@@ -119,7 +123,8 @@ struct GenerationParameters: Sendable {
         warmupPrefill: Bool = false,
         cacheStableSystemPrefix: String? = nil,
         requestSource: RequestSource = .httpAPI,
-        loadIntent: ModelLoadIntent = .interactive
+        loadIntent: ModelLoadIntent = .interactive,
+        preserveExistingResidencyOwner: Bool = false
     ) {
         self.temperature = temperature
         self.maxTokens = maxTokens
@@ -143,6 +148,7 @@ struct GenerationParameters: Sendable {
         self.cacheStableSystemPrefix = cacheStableSystemPrefix
         self.requestSource = requestSource
         self.loadIntent = loadIntent
+        self.preserveExistingResidencyOwner = preserveExistingResidencyOwner
     }
 }
 

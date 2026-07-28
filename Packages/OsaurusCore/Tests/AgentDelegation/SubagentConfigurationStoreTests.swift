@@ -70,9 +70,11 @@ struct SubagentConfigurationStoreTests {
     func mainChatSpawnPolicySurvivesReload() async throws {
         let lease = await acquireSubagentStoreSandbox("main-chat-spawn-policy")
         defer { lease.release() }
+        let researcherID = UUID(uuidString: "30000000-0000-4000-8000-000000000001")!
+        let coderID = UUID(uuidString: "30000000-0000-4000-8000-000000000002")!
 
         let config = SubagentConfiguration(
-            spawnableAgentNames: ["Researcher", "Coder"],
+            spawnableAgentIDs: [researcherID, coderID],
             permissionDefaults: SubagentPermissionDefaults(
                 policies: [SubagentCapabilityRegistry.spawn.id: .alwaysAllow]
             ),
@@ -102,7 +104,7 @@ struct SubagentConfigurationStoreTests {
         SubagentConfigurationStore.invalidateSnapshot()
 
         let reloaded = SubagentConfigurationStore.snapshot()
-        #expect(reloaded.spawnableAgentNames == ["Researcher", "Coder"])
+        #expect(reloaded.spawnableAgentIDs == [researcherID, coderID])
         #expect(
             reloaded.spawnableModelNames
                 == ["local/fast-helper", "openai/frontier-helper"]
@@ -125,6 +127,50 @@ struct SubagentConfigurationStoreTests {
         )
     }
 
+    @Test("legacy names migrate once, persist UUIDs, and collisions fail closed")
+    func legacyNameMigrationPersistsStableIDs() async throws {
+        let lease = await acquireSubagentStoreSandbox("legacy-agent-name-migration")
+        defer { lease.release() }
+        let coderID = UUID(uuidString: "30000000-0000-4000-8000-000000000003")!
+        let upperID = UUID(uuidString: "30000000-0000-4000-8000-000000000004")!
+        let lowerID = UUID(uuidString: "30000000-0000-4000-8000-000000000005")!
+        let file = lease.sandbox.appendingPathComponent("agent-delegation.json")
+        try FileManager.default.createDirectory(
+            at: lease.sandbox,
+            withIntermediateDirectories: true
+        )
+        try Data(
+            #"{"localTextDelegationEnabled":true,"spawnableAgentNames":["Coder","Helper","missing"]}"#
+                .utf8
+        ).write(to: file, options: .atomic)
+
+        SubagentConfigurationStore.invalidateSnapshot()
+        let legacy = SubagentConfigurationStore.snapshot()
+        #expect(legacy.spawnableAgentIDs.isEmpty)
+        #expect(legacy.legacySpawnableAgentNames == ["Coder", "Helper", "missing"])
+
+        let migrated = SubagentConfigurationStore.migrateLegacyAgentNames(
+            using: [
+                Agent(id: coderID, name: "Coder"),
+                Agent(id: upperID, name: "Helper"),
+                Agent(id: lowerID, name: "helper"),
+            ]
+        )
+        #expect(migrated.spawnableAgentIDs == [coderID])
+        #expect(migrated.legacySpawnableAgentNames.isEmpty)
+
+        SubagentConfigurationStore.flushPendingWrites()
+        SubagentConfigurationStore.invalidateSnapshot()
+        let reloaded = SubagentConfigurationStore.snapshot()
+        #expect(reloaded.spawnableAgentIDs == [coderID])
+        #expect(reloaded.legacySpawnableAgentNames.isEmpty)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any]
+        )
+        #expect(object["spawnableAgentNames"] == nil)
+        #expect((object["spawnableAgentIDs"] as? [String]) == [coderID.uuidString])
+    }
+
     @Test("legacy files decode with safe delegation defaults")
     func legacyFilesDecodeWithSafeDefaults() throws {
         let data = Data(
@@ -145,6 +191,104 @@ struct SubagentConfigurationStoreTests {
         // The main chat's image switch is off here, so image stays inactive.
         #expect(decoded.imageDelegationActive == false)
         #expect(decoded.defaultImageGenerationModelId == "flux")
+    }
+
+    @Test("external notification hydration is a no-op store commit")
+    func externalHydrationDoesNotEchoSave() async {
+        let lease = await acquireSubagentStoreSandbox(
+            "agent-delegation-editor-hydration"
+        )
+        defer { lease.release() }
+
+        var permissions = SubagentPermissionDefaults()
+        permissions.setPolicy(
+            .ask,
+            for: SubagentCapabilityRegistry.spawn.id
+        )
+        SubagentConfigurationStore.save(
+            SubagentConfiguration(
+                permissionDefaults: permissions,
+                budgets: SubagentBudgets(maxParallelSpawns: 2)
+            )
+        )
+        let loadedBaseline = SubagentConfigurationStore.snapshot()
+
+        let latest = SubagentConfigurationStore.mutate { live in
+            live.permissionDefaults.setPolicy(
+                .alwaysAllow,
+                for: SubagentCapabilityRegistry.spawn.id
+            )
+        }
+        let reconciled = SubagentConfiguration.mergingEditorSnapshot(
+            loadedBaseline,
+            loadedBaseline: loadedBaseline,
+            live: latest
+        )
+        #expect(reconciled == latest)
+
+        // SwiftUI's notification assignment triggers its onChange handler.
+        // Saving that already-hydrated value against the new baseline must not
+        // publish another revision/notification/write.
+        let revisionBeforeHydrationSave = SubagentConfigurationStore.revision()
+        let canonical = SubagentConfigurationStore.saveEditorSnapshot(
+            reconciled,
+            loadedBaseline: latest
+        )
+        #expect(canonical == latest)
+        #expect(
+            SubagentConfigurationStore.revision()
+                == revisionBeforeHydrationSave
+        )
+    }
+
+    @Test("stale global editor cannot erase concurrent Always Allow")
+    func staleEditorPreservesConcurrentAlwaysAllow() async {
+        let lease = await acquireSubagentStoreSandbox(
+            "agent-delegation-editor-always-allow"
+        )
+        defer { lease.release() }
+
+        var permissions = SubagentPermissionDefaults()
+        permissions.setPolicy(
+            .ask,
+            for: SubagentCapabilityRegistry.spawn.id
+        )
+        SubagentConfigurationStore.save(
+            SubagentConfiguration(
+                permissionDefaults: permissions,
+                budgets: SubagentBudgets(maxParallelSpawns: 2)
+            )
+        )
+        let loadedBaseline = SubagentConfigurationStore.snapshot()
+        var staleEditor = loadedBaseline
+        staleEditor.budgets = SubagentBudgets(maxParallelSpawns: 5)
+
+        SubagentConfigurationStore.mutate { live in
+            live.permissionDefaults.setPolicy(
+                .alwaysAllow,
+                for: SubagentCapabilityRegistry.spawn.id
+            )
+        }
+        let saved = SubagentConfigurationStore.saveEditorSnapshot(
+            staleEditor,
+            loadedBaseline: loadedBaseline
+        )
+        #expect(saved.budgets.maxParallelSpawns == 5)
+        #expect(
+            saved.permissionDefaults.policy(
+                for: SubagentCapabilityRegistry.spawn.id
+            ) == .alwaysAllow
+        )
+
+        SubagentConfigurationStore.flushPendingWrites()
+        SubagentConfigurationStore.invalidateSnapshot()
+        let reloaded = SubagentConfigurationStore.snapshot()
+        #expect(reloaded.budgets.maxParallelSpawns == 5)
+        #expect(
+            reloaded.permissionDefaults.policy(
+                for: SubagentCapabilityRegistry.spawn.id
+            ) == .alwaysAllow
+        )
     }
 
     @Test("override directory swaps between sandboxes")

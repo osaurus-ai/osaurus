@@ -68,7 +68,8 @@ struct SpawnToolTests {
         // family — a running subagent of ANY kind blocks a nested spawn.
         let agentResult = try await SubagentSession.$activeKindId.withValue("image") {
             try await SpawnAgentTool().execute(
-                argumentsJSON: #"{"agent":"helper","input":"summarize"}"#
+                argumentsJSON:
+                    #"{"agent":"00000000-0000-4000-8000-000000000098","input":"summarize"}"#
             )
         }
         #expect(ToolEnvelope.isError(agentResult))
@@ -272,7 +273,8 @@ struct SpawnToolTests {
     }
 
     @Test func agentKindShape() {
-        let kind = TextSubagentKind(agentName: "helper", input: "x")
+        let helperID = UUID(uuidString: "AAAAAAAA-1111-4111-8111-111111111111")!
+        let kind = TextSubagentKind(agentID: helperID, input: "x")
         #expect(kind.capability.id == "spawn")
         #expect(
             kind.capability.toolNames
@@ -282,7 +284,7 @@ struct SpawnToolTests {
         // local model and run the residency handoff (unlike the same-model
         // image / computer_use / sandbox kinds).
         #expect(kind.capability.modelSource == .agent)
-        #expect(kind.feedTitle.contains("helper"))
+        #expect(kind.feedTitle.contains(helperID.uuidString))
     }
 
     @Test func modelKindShape() {
@@ -330,6 +332,7 @@ struct SpawnToolTests {
 
     @Test func childRunnerPreservesInterleavedReasoningWithoutInlineThinkLeakage() async throws {
         let probe = InterleavedReasoningStreamProbe()
+        let channelProbe = ChannelDeltaProbe()
         let toolset = AgentSubagentToolset(
             specs: [
                 Tool(
@@ -359,6 +362,9 @@ struct SpawnToolTests {
             sessionId: "reasoning-tool-final-regression",
             enableThinking: true,
             toolset: toolset,
+            onChannelDelta: { delta in
+                channelProbe.record(delta)
+            },
             streamProvider: { request in
                 try await probe.stream(for: request)
             }
@@ -369,6 +375,13 @@ struct SpawnToolTests {
         #expect(result.digest == "Visible final answer.")
         #expect(result.digest?.contains("<think>") == false)
         #expect(result.digest?.contains("private reasoning") == false)
+        #expect(
+            channelProbe.snapshot() == [
+                .reasoning("private reasoning before tool"),
+                .reasoning("private reasoning after tool"),
+                .content("Visible final answer."),
+            ]
+        )
 
         let requests = await probe.requests()
         #expect(requests.count == 2)
@@ -397,7 +410,7 @@ struct SpawnToolTests {
     }
 
     /// Per-agent spawnable enforcement (agents): a CUSTOM launching agent may
-    /// only spawn agents in its OWN `spawnableAgentNames` list — the global
+    /// only spawn agents in its OWN `spawnableAgentIDs` list — the global
     /// pool does NOT apply to it. Here the main chat's pool lists "Helper", but
     /// the launching agent is a custom agent with an empty list, so `resolveModel`
     /// must reject BEFORE any model/residency work (reject-before-evict). Binding
@@ -406,16 +419,17 @@ struct SpawnToolTests {
     @Test func customAgentSpawnRejectsTargetOutsideItsOwnList() async throws {
         let lease = await acquireSubagentStoreSandbox("spawn-per-agent-enforcement")
         defer { lease.release() }
+        let helperID = UUID(uuidString: "AAAAAAAA-2222-4222-8222-222222222222")!
         SubagentConfigurationStore.save(
             SubagentConfiguration(
-                spawnableAgentNames: ["Helper"]
+                spawnableAgentIDs: [helperID]
             )
         )
 
         let customAgentId = UUID()
         await ChatExecutionContext.$currentAgentId.withValue(customAgentId) {
             do {
-                _ = try await TextSubagentKind(agentName: "Helper", input: "x")
+                _ = try await TextSubagentKind(agentID: helperID, input: "x")
                     .resolveModel(SubagentScope.current())
                 Issue.record("custom agent spawn of an unlisted target should be denied")
             } catch let SubagentError.denied(message) {
@@ -459,18 +473,19 @@ struct SpawnToolTests {
     @Test func mainChatSpawnRespectsGlobalPermissionDeny() async throws {
         let lease = await acquireSubagentStoreSandbox("spawn-main-chat-permission-deny")
         defer { lease.release() }
+        let helperID = UUID(uuidString: "AAAAAAAA-3333-4333-8333-333333333333")!
         var perms = SubagentPermissionDefaults()
         perms.setPolicy(.deny, for: SubagentCapabilityRegistry.spawn.id)
         SubagentConfigurationStore.save(
             SubagentConfiguration(
-                spawnableAgentNames: ["Helper"],
+                spawnableAgentIDs: [helperID],
                 permissionDefaults: perms
             )
         )
 
         await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
             do {
-                _ = try await TextSubagentKind(agentName: "Helper", input: "x")
+                _ = try await TextSubagentKind(agentID: helperID, input: "x")
                     .resolveModel(SubagentScope.current())
                 Issue.record("a denied spawn permission should reject resolveModel")
             } catch let SubagentError.denied(message) {
@@ -479,6 +494,23 @@ struct SpawnToolTests {
                 Issue.record("expected SubagentError.denied, got \(error)")
             }
         }
+    }
+}
+
+private final class ChannelDeltaProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var deltas: [AgentSubagentRunner.ChannelDelta] = []
+
+    func record(_ delta: AgentSubagentRunner.ChannelDelta) {
+        lock.lock()
+        deltas.append(delta)
+        lock.unlock()
+    }
+
+    func snapshot() -> [AgentSubagentRunner.ChannelDelta] {
+        lock.lock()
+        defer { lock.unlock() }
+        return deltas
     }
 }
 

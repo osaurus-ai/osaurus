@@ -154,12 +154,12 @@ enum SpawnPermissionGate {
         launchingAgentId: UUID
     ) async -> Bool {
         if launchingAgentId == Agent.defaultId {
-            var config = SubagentConfigurationStore.snapshot()
-            config.permissionDefaults.setPolicy(
-                .alwaysAllow,
-                for: SubagentCapabilityRegistry.spawn.id
-            )
-            SubagentConfigurationStore.save(config)
+            SubagentConfigurationStore.mutate { config in
+                config.permissionDefaults.setPolicy(
+                    .alwaysAllow,
+                    for: SubagentCapabilityRegistry.spawn.id
+                )
+            }
             return true
         }
 

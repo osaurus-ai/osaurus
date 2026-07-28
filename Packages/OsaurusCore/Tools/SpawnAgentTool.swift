@@ -7,7 +7,7 @@
 //  model (with the local-orchestrator residency handoff when needed)
 //  and returns only a compact digest. Sibling of `spawn_model`, which delegates
 //  to a bare model with no agent. Default OFF; each agent opts in from its
-//  Subagents tab (`spawnableAgentNames`). See docs/SUBAGENT_PORTABLE_DESIGN.md.
+//  Subagents tab (`spawnableAgentIDs`). See docs/SUBAGENT_PORTABLE_DESIGN.md.
 //
 
 import Foundation
@@ -33,7 +33,9 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
             ]),
             "agent": .object([
                 "type": .string("string"),
-                "description": .string("Name of a spawnable agent (e.g. \"sparky\")."),
+                "description": .string(
+                    "UUID of a spawnable agent. Copy the exact UUID from the configured target list."
+                ),
             ]),
         ]),
         "required": .array([.string("input"), .string("agent")]),
@@ -45,16 +47,10 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
 
     /// Narrow the request-local schema to the launching agent's currently
     /// runnable agent pool. Execution still enforces the durable allow-list;
-    /// this enum is exact spelling guidance and provider-side validation.
-    static func constrainedSpec(_ tool: Tool, allowedAgentNames: [String]) -> Tool {
-        var seen = Set<String>()
-        let normalized = allowedAgentNames.compactMap { raw -> String? in
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return nil }
-            let key = trimmed.lowercased()
-            guard seen.insert(key).inserted else { return nil }
-            return trimmed
-        }
+    /// this enum is exact identity guidance and provider-side validation.
+    static func constrainedSpec(_ tool: Tool, allowedAgentIDs: [UUID]) -> Tool {
+        let normalized = SpawnableAgentIdentity.normalizedIDs(allowedAgentIDs)
+            .map(\.uuidString)
         guard !normalized.isEmpty,
             case .object(var root)? = tool.function.parameters,
             case .object(var properties)? = root["properties"],
@@ -82,14 +78,26 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
         if let failure = SpawnInputContract.validationFailure(input: input, tool: name) {
             return failure
         }
-        let agentReq = requireString(args, "agent", expected: "a spawnable agent name", tool: name)
-        guard case .value(let agentName) = agentReq else { return agentReq.failureEnvelope ?? "" }
+        let agentReq = requireString(args, "agent", expected: "a spawnable agent UUID", tool: name)
+        guard case .value(let rawAgentID) = agentReq else {
+            return agentReq.failureEnvelope ?? ""
+        }
+        guard let agentID = UUID(uuidString: rawAgentID) else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "`agent` must be an exact UUID from the configured spawnable-agent list.",
+                field: "agent",
+                expected: "UUID",
+                tool: name,
+                retryable: true
+            )
+        }
 
         // The shared host owns the recursion guard, live feed, permission
         // verdict, residency handoff, compact-result normalization, and
         // telemetry; the kind owns model resolution + the bounded text loop.
         return await SubagentSession.runWithVisiblePreparation(
-            TextSubagentKind(agentName: agentName, input: input),
+            TextSubagentKind(agentID: agentID, input: input),
             tool: name
         )
     }

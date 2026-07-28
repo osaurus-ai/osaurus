@@ -9,6 +9,7 @@ import Testing
 
 @testable import OsaurusCore
 
+@Suite(.serialized)
 struct ServerControllerConfigLoadingTests {
 
     @Test @MainActor func controllerLoadsSavedConfigurationOnInit() async throws {
@@ -33,6 +34,72 @@ struct ServerControllerConfigLoadingTests {
         let controller = ServerController()
         #expect(controller.configuration.port == 4242)
         #expect(controller.configuration.exposeToNetwork == true)
+    }
+
+    @Test @MainActor
+    func controllerFollowsOffActorRuntimeSettingsStoreSave() async throws {
+        let base = URL(
+            fileURLWithPath: NSTemporaryDirectory(),
+            isDirectory: true
+        )
+        let dir = base.appendingPathComponent(
+            "osaurus-runtime-controller-tests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true
+        )
+
+        let previousRuntimeDirectory =
+            ServerRuntimeSettingsStore.overrideDirectory
+        let previousConfigurationDirectory =
+            ServerConfigurationStore.overrideDirectory
+        ServerRuntimeSettingsStore.overrideDirectory = dir
+        ServerRuntimeSettingsStore.invalidateSnapshot()
+        ServerConfigurationStore.overrideDirectory = dir
+        defer {
+            ServerRuntimeSettingsStore.overrideDirectory =
+                previousRuntimeDirectory
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            ServerConfigurationStore.overrideDirectory =
+                previousConfigurationDirectory
+            try? FileManager.default.removeItem(at: dir)
+        }
+
+        var legacy = ServerConfiguration.default
+        legacy.exposeToNetwork = true
+        ServerConfigurationStore.save(legacy)
+
+        var explicit = VMLXServerRuntimeSettings()
+        explicit.network.host = "0.0.0.0"
+        explicit.concurrency.maxConcurrentSequences = 8
+        ServerRuntimeSettingsStore.save(explicit)
+
+        let controller = ServerController()
+        #expect(
+            controller.runtimeSettings.concurrency
+                .maxConcurrentSequences == 8
+        )
+
+        var automatic = explicit
+        automatic.concurrency.maxConcurrentSequences = nil
+        await Task.detached {
+            ServerRuntimeSettingsStore.save(automatic)
+        }.value
+
+        for _ in 0 ..< 50 {
+            if controller.runtimeSettings.concurrency
+                .maxConcurrentSequences == nil
+            {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(
+            controller.runtimeSettings.concurrency
+                .maxConcurrentSequences == nil
+        )
     }
 
     @Test func loadedModelRefreshInputs_coverCacheMemorySafetyMultimodalAndMTP() {
@@ -158,5 +225,47 @@ struct ServerControllerConfigLoadingTests {
                 next: cacheChanged
             )
         )
+    }
+
+    @Test func openSettingsDraftAdoptsExternalClearAndPreservesUnrelatedEdit() {
+        var baseline = VMLXServerRuntimeSettings()
+        baseline.concurrency.maxConcurrentSequences = 8
+        baseline.generation.temperature = 0.2
+
+        var draft = baseline
+        draft.generation.temperature = 0.7
+
+        var external = baseline
+        external.concurrency.maxConcurrentSequences = nil
+
+        let reconciled = ServerRuntimeSettingsDraftReconciler.reconcile(
+            draft: draft,
+            baseline: baseline,
+            external: external
+        )
+
+        #expect(reconciled.settings.concurrency.maxConcurrentSequences == nil)
+        #expect(reconciled.settings.generation.temperature == 0.7)
+        #expect(reconciled.conflictingSections.isEmpty)
+    }
+
+    @Test func openSettingsDraftBlocksSameSectionExternalOverwrite() {
+        var baseline = VMLXServerRuntimeSettings()
+        baseline.concurrency.maxConcurrentSequences = 8
+
+        var draft = baseline
+        draft.concurrency.maxConcurrentSequences = 4
+
+        var external = baseline
+        external.concurrency.maxConcurrentSequences = nil
+
+        let reconciled = ServerRuntimeSettingsDraftReconciler.reconcile(
+            draft: draft,
+            baseline: baseline,
+            external: external
+        )
+
+        #expect(reconciled.settings.concurrency.maxConcurrentSequences == 4)
+        #expect(reconciled.conflictingSections == ["concurrency"])
     }
 }

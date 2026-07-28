@@ -23,6 +23,9 @@ struct HealthBatchDiagnosticsShapingTests {
             pendingCount: 2,
             activeCount: 1,
             activeHighWatermark: 3,
+            configuredEngineCapacity: 4,
+            nominalAvailableCapacity: 3,
+            engineCapacitySummary: "Ornith: 4",
             decodeSplitCount: 0,
             turboQuantCompressions: 4,
             isAcceptingRequests: true,
@@ -44,6 +47,9 @@ struct HealthBatchDiagnosticsShapingTests {
         #expect(dict["pending"] as? Int == 2)
         #expect(dict["active"] as? Int == 1)
         #expect(dict["active_high_watermark"] as? Int == 3)
+        #expect(dict["configured_engine_capacity"] as? Int == 4)
+        #expect(dict["nominal_available_capacity"] as? Int == 3)
+        #expect(dict["engine_capacity_summary"] as? String == "Ornith: 4")
         #expect(dict["accepting_requests"] as? Bool == true)
         #expect(dict["native_mtp_depths"] as? String == "d2, d4")
         #expect(dict["prefix_hits"] as? Int == 7)

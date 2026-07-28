@@ -118,7 +118,7 @@ public struct SubagentJobTranscript: Sendable, Codable {
     /// child does not discard successful siblings.
     public let runEnvelopeKinds: [String]?
     /// Production spawn_batch aggregate status (`succeeded` /
-    /// `partial_failure` / `all_failed`).
+    /// `partial_failure` / `all_failed` / `all_cancelled`).
     public let batchAggregateStatus: String?
     /// Production spawn_batch child rows in caller order.
     public let batchJobs: [SubagentBatchJobTranscript]?
@@ -515,13 +515,13 @@ public enum SubagentJobEvaluator {
     /// agent must still exist and be spawnable; only the effective model is
     /// overridden.
     public static func runSpawn(
-        agent: String,
+        agentID: UUID,
         input: String,
         modelId: String? = nil,
         interruptAfterMs: Int? = nil
     ) async -> SubagentJobTranscript {
         let toolCallId = freshToolCallId()
-        let kind = TextSubagentKind(agentName: agent, input: input, modelOverride: modelId)
+        let kind = TextSubagentKind(agentID: agentID, input: input, modelOverride: modelId)
         let started = Date()
         let stopper = scheduleInterrupt(afterMs: interruptAfterMs, toolCallId: toolCallId)
         let envelope = await withEvalScope(toolCallId: toolCallId) {
@@ -697,7 +697,7 @@ public enum SubagentJobEvaluator {
         // the real "did the model swap happen" signal — so surface it as
         // `handoffWrapped`. A rejected envelope (handoff-OFF gate) has no
         // payload, leaving it `nil`, and the case asserts `rejected` instead.
-        let payload = (ToolEnvelope.successPayload(envelope) as? [String: Any]) ?? [:]
+        let payload = (ToolEnvelope.resultPayload(envelope) as? [String: Any]) ?? [:]
         let handoffFlag = payload["handoff"] as? Bool
 
         // Restore-verified-resident: after a successful run with a LOCAL
@@ -866,7 +866,7 @@ public enum SubagentJobEvaluator {
     /// Seed a spawnable agent named `name` for the duration of `body`, then
     /// restore. Creates an `Agent` with that name (when absent, with a concise
     /// agent prompt) and adds it to the Default agent's GLOBAL spawnable pool
-    /// (`SubagentConfiguration.spawnableAgentNames`, which the Default/main-chat
+    /// (`SubagentConfiguration.spawnableAgentIDs`, which the Default/main-chat
     /// agent the eval scope uses consults), so the `spawn` lane RUNS across
     /// models on any host instead of skipping for lack of a configured agent.
     /// Also forces `localTextDelegationEnabled` (the "Local Orchestrator
@@ -883,16 +883,24 @@ public enum SubagentJobEvaluator {
     /// `SubagentConfigurationStore` is nonisolated.
     public static func withSpawnableAgent<T: Sendable>(
         name: String,
-        _ body: @Sendable () async -> T
+        _ body: @Sendable (UUID) async -> T
     ) async -> T {
-        let state: (createdAgentId: UUID?, priorConfig: SubagentConfiguration, configChanged: Bool) =
+        let state: (
+            targetID: UUID,
+            createdAgentId: UUID?,
+            priorConfig: SubagentConfiguration,
+            configChanged: Bool
+        ) =
             await MainActor.run {
                 let priorConfig = SubagentConfigurationStore.snapshot()
                 var createdAgentId: UUID? = nil
-                let exists = AgentManager.shared.agents.contains {
+                let matches = AgentManager.shared.agents.filter {
                     $0.name.caseInsensitiveCompare(name) == .orderedSame
                 }
-                if !exists {
+                let targetID: UUID
+                if matches.count == 1 {
+                    targetID = matches[0].id
+                } else {
                     let agent = Agent(
                         id: UUID(),
                         name: name,
@@ -903,10 +911,14 @@ public enum SubagentJobEvaluator {
                     )
                     AgentStore.save(agent)
                     createdAgentId = agent.id
+                    targetID = agent.id
                 }
                 var updated = priorConfig
-                if !priorConfig.isAgentSpawnable(name) {
-                    updated.spawnableAgentNames = priorConfig.spawnableAgentNames + [name]
+                if !priorConfig.isAgentSpawnable(targetID) {
+                    updated.spawnableAgentIDs =
+                        SpawnableAgentIdentity.normalizedIDs(
+                            priorConfig.spawnableAgentIDs + [targetID]
+                        )
                 }
                 // Enable the local handoff switch so a LOCAL run model can
                 // spawn the local agent (the chat model unloads to make
@@ -916,9 +928,9 @@ public enum SubagentJobEvaluator {
                 let configChanged = updated != priorConfig
                 if configChanged { SubagentConfigurationStore.save(updated) }
                 if createdAgentId != nil { AgentManager.shared.refresh() }
-                return (createdAgentId, priorConfig, configChanged)
+                return (targetID, createdAgentId, priorConfig, configChanged)
             }
-        let result = await body()
+        let result = await body(state.targetID)
         await MainActor.run {
             if let id = state.createdAgentId {
                 AgentStore.delete(id: id)
@@ -1025,7 +1037,13 @@ public enum SubagentJobEvaluator {
         restoredResident: Bool? = nil
     ) -> SubagentJobTranscript {
         let succeeded = ToolEnvelope.isSuccess(envelope)
-        let payload = (ToolEnvelope.successPayload(envelope) as? [String: Any]) ?? [:]
+        // Failed aggregate operations (for example, a user-stopped batch)
+        // intentionally retain their settled per-child rows under `result`.
+        // Preserve those rows without changing the root success/failure
+        // classification so cancellation evals can prove every child reached
+        // a terminal state instead of mistaking the aggregate for an empty
+        // early cancellation.
+        let payload = (ToolEnvelope.resultPayload(envelope) as? [String: Any]) ?? [:]
 
         let feed = SubagentFeedRegistry.shared.feed(for: toolCallId)
         let events = feed?.currentEvents() ?? []

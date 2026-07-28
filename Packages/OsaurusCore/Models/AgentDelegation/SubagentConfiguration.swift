@@ -314,6 +314,42 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
     }
 }
 
+/// Stable identity and one-time migration helpers for spawnable agent pools.
+///
+/// Agent display names are user-editable and are not unique. Legacy name
+/// entries therefore migrate only when exactly one current agent matches
+/// case-insensitively. Missing and ambiguous names are deliberately dropped:
+/// authorizing either `Helper` or `helper` by picking the first match would
+/// silently grant the wrong model, prompt, and tool set.
+enum SpawnableAgentIdentity {
+    static func normalizedIDs(_ values: [UUID]) -> [UUID] {
+        var seen = Set<UUID>()
+        return values.filter { seen.insert($0).inserted }
+    }
+
+    static func migratedIDs(
+        ids: [UUID],
+        legacyNames: [String],
+        agents: [Agent]
+    ) -> [UUID] {
+        var result = normalizedIDs(ids)
+        var seen = Set(result)
+
+        for rawName in legacyNames {
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            let matches = agents.filter {
+                $0.name.caseInsensitiveCompare(name) == .orderedSame
+            }
+            guard matches.count == 1, seen.insert(matches[0].id).inserted else {
+                continue
+            }
+            result.append(matches[0].id)
+        }
+        return result
+    }
+}
+
 struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// When true, a LOCAL orchestrator chat model may hand off to a local text
     /// `spawn` subagent: the orchestrator is unloaded for the job and reloaded
@@ -326,7 +362,11 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// Empty by default → the main chat has nothing to spawn until opted in.
     /// Custom agents carry their OWN per-agent list in `AgentSettings`; this
     /// field governs the main chat only (edited in Settings → Subagents).
-    var spawnableAgentNames: [String]
+    var spawnableAgentIDs: [UUID]
+    /// Decode-only compatibility payload. It is resolved against the complete
+    /// live agent catalog, then cleared before the next save. New JSON never
+    /// writes this field.
+    var legacySpawnableAgentNames: [String]
     /// The DEFAULT / main-chat agent's `image` enable. Custom agents carry their
     /// own `AgentSettings.imageEnabled`; this governs the main chat only.
     var imageDelegationEnabled: Bool
@@ -396,6 +436,7 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
 
     init(
         localTextDelegationEnabled: Bool = true,
+        spawnableAgentIDs: [UUID] = [],
         spawnableAgentNames: [String] = [],
         imageDelegationEnabled: Bool = false,
         defaultImageGenerationModelId: String? = nil,
@@ -416,7 +457,8 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         spawnToolAccess: SpawnToolAccess = .none
     ) {
         self.localTextDelegationEnabled = localTextDelegationEnabled
-        self.spawnableAgentNames = spawnableAgentNames
+        self.spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(spawnableAgentIDs)
+        self.legacySpawnableAgentNames = spawnableAgentNames
         self.imageDelegationEnabled = imageDelegationEnabled
         self.defaultImageGenerationModelId = defaultImageGenerationModelId
         self.defaultImageEditModelId = defaultImageEditModelId
@@ -442,21 +484,186 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
 
     static let `default` = SubagentConfiguration()
 
+    /// Three-way merge for long-lived settings surfaces backed by the shared
+    /// configuration document. A field changed by the editor since it loaded
+    /// wins; an untouched field adopts the latest store value. This lets the
+    /// main Spawn, AppleScript, and Image editors save their independent slices
+    /// without erasing a concurrent permission decision or another open
+    /// editor's update.
+    static func mergingEditorSnapshot(
+        _ editor: SubagentConfiguration,
+        loadedBaseline: SubagentConfiguration,
+        live: SubagentConfiguration
+    ) -> SubagentConfiguration {
+        var merged = editor
+        mergeEditorField(
+            \.localTextDelegationEnabled,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.spawnableAgentIDs,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.legacySpawnableAgentNames,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.imageDelegationEnabled,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.defaultImageGenerationModelId,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.defaultImageEditModelId,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.imageJobLoadPolicy,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.appleScriptDelegationEnabled,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.defaultAppleScriptModelId,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.defaultAppleScriptExecutionMode,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.appleScriptLoadPolicy,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.appleScriptQueryPrefersResidentModel,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        merged.permissionDefaults = SubagentPermissionDefaults.mergingEditorSnapshot(
+            editor.permissionDefaults,
+            loadedBaseline: loadedBaseline.permissionDefaults,
+            live: live.permissionDefaults
+        )
+        mergeEditorField(
+            \.budgets,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.ramSafetyPreflightEnabled,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.subagentCoexistenceEnabled,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.subagentModelOverrides,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.spawnableModelNames,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.spawnableModelNotes,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        mergeEditorField(
+            \.spawnToolAccess,
+            editor: editor,
+            loadedBaseline: loadedBaseline,
+            live: live,
+            into: &merged
+        )
+        return merged.normalized
+    }
+
+    private static func mergeEditorField<Value: Equatable>(
+        _ keyPath: WritableKeyPath<SubagentConfiguration, Value>,
+        editor: SubagentConfiguration,
+        loadedBaseline: SubagentConfiguration,
+        live: SubagentConfiguration,
+        into merged: inout SubagentConfiguration
+    ) {
+        if editor[keyPath: keyPath] == loadedBaseline[keyPath: keyPath] {
+            merged[keyPath: keyPath] = live[keyPath: keyPath]
+        }
+    }
+
     /// A local orchestrator may hand off to a local text subagent (unload/reload).
     var localOrchestratorTextHandoffActive: Bool {
         localTextDelegationEnabled
     }
 
-    /// Whether the named agent is reachable via `spawn` from the DEFAULT /
+    /// Whether the identified agent is reachable via `spawn` from the DEFAULT /
     /// main chat (the main-chat pool). Custom agents use their own per-agent list
     /// via `SubagentToolVisibility.spawnTargetAllowed`.
-    func isAgentSpawnable(_ name: String) -> Bool {
-        spawnableAgentNames.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
+    func isAgentSpawnable(_ id: UUID) -> Bool {
+        spawnableAgentIDs.contains(id)
     }
 
     /// Whether the DEFAULT / main chat has at least one spawnable agent.
     var anyAgentSpawnable: Bool {
-        !spawnableAgentNames.isEmpty
+        !spawnableAgentIDs.isEmpty
     }
 
     /// Whether the raw model id is in the DEFAULT / main chat's `spawn_model`
@@ -510,7 +717,8 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     var normalized: SubagentConfiguration {
         SubagentConfiguration(
             localTextDelegationEnabled: localTextDelegationEnabled,
-            spawnableAgentNames: spawnableAgentNames,
+            spawnableAgentIDs: spawnableAgentIDs,
+            spawnableAgentNames: legacySpawnableAgentNames,
             imageDelegationEnabled: imageDelegationEnabled,
             defaultImageGenerationModelId: Self.normalizedModelId(defaultImageGenerationModelId),
             defaultImageEditModelId: Self.normalizedModelId(defaultImageEditModelId),
@@ -536,8 +744,23 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         )
     }
 
+    /// Resolve legacy name grants once the complete agent catalog is known.
+    /// The result is UUID-only even when no legacy entry can be migrated.
+    func migratingLegacyAgentNames(using agents: [Agent]) -> SubagentConfiguration {
+        var migrated = self
+        migrated.spawnableAgentIDs = SpawnableAgentIdentity.migratedIDs(
+            ids: spawnableAgentIDs,
+            legacyNames: legacySpawnableAgentNames,
+            agents: agents
+        )
+        migrated.legacySpawnableAgentNames = []
+        return migrated.normalized
+    }
+
     enum CodingKeys: String, CodingKey {
         case localTextDelegationEnabled
+        case spawnableAgentIDs
+        /// Legacy decode-only key.
         case spawnableAgentNames
         case imageDelegationEnabled
         case defaultImageGenerationModelId
@@ -563,6 +786,10 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         self.init(
             localTextDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .localTextDelegationEnabled)
                 ?? true,
+            spawnableAgentIDs: (try? container.decodeIfPresent(
+                [UUID].self,
+                forKey: .spawnableAgentIDs
+            )) ?? [],
             spawnableAgentNames: try container.decodeIfPresent([String].self, forKey: .spawnableAgentNames) ?? [],
             imageDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .imageDelegationEnabled) ?? false,
             defaultImageGenerationModelId: try container.decodeIfPresent(
@@ -641,6 +868,54 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
                 forKey: .spawnToolAccess
             )) ?? .none
         )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        let value = normalized
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(value.localTextDelegationEnabled, forKey: .localTextDelegationEnabled)
+        try container.encode(value.spawnableAgentIDs, forKey: .spawnableAgentIDs)
+        try container.encode(value.imageDelegationEnabled, forKey: .imageDelegationEnabled)
+        try container.encodeIfPresent(
+            value.defaultImageGenerationModelId,
+            forKey: .defaultImageGenerationModelId
+        )
+        try container.encodeIfPresent(
+            value.defaultImageEditModelId,
+            forKey: .defaultImageEditModelId
+        )
+        try container.encode(value.imageJobLoadPolicy, forKey: .imageJobLoadPolicy)
+        try container.encode(
+            value.appleScriptDelegationEnabled,
+            forKey: .appleScriptDelegationEnabled
+        )
+        try container.encodeIfPresent(
+            value.defaultAppleScriptModelId,
+            forKey: .defaultAppleScriptModelId
+        )
+        try container.encode(
+            value.defaultAppleScriptExecutionMode,
+            forKey: .defaultAppleScriptExecutionMode
+        )
+        try container.encode(value.appleScriptLoadPolicy, forKey: .appleScriptLoadPolicy)
+        try container.encode(
+            value.appleScriptQueryPrefersResidentModel,
+            forKey: .appleScriptQueryPrefersResidentModel
+        )
+        try container.encode(value.permissionDefaults, forKey: .permissionDefaults)
+        try container.encode(value.budgets, forKey: .budgets)
+        try container.encode(
+            value.ramSafetyPreflightEnabled,
+            forKey: .ramSafetyPreflightEnabled
+        )
+        try container.encode(
+            value.subagentCoexistenceEnabled,
+            forKey: .subagentCoexistenceEnabled
+        )
+        try container.encode(value.subagentModelOverrides, forKey: .subagentModelOverrides)
+        try container.encode(value.spawnableModelNames, forKey: .spawnableModelNames)
+        try container.encode(value.spawnableModelNotes, forKey: .spawnableModelNotes)
+        try container.encode(value.spawnToolAccess, forKey: .spawnToolAccess)
     }
 
     private static func normalizedModelId(_ value: String?) -> String? {

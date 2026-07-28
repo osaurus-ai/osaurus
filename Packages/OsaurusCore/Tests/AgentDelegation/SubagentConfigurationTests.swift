@@ -213,14 +213,17 @@ struct SubagentConfigurationTests {
         #expect(decoded.normalized.ramSafetyPreflightEnabled == false)
     }
 
-    @Test("normalization preserves spawnable agent names")
-    func normalizationPreservesSpawnableNames() {
+    @Test("normalization preserves stable spawnable agent IDs")
+    func normalizationPreservesSpawnableIDs() {
+        let researcherID = UUID(uuidString: "20000000-0000-4000-8000-000000000001")!
+        let coderID = UUID(uuidString: "20000000-0000-4000-8000-000000000002")!
         var config = SubagentConfiguration()
-        config.spawnableAgentNames = ["Researcher", "Coder"]
+        config.spawnableAgentIDs = [researcherID, coderID, researcherID]
 
-        #expect(config.normalized.spawnableAgentNames == ["Researcher", "Coder"])
+        #expect(config.normalized.spawnableAgentIDs == [researcherID, coderID])
         #expect(config.normalized.anyAgentSpawnable)
-        #expect(config.normalized.isAgentSpawnable("researcher"))  // case-insensitive
+        #expect(config.normalized.isAgentSpawnable(researcherID))
+        #expect(!config.normalized.isAgentSpawnable(UUID()))
     }
 
     @Test("subagent model overrides round-trip and drop blank entries")

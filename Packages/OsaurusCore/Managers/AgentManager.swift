@@ -227,7 +227,20 @@ public final class AgentManager: ObservableObject {
 
     /// Reload agents from disk
     public func refresh() {
-        agents = AgentStore.loadAll()
+        let loaded = AgentStore.loadAll()
+        let migrated = loaded.map { agent -> Agent in
+            guard !agent.isBuiltIn, !agent.settings.legacySpawnableAgentNames.isEmpty else {
+                return agent
+            }
+            var updated = agent
+            updated.settings = agent.settings.migratingLegacySpawnableAgents(using: loaded)
+            if updated.settings != agent.settings {
+                AgentStore.save(updated)
+            }
+            return updated
+        }
+        agents = migrated
+        SubagentConfigurationStore.migrateLegacyAgentNames(using: migrated)
     }
 
     /// Set the active agent
@@ -872,7 +885,8 @@ extension AgentManager {
             spawnDelegationEnabled: agent.settings.spawnDelegationEnabled,
             imageEnabled: agent.settings.imageEnabled,
             appleScriptEnabled: agent.settings.appleScriptEnabled,
-            spawnableAgentNames: agent.settings.spawnableAgentNames,
+            spawnableAgentIDs: agent.settings.spawnableAgentIDs,
+            spawnableAgentNames: agent.settings.legacySpawnableAgentNames,
             spawnableModelNames: agent.settings.spawnableModelNames,
             spawnableModelNotes: agent.settings.spawnableModelNotes,
             knowledgeEnabled: agent.settings.knowledgeEnabled,

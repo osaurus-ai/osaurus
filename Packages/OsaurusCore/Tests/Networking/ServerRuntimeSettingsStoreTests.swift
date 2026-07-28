@@ -113,6 +113,45 @@ struct ServerRuntimeSettingsStoreTests {
         #expect(plan.displaySummary.contains("kv_cap=unlimited"))
     }
 
+    @Test func batchEngineCapacityMatchesResolvedMemorySafetyConcurrency() {
+        var settings = VMLXServerRuntimeSettings()
+        settings.memorySafety.mode = .performance
+        settings.concurrency.maxConcurrentSequences = nil
+
+        let performancePlan =
+            ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+                for: settings
+            )
+        #expect(performancePlan.concurrency.maxConcurrentSequences == 2)
+        #expect(
+            ServerRuntimeSettingsStore.resolvedBatchEngineMaxBatchSize(
+                for: settings
+            ) == 2
+        )
+
+        settings.memorySafety.mode = .balanced
+        #expect(
+            ServerRuntimeSettingsStore.resolvedBatchEngineMaxBatchSize(
+                for: settings
+            ) == 2
+        )
+
+        settings.concurrency.maxConcurrentSequences = 7
+        settings.memorySafety.customMaxConcurrentSequences = 3
+        #expect(
+            ServerRuntimeSettingsStore.resolvedBatchEngineMaxBatchSize(
+                for: settings
+            ) == 3
+        )
+
+        settings.concurrency.continuousBatching = false
+        #expect(
+            ServerRuntimeSettingsStore.resolvedBatchEngineMaxBatchSize(
+                for: settings
+            ) == 1
+        )
+    }
+
     @Test func noAutomaticLimitsDisablesOsaurusOwnedPercentageGates() {
         var settings = VMLXServerRuntimeSettings()
         settings.memorySafety.mode = .diagnosticDangerous
@@ -586,6 +625,25 @@ struct ServerRuntimeSettingsStoreTests {
         )
 
         #expect(migrated.concurrency.maxConcurrentSequences == 6)
+    }
+
+    @Test func resetDefaults_doesNotResurrectLegacyConcurrency() async throws {
+        let defaults = throwawayDefaults()
+        defaults.set(6, forKey: "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize")
+
+        let migrated = ServerRuntimeSettingsStore.migratedFromLegacy(
+            serverConfiguration: .default,
+            userDefaults: defaults
+        )
+        let reset = ServerRuntimeSettingsStore.resetDefaults()
+
+        #expect(migrated.concurrency.maxConcurrentSequences == 6)
+        #expect(reset.concurrency.maxConcurrentSequences == nil)
+        #expect(
+            ServerRuntimeSettingsStore.resolvedBatchEngineMaxBatchSize(
+                for: reset
+            ) == 1
+        )
     }
 
     @Test func projectIntoLegacy_mirrorsRuntimeChangesIntoServerConfiguration() async throws {

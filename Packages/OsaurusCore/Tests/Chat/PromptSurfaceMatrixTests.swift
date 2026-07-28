@@ -42,6 +42,42 @@ struct PromptSurfaceMatrixTests {
 
                 let manager = AgentManager.shared
                 let query = "Summarize the project status and identify next steps."
+                let workerModelID = "test/prompt-matrix-worker"
+                let previousScanOverride = ModelManager.scanLocalModelsOverrideForTests
+                let previousScanWait = ModelManager.localModelsScanWaitLimitOverrideForTests
+                let previousExternalRoots = ExternalModelLocator.testRootsOverride
+                ExternalModelLocator.testRootsOverride = []
+                ExternalModelLocator.invalidateInMemory()
+                _ = ExternalModelLocator.rescan()
+                ModelManager.localModelsScanWaitLimitOverrideForTests = 2
+                ModelManager.scanLocalModelsOverrideForTests = { _ in
+                    [
+                        MLXModel(
+                            id: workerModelID,
+                            name: "Prompt Matrix Worker",
+                            description: "Runnable spawn target fixture",
+                            downloadURL: "https://example.invalid/prompt-matrix-worker"
+                        )
+                    ]
+                }
+                ModelManager.invalidateLocalModelsCache()
+                _ = ModelManager.discoverLocalModels()
+                defer {
+                    ModelManager.scanLocalModelsOverrideForTests = previousScanOverride
+                    ModelManager.localModelsScanWaitLimitOverrideForTests = previousScanWait
+                    ExternalModelLocator.testRootsOverride = previousExternalRoots
+                    ExternalModelLocator.invalidateInMemory()
+                    ModelManager.invalidateLocalModelsCache()
+                }
+
+                let workerAgent = Agent(
+                    name: "PromptMatrix-Worker",
+                    description: "A deterministic runnable worker.",
+                    defaultModel: workerModelID,
+                    agentAddress: "test-prompt-matrix-worker-\(UUID().uuidString)",
+                    memoryEnabled: false
+                )
+                manager.add(workerAgent)
 
                 let defaultAgent = Agent(
                     name: "PromptMatrix-Default",
@@ -63,7 +99,9 @@ struct PromptSurfaceMatrixTests {
                 enabledAgent.settings.selfSchedulingEnabled = true
                 enabledAgent.settings.computerUseEnabled = true
                 enabledAgent.settings.spawnDelegationEnabled = true
-                enabledAgent.settings.spawnableAgentNames = ["Researcher"]
+                enabledAgent.settings.spawnableAgentIDs = [
+                    workerAgent.id
+                ]
                 manager.add(enabledAgent)
 
                 let sandboxConfig = AutonomousExecConfig(enabled: true, pluginCreate: false)
@@ -205,6 +243,7 @@ struct PromptSurfaceMatrixTests {
                 _ = await manager.delete(id: defaultAgent.id)
                 _ = await manager.delete(id: enabledAgent.id)
                 _ = await manager.delete(id: sandboxAgent.id)
+                _ = await manager.delete(id: workerAgent.id)
             }
         }
     }

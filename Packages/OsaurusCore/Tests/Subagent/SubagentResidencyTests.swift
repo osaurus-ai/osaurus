@@ -105,6 +105,134 @@ struct SubagentResidencyTests {
         #expect(plan.maxElapsedSeconds == 90)
     }
 
+    @Test("handoff refuses before unloading when unrelated non-chat work is resident")
+    func unrelatedProtectedResidentRefusesHandoff() {
+        do {
+            _ = try SubagentResidency.decidePlan(
+                isLocal: true,
+                modelName: "local-c",
+                residentChatModels: ["local-a"],
+                protectedResidentModels: ["api-b"],
+                handoffEnabled: true,
+                ramSafetyEnabled: true,
+                requiredBytes: 4096,
+                idleWaitSeconds: 90,
+                deniedMessage: denied
+            )
+            Issue.record("unrelated protected residency should refuse before handoff")
+        } catch let error as SubagentError {
+            guard case .unavailable(let message) = error else {
+                Issue.record("expected unavailable, got \(error)")
+                return
+            }
+            #expect(message.contains("api-b"))
+            #expect(message.contains("non-chat"))
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+    }
+
+    @Test("protected target refuses before a non-coexisting parent handoff")
+    func protectedTargetRefusesBeforeParentUnload() {
+        do {
+            _ = try SubagentResidency.decidePlan(
+                isLocal: true,
+                modelName: "api-b",
+                residentChatModels: ["local-a"],
+                protectedResidentModels: ["api-b"],
+                handoffEnabled: true,
+                ramSafetyEnabled: true,
+                requiredBytes: 4096,
+                idleWaitSeconds: 90,
+                deniedMessage: denied
+            )
+            Issue.record("protected target should refuse before the parent is unloaded")
+        } catch let error as SubagentError {
+            guard case .unavailable(let message) = error else {
+                Issue.record("expected unavailable, got \(error)")
+                return
+            }
+            #expect(message.contains("api-b"))
+            #expect(message.contains("restored"))
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+    }
+
+    @Test("RAM-safe coexistence may reuse a protected target without unloading the parent")
+    func protectedTargetCanBeReusedByCoexistence() throws {
+        let plan = try SubagentResidency.decidePlan(
+            isLocal: true,
+            modelName: "api-b",
+            residentChatModels: ["local-a"],
+            protectedResidentModels: ["api-b"],
+            handoffEnabled: true,
+            ramSafetyEnabled: true,
+            requiredBytes: 2_000,
+            idleWaitSeconds: 90,
+            deniedMessage: denied,
+            coexistence: SubagentCoexistence(
+                allowed: true,
+                availableBytes: 10_000_000_000,
+                residentBytes: 4_000,
+                flexibleBudgetBytes: 10_000
+            )
+        )
+        #expect(plan.coexists)
+        #expect(!plan.shouldUnload)
+    }
+
+    @Test("protected target coexistence does not double-charge resident weights")
+    func protectedTargetReuseDoesNotDoubleChargeWeights() throws {
+        let gb: Int64 = 1 << 30
+        let plan = try SubagentResidency.decidePlan(
+            isLocal: true,
+            modelName: "api-b",
+            residentChatModels: ["local-a"],
+            protectedResidentModels: ["api-b"],
+            handoffEnabled: true,
+            ramSafetyEnabled: true,
+            requiredBytes: 4 * gb,
+            idleWaitSeconds: 90,
+            deniedMessage: denied,
+            coexistence: SubagentCoexistence(
+                allowed: true,
+                availableBytes: 5 * gb,
+                residentBytes: 8 * gb,
+                // A+B fits, A+B+B does not. Reusing B must add zero weight.
+                flexibleBudgetBytes: 10 * gb,
+                // A tightened profile may reject a new cold load, but the
+                // target is already protected and resident in this row.
+                memorySafetyAllowsTargetLoad: false
+            )
+        )
+        #expect(plan.coexists)
+        #expect(!plan.shouldUnload)
+    }
+
+    @Test("RAM-safe coexistence may add a child without reclaiming protected residents")
+    func coexistenceCanPreserveProtectedResident() throws {
+        let plan = try SubagentResidency.decidePlan(
+            isLocal: true,
+            modelName: "local-c",
+            residentChatModels: ["local-a"],
+            protectedResidentModels: ["api-b"],
+            handoffEnabled: true,
+            ramSafetyEnabled: true,
+            requiredBytes: 2_000,
+            idleWaitSeconds: 90,
+            deniedMessage: denied,
+            coexistence: SubagentCoexistence(
+                allowed: true,
+                availableBytes: 10_000_000_000,
+                residentBytes: 4_000,
+                flexibleBudgetBytes: 10_000
+            )
+        )
+        #expect(plan.coexists)
+        #expect(!plan.shouldUnload)
+    }
+
     @Test("a different local model with the handoff disabled is rejected BEFORE evict")
     func differentLocalHandoffDisabledThrows() {
         do {
@@ -229,6 +357,25 @@ struct SubagentResidencyTests {
         )
         #expect(plan.shouldUnload == true)
         #expect(plan.coexists == false)
+    }
+
+    @Test("coexistence: Memory Safety target-load refusal falls back before loading")
+    func coexistenceMemorySafetyRefusalFallsBack() throws {
+        var inputs = roomyCoexistence()
+        inputs.memorySafetyAllowsTargetLoad = false
+        let plan = try SubagentResidency.decidePlan(
+            isLocal: true,
+            modelName: "local-b",
+            residentChatModels: ["local-a"],
+            handoffEnabled: true,
+            ramSafetyEnabled: true,
+            requiredBytes: tenGB,
+            idleWaitSeconds: 90,
+            deniedMessage: denied,
+            coexistence: inputs
+        )
+        #expect(plan.shouldUnload)
+        #expect(!plan.coexists)
     }
 
     @Test("coexistence: unknown model size cannot prove the fit → handoff")

@@ -105,6 +105,33 @@ private actor BatchLivePlanProbe {
     }
 }
 
+private actor BatchExecutionAuthorityProbe {
+    private var revoked = false
+    private var validations = 0
+    private var runs = 0
+
+    func revoke() {
+        revoked = true
+    }
+
+    func validate() throws {
+        validations += 1
+        if revoked {
+            throw SubagentError.denied(
+                "batch authority revoked while waiting for admission"
+            )
+        }
+    }
+
+    func recordRun() {
+        runs += 1
+    }
+
+    func snapshot() -> (validations: Int, runs: Int) {
+        (validations, runs)
+    }
+}
+
 private actor BatchTransitionProbe {
     private var transitions: [String] = []
     private var admissionTransitionCounts: [Int] = []
@@ -248,6 +275,8 @@ struct SpawnBatchToolTests {
         let laneProbe: BatchLaneProbe?
         let shouldFail: Bool
         let delayMilliseconds: Int
+        let emitsChannelDeltas: Bool
+        let authorityProbe: BatchExecutionAuthorityProbe?
 
         init(
             local: Bool,
@@ -255,7 +284,9 @@ struct SpawnBatchToolTests {
             probe: BatchExecutionProbe? = nil,
             laneProbe: BatchLaneProbe? = nil,
             shouldFail: Bool = false,
-            delayMilliseconds: Int = 80
+            delayMilliseconds: Int = 80,
+            emitsChannelDeltas: Bool = false,
+            authorityProbe: BatchExecutionAuthorityProbe? = nil
         ) {
             self.local = local
             self.admission = admission
@@ -263,6 +294,8 @@ struct SpawnBatchToolTests {
             self.laneProbe = laneProbe
             self.shouldFail = shouldFail
             self.delayMilliseconds = delayMilliseconds
+            self.emitsChannelDeltas = emitsChannelDeltas
+            self.authorityProbe = authorityProbe
         }
 
         func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
@@ -282,13 +315,38 @@ struct SpawnBatchToolTests {
             admission
         }
 
+        func validateExecutionAuthority(
+            _ scope: SubagentScope,
+            resolved: ResolvedModel
+        ) async throws {
+            try await authorityProbe?.validate()
+        }
+
         func run(
             _ scope: SubagentScope,
             _ resolved: ResolvedModel,
             feed: SubagentFeed,
             interrupt: InterruptToken
         ) async throws -> SubagentResult {
+            await authorityProbe?.recordRun()
             feed.emitPhase("scripted start", detail: resolved.name)
+            if emitsChannelDeltas {
+                feed.emitStreamDelta(
+                    kind: .reasoning,
+                    title: "reasoning",
+                    delta: "think "
+                )
+                feed.emitStreamDelta(
+                    kind: .reasoning,
+                    title: "reasoning",
+                    delta: "again"
+                )
+                feed.emitStreamDelta(
+                    kind: .response,
+                    title: "response",
+                    delta: "answer"
+                )
+            }
             if let laneProbe {
                 await laneProbe.enter(model: resolved.name, isLocal: resolved.isLocal)
             }
@@ -345,7 +403,10 @@ struct SpawnBatchToolTests {
         laneProbe: BatchLaneProbe? = nil,
         shouldFail: Bool = false,
         delayMilliseconds: Int = 80,
-        handoff: any SubagentHandoff = PassthroughHandoff()
+        emitsChannelDeltas: Bool = false,
+        authorityProbe: BatchExecutionAuthorityProbe? = nil,
+        handoff: any SubagentHandoff = PassthroughHandoff(),
+        parentModelName: String? = nil
     ) -> SpawnBatchTool.PreparedJob {
         let kind = ScriptedKind(
             local: isLocal,
@@ -353,12 +414,15 @@ struct SpawnBatchToolTests {
             probe: probe,
             laneProbe: laneProbe,
             shouldFail: shouldFail,
-            delayMilliseconds: delayMilliseconds
+            delayMilliseconds: delayMilliseconds,
+            emitsChannelDeltas: emitsChannelDeltas,
+            authorityProbe: authorityProbe
         )
         let scope = SubagentScope(
             sessionId: "session",
             toolCallId: "call:\(id)",
             agentId: Agent.defaultId,
+            parentModelName: parentModelName,
             enableThinking: true
         )
         return SpawnBatchTool.PreparedJob(
@@ -383,6 +447,57 @@ struct SpawnBatchToolTests {
         )
     }
 
+    @Test("one batch feed relays ordered child channels without a child Stop owner")
+    func batchRelayUpdatesStreamingRowsInPlace() async {
+        let parentFeed = SubagentFeed(
+            toolCallId: "batch-parent-\(UUID().uuidString)",
+            kindId: "spawn",
+            title: "batch"
+        )
+        let interrupt = InterruptToken()
+        let child = prepared(
+            index: 0,
+            id: "alpha",
+            targetType: .model,
+            target: "remote/model",
+            model: "remote/model",
+            isLocal: false,
+            admission: .remote,
+            emitsChannelDeltas: true
+        )
+
+        let result = await SpawnBatchTool.runOne(
+            child,
+            feed: parentFeed,
+            interrupt: interrupt,
+            skipAdmission: true
+        )
+
+        #expect(ToolEnvelope.isSuccess(result.envelope))
+        let events = parentFeed.currentEvents()
+        let reasoningIndex = events.firstIndex {
+            $0.kind == .reasoning && $0.title == "job alpha · reasoning"
+        }
+        let responseIndex = events.firstIndex {
+            $0.kind == .response && $0.title == "job alpha · response"
+        }
+        let outcomeIndex = events.firstIndex {
+            $0.kind == .outcome && $0.title == "job alpha finished"
+        }
+        #expect(reasoningIndex != nil)
+        #expect(responseIndex != nil)
+        #expect(outcomeIndex != nil)
+        if let reasoningIndex, let responseIndex, let outcomeIndex {
+            #expect(events[reasoningIndex].detail == "think again")
+            #expect(reasoningIndex < responseIndex)
+            #expect(responseIndex < outcomeIndex)
+        }
+
+        let childToolCallID = child.run.scope.toolCallId
+        #expect(SubagentFeedRegistry.shared.feed(for: childToolCallID) == nil)
+        #expect(SubagentInterruptCenter.shared.interrupt(childToolCallID) == false)
+    }
+
     @Test("valid jobs preserve order and exact target kinds")
     func parsesValidJobs() throws {
         let parsed = SpawnBatchTool.parseJobs(
@@ -392,7 +507,7 @@ struct SpawnBatchToolTests {
                 {
                   "id": "alpha",
                   "target_type": "agent",
-                  "target": "Researcher",
+                  "target": "00000000-0000-4000-8000-000000000097",
                   "input": "read A"
                 },
                 {
@@ -417,7 +532,7 @@ struct SpawnBatchToolTests {
         let duplicate = SpawnBatchTool.parseJobs(
             """
             {"jobs":[
-              {"id":"same","target_type":"agent","target":"A","input":"x"},
+              {"id":"same","target_type":"agent","target":"00000000-0000-4000-8000-000000000096","input":"x"},
               {"id":"same","target_type":"model","target":"M","input":"y"}
             ]}
             """,
@@ -514,10 +629,12 @@ struct SpawnBatchToolTests {
 
     @Test("request-local schema publishes only configured targets and limit")
     func constrainedSchemaUsesExactPool() throws {
+        let researcherID = UUID(uuidString: "AAAAAAAA-0000-4000-8000-000000000001")!
+        let writerID = UUID(uuidString: "AAAAAAAA-0000-4000-8000-000000000002")!
         let base = SpawnBatchTool().asOpenAITool()
         let constrained = SpawnBatchTool.constrainedSpec(
             base,
-            allowedAgentNames: [" Researcher ", "researcher", "Writer"],
+            allowedAgentIDs: [researcherID, researcherID, writerID],
             allowedModelIds: ["local/model", "cloud/model", "local/model"],
             maxParallel: 2
         )
@@ -542,8 +659,8 @@ struct SpawnBatchToolTests {
         #expect(
             Set(targetNames)
                 == Set([
-                    "Researcher",
-                    "Writer",
+                    researcherID.uuidString,
+                    writerID.uuidString,
                     "cloud/model",
                     "local/model",
                 ])
@@ -606,6 +723,121 @@ struct SpawnBatchToolTests {
             SpawnBatchTool.aggregateStatus(succeeded: 0, failed: 3)
                 == "all_failed"
         )
+        #expect(
+            SpawnBatchTool.aggregateStatus(
+                succeeded: 0,
+                failed: 3,
+                cancelled: 3
+            ) == "all_cancelled"
+        )
+    }
+
+    @Test("early cancellation keeps cause semantics and publishes its marker")
+    func earlyCancellationEnvelopeIsMachineReadable() throws {
+        for (userInterrupted, expectedKind) in [
+            (true, "user_denied"),
+            (false, "execution_error"),
+        ] {
+            let envelope = SpawnBatchTool.earlyCancellationEnvelope(
+                tool: "spawn_batch",
+                userInterrupted: userInterrupted
+            )
+            let object = try #require(
+                JSONSerialization.jsonObject(
+                    with: Data(envelope.utf8)
+                ) as? [String: Any]
+            )
+            #expect(object["kind"] as? String == expectedKind)
+            #expect(object["cancelled"] as? Bool == true)
+            #expect(object["retryable"] as? Bool == false)
+        }
+    }
+
+    @Test("aggregate envelope fails only when every child failed")
+    func aggregateEnvelopeReflectsTerminalChildren() throws {
+        let succeededRow: [String: Any] = [
+            "id": "ok",
+            "envelope": [
+                "ok": true,
+                "result": ["summary": "done"],
+            ],
+        ]
+        let failedRow: [String: Any] = [
+            "id": "failed",
+            "envelope": [
+                "ok": false,
+                "kind": "unavailable",
+                "message": "worker unavailable",
+                "retryable": true,
+            ],
+        ]
+
+        let partialPayload: [String: Any] = [
+            "summary": "2 jobs finished",
+            "aggregate_status": "partial_failure",
+            "results": [succeededRow, failedRow],
+        ]
+        let partial = SpawnBatchTool.aggregateEnvelope(
+            tool: "spawn_batch",
+            payload: partialPayload,
+            rows: [succeededRow, failedRow],
+            succeeded: 1,
+            failed: 1
+        )
+        #expect(ToolEnvelope.isSuccess(partial))
+
+        let allFailedPayload: [String: Any] = [
+            "summary": "2 jobs failed",
+            "aggregate_status": "all_failed",
+            "results": [failedRow, failedRow],
+        ]
+        let allFailed = SpawnBatchTool.aggregateEnvelope(
+            tool: "spawn_batch",
+            payload: allFailedPayload,
+            rows: [failedRow, failedRow],
+            succeeded: 0,
+            failed: 2
+        )
+        #expect(ToolEnvelope.isError(allFailed))
+        let result = try #require(
+            ToolEnvelope.resultPayload(allFailed) as? [String: Any]
+        )
+        #expect(result["aggregate_status"] as? String == "all_failed")
+        #expect((result["results"] as? [[String: Any]])?.count == 2)
+    }
+
+    @Test("aggregate retryability requires every failed child to be retryable")
+    func aggregateRetryabilityIsConservative() throws {
+        let retryableRow: [String: Any] = [
+            "envelope": [
+                "ok": false,
+                "kind": "unavailable",
+                "message": "later",
+                "retryable": true,
+            ]
+        ]
+        let deniedRow: [String: Any] = [
+            "envelope": [
+                "ok": false,
+                "kind": "user_denied",
+                "message": "no",
+                "retryable": false,
+            ]
+        ]
+        let envelope = SpawnBatchTool.aggregateEnvelope(
+            tool: "spawn_batch",
+            payload: ["summary": "all failed"],
+            rows: [retryableRow, deniedRow],
+            succeeded: 0,
+            failed: 2
+        )
+        let data = try #require(envelope.data(using: .utf8))
+        let root = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        #expect(root["ok"] as? Bool == false)
+        #expect(root["kind"] as? String == "execution_error")
+        #expect(root["retryable"] as? Bool == false)
     }
 
     @Test("batch cache diagnostics report exact aggregate boundary and deltas")
@@ -696,6 +928,77 @@ struct SpawnBatchToolTests {
         #expect(payload["after_available"] as? Bool == false)
         #expect(payload["before"] == nil)
         #expect(payload["delta"] == nil)
+    }
+
+    @Test("cold engine admission uses the configured maximum without queueing")
+    func coldEngineAdmissionUsesConfiguredMaximum() {
+        let window = SpawnBatchTool.engineAdmissionWindow(
+            configuredMaximum: 4,
+            snapshot: nil
+        )
+
+        #expect(window.parallelLimit == 4)
+        #expect(window.queued == false)
+    }
+
+    @Test("one free live engine slot admits one child without queueing")
+    func liveEngineAdmissionUsesNominalAvailability() {
+        let window = SpawnBatchTool.engineAdmissionWindow(
+            configuredMaximum: 4,
+            snapshot: ModelBatchCapacitySnapshot(
+                modelName: "Local-A",
+                configuredMaximum: 4,
+                activeCount: 3,
+                pendingCount: 0,
+                nominalAvailableCount: 1,
+                activeHighWatermark: 3,
+                isAcceptingRequests: true,
+                isShutdown: false
+            )
+        )
+
+        #expect(window.parallelLimit == 1)
+        #expect(window.queued == false)
+    }
+
+    @Test("saturated engine queues exactly one child")
+    func saturatedEngineAdmissionQueuesOneChild() {
+        let window = SpawnBatchTool.engineAdmissionWindow(
+            configuredMaximum: 4,
+            snapshot: ModelBatchCapacitySnapshot(
+                modelName: "Local-A",
+                configuredMaximum: 4,
+                activeCount: 4,
+                pendingCount: 0,
+                nominalAvailableCount: 0,
+                activeHighWatermark: 4,
+                isAcceptingRequests: true,
+                isShutdown: false
+            )
+        )
+
+        #expect(window.parallelLimit == 1)
+        #expect(window.queued)
+    }
+
+    @Test("non-accepting engine queues exactly one child")
+    func nonAcceptingEngineAdmissionQueuesOneChild() {
+        let window = SpawnBatchTool.engineAdmissionWindow(
+            configuredMaximum: 4,
+            snapshot: ModelBatchCapacitySnapshot(
+                modelName: "Local-A",
+                configuredMaximum: 4,
+                activeCount: 0,
+                pendingCount: 0,
+                nominalAvailableCount: 4,
+                activeHighWatermark: 1,
+                isAcceptingRequests: false,
+                isShutdown: false
+            )
+        )
+
+        #expect(window.parallelLimit == 1)
+        #expect(window.queued)
     }
 
     @Test("execution diagnostics report effective local slots and subwaves")
@@ -797,6 +1100,86 @@ struct SpawnBatchToolTests {
         #expect(admission.localParallelism == 1)
         #expect(admission.localSubwaveSizes == [1, 1, 1])
         #expect(admission.limitingFactors.contains(.memoryCapacity))
+    }
+
+    @Test("queued local batch revalidates authority before handoff or execution")
+    func queuedLocalBatchRejectsRevokedAuthority() async {
+        let admission = SubagentAdmission(pollNanoseconds: 1_000_000)
+        #expect(
+            await admission.admit(
+                .localExclusive,
+                modelKey: "authority-blocker"
+            ) == .admitted
+        )
+
+        let authority = BatchExecutionAuthorityProbe()
+        let handoff = CountingBatchHandoff()
+        let feed = SubagentFeed(
+            toolCallId: "batch-queued-authority",
+            kindId: "spawn",
+            title: "batch"
+        )
+        let jobs = [
+            prepared(
+                index: 0,
+                id: "local",
+                targetType: .model,
+                target: "Local-A",
+                model: "Local-A",
+                isLocal: true,
+                admission: .localExclusive,
+                authorityProbe: authority,
+                handoff: handoff
+            )
+        ]
+
+        let task = Task {
+            await SpawnBatchTool.runLocalSequence(
+                jobs,
+                remoteJobCount: 0,
+                maxParallel: 1,
+                localParallelismOverride: 1,
+                feed: feed,
+                interrupt: InterruptToken(),
+                tool: "spawn_batch",
+                diagnostics: nil,
+                admissionController: admission
+            )
+        }
+
+        let deadline = Date().addingTimeInterval(2)
+        while !feed.currentEvents().contains(
+            where: { $0.title == "waiting for local GPU" }
+        ), Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(
+            feed.currentEvents().contains {
+                $0.title == "waiting for local GPU"
+            }
+        )
+
+        await authority.revoke()
+        await admission.release(
+            .localExclusive,
+            modelKey: "authority-blocker"
+        )
+
+        let results = await task.value
+        let authoritySnapshot = await authority.snapshot()
+        #expect(results.count == 1)
+        #expect(ToolEnvelope.isError(results[0].envelope))
+        #expect(
+            ToolEnvelope.failureMessage(results[0].envelope).contains(
+                "batch authority revoked while waiting for admission"
+            )
+        )
+        #expect(authoritySnapshot.validations == 1)
+        #expect(authoritySnapshot.runs == 0)
+        #expect(await handoff.snapshot() == 0)
+        let finalAdmission = await admission.snapshot()
+        #expect(finalAdmission.exclusive == 0)
+        #expect(finalAdmission.inPlace == 0)
     }
 
     @Test("local capacity and handoff plan refresh only after admission wait")
@@ -1351,18 +1734,37 @@ struct SpawnBatchToolTests {
         )
     }
 
-    @Test("coexistence batches do not unload their final child")
-    func coexistenceBatchSkipsFinalChildCleanup() async {
-        let cleanup = BatchResidencyOrderProbe()
+    @Test("batch handoff carries exact parent identity and one ownership token through cleanup")
+    func batchHandoffCarriesExactOwnership() async {
+        let order = BatchResidencyOrderProbe()
+        let token = ModelResidencyOwnershipToken()
+        let handoff = ResidencyHandoff(
+            plan: { _ in ResidencyPlan(shouldUnload: true) },
+            preflight: { _, _, _ in },
+            unload: { parent, _, _ in
+                await order.record("unload-\(parent ?? "nil")")
+                return ChatResidencyLease(
+                    unloadedModelNames: ["Parent-Local"],
+                    childOwnershipToken: token
+                )
+            },
+            restore: { lease, _ in
+                #expect(lease.childOwnershipToken == token)
+                await order.record("restore")
+                return lease.unloadedModelNames
+            }
+        )
         let jobs = [
             prepared(
                 index: 0,
-                id: "coexisting-local",
+                id: "owned-local",
                 targetType: .model,
-                target: "Local-A",
-                model: "Local-A",
+                target: "Child-Local",
+                model: "Child-Local",
                 isLocal: true,
-                admission: .localExclusive
+                admission: .localExclusive,
+                handoff: handoff,
+                parentModelName: "Parent-Local"
             )
         ]
 
@@ -1372,7 +1774,7 @@ struct SpawnBatchToolTests {
             maxParallel: 1,
             localParallelismOverride: 1,
             feed: SubagentFeed(
-                toolCallId: "batch-coexist-no-cleanup",
+                toolCallId: "batch-exact-ownership",
                 kindId: "spawn",
                 title: "batch"
             ),
@@ -1394,6 +1796,76 @@ struct SpawnBatchToolTests {
                 )
             },
             liveResidencyPlanOverride: { _ in
+                ResidencyPlan(shouldUnload: true)
+            },
+            finalLocalModelCleanupOverride: { _, _, _ in
+                #expect(ModelResidencyOwnershipContext.childOwnershipToken == token)
+                await order.record("cleanup")
+            }
+        )
+
+        #expect(results.count == 1)
+        #expect(results[0].envelope.contains(#""ok":true"#))
+        #expect(
+            await order.snapshot()
+                == ["unload-Parent-Local", "cleanup", "restore"]
+        )
+    }
+
+    @Test("no-parent B→C transition and final cleanup share one exact ownership token")
+    func noParentSequenceSharesExactOwnership() async throws {
+        let token = ModelResidencyOwnershipToken()
+        let order = BatchResidencyOrderProbe()
+        let handoff = ResidencyOwnershipHandoff(
+            wrapping: PassthroughHandoff(),
+            ownershipToken: token
+        )
+        let noParentScope = SubagentScope(
+            sessionId: "batch-no-parent",
+            toolCallId: "batch-no-parent-call",
+            agentId: Agent.defaultId,
+            parentModelName: nil
+        )
+
+        let result = try await handoff.around(
+            scope: noParentScope,
+            resolved: ResolvedModel(name: "Local-B", id: "Org/Local-B", isLocal: true),
+            feed: SubagentFeed(
+                toolCallId: "batch-no-parent-call",
+                kindId: "spawn",
+                title: "batch"
+            )
+        ) {
+            #expect(ModelResidencyOwnershipContext.childOwnershipToken == token)
+            await order.record("run-Local-B")
+
+            // Model-free equivalent of the B → C transition callback.
+            #expect(ModelResidencyOwnershipContext.childOwnershipToken == token)
+            await order.record("transition-Local-B-to-Local-C")
+
+            // The final exact-owned cleanup must see that same token.
+            #expect(ModelResidencyOwnershipContext.childOwnershipToken == token)
+            await order.record("final-cleanup-Local-C")
+            return SubagentResult(payload: ["summary": "ok"], summary: "ok")
+        }
+
+        #expect(result.summary == "ok")
+        #expect(
+            await order.snapshot()
+                == [
+                    "run-Local-B",
+                    "transition-Local-B-to-Local-C",
+                    "final-cleanup-Local-C",
+                ]
+        )
+    }
+
+    @Test("coexistence B→C transition and final cleanup share one exact ownership token")
+    func coexistenceSequenceCleansUpExactOwnedFinalChild() async throws {
+        let token = ModelResidencyOwnershipToken()
+        let order = BatchResidencyOrderProbe()
+        let coexistence = ResidencyHandoff(
+            plan: { _ in
                 ResidencyPlan(
                     shouldUnload: false,
                     requiredBytes: 1,
@@ -1402,14 +1874,59 @@ struct SpawnBatchToolTests {
                     coexists: true
                 )
             },
-            finalLocalModelCleanupOverride: { current, _, _ in
-                await cleanup.record("unexpected-\(current.resolved.name)")
+            preflight: { _, _, _ in
+                await order.record("coexistence-preflight")
+            },
+            unload: { _, _, _ in
+                Issue.record("coexistence must not unload its parent")
+                return ChatResidencyLease(unloadedModelNames: [])
+            },
+            restore: { _, _ in
+                Issue.record("coexistence must not restore an unloaded parent")
+                return []
             }
         )
+        let handoff = ResidencyOwnershipHandoff(
+            wrapping: coexistence,
+            ownershipToken: token
+        )
+        let coexistenceScope = SubagentScope(
+            sessionId: "batch-coexist",
+            toolCallId: "batch-coexist-call",
+            agentId: Agent.defaultId,
+            parentModelName: "Parent-Local"
+        )
 
-        #expect(results.count == 1)
-        #expect(results[0].envelope.contains(#""ok":true"#))
-        #expect(await cleanup.snapshot().isEmpty)
+        let result = try await handoff.around(
+            scope: coexistenceScope,
+            resolved: ResolvedModel(name: "Local-B", id: "Org/Local-B", isLocal: true),
+            feed: SubagentFeed(
+                toolCallId: "batch-coexist-owned-cleanup",
+                kindId: "spawn",
+                title: "batch"
+            )
+        ) {
+            #expect(ModelResidencyOwnershipContext.childOwnershipToken == token)
+            await order.record("run-Local-B")
+
+            #expect(ModelResidencyOwnershipContext.childOwnershipToken == token)
+            await order.record("transition-Local-B-to-Local-C")
+
+            #expect(ModelResidencyOwnershipContext.childOwnershipToken == token)
+            await order.record("final-cleanup-Local-C")
+            return SubagentResult(payload: ["summary": "ok"], summary: "ok")
+        }
+
+        #expect(result.summary == "ok")
+        #expect(
+            await order.snapshot()
+                == [
+                    "coexistence-preflight",
+                    "run-Local-B",
+                    "transition-Local-B-to-Local-C",
+                    "final-cleanup-Local-C",
+                ]
+        )
     }
 
     @Test("post-child parent restore failure cannot aggregate as batch success")
