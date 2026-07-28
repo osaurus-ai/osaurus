@@ -1196,8 +1196,11 @@ final class NativeMarkdownView: NSView {
     }
 
     private func updateTextViewColors(_ tv: SelectableNSTextView, theme: any ThemeProtocol) {
-        tv.isEditable = false
-        tv.isSelectable = true
+        // `-[NSTextView setEditable:]` invalidates state even when the value
+        // is unchanged, and this runs per block on every streaming apply —
+        // only touch the properties when they actually differ.
+        if tv.isEditable { tv.isEditable = false }
+        if !tv.isSelectable { tv.isSelectable = true }
         tv.selectedTextAttributes = [.backgroundColor: NSColor(theme.selectionColor)]
         tv.insertionPointColor = NSColor(theme.cursorColor)
         tv.accentColor = NSColor(theme.accentColor)

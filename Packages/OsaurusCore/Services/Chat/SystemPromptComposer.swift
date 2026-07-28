@@ -1601,8 +1601,27 @@ public struct SystemPromptComposer: Sendable {
     /// A sentence ends only on `.`/`!`/`?` that is followed by whitespace or
     /// the end of the string, so periods inside paths (`~/.venv/`) or
     /// abbreviations (`e.g.`) don't truncate the description mid-token.
+    /// Compaction is a pure function of the description string, but the
+    /// per-character Unicode scans below run for every bootstrap tool on
+    /// every fresh compose (including the preview compose inside a view-body
+    /// evaluation), so identical inputs are memoized.
+    nonisolated(unsafe) private static var oneLineDescriptionMemo: [String: String] = [:]
+    private static let oneLineDescriptionMemoLock = NSLock()
+
     private static func oneLineToolDescription(_ description: String?) -> String? {
         guard let description else { return nil }
+        oneLineDescriptionMemoLock.lock()
+        let cached = oneLineDescriptionMemo[description]
+        oneLineDescriptionMemoLock.unlock()
+        if let cached { return cached.isEmpty ? nil : cached }
+        let result = oneLineToolDescriptionImpl(description)
+        oneLineDescriptionMemoLock.lock()
+        oneLineDescriptionMemo[description] = result ?? ""
+        oneLineDescriptionMemoLock.unlock()
+        return result
+    }
+
+    private static func oneLineToolDescriptionImpl(_ description: String) -> String? {
         let collapsed =
             description
             .split(whereSeparator: { $0.isWhitespace })
