@@ -5239,6 +5239,10 @@ extension RemoteProviderService {
             return try await fetchOsaurusRouterModels(from: provider)
         }
 
+        if isFireworksProvider(provider) {
+            return try await fetchFireworksModels(from: provider)
+        }
+
         return try await fetchOpenAICompatibleModels(from: provider)
     }
 
@@ -5853,6 +5857,100 @@ extension RemoteProviderService {
         }
 
         return allModels
+    }
+
+    /// Fireworks' OpenAI-compatible `/inference/v1/models` only lists the
+    /// account's default/deployed serverless models (a handful), not the full
+    /// serverless catalog. Detect Fireworks by host so discovery can augment
+    /// the standard `/models` result with the public catalog.
+    static func isFireworksProvider(_ provider: RemoteProvider) -> Bool {
+        guard isOpenAICompatibleModelDiscoveryProvider(provider.providerType) else { return false }
+        // `host` may embed a path (e.g. "api.fireworks.ai/inference").
+        let host = provider.host.lowercased()
+            .split(separator: "/", maxSplits: 1, omittingEmptySubsequences: true)
+            .first.map(String.init) ?? ""
+        return host == "fireworks.ai" || host.hasSuffix(".fireworks.ai")
+    }
+
+    /// Standard `/models` discovery plus the Fireworks serverless catalog.
+    /// `/models` stays authoritative for the account's own deployments and
+    /// fine-tunes; the catalog is best-effort — on any failure the `/models`
+    /// result is returned unchanged so Fireworks behaves no worse than before.
+    static func fetchFireworksModels(from provider: RemoteProvider) async throws -> [String] {
+        let discovered = try await fetchOpenAICompatibleModels(from: provider)
+        do {
+            let catalog = try await fetchFireworksCatalogModels(from: provider)
+            var seen = Set<String>()
+            var merged: [String] = []
+            for id in discovered + catalog {
+                let key = id.lowercased()
+                guard !key.isEmpty, !seen.contains(key) else { continue }
+                seen.insert(key)
+                merged.append(id)
+            }
+            return merged
+        } catch {
+            print(
+                "[Osaurus] Fireworks catalog discovery failed, using /models result only: \(ProviderDiagnosticRedactor.safe(error.localizedDescription, maxLength: 240))"
+            )
+            return discovered
+        }
+    }
+
+    private static let fireworksCatalogURL = "https://api.fireworks.ai/v1/accounts/fireworks/models"
+    private static let fireworksCatalogMaxPages = 25
+
+    /// Page through the Fireworks gateway catalog and return serverless,
+    /// chat-capable model resource names (`accounts/fireworks/models/...`),
+    /// which the OpenAI-compatible inference endpoints accept as model ids.
+    static func fetchFireworksCatalogModels(from provider: RemoteProvider) async throws -> [String] {
+        let headers = await provider.resolvedHeadersOffMainActor()
+        var allModels: [String] = []
+        var pageToken: String?
+
+        for _ in 0..<fireworksCatalogMaxPages {
+            guard var components = URLComponents(string: fireworksCatalogURL) else {
+                throw RemoteProviderServiceError.invalidURL
+            }
+            var queryItems = [URLQueryItem(name: "pageSize", value: "200")]
+            if let pageToken {
+                queryItems.append(URLQueryItem(name: "pageToken", value: pageToken))
+            }
+            components.queryItems = queryItems
+
+            guard let url = components.url else {
+                throw RemoteProviderServiceError.invalidURL
+            }
+
+            let request = modelDiscoveryRequest(url: url, headers: headers, timeout: provider.timeout)
+            let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw RemoteProviderServiceError.invalidResponse
+            }
+            if httpResponse.statusCode >= 400 {
+                let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
+                throw RemoteProviderServiceError.requestFailed(errorMessage)
+            }
+
+            let page = try decodeFireworksCatalogPage(data: data)
+            allModels.append(contentsOf: page.models)
+
+            guard let next = page.nextPageToken, !next.isEmpty else { break }
+            pageToken = next
+        }
+
+        return allModels
+    }
+
+    static func decodeFireworksCatalogPage(
+        data: Data
+    ) throws -> (models: [String], nextPageToken: String?) {
+        let page = try JSONDecoder().decode(FireworksModelsPage.self, from: data)
+        let models = (page.models ?? [])
+            .filter { $0.isServerlessChatModel }
+            .map { $0.name }
+        return (models, page.nextPageToken)
     }
 
     /// Extract a human-readable error message from API error response data
