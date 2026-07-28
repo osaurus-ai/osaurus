@@ -5879,16 +5879,11 @@ extension RemoteProviderService {
     static func fetchFireworksModels(from provider: RemoteProvider) async throws -> [String] {
         let discovered = try await fetchOpenAICompatibleModels(from: provider)
         do {
-            let catalog = try await fetchFireworksCatalogModels(from: provider)
-            var seen = Set<String>()
-            var merged: [String] = []
-            for id in discovered + catalog {
-                let key = id.lowercased()
-                guard !key.isEmpty, !seen.contains(key) else { continue }
-                seen.insert(key)
-                merged.append(id)
-            }
-            return merged
+            let catalog = try await fetchFireworksCatalogModels(
+                headers: await provider.resolvedHeadersOffMainActor(),
+                timeout: provider.timeout
+            )
+            return mergeFireworksModelIds(discovered: discovered, catalog: catalog)
         } catch {
             print(
                 "[Osaurus] Fireworks catalog discovery failed, using /models result only: \(ProviderDiagnosticRedactor.safe(error.localizedDescription, maxLength: 240))"
@@ -5900,11 +5895,27 @@ extension RemoteProviderService {
     private static let fireworksCatalogURL = "https://api.fireworks.ai/v1/accounts/fireworks/models"
     private static let fireworksCatalogMaxPages = 25
 
+    /// `/models` results first (the account's own deployments), then catalog
+    /// entries, case-insensitively deduplicated.
+    static func mergeFireworksModelIds(discovered: [String], catalog: [String]) -> [String] {
+        var seen = Set<String>()
+        var merged: [String] = []
+        for id in discovered + catalog {
+            let key = id.lowercased()
+            guard !key.isEmpty, !seen.contains(key) else { continue }
+            seen.insert(key)
+            merged.append(id)
+        }
+        return merged
+    }
+
     /// Page through the Fireworks gateway catalog and return serverless,
     /// chat-capable model resource names (`accounts/fireworks/models/...`),
     /// which the OpenAI-compatible inference endpoints accept as model ids.
-    static func fetchFireworksCatalogModels(from provider: RemoteProvider) async throws -> [String] {
-        let headers = await provider.resolvedHeadersOffMainActor()
+    static func fetchFireworksCatalogModels(
+        headers: [String: String],
+        timeout: TimeInterval
+    ) async throws -> [String] {
         var allModels: [String] = []
         var pageToken: String?
 
@@ -5922,7 +5933,7 @@ extension RemoteProviderService {
                 throw RemoteProviderServiceError.invalidURL
             }
 
-            let request = modelDiscoveryRequest(url: url, headers: headers, timeout: provider.timeout)
+            let request = modelDiscoveryRequest(url: url, headers: headers, timeout: timeout)
             let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {

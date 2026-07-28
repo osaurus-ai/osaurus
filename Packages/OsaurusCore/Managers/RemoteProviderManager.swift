@@ -1273,6 +1273,25 @@ public final class RemoteProviderManager: ObservableObject {
                         diagnostics
                     )
                 }
+                // Fireworks: augment with the serverless catalog so the Test
+                // badge matches what connect will discover. Best-effort — a
+                // catalog failure keeps the plain /models result.
+                if RemoteProviderService.isFireworksProvider(tempProvider) {
+                    do {
+                        let catalog = try await RemoteProviderService.fetchFireworksCatalogModels(
+                            headers: testHeaders,
+                            timeout: 30
+                        )
+                        let merged = RemoteProviderService.mergeFireworksModelIds(
+                            discovered: models,
+                            catalog: catalog
+                        )
+                        print("[Osaurus] Test Connection: Success - found \(merged.count) models")
+                        return merged
+                    } catch {
+                        print("[Osaurus] Test Connection: Fireworks catalog unavailable, using /models only")
+                    }
+                }
                 print("[Osaurus] Test Connection: Success - found \(models.count) models")
                 return models
             }
