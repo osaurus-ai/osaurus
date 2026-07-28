@@ -167,6 +167,12 @@ struct PromptSurfaceMatrixTests {
                     model: "google/gemma-4-4b-it",
                     query: query
                 )
+                let channelsAndSpawnContext = await SystemPromptComposer.composeChatContext(
+                    agentId: enabledAgent.id,
+                    executionMode: .none,
+                    model: "google/gemma-4-4b-it",
+                    query: query
+                )
 
                 let rows = [
                     Row(name: "tools-off", context: toolsOff),
@@ -175,6 +181,7 @@ struct PromptSurfaceMatrixTests {
                     Row(name: "features-on", context: enabledContext),
                     Row(name: "sandbox", context: sandboxContext),
                     Row(name: "channels-on", context: channelsContext),
+                    Row(name: "channels+spawn", context: channelsAndSpawnContext),
                 ]
                 print("[PromptSurfaceMatrix] scenario context cost")
                 print("  scenario          prompt   tools   total  schemas  sections")
@@ -238,6 +245,26 @@ struct PromptSurfaceMatrixTests {
 
                 #expect((rows[5].context.enabledManifest ?? "").contains("agent_channel_"))
                 #expect(!rows[5].sectionIds.contains("skillsGovern"))
+
+                #expect(rows[6].sectionIds.contains("spawn"))
+                #expect(rows[6].toolNames.contains("spawn_agent"))
+                #expect(rows[6].toolNames.contains("spawn_batch"))
+                #expect((rows[6].context.enabledManifest ?? "").contains("agent_channel_"))
+                #expect(rows[6].toolNames.count == rows[6].context.tools.count)
+                for spawnToolName in ["spawn_agent", "spawn_batch"] {
+                    let featureTool = rows[3].context.tools.first {
+                        $0.function.name == spawnToolName
+                    }
+                    let combinedTool = rows[6].context.tools.first {
+                        $0.function.name == spawnToolName
+                    }
+                    #expect(featureTool != nil)
+                    #expect(combinedTool != nil)
+                    #expect(
+                        featureTool?.canonicalHashPayload()
+                            == combinedTool?.canonicalHashPayload()
+                    )
+                }
 
                 ToolRegistry.shared.unregisterAllSandboxTools()
                 _ = await manager.delete(id: defaultAgent.id)

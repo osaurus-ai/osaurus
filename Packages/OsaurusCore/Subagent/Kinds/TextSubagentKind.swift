@@ -525,8 +525,10 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     ) async -> AuthoritySnapshot {
         // Materialize the store before reading its monotonic revision. A cold
         // load increments the revision once and must not look like a mutation.
-        var configuration = SubagentConfigurationStore.snapshot()
-        let revision = SubagentConfigurationStore.revision()
+        let storeSnapshot =
+            SubagentConfigurationStore.snapshotWithRevision()
+        var configuration = storeSnapshot.configuration
+        let revision = storeSnapshot.revision
         let isDefault = scope.agentId == Agent.defaultId
         let targetAgentID: UUID? = {
             guard case .agent(let id) = target else { return nil }

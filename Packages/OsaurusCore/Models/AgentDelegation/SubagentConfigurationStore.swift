@@ -12,6 +12,11 @@ enum SubagentConfigurationStore {
     private nonisolated(unsafe) static var cachedSnapshot: SubagentConfiguration?
     private nonisolated(unsafe) static var snapshotRevision: UInt64 = 0
     private static let snapshotLock = NSLock()
+    /// Serializes the one cold disk materialization without holding
+    /// `snapshotLock` across I/O. A save may still proceed while the read is in
+    /// flight; the commit path below rechecks the revision/cache and never
+    /// overwrites that newer value.
+    private static let snapshotMaterializationLock = NSLock()
     private static let fileName = "agent-delegation.json"
 
     nonisolated static func setOverrideDirectory(_ url: URL?) {
@@ -23,20 +28,42 @@ enum SubagentConfigurationStore {
     }
 
     nonisolated static func load() -> SubagentConfiguration? {
-        let url = fileURL()
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        do {
-            let data = try Data(contentsOf: url)
-            let decoded = try JSONDecoder().decode(SubagentConfiguration.self, from: data)
-            let normalized = decoded.normalized
+        snapshotMaterializationLock.lock()
+        defer { snapshotMaterializationLock.unlock() }
+
+        while true {
             snapshotLock.lock()
-            cachedSnapshot = normalized
+            let revisionBeforeRead = snapshotRevision
+            let url = fileURLWhileLocked()
+            snapshotLock.unlock()
+
+            let decoded = readConfiguration(at: url)
+
+            snapshotLock.lock()
+            // A concurrent save installed newer authority while disk I/O was
+            // open. Return that live value rather than overwriting it with the
+            // stale read.
+            if snapshotRevision != revisionBeforeRead,
+                let live = cachedSnapshot
+            {
+                snapshotLock.unlock()
+                return live
+            }
+            // An override-directory swap or explicit invalidation changed the
+            // generation but left no cached value. Retry against the current
+            // location instead of installing bytes from the old one.
+            guard snapshotRevision == revisionBeforeRead else {
+                snapshotLock.unlock()
+                continue
+            }
+            guard let decoded else {
+                snapshotLock.unlock()
+                return nil
+            }
+            cachedSnapshot = decoded
             snapshotRevision &+= 1
             snapshotLock.unlock()
-            return normalized
-        } catch {
-            print("[Osaurus] Failed to load SubagentConfiguration: \(error)")
-            return nil
+            return decoded
         }
     }
 
@@ -146,13 +173,63 @@ enum SubagentConfigurationStore {
         label: "com.osaurus.subagentconfig.write", qos: .utility)
 
     nonisolated static func snapshot() -> SubagentConfiguration {
+        snapshotWithRevision().configuration
+    }
+
+    /// One linearizable authority read. Callers that compare configuration
+    /// generations must never obtain the configuration and revision in two
+    /// separate lock acquisitions: a concurrent save between those reads
+    /// would produce a torn pair.
+    nonisolated static func snapshotWithRevision() -> (
+        configuration: SubagentConfiguration,
+        revision: UInt64
+    ) {
         snapshotLock.lock()
         if let cached = cachedSnapshot {
+            let revision = snapshotRevision
             snapshotLock.unlock()
-            return cached
+            return (cached, revision)
         }
         snapshotLock.unlock()
-        return load() ?? .default
+
+        snapshotMaterializationLock.lock()
+        defer { snapshotMaterializationLock.unlock() }
+
+        while true {
+            snapshotLock.lock()
+            if let cached = cachedSnapshot {
+                let revision = snapshotRevision
+                snapshotLock.unlock()
+                return (cached, revision)
+            }
+            let revisionBeforeRead = snapshotRevision
+            let url = fileURLWhileLocked()
+            snapshotLock.unlock()
+
+            let decoded = readConfiguration(at: url)
+
+            snapshotLock.lock()
+            // A save that won during the read is authoritative.
+            if let cached = cachedSnapshot {
+                let revision = snapshotRevision
+                snapshotLock.unlock()
+                return (cached, revision)
+            }
+            // The active directory or invalidation generation changed while
+            // reading. Discard stale bytes and retry from the current source.
+            guard snapshotRevision == revisionBeforeRead else {
+                snapshotLock.unlock()
+                continue
+            }
+            if let decoded {
+                cachedSnapshot = decoded
+                snapshotRevision &+= 1
+            }
+            let configuration = decoded ?? .default
+            let revision = snapshotRevision
+            snapshotLock.unlock()
+            return (configuration, revision)
+        }
     }
 
     /// Monotonic ABA-safe generation for execution-time authorization.
@@ -196,8 +273,31 @@ enum SubagentConfigurationStore {
         return OsaurusPaths.config()
     }
 
+    /// `snapshotLock` must be held.
+    private nonisolated static func fileURLWhileLocked() -> URL {
+        (overrideDirectory ?? OsaurusPaths.config())
+            .appendingPathComponent(fileName)
+    }
+
     private nonisolated static func fileURL() -> URL {
         directoryURL().appendingPathComponent(fileName)
+    }
+
+    private nonisolated static func readConfiguration(
+        at url: URL
+    ) -> SubagentConfiguration? {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder()
+                .decode(SubagentConfiguration.self, from: data)
+                .normalized
+        } catch {
+            print("[Osaurus] Failed to load SubagentConfiguration: \(error)")
+            return nil
+        }
     }
 }
 

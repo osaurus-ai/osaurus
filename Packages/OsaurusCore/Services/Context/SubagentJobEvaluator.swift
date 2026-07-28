@@ -467,9 +467,13 @@ public enum SubagentJobEvaluator {
         ])
         let toolCallId = freshToolCallId()
         let started = Date()
-        let stopper = scheduleInterrupt(
+        let requiredRunArrivals =
+            jobs.map(\.subagent.rendezvousArrivals).max() ?? 0
+        let stopper = scheduleBatchInterrupt(
             afterMs: interruptAfterMs,
-            toolCallId: toolCallId
+            toolCallId: toolCallId,
+            probe: probe,
+            requiredRunArrivals: requiredRunArrivals
         )
         let envelope = await withEvalScope(toolCallId: toolCallId) {
             await SpawnPermissionGate.$policyOverrideForTests.withValue(
@@ -996,6 +1000,46 @@ public enum SubagentJobEvaluator {
             try? await Task.sleep(nanoseconds: UInt64(afterMs) * 1_000_000)
             while !Task.isCancelled {
                 if SubagentInterruptCenter.shared.interrupt(toolCallId) { return }
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
+    }
+
+    /// Batch interrupt fixture with an optional run-entry barrier. A fixed
+    /// delay from tool start is not a valid "mid-run" proof: under full-suite
+    /// contention it can land during target validation or approval. Scripted
+    /// jobs that request a rendezvous therefore start the delay only after the
+    /// expected child runs have entered. A bounded fallback still exercises
+    /// Stop if a regression prevents the children from entering at all.
+    private static func scheduleBatchInterrupt(
+        afterMs: Int?,
+        toolCallId: String,
+        probe: SubagentOverlapProbe,
+        requiredRunArrivals: Int
+    ) -> Task<Void, Never>? {
+        guard let afterMs, afterMs > 0 else { return nil }
+        guard requiredRunArrivals > 0 else {
+            return scheduleInterrupt(
+                afterMs: afterMs,
+                toolCallId: toolCallId
+            )
+        }
+        return Task {
+            let entryDeadline = Date().addingTimeInterval(3)
+            while !Task.isCancelled,
+                probe.arrivals < requiredRunArrivals,
+                Date() < entryDeadline
+            {
+                try? await Task.sleep(nanoseconds: 5_000_000)
+            }
+            guard !Task.isCancelled else { return }
+            try? await Task.sleep(
+                nanoseconds: UInt64(afterMs) * 1_000_000
+            )
+            while !Task.isCancelled {
+                if SubagentInterruptCenter.shared.interrupt(toolCallId) {
+                    return
+                }
                 try? await Task.sleep(nanoseconds: 50_000_000)
             }
         }

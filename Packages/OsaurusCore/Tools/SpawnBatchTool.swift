@@ -916,8 +916,10 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         // Materialize a cold on-disk snapshot before capturing its monotonic
         // revision. Otherwise the first resolve could load the same unchanged
         // file and look like an authority mutation.
-        var configuration = SubagentConfigurationStore.snapshot()
-        let revision = SubagentConfigurationStore.revision()
+        let storeSnapshot =
+            SubagentConfigurationStore.snapshotWithRevision()
+        var configuration = storeSnapshot.configuration
+        let revision = storeSnapshot.revision
         let isDefaultLauncher = parentScope.agentId == Agent.defaultId
         var agentIDs = Set<UUID>()
         agentIDs.insert(parentScope.agentId)

@@ -2,13 +2,17 @@
 
 ## Status
 
-`PARTIAL` — automated gates pass on the current dirty campaign, but the
-rebased Release-app UI matrix has not run yet.
+`PARTIAL` — the current dirty campaign source passes the full token-free eval
+package and the broad Core regression matrix, but the fresh isolated
+Release-app UI matrix has not run yet. Authenticated remote-provider proof is
+also expected to remain blocked until a credentialed provider is available.
 
-- Osaurus campaign HEAD: `887104298d04c32c36817645c231c58841067681`
-  plus the dirty campaign diff recorded below.
-- Current upstream target: `e294c616d3e0688d4fd5a26d0cd1c9f2e62252ab`
-  (channel-presence and appcast updates; rebase and re-verification required)
+- Osaurus campaign HEAD: `69485fd09e9a2736c2f5680814ec6545b3a9be79`
+- Previous rebased upstream base:
+  `e294c616d3e0688d4fd5a26d0cd1c9f2e62252ab`.
+- Current upstream target:
+  `d6216d23b3577c7819c196ead25855bf144aefdd`; the final rebase and
+  post-rebase reruns are still pending.
 - vMLX Swift pin: `d7483a88668bb3ec70e0ea7f8423a5f684084c28`
 - Worktree: `/private/tmp/osaurus-subagent-batching-complete-20260727`
 - Branch: `codex/subagent-batching-complete-20260727`
@@ -299,19 +303,23 @@ Release-app matrix below.
   BATCH-18 above. The earlier focused passes therefore do not make this branch
   merge-ready. Exact regression tests and current-head Release proof are still
   required after those owning-layer fixes.
-- Still pending before any merge-ready claim: combined related suites,
-  OsaurusEvals model-backed scoring, rebase onto current `osaurus/main`, and
-  every applicable live Release-app row.
-- Final pre-rebase focused verification on the exact dirty campaign source
-  passed **341/341** with zero failures and zero skips. It covers the twelve
+- Still pending before any merge-ready claim: the final rebase onto current
+  `osaurus/main`, its post-rebase automated reruns, OsaurusEvals model-backed
+  scoring, and every applicable live Release-app row. The current dirty source
+  has rerun the full token-free eval package plus the broad related Core
+  suites on the previous rebased base.
+- Final focused verification on clean rebased HEAD `69485fd0` passed
+  **341/341** with zero failures and zero skips. It covers the twelve
   batching, permission, persistence, residency, diagnostics, runtime-policy,
   admission, feed, and cancellation suites named in the evidence ledger.
-  `RuntimePolicySourceTests` also passed **99/99** independently after updating
-  stale pin/source-contract expectations. These are deterministic
-  source/runtime-unit gates, not Release-app proof.
+  The earlier independent `RuntimePolicySourceTests` **99/99** result was
+  pre-rebase; all runtime-policy rows are included in the rebased 341-test
+  result. These are deterministic source/runtime-unit gates, not Release-app
+  proof.
 - The pre-final full `OsaurusEvals` package run passed **296/296** across
   35 suites before the last source-contract and already-resident RAM reuse
-  fixes. It must be rerun after the upstream rebase; it is not the final score.
+  fixes. That historical score was not used as the final gate; the package was
+  rerun after the authority and fixture fixes described below.
 - The exact pinned vMLX `BatchEngineIntegrationTests` passed **28/28** at
   `d7483a88668bb3ec70e0ea7f8423a5f684084c28`, including atomic capacity
   snapshots, hot resize, two-active/third-pending admission, cancellation,
@@ -323,6 +331,75 @@ Release-app matrix below.
   policy now bypasses only that cold-load verdict for the already-resident
   target; the regression remains within the shared bundle-aware memory
   profile. Live RAM refusal/reuse behavior is still pending.
+
+### Post-rebase authority and eval stabilization
+
+The first full post-rebase `OsaurusEvals` run did **not** pass: it ran all
+**296 tests across 35 suites** but reported **3 failed tests / 15 recorded
+issues** in subagent authority rows. Running the complete
+`SubagentEvalTests` suite as a focused reproducer amplified the same problem to
+**6 failed tests / 23 recorded issues**. The failures were not accepted as
+model randomness or hidden with test serialization.
+
+The production root cause was a torn cold authority read.
+`SubagentConfigurationStore.snapshot()` released its state lock before disk
+materialization, so concurrent first readers could decode identical bytes but
+each advance `snapshotRevision`. Callers that obtained configuration and
+revision separately could therefore observe a configuration from one
+materialization and a revision from another, making an unchanged batch look
+mutated during validation/authorization.
+
+The owning-layer correction is:
+
+- single-flight cold disk materialization without holding the state lock
+  across I/O;
+- a post-read generation/cache recheck so an old disk read cannot overwrite a
+  concurrent save or override-directory change;
+- one atomic `snapshotWithRevision()` configuration/revision pair consumed by
+  both text-subagent authority snapshots and batch authority fingerprints;
+- a 32-reader cold-start regression proving one materialization and one
+  revision increment.
+
+After that correction, focused `SubagentEvalTests` passed **33/33**. The
+configuration-store, permission-gate, and batch-tool Core matrix passed
+**65/65**, zero failures/skips, in
+`/private/tmp/osaurus-subagent-store-authority-20260728-1140.xcresult`.
+
+A second failure was isolated to the scripted eval fixture rather than the
+production Stop contract. Its fixed wall-clock interrupt could fire before the
+scripted child had entered its run under full-suite contention. The original
+case passed **1/1** in isolation, showing the intended production path; the
+fixture now uses a bounded run-entry rendezvous before starting the Stop delay,
+while retaining a fallback deadline so a real failure to enter still gets
+interrupted rather than hanging.
+
+With both corrections on the current dirty source:
+
+- full `OsaurusEvals`: **296/296 across 35 suites**;
+- broad affected `OsaurusCoreTests`: **489/489**, zero failures/skips, result
+  bundle
+  `/private/tmp/osaurus-subagent-batching-broad-core-20260728-1201.xcresult`;
+- combined Agent Channels + Spawn prompt/tool surface:
+  `PromptSurfaceMatrixTests/promptAndToolSurfaceMatrix()` **1/1**, result bundle
+  `/private/tmp/osaurus-prompt-surface-cross-feature-20260728.xcresult`.
+
+The combined prompt result preserves both `spawn_agent` and `spawn_batch`,
+retains the `agent_channel_*` manifest, and asserts that the Spawn schemas are
+byte-identical to the Spawn-only row with no duplicate tool names. Its
+xcresult also contains a non-failing Thread Performance Checker warning at
+`ModelManager.swift:1856`; that diagnostic is not represented as resolved by
+the passing assertion.
+
+The pinned vMLX `BatchEngineIntegrationTests` were also rerun at
+`d7483a88668bb3ec70e0ea7f8423a5f684084c28`: **28/28**, zero failures, 4.768 s.
+The synthetic throughput row measured 425.4 total tok/s serial versus
+640.3 tok/s batched (**1.51x**). This is engine/test-only evidence, not live
+Osaurus/model proof.
+
+Cleanup removed **18.9 GB** of obsolete DerivedData; the Data volume reported
+approximately **1.2 TiB free** afterward. The model assets reserved for the
+live matrix were not removed. This is storage housekeeping only, not runtime
+proof.
 
 ## Current-head live Release-app matrix
 
@@ -407,3 +484,14 @@ whole lifecycle through final unlock and a follow-up.
 | 2026-07-28 RuntimePolicy source contracts | `88710429` + campaign diff | Runtime-policy contracts and exact vMLX pin | PASS (automated only) | xcresult `Test-OsaurusCoreTests-2026.07.28_11-02-09--0700.xcresult`: 99/99, zero failures/skips |
 | 2026-07-28 final focused pre-rebase matrix | `88710429` + campaign diff | Permission, config, UI source, residency, health, runtime policy, batch, adapter, server settings, admission, feed, cancellation | PASS (automated only) | xcresult `Test-OsaurusCoreTests-2026.07.28_11-03-21--0700.xcresult`: 341/341, zero failures/skips |
 | 2026-07-28 RAM adversarial review | `88710429` + campaign diff | Already-resident target under tightened Memory Safety | FIXED IN SOURCE / LIVE PENDING | Cold-load denial no longer rejects an already-resident target; focused regression is included in the 341-test matrix; Release-app RAM rows remain unrun |
+| 2026-07-28 upstream rebase | `69485fd0` on `e294c616` | Four campaign commits rebased over the then-current Osaurus main | PASS (historical source ancestry only) | Conflict-free rebase; upstream later advanced to `d6216d23`, so a final rebase and rerun remain pending; all four vMLX pins resolve to `d7483a88668bb3ec70e0ea7f8423a5f684084c28` |
+| 2026-07-28 focused post-rebase matrix | `69485fd0` | Permission, config, UI source, residency, health, runtime policy, batch, adapter, server settings, admission, feed, cancellation | PASS (automated only) | xcresult `Test-OsaurusCoreTests-2026.07.28_11-08-59--0700.xcresult`: 341/341, zero failures/skips |
+| 2026-07-28 first full post-rebase eval | `69485fd0` + campaign diff | Full OsaurusEvals package | FAIL | 296 tests across 35 suites; 3 failed tests / 15 issues in subagent authority rows; not counted as a pass |
+| 2026-07-28 focused authority reproduction | `69485fd0` + campaign diff | Full `SubagentEvalTests` before authority fix | FAIL | 6 failed tests / 23 issues; unchanged config was rejected while validating/authorizing batches |
+| 2026-07-28 cold authority fix | `69485fd0` + campaign diff | Single-flight configuration materialization and atomic config/revision snapshot | PASS (automated only) | `SubagentEvalTests` 33/33; Core store/permission/batch 65/65 in `/private/tmp/osaurus-subagent-store-authority-20260728-1140.xcresult`; live app pending |
+| 2026-07-28 scripted Stop fixture audit | `69485fd0` + campaign diff | Wall-clock Stop under full-suite contention | FIXED IN EVAL FIXTURE | Old case passed 1/1 isolated; new bounded run-entry barrier prevents a nominal mid-run Stop from landing before child run entry |
+| 2026-07-28 final token-free eval package | `69485fd0` + campaign diff | Full OsaurusEvals package | PASS (automated only) | 296/296 tests across 35 suites; model-backed and live Release-app rows remain pending |
+| 2026-07-28 broad affected Core matrix | `69485fd0` + campaign diff | Authority, permission, batching, residency, lifecycle, channels, prompts, settings | PASS (automated only) | 489/489, zero failures/skips; `/private/tmp/osaurus-subagent-batching-broad-core-20260728-1201.xcresult` |
+| 2026-07-28 channels + spawn prompt surface | `69485fd0` + campaign diff | Combined prompt/tool schema composition | PASS WITH NON-FAILING DIAGNOSTIC (automated only) | 1/1; `/private/tmp/osaurus-prompt-surface-cross-feature-20260728.xcresult`; bundle also records a Thread Performance Checker warning at `ModelManager.swift:1856` |
+| 2026-07-28 pinned vMLX rerun | `d7483a88668bb3ec70e0ea7f8423a5f684084c28` | `BatchEngineIntegrationTests` | PASS (engine automated only) | 28/28, zero failures, 4.768 s; serial 425.4 total tok/s, batched 640.3, 1.51x; not live Osaurus/model proof |
+| 2026-07-28 storage cleanup | local machine | Obsolete build data | COMPLETE (housekeeping only) | 18.9 GB obsolete DerivedData removed; Data volume approximately 1.2 TiB free; reserved live-test model assets preserved |

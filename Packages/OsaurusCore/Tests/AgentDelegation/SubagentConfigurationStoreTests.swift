@@ -66,6 +66,64 @@ struct SubagentConfigurationStoreTests {
         #expect(reloaded.budgets.maxElapsedSeconds == 1_800)
     }
 
+    @Test("parallel cold readers materialize one atomic snapshot revision")
+    func parallelColdReadersShareOneMaterialization() async throws {
+        let lease = await acquireSubagentStoreSandbox(
+            "agent-delegation-parallel-cold-read"
+        )
+        defer { lease.release() }
+
+        let expected = SubagentConfiguration(
+            localTextDelegationEnabled: true,
+            budgets: SubagentBudgets(maxParallelSpawns: 4),
+            spawnableModelNames: ["local/worker"]
+        ).normalized
+        let file = lease.sandbox.appendingPathComponent(
+            "agent-delegation.json"
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(expected).write(to: file, options: .atomic)
+        SubagentConfigurationStore.invalidateSnapshot()
+        let revisionBeforeRead = SubagentConfigurationStore.revision()
+
+        let readers = 32
+        let gate = ColdSnapshotStartGate(expectedArrivals: readers)
+        let snapshots = await withTaskGroup(
+            of: (SubagentConfiguration, UInt64).self,
+            returning: [(SubagentConfiguration, UInt64)].self
+        ) { group in
+            for _ in 0 ..< readers {
+                group.addTask {
+                    await gate.arriveAndWait()
+                    let snapshot =
+                        SubagentConfigurationStore.snapshotWithRevision()
+                    return (
+                        snapshot.configuration,
+                        snapshot.revision
+                    )
+                }
+            }
+            var values: [(SubagentConfiguration, UInt64)] = []
+            for await value in group {
+                values.append(value)
+            }
+            return values
+        }
+
+        #expect(snapshots.count == readers)
+        #expect(snapshots.allSatisfy { $0.0 == expected })
+        #expect(
+            snapshots.allSatisfy {
+                $0.1 == revisionBeforeRead &+ 1
+            }
+        )
+        #expect(
+            SubagentConfigurationStore.revision()
+                == revisionBeforeRead &+ 1
+        )
+    }
+
     @Test("main-chat spawn policy survives a store reload")
     func mainChatSpawnPolicySurvivesReload() async throws {
         let lease = await acquireSubagentStoreSandbox("main-chat-spawn-policy")
@@ -329,5 +387,30 @@ struct SubagentConfigurationStoreTests {
             .appendingPathComponent("osaurus-agent-delegation-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+}
+
+private actor ColdSnapshotStartGate {
+    private let expectedArrivals: Int
+    private var arrivals = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(expectedArrivals: Int) {
+        self.expectedArrivals = expectedArrivals
+    }
+
+    func arriveAndWait() async {
+        arrivals += 1
+        if arrivals == expectedArrivals {
+            let pending = waiters
+            waiters.removeAll()
+            for waiter in pending {
+                waiter.resume()
+            }
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
     }
 }

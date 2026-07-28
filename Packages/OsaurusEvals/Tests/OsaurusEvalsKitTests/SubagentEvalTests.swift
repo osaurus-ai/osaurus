@@ -311,7 +311,7 @@ struct SubagentEvalTests {
         #expect(report.outcome == .passed, "notes: \(report.notes)")
     }
 
-    @Test func scriptedBatchUserStopMapsEveryUnstartedRowToUserDenied() async {
+    @Test func scriptedBatchUserStopAfterRunEntrySettlesEveryRow() async {
         let report = await scoreScripted(
             Sub(
                 lane: "scripted",
