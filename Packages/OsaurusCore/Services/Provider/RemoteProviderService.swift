@@ -5239,6 +5239,11 @@ extension RemoteProviderService {
             return try await fetchOsaurusRouterModels(from: provider)
         }
 
+        return try await fetchOpenAICompatibleModels(from: provider)
+    }
+
+    /// Fetch models from an OpenAI-compatible `/models` endpoint.
+    static func fetchOpenAICompatibleModels(from provider: RemoteProvider) async throws -> [String] {
         // OpenAI-compatible providers use /models endpoint
         guard let url = provider.url(for: "/models") else {
             throw RemoteProviderServiceError.invalidURL
