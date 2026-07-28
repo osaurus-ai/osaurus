@@ -344,29 +344,6 @@ struct FloatingInputCard: View {
     @State private var isDragOver = false
     @State private var showModelPicker = false
     @State private var showImageSizePicker = false
-    @State private var showContextBreakdown = false
-    /// True when the context panel was opened by click. Hover previews dismiss
-    /// automatically; pinned panels remain interactive until an outside click
-    /// or a second click on the trigger.
-    @State private var contextPanelPinned = false
-    @State private var contextHoverTask: Task<Void, Never>?
-    /// Delayed dismiss for the context popover. Gives the cursor a grace
-    /// period to travel from the trigger into the popover (which lives in its
-    /// own window, so hovering it doesn't keep the trigger "hovered").
-    @State private var contextDismissTask: Task<Void, Never>?
-    /// Wallet panel presentation. Hovering the credits chip opens it as a
-    /// passive preview (dismissed on hover exit); clicking pins it so its
-    /// actions (Add credits, View all) are reachable.
-    @State private var showWalletPanel = false
-    /// True when the wallet panel was opened by click; hover exit no longer
-    /// dismisses it, only outside-click / an action does.
-    @State private var walletPanelPinned = false
-    @State private var balanceHoverTask: Task<Void, Never>?
-    /// Delayed dismiss for the hover-opened wallet panel. Gives the cursor a
-    /// grace period to travel from the chip into the panel (which lives in its
-    /// own window, so hovering it doesn't keep the chip "hovered"); the panel's
-    /// own hover cancels it so its buttons stay clickable.
-    @State private var walletDismissTask: Task<Void, Never>?
     /// Width available to the toggle-chip region (the space between the model
     /// chip and the meta cluster). Measured cheaply via `onGeometryChange` and
     /// used to decide whether the chips collapse to icon-only — see
@@ -2449,7 +2426,13 @@ extension FloatingInputCard {
         if showCredits || showTokens {
             HStack(alignment: .center, spacing: 8) {
                 if showCredits {
-                    creditsChip
+                    FloatingCreditsChip(
+                        isRouterBilledSession: isRouterBilledSession,
+                        sessionSpendMicro: sessionSpendMicro,
+                        metaCompact: metaCompact,
+                        metaUltraCompact: metaUltraCompact,
+                        onAddCredits: onAddCredits
+                    )
                 }
                 if showCredits && showTokens {
                     Rectangle()
@@ -2457,377 +2440,20 @@ extension FloatingInputCard {
                         .frame(width: 1, height: 12)
                 }
                 if showTokens {
-                    contextIndicatorChip
-                }
-            }
-        }
-    }
-
-    // MARK: - Credits Indicator
-
-    /// Urgency tiers for the balance indicator. Healthy stays quiet (plain muted
-    /// text that blends into the meta cluster); low and empty escalate to an
-    /// amber pill so a top-up is easy to notice. Empty/frozen reads as an "Add
-    /// credits" call to action — deliberately amber, never error-red, so it
-    /// invites action instead of looking like a failure. The escalation only
-    /// applies to router-billed sessions; see `creditsStyle(for:)`.
-    private enum BalanceLevel {
-        case healthy
-        case low
-        case empty
-    }
-
-    private var balanceLevel: BalanceLevel {
-        let micro = accountService.balanceMicroValue
-        if micro <= 0 || accountService.isFrozen {
-            return .empty
-        }
-        if micro < 1_000_000 {  // < $1.00
-            return .low
-        }
-        return .healthy
-    }
-
-    /// Resolved visual tokens for one `BalanceLevel` so `creditsChip` can render
-    /// declaratively instead of re-deriving each property from the level inline.
-    private struct CreditsChipStyle {
-        let iconName: String
-        let iconColor: Color
-        let textColor: Color
-        let weight: Font.Weight
-        /// Pill fill/stroke; `nil` keeps the chip chrome-free (healthy state).
-        let pill: (fill: Color, stroke: Color)?
-        let glow: Color
-        /// When false, the chip shows the "Add credits" CTA instead of an amount.
-        let showsAmount: Bool
-    }
-
-    private func creditsStyle(for level: BalanceLevel) -> CreditsChipStyle {
-        let amber = theme.warningColor
-        // Outside router-billed sessions the chip never escalates: the balance
-        // doesn't block the current session, so a $0/unknown wallet reads as
-        // quiet muted "Add credits" text instead of an amber call to action.
-        guard isRouterBilledSession else {
-            return CreditsChipStyle(
-                iconName: "creditcard",
-                iconColor: theme.tertiaryText,
-                textColor: theme.secondaryText,
-                weight: .medium,
-                pill: nil,
-                glow: .clear,
-                showsAmount: level != .empty
-            )
-        }
-        switch level {
-        case .healthy:
-            return CreditsChipStyle(
-                iconName: "creditcard",
-                iconColor: theme.tertiaryText,
-                textColor: theme.secondaryText,
-                weight: .medium,
-                pill: nil,
-                glow: .clear,
-                showsAmount: true
-            )
-        case .low:
-            // The chip shows the router balance, so a low balance escalates the
-            // chip itself to amber text (no pill) — a gentle nudge that stops
-            // short of the empty-state "Add credits" call to action.
-            return CreditsChipStyle(
-                iconName: "creditcard",
-                iconColor: amber,
-                textColor: amber,
-                weight: .semibold,
-                pill: nil,
-                glow: .clear,
-                showsAmount: true
-            )
-        case .empty:
-            return CreditsChipStyle(
-                iconName: "plus.circle.fill",
-                iconColor: amber,
-                textColor: amber,
-                weight: .semibold,
-                pill: (amber.opacity(0.22), amber.opacity(0.5)),
-                glow: amber.opacity(0.25),
-                showsAmount: false
-            )
-        }
-    }
-
-    /// This session's Router spend, formatted for the hover popover. The chip
-    /// surfaces the account balance; spend is shown only in the popover.
-    private var sessionSpendDisplay: String {
-        OsaurusRouter.formatMicroUSDPrecise(String(sessionSpendMicro))
-    }
-
-    /// Accessibility text for the credits chip. Describes the router balance the
-    /// chip shows and the tap action; session spend lives in the wallet panel.
-    private var creditsHelpText: Text {
-        if accountService.isFrozen {
-            return Text("Account paused - add credits to resume.", bundle: .module)
-        }
-        return Text("\(accountService.formattedBalance) router balance. Click to open the wallet.", bundle: .module)
-    }
-
-    /// Balance indicator shown in every session where the router is usable.
-    /// Hovering previews the wallet panel; clicking pins it so its actions
-    /// (Add credits → top-up sheet, View all → Credits tab) are reachable.
-    /// Quiet plain text normally, escalating to an amber pill / "Add credits"
-    /// CTA as the balance runs low or hits zero — router-billed sessions only
-    /// (see `BalanceLevel` / `creditsStyle(for:)`).
-    @ViewBuilder
-    private var creditsChip: some View {
-        let level = balanceLevel
-        let style = creditsStyle(for: level)
-        let caption = CGFloat(theme.captionSize)
-        // Hide the icon in compact mode to save width, except the empty-state
-        // plus glyph, which signals the chip is actionable. In the ultra-compact
-        // tier we always keep the icon, since it becomes the whole chip.
-        let showIcon = !metaCompact || level == .empty || metaUltraCompact
-        // At the tightest width the chip is icon-only (glyph carries the state,
-        // hover/tap opens the wallet) so the row's toggle chips aren't clipped.
-        let showLabel = !metaUltraCompact
-
-        Button {
-            // Click pins the wallet panel (rather than jumping straight to the
-            // top-up sheet) so its actions stay reachable; a second click while
-            // pinned closes it.
-            balanceHoverTask?.cancel()
-            walletDismissTask?.cancel()
-            if showWalletPanel && walletPanelPinned {
-                showWalletPanel = false
-                walletPanelPinned = false
-            } else {
-                walletPanelPinned = true
-                showWalletPanel = true
-            }
-        } label: {
-            HStack(spacing: 4) {
-                if showIcon {
-                    Image(systemName: style.iconName)
-                        .font(.system(size: caption - 2))
-                        .foregroundColor(style.iconColor)
-                        .contentTransition(.symbolEffect(.replace))
-                }
-
-                if showLabel {
-                    if style.showsAmount {
-                        // Composer shows the overall router balance; this session's
-                        // spend is surfaced only in the hover popover.
-                        Text(verbatim: accountService.formattedBalance)
-                            .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
-                            .foregroundColor(style.textColor)
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                    } else {
-                        Text("Add credits", bundle: .module)
-                            .font(theme.font(size: caption - 1, weight: style.weight))
-                            .foregroundColor(style.textColor)
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                    }
-                }
-            }
-            // Chrome only appears in the low/empty attention states; the healthy
-            // chip stays plain text to match the token indicator's weight.
-            .padding(.horizontal, style.pill == nil ? 0 : 10)
-            .padding(.vertical, style.pill == nil ? 0 : 4)
-            .background {
-                if let pill = style.pill {
-                    Capsule()
-                        .fill(pill.fill)
-                        .overlay(Capsule().strokeBorder(pill.stroke, lineWidth: 1))
-                }
-            }
-            // Soft glow on the empty CTA draws the eye without a repeating animation.
-            .shadow(color: style.glow, radius: 5, x: 0, y: 1)
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
-        .accessibilityLabel(creditsHelpText)
-        .onHover { hovering in
-            balanceHoverTask?.cancel()
-            if hovering {
-                walletDismissTask?.cancel()
-                balanceHoverTask = Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 300_000_000)
-                    guard !Task.isCancelled else { return }
-                    showWalletPanel = true
-                }
-            } else if !walletPanelPinned {
-                scheduleWalletDismiss()
-            }
-        }
-        .popover(isPresented: $showWalletPanel, arrowEdge: .top) {
-            WalletPopover(
-                sessionSpend: isRouterBilledSession ? sessionSpendDisplay : nil,
-                isAttention: isRouterBilledSession && level != .healthy,
-                onAddCredits: {
-                    closeWalletPanel()
-                    onAddCredits?()
-                },
-                onViewAll: {
-                    closeWalletPanel()
-                    AppDelegate.shared?.showManagementWindow(initialTab: .credits)
-                }
-            )
-            // Keep the panel alive while the cursor is over it, so the user
-            // can travel from the chip and click Add credits / View all.
-            .onHover { hovering in
-                if hovering {
-                    walletDismissTask?.cancel()
-                } else if !walletPanelPinned {
-                    scheduleWalletDismiss()
-                }
-            }
-        }
-        .onChange(of: showWalletPanel) { _, isShown in
-            // Outside-click dismissal flips the binding directly; unpin so the
-            // next hover preview behaves normally.
-            if !isShown { walletPanelPinned = false }
-        }
-    }
-
-    /// Dismiss the hover-opened wallet panel after a grace period, giving the
-    /// cursor time to cross the gap into the panel window.
-    private func scheduleWalletDismiss() {
-        balanceHoverTask?.cancel()
-        walletDismissTask?.cancel()
-        walletDismissTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            guard !Task.isCancelled else { return }
-            showWalletPanel = false
-        }
-    }
-
-    private func closeWalletPanel() {
-        walletDismissTask?.cancel()
-        balanceHoverTask?.cancel()
-        showWalletPanel = false
-        walletPanelPinned = false
-    }
-
-    // MARK: - Context Indicator
-
-    @ViewBuilder
-    private var contextIndicatorChip: some View {
-        let warningColor: Color? =
-            isContextHardOverflow ? .red : (isContextNearLimit ? .orange : nil)
-        let prefix = isStreaming ? "" : "~"
-        let tokenText =
-            if let maxCtx = usableContextTokens {
-                "\(prefix)\(formatTokenCount(displayContextTokens)) / \(formatTokenCount(maxCtx))"
-            } else {
-                "\(prefix)\(formatTokenCount(displayContextTokens))"
-            }
-
-        Button {
-            contextHoverTask?.cancel()
-            contextDismissTask?.cancel()
-            if showContextBreakdown && contextPanelPinned {
-                showContextBreakdown = false
-                contextPanelPinned = false
-            } else {
-                contextPanelPinned = true
-                showContextBreakdown = true
-            }
-        } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                // Budget-state tinting: amber at ≥85% of the window (soft
-                // warning — compaction will engage), red when the
-                // non-compactable prefix alone can't fit (send is gated).
-                if let warningColor {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: CGFloat(theme.captionSize) - 2))
-                        .foregroundColor(warningColor)
-                        .localizedHelp(
-                            isContextHardOverflow
-                                ? "Context is full: the system prompt, tools, and input alone exceed this model's window. Shorten the input, disable tools, or pick a larger-context model."
-                                : "Context is nearly full (≥85% of the model window). Older messages will be compacted; consider starting a fresh chat for best quality."
-                        )
-                }
-
-                Text(tokenText)
-                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
-                    .foregroundColor(
-                        warningColor ?? (isStreaming ? theme.secondaryText : theme.tertiaryText)
+                    FloatingContextChip(
+                        displayTokens: displayContextTokens,
+                        usableTokens: usableContextTokens,
+                        modelMaxTokens: maxContextTokens,
+                        windowResolution: contextWindowResolution,
+                        isStreaming: isStreaming,
+                        isNearLimit: isContextNearLimit,
+                        isHardOverflow: isContextHardOverflow,
+                        metaCompact: metaCompact,
+                        formatTokenCount: formatTokenCount,
+                        breakdown: { displayContextBreakdown }
                     )
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-
-                if !metaCompact {
-                    Text("tokens", bundle: .module)
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
-                        .foregroundColor(theme.tertiaryText.opacity(0.7))
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
                 }
             }
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
-        .accessibilityLabel(
-            Text("Context budget: \(tokenText) tokens", bundle: .module)
-        )
-        .onHover { hovering in
-            if hovering {
-                openContextBreakdown()
-            } else if !contextPanelPinned {
-                scheduleContextDismiss()
-            }
-        }
-        .popover(isPresented: $showContextBreakdown, arrowEdge: .top) {
-            ContextBreakdownPopover(
-                breakdown: displayContextBreakdown,
-                maxTokens: usableContextTokens,
-                modelMaxTokens: maxContextTokens,
-                modelLimitSource: contextWindowResolution?.source,
-                isStreaming: isStreaming,
-                isNearLimit: isContextNearLimit,
-                isHardOverflow: isContextHardOverflow,
-                formatTokenCount: formatTokenCount
-            )
-            // Keep the popover alive while the cursor is over it, so the user
-            // can travel from the trigger and click the disclosure headers.
-            .onPopoverHover { hovering in
-                if hovering {
-                    contextDismissTask?.cancel()
-                } else if !contextPanelPinned {
-                    scheduleContextDismiss()
-                }
-            }
-        }
-        .onChange(of: showContextBreakdown) { _, isShown in
-            // Outside-click dismissal flips the binding directly. Clear the
-            // pinned state so the next hover behaves as a passive preview.
-            if !isShown { contextPanelPinned = false }
-        }
-    }
-
-    /// Open the context popover after a short hover dwell, cancelling any
-    /// pending dismiss so a quick re-entry doesn't flicker it closed.
-    private func openContextBreakdown() {
-        contextDismissTask?.cancel()
-        contextHoverTask?.cancel()
-        contextHoverTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            guard !Task.isCancelled else { return }
-            showContextBreakdown = true
-        }
-    }
-
-    /// Dismiss the context popover after a grace period, giving the cursor
-    /// time to cross the gap into the popover window.
-    private func scheduleContextDismiss() {
-        contextHoverTask?.cancel()
-        contextDismissTask?.cancel()
-        contextDismissTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            guard !Task.isCancelled else { return }
-            showContextBreakdown = false
         }
     }
 
@@ -7375,3 +7001,426 @@ private struct SendNowButton: View {
         }
     }
 #endif
+
+// MARK: - Meta Cluster Chips
+
+/// Balance indicator shown in every session where the router is usable.
+/// Extracted from `FloatingInputCard` so wallet-panel hover/pin state and
+/// account-service updates re-render only this chip, never the whole card.
+/// Hovering previews the wallet panel; clicking pins it so its actions
+/// (Add credits → top-up sheet, View all → Credits tab) are reachable.
+/// Quiet plain text normally, escalating to an amber pill / "Add credits"
+/// CTA as the balance runs low or hits zero — router-billed sessions only.
+private struct FloatingCreditsChip: View {
+    let isRouterBilledSession: Bool
+    /// Total micro-USD spent on the Osaurus Router this session (popover row).
+    let sessionSpendMicro: Int
+    let metaCompact: Bool
+    let metaUltraCompact: Bool
+    let onAddCredits: (() -> Void)?
+
+    @ObservedObject private var accountService = OsaurusRouterAccountService.shared
+    @Environment(\.theme) private var theme
+
+    /// Wallet panel presentation. Hovering the chip opens it as a passive
+    /// preview (dismissed on hover exit); clicking pins it so its actions
+    /// (Add credits, View all) are reachable.
+    @State private var showWalletPanel = false
+    /// True when the wallet panel was opened by click; hover exit no longer
+    /// dismisses it, only outside-click / an action does.
+    @State private var walletPanelPinned = false
+    @State private var balanceHoverTask: Task<Void, Never>?
+    /// Delayed dismiss for the hover-opened wallet panel. Gives the cursor a
+    /// grace period to travel from the chip into the panel (which lives in its
+    /// own window, so hovering it doesn't keep the chip "hovered"); the panel's
+    /// own hover cancels it so its buttons stay clickable.
+    @State private var walletDismissTask: Task<Void, Never>?
+
+    /// Urgency tiers for the balance indicator. Healthy stays quiet (plain muted
+    /// text that blends into the meta cluster); low and empty escalate to an
+    /// amber pill so a top-up is easy to notice. Empty/frozen reads as an "Add
+    /// credits" call to action — deliberately amber, never error-red, so it
+    /// invites action instead of looking like a failure. The escalation only
+    /// applies to router-billed sessions; see `creditsStyle(for:)`.
+    private enum BalanceLevel {
+        case healthy
+        case low
+        case empty
+    }
+
+    private var balanceLevel: BalanceLevel {
+        let micro = accountService.balanceMicroValue
+        if micro <= 0 || accountService.isFrozen {
+            return .empty
+        }
+        if micro < 1_000_000 {  // < $1.00
+            return .low
+        }
+        return .healthy
+    }
+
+    /// Resolved visual tokens for one `BalanceLevel` so the body can render
+    /// declaratively instead of re-deriving each property from the level inline.
+    private struct CreditsChipStyle {
+        let iconName: String
+        let iconColor: Color
+        let textColor: Color
+        let weight: Font.Weight
+        /// Pill fill/stroke; `nil` keeps the chip chrome-free (healthy state).
+        let pill: (fill: Color, stroke: Color)?
+        let glow: Color
+        /// When false, the chip shows the "Add credits" CTA instead of an amount.
+        let showsAmount: Bool
+    }
+
+    private func creditsStyle(for level: BalanceLevel) -> CreditsChipStyle {
+        let amber = theme.warningColor
+        // Outside router-billed sessions the chip never escalates: the balance
+        // doesn't block the current session, so a $0/unknown wallet reads as
+        // quiet muted "Add credits" text instead of an amber call to action.
+        guard isRouterBilledSession else {
+            return CreditsChipStyle(
+                iconName: "creditcard",
+                iconColor: theme.tertiaryText,
+                textColor: theme.secondaryText,
+                weight: .medium,
+                pill: nil,
+                glow: .clear,
+                showsAmount: level != .empty
+            )
+        }
+        switch level {
+        case .healthy:
+            return CreditsChipStyle(
+                iconName: "creditcard",
+                iconColor: theme.tertiaryText,
+                textColor: theme.secondaryText,
+                weight: .medium,
+                pill: nil,
+                glow: .clear,
+                showsAmount: true
+            )
+        case .low:
+            // The chip shows the router balance, so a low balance escalates the
+            // chip itself to amber text (no pill) — a gentle nudge that stops
+            // short of the empty-state "Add credits" call to action.
+            return CreditsChipStyle(
+                iconName: "creditcard",
+                iconColor: amber,
+                textColor: amber,
+                weight: .semibold,
+                pill: nil,
+                glow: .clear,
+                showsAmount: true
+            )
+        case .empty:
+            return CreditsChipStyle(
+                iconName: "plus.circle.fill",
+                iconColor: amber,
+                textColor: amber,
+                weight: .semibold,
+                pill: (amber.opacity(0.22), amber.opacity(0.5)),
+                glow: amber.opacity(0.25),
+                showsAmount: false
+            )
+        }
+    }
+
+    /// This session's Router spend, formatted for the hover popover. The chip
+    /// surfaces the account balance; spend is shown only in the popover.
+    private var sessionSpendDisplay: String {
+        OsaurusRouter.formatMicroUSDPrecise(String(sessionSpendMicro))
+    }
+
+    /// Accessibility text for the credits chip. Describes the router balance the
+    /// chip shows and the tap action; session spend lives in the wallet panel.
+    private var creditsHelpText: Text {
+        if accountService.isFrozen {
+            return Text("Account paused - add credits to resume.", bundle: .module)
+        }
+        return Text("\(accountService.formattedBalance) router balance. Click to open the wallet.", bundle: .module)
+    }
+
+    var body: some View {
+        let level = balanceLevel
+        let style = creditsStyle(for: level)
+        let caption = CGFloat(theme.captionSize)
+        // Hide the icon in compact mode to save width, except the empty-state
+        // plus glyph, which signals the chip is actionable. In the ultra-compact
+        // tier we always keep the icon, since it becomes the whole chip.
+        let showIcon = !metaCompact || level == .empty || metaUltraCompact
+        // At the tightest width the chip is icon-only (glyph carries the state,
+        // hover/tap opens the wallet) so the row's toggle chips aren't clipped.
+        let showLabel = !metaUltraCompact
+
+        Button {
+            // Click pins the wallet panel (rather than jumping straight to the
+            // top-up sheet) so its actions stay reachable; a second click while
+            // pinned closes it.
+            balanceHoverTask?.cancel()
+            walletDismissTask?.cancel()
+            if showWalletPanel && walletPanelPinned {
+                showWalletPanel = false
+                walletPanelPinned = false
+            } else {
+                walletPanelPinned = true
+                showWalletPanel = true
+            }
+        } label: {
+            HStack(spacing: 4) {
+                if showIcon {
+                    Image(systemName: style.iconName)
+                        .font(.system(size: caption - 2))
+                        .foregroundColor(style.iconColor)
+                        .contentTransition(.symbolEffect(.replace))
+                }
+
+                if showLabel {
+                    if style.showsAmount {
+                        // Composer shows the overall router balance; this session's
+                        // spend is surfaced only in the hover popover.
+                        Text(verbatim: accountService.formattedBalance)
+                            .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
+                            .foregroundColor(style.textColor)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    } else {
+                        Text("Add credits", bundle: .module)
+                            .font(theme.font(size: caption - 1, weight: style.weight))
+                            .foregroundColor(style.textColor)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+            }
+            // Chrome only appears in the low/empty attention states; the healthy
+            // chip stays plain text to match the token indicator's weight.
+            .padding(.horizontal, style.pill == nil ? 0 : 10)
+            .padding(.vertical, style.pill == nil ? 0 : 4)
+            .background {
+                if let pill = style.pill {
+                    Capsule()
+                        .fill(pill.fill)
+                        .overlay(Capsule().strokeBorder(pill.stroke, lineWidth: 1))
+                }
+            }
+            // Soft glow on the empty CTA draws the eye without a repeating animation.
+            .shadow(color: style.glow, radius: 5, x: 0, y: 1)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .accessibilityLabel(creditsHelpText)
+        .onHover { hovering in
+            balanceHoverTask?.cancel()
+            if hovering {
+                walletDismissTask?.cancel()
+                balanceHoverTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    guard !Task.isCancelled else { return }
+                    showWalletPanel = true
+                }
+            } else if !walletPanelPinned {
+                scheduleWalletDismiss()
+            }
+        }
+        .popover(isPresented: $showWalletPanel, arrowEdge: .top) {
+            WalletPopover(
+                sessionSpend: isRouterBilledSession ? sessionSpendDisplay : nil,
+                isAttention: isRouterBilledSession && balanceLevel != .healthy,
+                onAddCredits: {
+                    closeWalletPanel()
+                    onAddCredits?()
+                },
+                onViewAll: {
+                    closeWalletPanel()
+                    AppDelegate.shared?.showManagementWindow(initialTab: .credits)
+                }
+            )
+            // Keep the panel alive while the cursor is over it, so the user
+            // can travel from the chip and click Add credits / View all.
+            .onHover { hovering in
+                if hovering {
+                    walletDismissTask?.cancel()
+                } else if !walletPanelPinned {
+                    scheduleWalletDismiss()
+                }
+            }
+        }
+        .onChange(of: showWalletPanel) { _, isShown in
+            // Outside-click dismissal flips the binding directly; unpin so the
+            // next hover preview behaves normally.
+            if !isShown { walletPanelPinned = false }
+        }
+    }
+
+    /// Dismiss the hover-opened wallet panel after a grace period, giving the
+    /// cursor time to cross the gap into the panel window.
+    private func scheduleWalletDismiss() {
+        balanceHoverTask?.cancel()
+        walletDismissTask?.cancel()
+        walletDismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            showWalletPanel = false
+        }
+    }
+
+    private func closeWalletPanel() {
+        walletDismissTask?.cancel()
+        balanceHoverTask?.cancel()
+        showWalletPanel = false
+        walletPanelPinned = false
+    }
+}
+
+/// Context/token indicator on the right edge of the selector row. Extracted
+/// from `FloatingInputCard` so popover hover/pin state re-renders only this
+/// chip. All budget math stays in the parent (it also gates sending); this
+/// view just renders the passed values. `breakdown` is a closure so the
+/// popover's content is computed only when it actually opens, matching the
+/// lazy evaluation the inline `.popover` closure had before extraction.
+private struct FloatingContextChip: View {
+    let displayTokens: Int
+    let usableTokens: Int?
+    let modelMaxTokens: Int?
+    let windowResolution: AgentLoopBudget.ContextWindowResolution?
+    let isStreaming: Bool
+    let isNearLimit: Bool
+    let isHardOverflow: Bool
+    let metaCompact: Bool
+    let formatTokenCount: (Int) -> String
+    let breakdown: () -> ContextBreakdown
+
+    @Environment(\.theme) private var theme
+
+    @State private var showContextBreakdown = false
+    /// True when the context panel was opened by click. Hover previews dismiss
+    /// automatically; pinned panels remain interactive until an outside click
+    /// or a second click on the trigger.
+    @State private var contextPanelPinned = false
+    @State private var contextHoverTask: Task<Void, Never>?
+    /// Delayed dismiss for the context popover. Gives the cursor a grace
+    /// period to travel from the trigger into the popover (which lives in its
+    /// own window, so hovering it doesn't keep the trigger "hovered").
+    @State private var contextDismissTask: Task<Void, Never>?
+
+    var body: some View {
+        let warningColor: Color? =
+            isHardOverflow ? .red : (isNearLimit ? .orange : nil)
+        let prefix = isStreaming ? "" : "~"
+        let tokenText =
+            if let maxCtx = usableTokens {
+                "\(prefix)\(formatTokenCount(displayTokens)) / \(formatTokenCount(maxCtx))"
+            } else {
+                "\(prefix)\(formatTokenCount(displayTokens))"
+            }
+
+        Button {
+            contextHoverTask?.cancel()
+            contextDismissTask?.cancel()
+            if showContextBreakdown && contextPanelPinned {
+                showContextBreakdown = false
+                contextPanelPinned = false
+            } else {
+                contextPanelPinned = true
+                showContextBreakdown = true
+            }
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                // Budget-state tinting: amber at ≥85% of the window (soft
+                // warning — compaction will engage), red when the
+                // non-compactable prefix alone can't fit (send is gated).
+                if let warningColor {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: CGFloat(theme.captionSize) - 2))
+                        .foregroundColor(warningColor)
+                        .localizedHelp(
+                            isHardOverflow
+                                ? "Context is full: the system prompt, tools, and input alone exceed this model's window. Shorten the input, disable tools, or pick a larger-context model."
+                                : "Context is nearly full (≥85% of the model window). Older messages will be compacted; consider starting a fresh chat for best quality."
+                        )
+                }
+
+                Text(tokenText)
+                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
+                    .foregroundColor(
+                        warningColor ?? (isStreaming ? theme.secondaryText : theme.tertiaryText)
+                    )
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+
+                if !metaCompact {
+                    Text("tokens", bundle: .module)
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                        .foregroundColor(theme.tertiaryText.opacity(0.7))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .accessibilityLabel(
+            Text("Context budget: \(tokenText) tokens", bundle: .module)
+        )
+        .onHover { hovering in
+            if hovering {
+                openContextBreakdown()
+            } else if !contextPanelPinned {
+                scheduleContextDismiss()
+            }
+        }
+        .popover(isPresented: $showContextBreakdown, arrowEdge: .top) {
+            ContextBreakdownPopover(
+                breakdown: breakdown(),
+                maxTokens: usableTokens,
+                modelMaxTokens: modelMaxTokens,
+                modelLimitSource: windowResolution?.source,
+                isStreaming: isStreaming,
+                isNearLimit: isNearLimit,
+                isHardOverflow: isHardOverflow,
+                formatTokenCount: formatTokenCount
+            )
+            // Keep the popover alive while the cursor is over it, so the user
+            // can travel from the trigger and click the disclosure headers.
+            .onPopoverHover { hovering in
+                if hovering {
+                    contextDismissTask?.cancel()
+                } else if !contextPanelPinned {
+                    scheduleContextDismiss()
+                }
+            }
+        }
+        .onChange(of: showContextBreakdown) { _, isShown in
+            // Outside-click dismissal flips the binding directly. Clear the
+            // pinned state so the next hover behaves as a passive preview.
+            if !isShown { contextPanelPinned = false }
+        }
+    }
+
+    /// Open the context popover after a short hover dwell, cancelling any
+    /// pending dismiss so a quick re-entry doesn't flicker it closed.
+    private func openContextBreakdown() {
+        contextDismissTask?.cancel()
+        contextHoverTask?.cancel()
+        contextHoverTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
+            showContextBreakdown = true
+        }
+    }
+
+    /// Dismiss the context popover after a grace period, giving the cursor
+    /// time to cross the gap into the popover window.
+    private func scheduleContextDismiss() {
+        contextHoverTask?.cancel()
+        contextDismissTask?.cancel()
+        contextDismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            showContextBreakdown = false
+        }
+    }
+}
