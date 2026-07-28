@@ -664,7 +664,7 @@ struct TelegramSettingsView: View {
         inboundAgentId = configuration.inboundDispatch.targetAgentId
         inboundRoutes = configuration.inboundDispatch.routes
         inboundAutoReplyEnabled = configuration.inboundDispatch.autoReplyEnabled
-        tokenSaved = TelegramConnectionService.shared.hasBotToken()
+        Task { tokenSaved = await TelegramConnectionService.shared.hasBotTokenOffMain() }
         // Arm autosave only after the stored configuration has hydrated the
         // draft, so hydration itself is never mistaken for an edit.
         lastSavedDraft = currentDraft
@@ -675,10 +675,12 @@ struct TelegramSettingsView: View {
     }
 
     /// Persist a pasted bot token to Keychain before the configuration save.
-    private func persistPendingSecrets() -> Bool {
+    /// Awaited off the main thread so a slow securityd never beachballs the
+    /// Save/Test buttons.
+    private func persistPendingSecrets() async -> Bool {
         guard hasPendingToken else { return true }
         do {
-            try TelegramConnectionService.shared.saveBotToken(botToken)
+            try await TelegramConnectionService.shared.saveBotTokenOffMain(botToken)
             botToken = ""
             tokenSaved = true
             return true
@@ -689,11 +691,13 @@ struct TelegramSettingsView: View {
     }
 
     private func removeToken() {
-        _ = TelegramConnectionService.shared.deleteBotToken()
         botToken = ""
         tokenSaved = false
         webhookRegistered = false
-        refreshReceiveRuntime()
+        Task {
+            await TelegramConnectionService.shared.deleteBotTokenOffMain()
+            refreshReceiveRuntime()
+        }
         showStatus(L("Telegram bot token removed"), isError: false)
     }
 
@@ -770,9 +774,12 @@ struct TelegramSettingsView: View {
     /// rather than dismissing on a superficially successful save.
     private func saveAndDismiss() {
         autosaveTask?.cancel()
-        guard persistPendingSecrets(), saveConfiguration() else { return }
         isSaving = true
         Task {
+            guard await persistPendingSecrets(), saveConfiguration() else {
+                isSaving = false
+                return
+            }
             await AgentChannelTransportSupervisor.shared.refreshTelegramRuntime()
             let diagnostics = await TelegramConnectionService.shared.diagnostics()
             let report = AgentChannelLiveProofReadiness.telegram(diagnostics)
@@ -827,9 +834,12 @@ struct TelegramSettingsView: View {
     /// user sees in the form, not a stale save.
     private func testConnection() {
         autosaveTask?.cancel()
-        guard persistPendingSecrets(), saveConfiguration() else { return }
         isTesting = true
         Task {
+            guard await persistPendingSecrets(), saveConfiguration() else {
+                isTesting = false
+                return
+            }
             await AgentChannelTransportSupervisor.shared.refreshTelegramRuntime()
             let diagnostics = await TelegramConnectionService.shared.diagnostics()
             await MainActor.run {
@@ -944,9 +954,12 @@ struct TelegramSettingsView: View {
     /// active long-poll runtime (Telegram allows one consumer). Pause the
     /// runtime around discovery and resume it afterwards.
     private func refreshDiscovery(showStatus announce: Bool) {
-        guard persistPendingSecrets() else { return }
         isDiscovering = true
         Task {
+            guard await persistPendingSecrets() else {
+                isDiscovering = false
+                return
+            }
             await AgentChannelTransportSupervisor.shared.suspendTelegramRuntime()
             defer {
                 Task {
