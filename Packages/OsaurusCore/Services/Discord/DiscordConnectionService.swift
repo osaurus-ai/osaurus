@@ -238,6 +238,32 @@ final class DiscordConnectionService: @unchecked Sendable {
         credentialStore.hasBotToken()
     }
 
+    // MARK: - Off-main credential access
+    //
+    // SecItem calls can block for seconds under securityd contention, so UI
+    // flows await these instead of the synchronous accessors above.
+
+    func saveBotTokenOffMain(_ token: String) async throws {
+        let store = credentialStore
+        let saved = await Keychain.perform { store.saveBotToken(token) }
+        if !saved {
+            throw DiscordConnectionServiceError.configurationSaveFailed(
+                "The token was empty or Keychain storage was unavailable."
+            )
+        }
+    }
+
+    @discardableResult
+    func deleteBotTokenOffMain() async -> Bool {
+        let store = credentialStore
+        return await Keychain.perform { store.deleteBotToken() }
+    }
+
+    func hasBotTokenOffMain() async -> Bool {
+        let store = credentialStore
+        return await Keychain.perform { store.hasBotToken() }
+    }
+
     func discoverConfigurationOptions() async throws -> DiscordConnectionDiscovery {
         let token = try requireToken()
         do {

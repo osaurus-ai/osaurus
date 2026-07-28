@@ -704,7 +704,7 @@ struct DiscordSettingsView: View {
         inboundRequireMention = configuration.inboundDispatch.requireMention
         inboundContinueThreads = configuration.inboundDispatch.continueThreads
         inboundAutoReplyEnabled = configuration.inboundDispatch.autoReplyEnabled
-        tokenSaved = DiscordConnectionService.shared.hasBotToken()
+        Task { tokenSaved = await DiscordConnectionService.shared.hasBotTokenOffMain() }
         // Arm autosave only after the stored configuration has hydrated the
         // draft, so hydration itself is never mistaken for an edit.
         lastSavedDraft = currentDraft
@@ -715,10 +715,12 @@ struct DiscordSettingsView: View {
     }
 
     /// Persist a pasted bot token to Keychain before the configuration save.
-    private func persistPendingSecrets() -> Bool {
+    /// Awaited off the main thread so a slow securityd never beachballs the
+    /// Save/Test buttons.
+    private func persistPendingSecrets() async -> Bool {
         guard hasPendingToken else { return true }
         do {
-            try DiscordConnectionService.shared.saveBotToken(botToken)
+            try await DiscordConnectionService.shared.saveBotTokenOffMain(botToken)
             botToken = ""
             tokenSaved = true
             return true
@@ -729,9 +731,9 @@ struct DiscordSettingsView: View {
     }
 
     private func removeToken() {
-        _ = DiscordConnectionService.shared.deleteBotToken()
         botToken = ""
         tokenSaved = false
+        Task { await DiscordConnectionService.shared.deleteBotTokenOffMain() }
         showStatus(L("Discord bot token removed"), isError: false)
     }
 
@@ -802,9 +804,12 @@ struct DiscordSettingsView: View {
     /// than dismissing on a superficially successful save.
     private func saveAndDismiss() {
         autosaveTask?.cancel()
-        guard persistPendingSecrets(), saveConfiguration() else { return }
         isSaving = true
         Task {
+            guard await persistPendingSecrets(), saveConfiguration() else {
+                isSaving = false
+                return
+            }
             await AgentChannelTransportSupervisor.shared.refreshDiscordRuntime()
             guard inboundDispatchEnabled else {
                 await MainActor.run {
@@ -838,9 +843,12 @@ struct DiscordSettingsView: View {
     /// user sees in the form, not a stale save.
     private func testConnection() {
         autosaveTask?.cancel()
-        guard persistPendingSecrets(), saveConfiguration() else { return }
         isTesting = true
         Task {
+            guard await persistPendingSecrets(), saveConfiguration() else {
+                isTesting = false
+                return
+            }
             await AgentChannelTransportSupervisor.shared.refreshDiscordRuntime()
             let diagnostics = await DiscordConnectionService.shared.diagnostics()
             await MainActor.run {
@@ -859,9 +867,12 @@ struct DiscordSettingsView: View {
     }
 
     private func refreshDiscovery(showStatus announce: Bool) {
-        guard persistPendingSecrets() else { return }
         isDiscovering = true
         Task {
+            guard await persistPendingSecrets() else {
+                isDiscovering = false
+                return
+            }
             do {
                 let loaded = try await DiscordConnectionService.shared.discoverConfigurationOptions()
                 await MainActor.run {

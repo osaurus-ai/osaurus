@@ -91,6 +91,17 @@ enum Keychain {
         writeQueue.async(execute: work)
     }
 
+    /// Await a keychain operation on the serial write queue and return its
+    /// result. For callers (typically UI flows) that need the outcome of a
+    /// SecItem read or mutation without blocking the main thread on
+    /// Security-framework I/O. Ordered relative to `writeInBackground` and
+    /// `performInBackground` work.
+    static func perform<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            writeQueue.async { continuation.resume(returning: work()) }
+        }
+    }
+
     /// Read (`service`, `account`). Returns `nil` when the item is absent or
     /// the read would require interactive authorization.
     static func read(
