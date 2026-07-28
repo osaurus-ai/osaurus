@@ -1200,6 +1200,27 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             replyToTerminationOnce()
         }
 
+        // Last-resort exit backstop, OFF the main thread. Every other safety
+        // net here (the 22s watchdog above, the teardown chain, the bounded
+        // flushes in `applicationWillTerminate`) runs on the main actor — so a
+        // single synchronous call that wedges the main thread disables all of
+        // them at once and the app hangs forever (0.22.11 factory-reset
+        // report: journey stuck on "Quitting Osaurus" with MainThreadWatchdog
+        // logging a blocked main thread for minutes). Once this method runs,
+        // the quit is committed (`isTerminating` is never reset and the reply
+        // is always `true`), and the normal path already ends in
+        // `Darwin._exit(0)` — so hard-exiting from a GCD timer changes nothing
+        // except guaranteeing the process actually dies. 45s comfortably
+        // exceeds the 22s reply watchdog plus every bounded flush in
+        // `applicationWillTerminate` (~10s), so it can only fire when the
+        // main thread is truly stuck; a normal quit exits long before.
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 45) {
+            log.error(
+                "Exit backstop fired 45s after termination began — main thread presumed stuck; forcing exit"
+            )
+            Darwin._exit(0)
+        }
+
         Task { @MainActor in
             // ── Phase 0: freeze everything that can dispatch new work ──
             // All cheap + synchronous (cancel timers / tasks, stop FSEvents,
