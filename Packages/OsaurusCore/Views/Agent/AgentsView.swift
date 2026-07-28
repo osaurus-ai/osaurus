@@ -6553,16 +6553,31 @@ struct AgentDetailView: View {
     }
 
     private func loadMemoryData() {
-        let db = MemoryDatabase.shared
-        if !db.isOpen { try? db.open() }
-        pinnedFacts = (try? db.loadPinnedFacts(agentId: agent.id.uuidString, limit: 200)) ?? []
-        episodes = (try? db.loadEpisodes(agentId: agent.id.uuidString, limit: 100)) ?? []
-        // Counts come from `sessions.turn_count` directly so the row's
-        // "N turns" label is accurate without hydrating each session's
-        // turn array (which only happens on click — the prior root cause
-        // of the persistent "0 turns" display).
-        let agentFilter: UUID? = (agent.id == Agent.defaultId) ? nil : agent.id
-        sessionTurnCounts = ChatHistoryDatabase.shared.turnCounts(forAgent: agentFilter)
+        // Every database call here dispatch-syncs onto the DB's serial queue;
+        // when that queue is busy with background writes the wait has hung
+        // the appear path. Read off the main actor and publish back — same
+        // pattern as `loadAgentSecrets`.
+        let agentId = agent.id
+        Task {
+            let (facts, loadedEpisodes, counts) = await Task.detached(priority: .userInitiated) {
+                let db = MemoryDatabase.shared
+                if !db.isOpen { try? db.open() }
+                let facts = (try? db.loadPinnedFacts(agentId: agentId.uuidString, limit: 200)) ?? []
+                let loadedEpisodes =
+                    (try? db.loadEpisodes(agentId: agentId.uuidString, limit: 100)) ?? []
+                // Counts come from `sessions.turn_count` directly so the row's
+                // "N turns" label is accurate without hydrating each session's
+                // turn array (which only happens on click — the prior root cause
+                // of the persistent "0 turns" display).
+                let agentFilter: UUID? = (agentId == Agent.defaultId) ? nil : agentId
+                let counts = ChatHistoryDatabase.shared.turnCounts(forAgent: agentFilter)
+                return (facts, loadedEpisodes, counts)
+            }.value
+            guard agentId == agent.id else { return }
+            pinnedFacts = facts
+            episodes = loadedEpisodes
+            sessionTurnCounts = counts
+        }
     }
 
     // MARK: - Agent Secrets
