@@ -187,6 +187,65 @@ struct ChatSessionImporterTests {
         #expect(promptOnly.turns[0].role == .user)
     }
 
+    // MARK: - Grok (account export)
+
+    private let grokExport = """
+        {
+          "conversations": [
+            {
+              "conversation": {
+                "conversation_id": "grok-conv-1",
+                "title": "Mars colony logistics",
+                "create_time": {"$date": {"$numberLong": "1750000000000"}},
+                "modify_time": {"$date": {"$numberLong": "1750000200000"}}
+              },
+              "responses": [
+                {"response": {"sender": "human", "message": "How much water does a 100-person Mars base need?", "create_time": {"$date": {"$numberLong": "1750000000000"}}}},
+                {"response": {"sender": "assistant", "message": "Roughly 5 tons/day before recycling; closed-loop systems cut that by ~90%.", "create_time": {"$date": {"$numberLong": "1750000100000"}}}}
+              ]
+            },
+            {
+              "conversation": {
+                "_id": {"$oid": "665f1e2a9b3c4d5e6f708192"},
+                "title": "Flat senders",
+                "create_time": {"$date": "2026-06-15T12:00:00.000Z"}
+              },
+              "responses": [
+                {"sender": "user", "message": "ping"},
+                {"sender": "grok", "message": "pong"}
+              ]
+            }
+          ]
+        }
+        """
+
+    @Test func grokExportParsesNestedResponsesAndMongoDates() throws {
+        let imported = try ChatSessionImporter.parse(data: Data(grokExport.utf8))
+
+        #expect(imported.count == 2)
+        #expect(imported.allSatisfy { $0.format == .grok })
+
+        let first = try #require(imported.first).session
+        #expect(first.title == "Mars colony logistics")
+        #expect(first.externalSessionKey == "grok:grok-conv-1")
+        #expect(first.turns.count == 2)
+        #expect(first.turns[0].role == .user)
+        #expect(first.turns[1].role == .assistant)
+        #expect(first.createdAt == Date(timeIntervalSince1970: 1_750_000_000))
+        #expect(first.updatedAt == Date(timeIntervalSince1970: 1_750_000_200))
+    }
+
+    @Test func grokExportAcceptsFlatResponsesAndOidIds() throws {
+        let imported = try ChatSessionImporter.parse(data: Data(grokExport.utf8))
+        let flat = try #require(imported.last).session
+
+        #expect(flat.externalSessionKey == "grok:665f1e2a9b3c4d5e6f708192")
+        #expect(flat.turns.count == 2)
+        #expect(flat.turns[0].content == "ping")
+        #expect(flat.turns[1].role == .assistant)
+        #expect(flat.createdAt == ISO8601DateFormatter().date(from: "2026-06-15T12:00:00Z"))
+    }
+
     // MARK: - Generic schema
 
     @Test func genericSchemaParsesAndTitlesFromFirstUserTurn() throws {

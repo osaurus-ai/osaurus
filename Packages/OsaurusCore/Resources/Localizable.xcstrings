@@ -39473,7 +39473,7 @@
         }
       }
     },
-    "Choose an export from ChatGPT, Claude, or Gemini (.zip or .json), or an Osaurus import JSON file." : {
+    "Choose an export from ChatGPT, Claude, Grok, or Gemini (.zip or .json), or an Osaurus import JSON file." : {
 
     },
     "Choose a CSV, TSV, JSON, or JSONL file to import." : {
@@ -203721,7 +203721,7 @@
         }
       }
     },
-    "Unrecognized export format. Supported: ChatGPT conversations.json, Claude export JSON, Gemini Takeout MyActivity.json, or Osaurus generic import JSON." : {
+    "Unrecognized export format. Supported: ChatGPT conversations.json, Claude export JSON, Grok account export, Gemini Takeout MyActivity.json, or Osaurus generic import JSON." : {
 
     },
     "Unsaved changes" : {

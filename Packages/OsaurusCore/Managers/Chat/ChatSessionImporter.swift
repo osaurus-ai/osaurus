@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Parses conversation exports from other assistants (ChatGPT, Claude,
-//  Gemini, or a generic JSON schema) into `ChatSessionData` so they can be
+//  Gemini, Grok, or a generic JSON schema) into `ChatSessionData` so they can be
 //  continued as native sessions. Pure data transformation — no I/O,
 //  no persistence; the coordinator owns file access and saving.
 //
@@ -18,6 +18,7 @@ public enum ChatSessionImporter {
         case chatGPT = "chatgpt"
         case claude = "claude"
         case gemini = "gemini"
+        case grok = "grok"
         case generic = "import"
     }
 
@@ -37,7 +38,7 @@ public enum ChatSessionImporter {
                 return L("The file is not valid JSON.")
             case .unrecognizedFormat:
                 return L(
-                    "Unrecognized export format. Supported: ChatGPT conversations.json, Claude export JSON, Gemini Takeout MyActivity.json, or Osaurus generic import JSON."
+                    "Unrecognized export format. Supported: ChatGPT conversations.json, Claude export JSON, Grok account export, Gemini Takeout MyActivity.json, or Osaurus generic import JSON."
                 )
             case .noConversations:
                 return L("No importable conversations were found in the file.")
@@ -76,6 +77,13 @@ public enum ChatSessionImporter {
                 conversations = [parseChatGPT(object)].compactMap { $0 }
             } else if object["chat_messages"] is [Any] {
                 conversations = [parseClaude(object)].compactMap { $0 }
+            } else if let list = object["conversations"] as? [[String: Any]],
+                list.contains(where: { $0["responses"] is [Any] })
+            {
+                // Grok's account export shares the generic schema's
+                // top-level `conversations` key but nests messages under
+                // `responses`, so it must be checked first.
+                conversations = list.compactMap { parseGrok($0) }
             } else if let list = object["conversations"] as? [[String: Any]] {
                 conversations = list.compactMap { parseGeneric($0) }
             } else if object["messages"] is [Any] {
@@ -351,6 +359,56 @@ public enum ChatSessionImporter {
         return text
     }
 
+    // MARK: - Grok (accounts.x.ai data export)
+
+    /// Grok's account export (`prod-grok-backend.json`) wraps each
+    /// conversation as `{"conversation": {meta}, "responses": [...]}`,
+    /// with each response usually nested one level deeper under a
+    /// `response` key. Sender values vary between exports
+    /// (`human`/`assistant` vs `user`/`grok`), and timestamps are
+    /// MongoDB extended JSON (`{"$date": {"$numberLong": "ms"}}`).
+    private static func parseGrok(_ item: [String: Any]) -> ImportedConversation? {
+        guard let responses = item["responses"] as? [[String: Any]] else { return nil }
+        let meta = item["conversation"] as? [String: Any] ?? [:]
+
+        var turns: [ChatTurnData] = []
+        for wrapper in responses {
+            let message = wrapper["response"] as? [String: Any] ?? wrapper
+            guard let sender = message["sender"] as? String else { continue }
+            let role: MessageRole
+            switch sender.lowercased() {
+            case "human", "user": role = .user
+            case "assistant", "grok": role = .assistant
+            default: continue
+            }
+            let text = (message["message"] as? String) ?? (message["text"] as? String) ?? ""
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            turns.append(
+                ChatTurnData(role: role, content: text, createdAt: mongoDate(message["create_time"]))
+            )
+        }
+        guard turns.contains(where: { $0.role == .user }) else { return nil }
+
+        return assemble(
+            format: .grok,
+            title: meta["title"] as? String,
+            externalId: grokConversationId(meta) ?? grokConversationId(item),
+            createdAt: mongoDate(meta["create_time"]),
+            updatedAt: mongoDate(meta["modify_time"]),
+            turns: turns
+        )
+    }
+
+    /// The conversation id appears as a plain string or a MongoDB
+    /// `{"$oid": …}` object depending on export vintage.
+    private static func grokConversationId(_ object: [String: Any]) -> String? {
+        for key in ["conversation_id", "_id", "id"] {
+            if let id = object[key] as? String { return id }
+            if let oid = (object[key] as? [String: Any])?["$oid"] as? String { return oid }
+        }
+        return nil
+    }
+
     // MARK: - Generic Osaurus import schema
 
     /// Minimal documented schema any tool (or an agent scraping a WebUI)
@@ -477,5 +535,24 @@ public enum ChatSessionImporter {
         if let string = value as? String { return isoDate(string) }
         if let epoch = value as? Double { return Date(timeIntervalSince1970: epoch) }
         return nil
+    }
+
+    /// MongoDB extended JSON dates as found in Grok exports:
+    /// `{"$date": {"$numberLong": "<epoch ms>"}}` (canonical) or
+    /// `{"$date": "<ISO-8601>"}` (relaxed). Falls back to the flexible
+    /// ISO/epoch forms for hand-massaged files.
+    private static func mongoDate(_ value: Any?) -> Date? {
+        if let wrapper = value as? [String: Any], let inner = wrapper["$date"] {
+            if let iso = inner as? String { return isoDate(iso) }
+            if let canonical = inner as? [String: Any],
+                let millis = canonical["$numberLong"] as? String,
+                let ms = Double(millis)
+            {
+                return Date(timeIntervalSince1970: ms / 1000)
+            }
+            if let ms = inner as? Double { return Date(timeIntervalSince1970: ms / 1000) }
+            return nil
+        }
+        return flexibleDate(value)
     }
 }
