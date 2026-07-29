@@ -2,23 +2,26 @@
 
 ## Status
 
-`PARTIAL` — the source is rebased onto merged PR #2216 and the isolated
-Release-app acceptance scope is complete: settings persistence, permission,
-configured fan-out, same-model batching, different-local handoff/restore,
-mixed local/OpenAI-compatible-provider execution, cancellation across approval,
-active-child, queued-child, and post-child parent phases, strict RAM refusal,
-thinking on/off, interleaved reasoning/tool lifecycle, and terminal follow-ups.
-The final source-freeze broad Core and full token-free eval reruns remain before
-merge-ready promotion. The provider row uses the user-approved deterministic
-localhost emulator rather than claiming an authenticated public-cloud run.
+`MERGE CANDIDATE` — runtime/test source was frozen at
+`886319c35fe7e102d2c25a0c39a50e72f16452f2`, rebased onto current upstream,
+and passed the full Core and OsaurusEvals packages plus a fresh isolated
+Release-app acceptance run. The live scope covers settings persistence,
+permission, configured fan-out, same-model batching, different-local
+handoff/restore, mixed local/OpenAI-compatible-provider execution,
+cancellation, strict RAM refusal, thinking on/off, interleaved reasoning/tool
+lifecycle, terminal unlock, and follow-up turns.
 
-- Osaurus campaign code HEAD: `6d621e2610b52ba2e351d2e9c297695bfa080dcc`.
-- Current rebased upstream base:
-  `33f455e4ce7fac1e2ee130db4c951081907a926e`.
-- Post-rebase automated reruns are current through the `de0ac40e` broad/eval
-  checkpoint. The later settings-navigation fix passed its focused 100/100
-  source suite and current Release UI rows; the broad/eval gates must rerun
-  after the final source freeze.
+Two visible local-model content misses are retained below and are not described
+as runtime passes: one thinking-on parent emitted a false intermediate status,
+and the final RAM-refusal chat retried a disallowed sibling target then repeated
+a stale exact-response token on follow-up. In both cases tool authorization,
+admission/cancellation, card settlement, Stop removal, and input unlock behaved
+correctly. The provider proof uses a deterministic no-auth localhost emulator;
+it does not claim an authenticated public-cloud account test and did not read
+or copy Codex credentials.
+
+- Frozen runtime/test source: `886319c35fe7e102d2c25a0c39a50e72f16452f2`.
+- Rebased upstream base: `09a3dee98673b267a19848a6841d8f0dbbbc41d3`.
 - vMLX Swift pin: `84612e143d2e51da865316dbc49167530a1717ad`
 - Worktree: `/private/tmp/osaurus-subagent-batching-complete-20260727`
 - Branch: `codex/subagent-batching-complete-20260727`
@@ -444,6 +447,122 @@ suites**; raw log:
 `/private/tmp/osaurus-subagent-evals-current-20260729.log`. This adds the
 selected-chat idle-eviction lifecycle suite to the previous 296/35 baseline.
 
+### Final frozen-candidate verification
+
+The final automated gates ran on frozen runtime/test source
+`886319c35fe7e102d2c25a0c39a50e72f16452f2` with vMLX pin
+`84612e143d2e51da865316dbc49167530a1717ad`:
+
+- full `OsaurusCoreTests`: **7,311 passed, 21 skipped, 0 failed, 7,332
+  total** in
+  `/private/tmp/osaurus-subagent-broad-final-886319c3.xcresult`; raw log
+  SHA-256
+  `cbdacbc5ea3076969e9ed7a079164b36926816381ba2e947b4f12d96c0900c86`;
+- full `OsaurusEvals`: **299/299 across 36 suites**, zero failures; raw log
+  `/private/tmp/osaurus-subagent-evals-final-886319c3-xcode.log`, SHA-256
+  `c4eba58b13534416e94074992a126bcbab9c6ae875839798c9f5fadaa02050b7`;
+- deterministic live-contract eval scenarios: **101/101** across Schema,
+  ToolEnvelope, PrefixHash, ArgumentCoercion, ToolResultGrounding,
+  AgentChannels, ComputerUse, and ScreenContext; raw log SHA-256
+  `6ddd8c2394c40f39bbfe1f8df4cf774576832ee60694c3df09147d2d51cd649d`;
+- focused isolation regressions: **7/7** AppleScript/image bridge and **33/33**
+  tokenizer/personas, zero failures; logs SHA-256
+  `784518ede238a1a7033921468e9e8876f87da72ef17763cbd3aee3b4bd2d0c01`
+  and
+  `7408ce6c81348414bc7b21061a8426f206942fc870f9f5004da4de712b8b6194`;
+- exact-rebased-source Release app bundle ID
+  `com.dinoki.osaurus.subagentbatchproof.886319c3`; executable SHA-256
+  `621cc20ed05223022846057085d271d773f900ae8b8d5de7ff12798bc3f5f91b`;
+  strict deep code-sign verification passed and the build log SHA-256 is
+  `8a3adf7e52a6ab07a2093aa4f6dff5d3c4a4536b7eb6d188b46601427e50db26`;
+- full live-matrix Release app bundle ID from the immediately preceding,
+  patch-identical campaign commit
+  `com.dinoki.osaurus.subagentbatchproof.23219920`; executable SHA-256
+  `74b5828910186c71903cf424a2f5524551df562b87112251569a56352f5bcf52`;
+  strict deep code-sign verification passed and the build log SHA-256 is
+  `7a9ece798d1c6e6b0420d953c5e69c22ff4c2d78c19ed418e81f10b356d5f7a0`.
+
+The late upstream rebase added only PR #2219's OsaurusAI catalog fetch-limit
+change from 100 to 200. `git range-diff` classified all 13 campaign commits as
+patch-identical. The exact rebased Release app was then opened with a new
+keychain-free test root and the affected model-discovery/settings surface was
+rechecked through Computer Use: the picker exposed 61 local bundles, Nanbeige
+JANG_4M was assigned with note `Post-rebase discovery proof`, the main-chat
+maximum was changed from three to two, and a full app relaunch preserved the
+target, note, Ask policy, worker-tool mode, two-per-batch limit, local handoff,
+and RAM-Safety preflight. The persisted delegation JSON SHA-256 is
+`f363c8167814e4204f51179e0c1cacbe8f36921d8a259319197d8a8c6e0fbcb4`;
+the target-assignment and post-relaunch screenshot SHA-256 values are
+`1b4df1b74e816fe6b369056559087c13ca208bbea251c293aef6b78987e3aeea`
+and
+`9a0b7389a771ccf7568d1f3a4ba42e37fca443a469fc96a155356926c59b7a88`.
+The isolated app was quit; the production `com.dinoki.osaurus` instance was
+left running and untouched.
+
+The full-matrix Release app was launched with a dedicated keychain-free test root
+and clicked through the real Chat and Settings UI. The final-candidate rerun
+visibly proved persisted target notes, Ask permission, worker-tool mode,
+2,048-token/2-turn/120-second child budgets, per-agent maximum two, Concurrent
+Sessions three, Continuous Batching on, Memory Safety effective concurrency
+two, same-model `[2]` execution, mixed local/remote execution, active remote
+cancellation with provider socket closure, thinking on/off, terminal unlock,
+and strict 10% RAM refusal followed by restoration to the normal Strict 60%
+plan. The deterministic OpenAI-compatible emulator script SHA-256 is
+`df4f509abd1091092a38917715a9cdc1e1891f539ad118ceb6ef3df3c0c4e80c`.
+No credential or `auth.json` was used.
+
+Final-candidate visible rows and raw evidence:
+
+- Settings relaunch preserved Batch Worker, Ornith 9B, Thinking Off, allowed
+  local/remote targets and notes, Ask, worker tools, child budgets, maximum
+  two, Continuous Batching on, and the Strict concurrency clamp. Screenshot
+  SHA-256
+  `fb94c0b19f32f523c69585e7e47fe2f43c7425390feaa4408ee253024e090417`.
+- Same-model Nanbeige `spawn_batch` reported configured/effective two,
+  `engine_slots: 2`, `ram_slots: 21`, subwaves `[2]`, ordered exact child
+  summaries, 2/2 success, exact parent final, and exact follow-up. Child rates
+  were 21.5 and 18.8 tok/s; parent/follow-up were 56.3/54.4 tok/s. Result and
+  follow-up screenshot SHA-256 values are
+  `e33572bf2b7bc8174a4bd5d7e60866a8d8b1c999f636dcfea187c8a63b2a1e95`
+  and
+  `34649da9f81fb668314110b007be849b008fb65f5b934cfcf959aa28de158e92`.
+- Mixed Nanbeige/local plus stable provider target returned ordered 2/2
+  success with `local_jobs: 1`, `remote_jobs: 1`, effective local slots one,
+  and parent/follow-up finalization. The emulator returned its deterministic
+  fallback because the child used `Return` rather than its `Reply exactly`
+  pattern; this is recorded as an emulator-content expectation miss, not a
+  routing failure. Screenshot SHA-256
+  `0ccf287ebb0172817becddedca758254d5e6584f69ced72699eddd97fa04f114`.
+- Stop during a delayed active provider child returned the explicit cancelled
+  envelope, removed Stop, unlocked input, and closed the client socket (the
+  emulator observed a broken pipe). Screenshot SHA-256
+  `c76fb303281d6f9eb4bde631658c60bca48233e3ff080b7de71a7b94658fa4b3`.
+- Thinking On showed closed reasoning around two settled tool cards and a
+  coherent final with no raw thinking tags or protocol debris. The parent also
+  emitted a false intermediate "still running" line after the first settled
+  child; lifecycle is PASS and model content is MISS. Thinking Off persisted
+  across relaunch and produced no reasoning card. Screenshot SHA-256 values:
+  `85dd4745831f8cd94158af3da01ac79e46bc5f28d006486bebfb8bf7650a2624`,
+  `4fdedce4f8d20776acd7c1ccfa12e29eb92ad1499bd9f0123bd6d2be9ad38fda`,
+  and
+  `94555d61cda74ab963023b237bd0200d42c30adaef4d2bb6b1d26be9726e5ca2`.
+- Strict was changed live to custom 10% and saved. The dense Ornith 35B MXFP8
+  request was refused before load because its estimated 42.7 GB working set
+  exceeded the 12.8 GB budget. The parent then wrongly attempted a second 9B
+  spawn, which was denied; the card settled and later turns unlocked but
+  repeated the stale parent token, recorded as a model-content miss. Strict
+  60% was restored and the temporary target was removed through the UI. The
+  app ended at 2,660 MB physical footprint (4,603 MB peak), with system memory
+  92% free. Setting/refusal/restore screenshot SHA-256 values are
+  `8639af742dfdcc2f5cd00df0561dd17d07afd2b6a39f81531c3de29d1222b741`,
+  `37e4ed0da5076cee9cee8b1288de93b47b6a26d2df1d03439f7ce7a8284f5a2c`,
+  and
+  `50c7baef3b16b2caaf4682caac40956392c97ad5fe572da32de90f41cfae38f6`.
+  The temporary clone is recoverable at
+  `/Users/eric/.Trash/Osaurus-proof-Ornith-35B-MXFP8-20260729T0625`; the
+  original bundle was never modified and both config hashes were
+  `33b6cb6d3fb9e265486b6e9fd018f48b6d94172becc22805f51dd140e9400246`.
+
 ## Current-head live Release-app matrix
 
 Use a dedicated bundle identifier and test root. For every turn inspect the
@@ -570,3 +689,4 @@ whole lifecycle through final unlock and a follow-up.
 | 2026-07-29 04:52–04:59 PDT fresh fixed Release UI | `6d621e26` + vMLX `84612e14` | Strict custom RAM policy and pre-side-effect dense-model refusal | PASS | Server RAM Safety was changed live from the normal resolved 60% load budget to a custom 10% (`~12.8 GB`) and saved. A routed Ornith 35B JANG_4M child still ran coherently at 12.9 tok/s because its effective active working set fit; this was correctly not misreported as a refusal. A separate dense Ornith 35B MXFP8 request was refused before child output or model load with `Estimated request working set ~42.7 GB exceeds the selected ~12.8 GB load budget`; the parent settled and exact `RAM-REFUSAL-FOLLOWUP` completed at 53.6 tok/s. Post-refusal process physical footprint was 2,563 MB. The custom override was cleared through the real UI, which visibly restored `Load 60%`; both temporary 35B targets were removed from the agent pool, the isolated app was stopped, and only the two temporary APFS clones were moved to recoverable Trash paths while the original `/Users/eric/models` bundles remained untouched. Screenshots: 10% setting `/private/tmp/osaurus-subagent-batch-6d621e26-ram-strict-10-percent.jpeg` (SHA-256 `d49ae7bf78662bf9936753353257c77a61c6520c6011a78bc1e44d293e16400d`), target pool `/private/tmp/osaurus-subagent-batch-6d621e26-ram-target-allowed.jpeg` (`37c23a3cf4c18c4a846d982abe3bbba04418bbe1b3b166be1857e575e4529351`), refusal `/private/tmp/osaurus-subagent-batch-6d621e26-ram-strict-refusal.jpeg` (`d8b890855434d59b262524115c71bd0435d8d240bc33ebcb6e5427eb412ea257`), and follow-up `/private/tmp/osaurus-subagent-batch-6d621e26-ram-strict-refusal-followup.jpeg` (`64af17d531983e36c5bf1591ce8ea2ab36bd17b9eba2d700abe2d42cfc1ddb7a`). |
 | 2026-07-29 05:05–05:09 PDT fresh fixed Release UI | `6d621e26` + vMLX `84612e14` | Thinking on; reasoning → tool → reasoning → tool → reasoning → final; follow-up | PASS LIFECYCLE / PARENT FORMAT MISS | The model picker was changed live from Thinking Off to On. The resulting turn exposed three closed reasoning cards around two separately approved, settled Nanbeige subagent cards in the required order. Both children returned exact `THINK-TOOL-ONE` and `THINK-TOOL-TWO`; the parent produced a coherent final containing `THINK-INTERLEAVED-DONE` but added a short summary line, recorded as an instruction-format miss. No raw `<think>` content or protocol debris leaked into the final. Stop disappeared, input unlocked, and exact `THINKING-ON-FOLLOWUP` completed at 55.4 tok/s with its reasoning card closed. Screenshots `/private/tmp/osaurus-subagent-batch-6d621e26-thinking-interleaved.jpeg` (SHA-256 `8e4c30e37a1e8bd73c5c803b6fe5043be654858047dadbb5ce1abcf97e817457`) and `/private/tmp/osaurus-subagent-batch-6d621e26-thinking-on-followup.jpeg` (`f02a9d5526e69633ac0d1ebaa5a940f8566cf90e1e7f10917a27aa4db3c7b75f`). |
 | 2026-07-29 05:10–05:13 PDT fresh fixed Release UI | `6d621e26` + vMLX `84612e14` | Thinking off; exact child, exact final, exact follow-up, no reasoning UI | PASS | Thinking was changed live back to Off. In a clean chat, the visible Ask dialog exposed exact `OFF-CHILD-20260729`, the Nanbeige child returned that exact summary at 67.7 tok/s, and the parent returned exact `OFF-FINAL-20260729` at 55.4 tok/s. The turn contained no reasoning card. Stop disappeared, input unlocked, and exact `OFF-FOLLOWUP-20260729` completed at 55.7 tok/s without tools or reasoning UI. The expanded result also reported normal handoff/restore and cache telemetry (`disk_l2_misses: 8`, `disk_l2_stores: 3`) rather than a separate spawn cache implementation. Screenshots `/private/tmp/osaurus-subagent-batch-6d621e26-thinking-off-tool.jpeg` (SHA-256 `88b23eb3b09633d80fdf498d1ac21e368bcb62e5b57a2fbb1f917108247e6e71`) and `/private/tmp/osaurus-subagent-batch-6d621e26-thinking-off-followup.jpeg` (`3f5e8b7727397a6c972a017f602f570317f488c2d3ae4ea56209a24e04158f25`). |
+| 2026-07-29 06:33–06:53 PDT exact post-rebase freeze | `886319c3` on `09a3dee9` + vMLX `84612e14` | Full Core, full Evals, Release build, changed model-discovery/settings surface, save/relaunch | PASS | Upstream PR #2219 changed only the OsaurusAI fetch cap; all 13 campaign patches are range-diff identical. Core passed 7,311/7,332 with 21 skips and zero failures; Evals passed 299/299 across 36 suites. The ad-hoc keychain-free Release bundle passed strict deep code-sign verification. Computer Use exposed 61 local models, assigned Nanbeige JANG_4M, persisted its note, changed the batch maximum 3→2, and re-proved target/note/Ask/tools/limit/handoff/RAM-Safety after relaunch. The isolated proof app was quit and production Osaurus was untouched. |
