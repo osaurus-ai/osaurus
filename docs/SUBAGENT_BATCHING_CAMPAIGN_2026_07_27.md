@@ -3,9 +3,9 @@
 ## Status
 
 `MERGE CANDIDATE` — runtime/test source was frozen at
-`c317e0f094e4b35593e39d9d2d2e492871574e0a`, rebased onto current upstream,
-and passed the full Core and OsaurusEvals packages plus a fresh isolated
-Release-app acceptance run. The live scope covers settings persistence,
+`315f1f63b4eef7b8c966ceaa1c7601f18c9568a9`, rebased onto current upstream,
+and passed the full Core and OsaurusEvals packages plus fresh Release-app
+acceptance runs. The live scope covers settings persistence,
 permission, configured fan-out, same-model batching, different-local
 handoff/restore, mixed local/OpenAI-compatible-provider execution,
 cancellation, strict RAM refusal, thinking on/off, interleaved reasoning/tool
@@ -20,8 +20,8 @@ correctly. The provider proof uses a deterministic no-auth localhost emulator;
 it does not claim an authenticated public-cloud account test and did not read
 or copy Codex credentials.
 
-- Frozen runtime/test source: `c317e0f094e4b35593e39d9d2d2e492871574e0a`.
-- Rebased upstream base: `09a3dee98673b267a19848a6841d8f0dbbbc41d3`.
+- Frozen runtime/test source: `315f1f63b4eef7b8c966ceaa1c7601f18c9568a9`.
+- Rebased upstream base: `af68b064167300d255ab1a1e37b5b5c2dd2943fc`.
 - vMLX Swift pin: `84612e143d2e51da865316dbc49167530a1717ad`
 - Worktree: `/private/tmp/osaurus-subagent-batching-complete-20260727`
 - Branch: `codex/subagent-batching-complete-20260727`
@@ -506,6 +506,58 @@ and
 The isolated app was quit; the production `com.dinoki.osaurus` instance was
 left running and untouched.
 
+### Final upstream rebase and Settings lifecycle fix
+
+Upstream advanced once more through PR #2220, which changed only
+`ClaudePluginCard.swift` and `PluginsView.swift`. The campaign rebased
+conflict-free onto `af68b064167300d255ab1a1e37b5b5c2dd2943fc`. Exact rebased
+source `033eb49815b4fd3c7920fcf1b9ae49942fb3feef` passed full Core
+(**7,311 passed, 21 skipped, 0 failed**) and full Evals (**299/299 across 36
+suites**), and its fresh Release app built and passed strict deep code-sign
+verification. The executable SHA-256 was
+`60f586f0a1f81e396573441491f1329379262f6ec326b3ab97eecf468f88683b`.
+
+That exact app nevertheless failed the required visible Settings lifecycle:
+after changing the main-chat maximum from three to two and enabling RAM-Safety,
+General -> Server stopped responding. The sampled main thread was blocked in
+`SecItemCopyMatching` from `RelaysSectionView.body` at `ServerView.swift:718`
+while a concurrent router signer also accessed the Keychain. The raw sample is
+`/private/tmp/osaurus-subagent-postrebase-033eb498-ui-timeout.sample`, SHA-256
+`5997d856076637dd93118276eac5bd820000de7f98cc728179136e1fca293c0e`.
+This was recorded as a live failure and fixed rather than masked by an app
+restart.
+
+Runtime source `315f1f63b4eef7b8c966ceaa1c7601f18c9568a9` routes both automatic
+relay-identity call sites through the existing race-safe background helper,
+which reserves identity state on the main actor but performs Keychain reads and
+address derivation in a detached task. The new focused source contract passed
+**101/101**; full Core passed **7,312 passed, 21 skipped, 0 failed, 7,333
+total**; and full Evals passed **299/299 across 36 suites**. Evidence SHA-256
+values are, respectively,
+`156e62c80fb7468a91c0a26a1fd1bf0146c89a473ac74f587a30fb693dee201e`,
+`647c17033b9d937f3ffbe24191f2e90c3a3bdbd68798085720a496e33070193b`,
+and `c07221ed8e587a6cc140d5043e6650f490986b573c4825b1700fbe2763e2794e`.
+
+The exact fixed Release bundle
+`com.dinoki.osaurus.subagentbatchproof.315f1f63` passed strict deep code-sign
+verification; its executable SHA-256 is
+`4d95e983b592c7ac5268c5f6fdb29997f18a2910a3b7d06c6b46925dd2e14971`
+and build-log SHA-256 is
+`aba3fca4ae0036f8a4a9ec62af183df8da10d96de277e450c6a38f4d97e75a35`.
+Computer Use then proved General -> Server -> General navigation, successful
+quit, relaunch persistence of two-per-batch plus RAM-Safety enabled, and a
+responsive Server surface. The proof used the shared Osaurus configuration
+root despite the dedicated bundle identifier, so the measured pre-test values
+were explicitly restored through the UI to three-per-batch and RAM-Safety off.
+The restored JSON SHA-256 is
+`e017dff20893795b4b8607321bdc4ff8e1223f91668ebbec2c6cd5fb035a1464`.
+General-restored and Server-responsive screenshot SHA-256 values are
+`2cfdf8230831d7f9f8d5c5fedfb5e12095270d7c5d8504260ef3e71871886b1e`
+and
+`a29b7faca4befe1c01d70ed4ebe9b79af7affc6c9ee64212ac6f8d0bbdc4c200`.
+The proof app was quit and the already-running production
+`com.dinoki.osaurus` app remained running.
+
 The full-matrix Release app was launched with a dedicated keychain-free test root
 and clicked through the real Chat and Settings UI. The final-candidate rerun
 visibly proved persisted target notes, Ask permission, worker-tool mode,
@@ -697,3 +749,5 @@ whole lifecycle through final unlock and a follow-up.
 | 2026-07-29 05:05–05:09 PDT fresh fixed Release UI | `6d621e26` + vMLX `84612e14` | Thinking on; reasoning → tool → reasoning → tool → reasoning → final; follow-up | PASS LIFECYCLE / PARENT FORMAT MISS | The model picker was changed live from Thinking Off to On. The resulting turn exposed three closed reasoning cards around two separately approved, settled Nanbeige subagent cards in the required order. Both children returned exact `THINK-TOOL-ONE` and `THINK-TOOL-TWO`; the parent produced a coherent final containing `THINK-INTERLEAVED-DONE` but added a short summary line, recorded as an instruction-format miss. No raw `<think>` content or protocol debris leaked into the final. Stop disappeared, input unlocked, and exact `THINKING-ON-FOLLOWUP` completed at 55.4 tok/s with its reasoning card closed. Screenshots `/private/tmp/osaurus-subagent-batch-6d621e26-thinking-interleaved.jpeg` (SHA-256 `8e4c30e37a1e8bd73c5c803b6fe5043be654858047dadbb5ce1abcf97e817457`) and `/private/tmp/osaurus-subagent-batch-6d621e26-thinking-on-followup.jpeg` (`f02a9d5526e69633ac0d1ebaa5a940f8566cf90e1e7f10917a27aa4db3c7b75f`). |
 | 2026-07-29 05:10–05:13 PDT fresh fixed Release UI | `6d621e26` + vMLX `84612e14` | Thinking off; exact child, exact final, exact follow-up, no reasoning UI | PASS | Thinking was changed live back to Off. In a clean chat, the visible Ask dialog exposed exact `OFF-CHILD-20260729`, the Nanbeige child returned that exact summary at 67.7 tok/s, and the parent returned exact `OFF-FINAL-20260729` at 55.4 tok/s. The turn contained no reasoning card. Stop disappeared, input unlocked, and exact `OFF-FOLLOWUP-20260729` completed at 55.7 tok/s without tools or reasoning UI. The expanded result also reported normal handoff/restore and cache telemetry (`disk_l2_misses: 8`, `disk_l2_stores: 3`) rather than a separate spawn cache implementation. Screenshots `/private/tmp/osaurus-subagent-batch-6d621e26-thinking-off-tool.jpeg` (SHA-256 `88b23eb3b09633d80fdf498d1ac21e368bcb62e5b57a2fbb1f917108247e6e71`) and `/private/tmp/osaurus-subagent-batch-6d621e26-thinking-off-followup.jpeg` (`3f5e8b7727397a6c972a017f602f570317f488c2d3ae4ea56209a24e04158f25`). |
 | 2026-07-29 06:33–07:11 PDT exact post-rebase freeze | `c317e0f0` on `09a3dee9` + vMLX `84612e14` | Full Core, full Evals, i18n, Release build, changed model-discovery/settings surface, save/relaunch | PASS | Upstream PR #2219 changed only the OsaurusAI fetch cap; all 13 campaign patches are range-diff identical. Core passed 7,311/7,332 with 21 skips and zero failures; Evals passed 299/299 across 36 suites. The final localization-only source delta passed the i18n catalog/reference/literal gate. The fresh ad-hoc keychain-free Release bundle passed strict deep code-sign verification. Computer Use exposed 61 local models, assigned Nanbeige JANG_4M, persisted its note, changed the batch maximum 3→2, and re-proved target/note/Ask/tools/limit/handoff/RAM-Safety after relaunch. The isolated proof app was quit and production Osaurus was untouched. |
+| 2026-07-29 final upstream rebase | `033eb498` on `af68b064` + vMLX `84612e14` | Full Core/Evals/Release build followed by General -> Server UI navigation | FAIL LIVE / AUTOMATED PASS | Core passed 7,311/7,332 and Evals 299/299, but the exact Release app blocked in `SecItemCopyMatching` from `RelaysSectionView.body` during General -> Server navigation. Sample SHA-256 `5997d856076637dd93118276eac5bd820000de7f98cc728179136e1fca293c0e`; merge was stopped pending an owning-layer fix. |
+| 2026-07-29 final relay fix | `315f1f63` on `af68b064` + vMLX `84612e14` | Background relay identity, full Core/Evals, exact Release build, Settings navigation/relaunch/restore | PASS | Both automatic relay-identity call sites now use the detached Keychain helper. Focused source contracts passed 101/101, Core 7,312/7,333 with 21 skips, Evals 299/299, and strict deep code signing passed. Computer Use proved responsive General -> Server -> General, quit/relaunch persistence, and restoration through the UI to the measured shared defaults of three-per-batch plus RAM-Safety off. Production Osaurus remained running. |
