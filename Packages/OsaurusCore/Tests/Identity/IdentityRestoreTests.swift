@@ -59,12 +59,17 @@ struct OsaurusIdentityRestoreTests {
         #expect(posts == 0)
     }
 
-    @Test("keychain-disabled install failure surfaces as an error, not a fake success")
+    // Only meaningful when the keychain is disabled for the process; the CI
+    // xcodebuild lane runs against a real keychain, where restore succeeding
+    // is the correct behavior — so skip instead of asserting the environment.
+    @Test(
+        "keychain-disabled install failure surfaces as an error, not a fake success",
+        .enabled(if: KeychainQueryHelpers.disablesKeychainForProcess)
+    )
     func disabledKeychainFailsLoudly() throws {
         // Under OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS the install must throw —
         // a silent no-op would tell the user their identity was restored
         // when nothing was persisted. No identity-changed signal either.
-        try #require(KeychainQueryHelpers.disablesKeychainForProcess)
         let words = try MasterKeyMnemonic.mnemonic(forKey: TestKeys.alicePrivateKey)
         let posts = identityChangedCount {
             #expect(throws: OsaurusIdentityError.self) {
