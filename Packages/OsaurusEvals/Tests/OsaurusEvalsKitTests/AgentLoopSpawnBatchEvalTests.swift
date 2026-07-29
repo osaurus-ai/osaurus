@@ -431,6 +431,7 @@ struct AgentLoopSpawnBatchEvalTests {
             }
         )
         let capabilities = try #require(testCase.fixtures.agentCapabilities)
+        let runtimeConcurrency = try #require(testCase.fixtures.runtimeConcurrency)
         let workers = try #require(capabilities.spawnAgents)
         let expectation = try #require(testCase.expect.agentLoop)
         let waves = try #require(expectation.spawnBatch?.expectedExecutionWaves)
@@ -448,6 +449,8 @@ struct AgentLoopSpawnBatchEvalTests {
             "JANGQ-AI/Ornith-1.0-9B-JANG_4M",
         ])
         #expect(capabilities.maxParallelSpawns == 2)
+        #expect(runtimeConcurrency.continuousBatching == true)
+        #expect(runtimeConcurrency.maxConcurrentSequences == 2)
         #expect(expectation.enableThinking == nil)
         #expect(expectation.spawnBatch?.expectedJobIds == ["nanbeige", "ornith"])
         #expect(expectation.spawnBatch?.expectedRows?.map(\.model) == [

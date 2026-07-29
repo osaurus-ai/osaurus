@@ -3132,6 +3132,20 @@ struct RuntimePolicySourceTests {
             !evaluator.contains("temperature: 0.0"),
             "The eval harness must not silently force greedy decoding for bundles tuned for sampling."
         )
+        #expect(
+            evaluator.contains("ChatExecutionContext.$currentModelName.withValue(resolvedModel)"),
+            "Agent-loop tools must see the exact invoking parent model so residency handoff stays production-equivalent."
+        )
+        #expect(
+            evaluator.contains("let sessionSource: SessionSource = .chat")
+                && evaluator.contains("ChatEngine(source: sessionSource.inferenceSource)")
+                && evaluator.contains("ChatExecutionContext.$currentSessionSource.withValue("),
+            "Agent-loop eval inference and tool dispatch must share Chat provenance so parent residency ownership matches the live UI."
+        )
+        #expect(
+            evaluator.contains("ChatExecutionContext.$currentEnableThinking.withValue(enableThinking)"),
+            "Agent-loop spawned work must inherit the explicit Thinking setting exercised by the eval row."
+        )
     }
 
     @Test("Chat UI sends accumulated history and marks implicit sampling without forcing native MTP")

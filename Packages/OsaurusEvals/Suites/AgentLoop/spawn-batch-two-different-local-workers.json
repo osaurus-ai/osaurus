@@ -23,6 +23,10 @@
         }
       ],
       "maxParallelSpawns": 2
+    },
+    "runtimeConcurrency": {
+      "continuousBatching": true,
+      "maxConcurrentSequences": 2
     }
   },
   "expect": {

@@ -838,3 +838,59 @@ whole lifecycle through final unlock and a follow-up.
 | 2026-07-29 final relay fix | `315f1f63` on `af68b064` + vMLX `84612e14` | Background relay identity, full Core/Evals, exact Release build, Settings navigation/relaunch/restore | PASS | Both automatic relay-identity call sites now use the detached Keychain helper. Focused source contracts passed 101/101, Core 7,312/7,333 with 21 skips, Evals 299/299, and strict deep code signing passed. Computer Use proved responsive General -> Server -> General, quit/relaunch persistence, and restoration through the UI to the measured shared defaults of three-per-batch plus RAM-Safety off. Production Osaurus remained running. |
 | 2026-07-29 final PR #2222 base move | `ebdd2293` on `f013ccc7` + vMLX `84612e14` | Patch-identical rebase, full Core/Evals/i18n, exact Release build, Settings navigation/relaunch/restore | PASS | PR #2222 touched only chat-import UI and localization. Core passed 7,312/7,333 with 21 skips, Evals 299/299, i18n passed, and strict deep code signing passed. Computer Use proved 3->2 plus RAM off->on, responsive General -> Server -> General, quit/relaunch persistence, and UI restoration to 3/off. Shared config returned to its original hash; the isolated app quit and production Osaurus remained running. |
 | 2026-07-29 exact-pin model gate | `ebdd2293` + vMLX `84612e14` | Nanbeige registration/two-loop cache slots, chunked prefill, reasoning and tool parsers | PASS | Exact dependency checkout passed Nanbeige 6/6, chunked prefill 9/9, and reasoning/tool parsers 139/139. The final runs used the packaged Cmlx metallib after two explicitly recorded terminal-runner resource failures. No product assertion failed. |
+
+## 2026-07-29 post-merge shared-concurrency follow-up
+
+This follow-up starts from merged PR #2221 and is intentionally separate from
+the proof rows above. Its exact pre-fix checkpoint is Osaurus
+`4d83b440e435695ca9653472597996d275dc1d92` with vMLX
+`84612e143d2e51da865316dbc49167530a1717ad`.
+
+Two new findings were recorded before changing their owning fixtures or
+runtime:
+
+- **BATCH-28 — different-local eval fixture omitted the canonical server
+  limit.** `agent_loop.spawn-batch-two-different-local-workers` configured the
+  legacy per-agent mirror as two but did not configure
+  `fixtures.runtimeConcurrency.maxConcurrentSequences`. After unifying the
+  product to one server-owned limit, the isolated eval inherited the default
+  limit of one and honestly rejected the two-job call before handoff. The
+  fixture must set the production server value explicitly, as the same-model
+  row already does; changing product admission to consult the stale mirror
+  would reintroduce two sources of truth.
+- **BATCH-29 — Nanbeige parent final duplicated once after a successful
+  same-model batch.** The runtime contract passed (one call, two simultaneous
+  slots, ordered settled children, `max_parallel=2`, parent finalization), but
+  the visible final paragraph was emitted twice. This is a content/lifecycle
+  failure until repeated exact-source runs and the Release UI determine
+  whether it is stable model output or a runtime continuation regression. It
+  must not be hidden by prompt coercion, sampler overrides, output
+  deduplication, or parser masking.
+- **BATCH-30 — headless AgentLoop omitted parent model/Thinking task-local
+  scope and Chat inference provenance.** Even after BATCH-28 was corrected,
+  the different-local row was rejected because `AgentLoopEvaluator` bound the
+  agent id around the loop but not `ChatExecutionContext.currentModelName`,
+  `currentEnableThinking`, or `currentSessionSource`. It also constructed its
+  `ChatEngine` with the default HTTP provenance while this suite claims the
+  in-app Chat contract. Production chat publishes all three task locals and
+  constructs the engine from the session's inference source. The spawned tool
+  therefore saw Nanbeige as unrelated protected HTTP work and could not
+  exercise handoff/restore. The eval harness now binds `.chat`, constructs the
+  engine with `.chatUI`, and publishes the exact parent model and explicit
+  Thinking value. Residency ownership remains fail-closed for real unrelated
+  API/plugin/scheduled work.
+
+Fresh evidence at this checkpoint:
+
+| Row | Result | Evidence |
+|---|---|---|
+| Full Core | PASS | 7,324 passed, 21 skipped, 0 failed; `/private/tmp/osaurus-shared-concurrency-full-v3.xcresult` |
+| OsaurusEvals harness | PASS | 299/299; log SHA-256 `2b542fd61ba761764546a46d7e29f5602203f7699ad3ee3ac6d4b932af5eeb2a` |
+| Deterministic eval floor | PASS | 101/101; log SHA-256 `ef061682f87ffd5fcef935fee91941e47869870564d3300a8342d50258eaf4a5` |
+| Pinned vMLX Nanbeige/parser/cache | PASS | Nanbeige 6/6, reasoning/tool parsers 119/119, mode isolation 9/9, cache coordinator 13/13, cache topology 42/42 |
+| Nanbeige disk-L2 longest prefix | PASS CACHE / CONTENT PARTIAL | Paged RAM off; turn 2 restored 301/730 tokens, turn 3 restored 729/730 from disk; L2 +2 hits/+9 stores, 72.5 tok/s, 1,808 MB peak. Turn 2 stopped at the 256-token cap, so this row proves cache selection and accounting but not exact-answer fidelity. Report SHA-256 `4bcd26ebaae3d386efbb3e9b370ed391f8972c2f9c4f99a9967f36c813330a91`. |
+| Full Nanbeige AgentLoop | PARTIAL | 40 total: 24 passed, 13 failed, 3 skipped. The same-model batch runtime row passed; the different-local fixture hit BATCH-28; the same-model final exposed BATCH-29. Report SHA-256 `116da099329bc9cbf7e50080010dc9b1850f4fe693d43c003843f30cb42ac9eb`; log SHA-256 `8eb8fb6fdebb69d784da66fafb38dc9fb0baf12a64b1ba3effe405870d4bc9ab`. Self-judge failures are retained and are not release-pass claims. |
+| Eval Chat-context source contract | PASS (automated only) | 101/101, zero failures/skips; `/private/tmp/osaurus-shared-concurrency-eval-context-v2.xcresult`; log SHA-256 `b3259efda1f9a608f47e90e83eea67f3f36e022dc12a2ccbb817f1a90e10d295`. The focused source contract requires the same Chat inference provenance, parent model, and Thinking value used by the live Chat surface. |
+| Spawn-batch fixture/scorer | PASS (automated only) | 11/11; log SHA-256 `bd0b4327321ffe5bfd97778a6ed968c2225010820d2091178e24abca46dfd29b`. The different-local fixture now declares Continuous Batching on and canonical server maximum two. |
+| Different-local Nanbeige -> Ornith handoff/restore | PASS (model-backed) | One `spawn_batch`, two ordered successes, `max_parallel=2`, two serialized one-job local waves, Nanbeige parent restored, no tool errors; 30.5 tok/s, TTFT 4.871 s, peak physical footprint 3,883 MB, disk-L2 +1 hit/+1 store. Report SHA-256 `3f4c3483614699403bb9aa40d86710d925bf724c22eff3850003071df7ab5e55`; log SHA-256 `eaff0b4d539e25f061a3e1103681fa4362f7f55493b22c9e399db267447d2e5c`. |
+| Same-model concurrent batch repetition | PASS RUNTIME / BATCH-29 LIVE UI PENDING | The aggregate repeat passed 3/3 and three separately persisted trials also passed: one call, two concurrent child slots in one `[2]` subwave, ordered 2/2 settlement, no tool errors, cache available, and one non-duplicated parent final in each retained trial. Aggregate report SHA-256 `423cbf880e4e220e8037e0a9ee6db1ec14a5f639e6317431b44405fc1677e07c`; individual report hashes `876755aca315e8f1608163227948da81109994163d06069ff4d7523aaa9eee33`, `5e13865f85a67b72904790f2f234f88fc59063ea6e40e0a0fc02ed440cb89f95`, and `920bee23c41d566ff6789cfb45baf91c298b0caba786758027910c17fcf10b40`. The earlier duplicated final remains a real recorded occurrence; six clean current-source trials do not replace the required Release UI lifecycle row. |

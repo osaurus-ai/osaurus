@@ -468,7 +468,13 @@ public enum AgentLoopEvaluator {
             model
             ?? ChatConfigurationStore.load().coreModelIdentifier
             ?? "foundation"
-        let engine = ChatEngine()
+        // AgentLoop evals exercise the in-app Chat contract. Publish the same
+        // inference provenance as ChatSession so ModelRuntime attributes the
+        // resident parent to this invoking surface; otherwise the default
+        // `.httpAPI` engine marks it as unrelated protected work and a real
+        // different-local spawn handoff is rejected before execution.
+        let sessionSource: SessionSource = .chat
+        let engine = ChatEngine(source: sessionSource.inferenceSource)
 
         // Workspace context + folder tools, mirroring the chat path's
         // host-folder mode. Pure sandbox mode composes with NO host folder
@@ -1056,17 +1062,25 @@ public enum AgentLoopEvaluator {
 
         let loopStarted = Date()
         do {
-            let runResult = try await ChatExecutionContext.$currentAgentId.withValue(resolvedAgentId) {
-                try await AgentToolLoop.run(
-                    policy: AgentLoopPolicy(
-                        maxIterations: maxIterations,
-                        stopOnToolRejection: stopOnToolRejection,
-                        dedupeNoticeEnabled: true,
-                        maxDataMovementSteps: min(16, maxIterations)
-                    ),
-                    state: state,
-                    hooks: hooks
-                )
+            let runResult = try await ChatExecutionContext.$currentSessionSource.withValue(
+                sessionSource
+            ) {
+                try await ChatExecutionContext.$currentAgentId.withValue(resolvedAgentId) {
+                    try await ChatExecutionContext.$currentModelName.withValue(resolvedModel) {
+                        try await ChatExecutionContext.$currentEnableThinking.withValue(enableThinking) {
+                            try await AgentToolLoop.run(
+                                policy: AgentLoopPolicy(
+                                    maxIterations: maxIterations,
+                                    stopOnToolRejection: stopOnToolRejection,
+                                    dedupeNoticeEnabled: true,
+                                    maxDataMovementSteps: min(16, maxIterations)
+                                ),
+                                state: state,
+                                hooks: hooks
+                            )
+                        }
+                    }
+                }
             }
             // Production parity (ChatView): when the iteration budget is
             // exhausted mid-task, chat sends ONE final tool-free request over
