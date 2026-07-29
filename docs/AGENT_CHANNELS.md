@@ -24,9 +24,9 @@ channel definitions.
 The model-facing tools use these standard verbs through `agent_channel_*`
 tools. Provider-specific adapters translate the standard action into the
 provider API. Native adapters currently include Discord, Slack, Telegram, and
-iMessage (macOS only, backed by a pinned, digest-verified `imsg` helper —
-bundled in release builds or downloaded on demand from settings — instead of a
-remote bot API).
+iMessage (macOS only, backed by a pinned, digest-verified `imsg` helper
+downloaded on demand from settings — like the sandbox runtime and models —
+instead of a remote bot API).
 
 The `agent_channel_*` tools are native dynamic tools. They are available to the
 app runtime and can be loaded through the capability flow, but they are not part
@@ -94,7 +94,7 @@ server, bot, or chat and prove:
 The smoke boundary uses the visible Agent Channels settings surface and the
 app-managed receive transports: Slack Socket Mode, Telegram Bot API long polling,
 cursor-based Discord REST polling, and the iMessage `watch.subscribe` stream
-(with since-rowid cursor resume) against the bundled helper. It does not require production webhook hosting. The
+(with since-rowid cursor resume) against the downloaded helper. It does not require production webhook hosting. The
 transport supervisor starts each configured runtime at launch and after settings
 changes. Live health is shown in each provider's settings.
 
@@ -125,7 +125,7 @@ Use the native readiness classifier in code for support tooling or future UI:
 - Telegram is blocked until the bot token validates, receive storage and long
   polling are enabled, readable chats and authorized senders are configured, and
   no webhook conflicts with long polling.
-- iMessage is blocked until the helper (bundled or downloaded) passes
+- iMessage is blocked until the downloaded helper passes
   verification, Full Disk
   Access is granted, receive storage and receiving are enabled, and readable
   chats and authorized senders are configured. Sending additionally needs Messages

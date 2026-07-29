@@ -61,8 +61,6 @@ app: cli
 	chmod +x "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus"
 	@echo "Bundling sandbox kernel (Resources/SandboxRuntime)…"
 	./scripts/build/fetch_sandbox_kernel.sh "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Resources/SandboxRuntime"
-	@echo "Bundling imsg helper (Contents/Helpers)…"
-	./scripts/build/fetch_imsg.sh "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers"
 
 install-cli: cli
 	@echo "Installing CLI symlink…"

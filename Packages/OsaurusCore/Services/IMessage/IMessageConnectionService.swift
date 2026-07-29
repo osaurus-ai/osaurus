@@ -3,14 +3,14 @@
 //  osaurus
 //
 //  Policy, normalization, capability gating, and receive/dispatch for the
-//  native iMessage channel. Basic send/read run against the bundled `imsg`
+//  native iMessage channel. Basic send/read run against the pinned `imsg`
 //  helper's public methods; advanced (private-API) actions are gated behind
 //  per-action operator enablement AND a live capability probe of the helper.
 //
 
 import Foundation
 
-/// Method names the bundled `imsg` helper exposes over JSON-RPC. Public
+/// Method names the pinned `imsg` helper exposes over JSON-RPC. Public
 /// methods work in basic mode; advanced ones require the injected bridge
 /// (SIP + Library Validation disabled by the operator). These names are part
 /// of the pinned-helper contract — see the release runbook.

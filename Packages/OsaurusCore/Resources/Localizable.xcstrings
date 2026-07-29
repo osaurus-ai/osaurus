@@ -116405,30 +116405,30 @@
         }
       }
     },
-    "No chats came back. Verify the helper is bundled and Full Disk Access is granted." : {
+    "No chats came back. Verify the helper is downloaded and Full Disk Access is granted." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Keine Chats erhalten. Prüfe, ob der Helfer mitgeliefert und der vollständige Festplattenzugriff erteilt ist."
+            "value" : "Keine Chats erhalten. Prüfe, ob der Helfer heruntergeladen und der vollständige Festplattenzugriff erteilt ist."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "채팅을 가져오지 못했습니다. 도우미가 번들로 포함되어 있고 전체 디스크 접근 권한이 부여되었는지 확인하세요."
+            "value" : "채팅을 가져오지 못했습니다. 도우미가 다운로드되어 있고 전체 디스크 접근 권한이 부여되었는지 확인하세요."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Чаты не получены. Убедитесь, что помощник встроен и предоставлен полный доступ к диску."
+            "value" : "Чаты не получены. Убедитесь, что помощник загружен и предоставлен полный доступ к диску."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未返回任何聊天。请确认辅助程序已内置且已授予完全磁盘访问权限。"
+            "value" : "未返回任何聊天。请确认辅助程序已下载且已授予完全磁盘访问权限。"
           }
         }
       }

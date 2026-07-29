@@ -8,37 +8,32 @@ Access, Messages Automation), and local allowlists. Advanced actions use
 Apple-private APIs and are additionally gated on operator-disabled SIP and
 Library Validation, which Osaurus only ever diagnoses — never changes.
 
-## Helper Acquisition Lanes
+## Helper Acquisition
 
-The helper reaches disk through two lanes with identical pins (same lane split
-as the sandbox runtime assets):
-
-- Bundled: release builds stage it into `Contents/Helpers` via
-  `scripts/build/fetch_imsg.sh` (run from `make app` / `build_arm64.sh`).
-- Runtime download: `IMessageHelperInstaller` fetches the pinned release
-  archive on demand (Download button in iMessage settings), verifies the
-  archive SHA-256 with the resumable downloader, verifies each Mach-O digest
-  again, strips quarantine only after those digests match, and installs
-  atomically to `~/.osaurus/helpers/imsg/<version>/`.
+The helper is NOT part of the app bundle or the release pipeline. It is
+downloaded on demand, like the sandbox runtime and models: the Download
+button in iMessage settings drives `IMessageHelperInstaller`, which fetches
+the pinned release archive, verifies the archive SHA-256 with the resumable
+downloader, verifies each Mach-O digest again, strips quarantine only after
+those digests match, and installs atomically to
+`~/.osaurus/helpers/imsg/<version>/`.
 
 Trust order at spawn time: `OSAURUS_IMSG_PATH` dev override (DEBUG builds
-only; release builds ignore the variable) → `Contents/Helpers` → the
-downloaded directory. Candidates verify independently: a bundled copy that
-fails verification does not mask a valid downloaded copy, so a corrupted
-release staging can be recovered by downloading the helper from settings.
-The downloaded directory is user-writable, so every spawn re-verifies the
-executable digest and the bridge dylib digest; a swapped binary or dylib
-fails closed. The same-team-signature trust path (below) applies only to
-copies inside the app bundle — a downloaded copy must match the digest pins
-exactly.
+only; release builds ignore the variable) → `Contents/Helpers` (defense in
+depth — no build lane stages a copy there today) → the downloaded
+directory. Candidates verify independently: a bundle copy that fails
+verification does not mask a valid downloaded copy. The downloaded
+directory is user-writable, so every spawn re-verifies the executable
+digest and the bridge dylib digest; a swapped binary or dylib fails closed.
+The same-team-signature trust path (below) applies only to copies inside
+the app bundle — a downloaded copy must match the digest pins exactly.
 
 ## Pinned Helper Rotation
 
 All pins live in one manifest: `scripts/build/imsg-helper-manifest.json`
 (version, archive URL + SHA-256, executable + bridge dylib SHA-256, required
-Mach-O slices, resource bundle names). `fetch_imsg.sh` reads the manifest at
-build time, and the `pinsStayInSyncWithBuildManifest` unit test fails CI when
-the constants in
+Mach-O slices, resource bundle names). The `pinsStayInSyncWithBuildManifest`
+unit test fails CI when the constants in
 `Packages/OsaurusCore/Services/IMessage/IMessageRuntimeAssets.swift` drift
 from it — so a rotation must update both, and CI proves they match.
 
@@ -52,23 +47,20 @@ To rotate to a new `imsg` release:
    constants in `IMessageRuntimeAssets.swift`, plus the version in
    `App/osaurus/Acknowledgements.json`. Run the iMessage test filter — the
    pin-sync test must pass.
-3. Run `scripts/build/fetch_imsg.sh` and confirm it verifies, stages, and
-   `lipo`-checks the ARM64 slice (the runtime installer enforces the same
-   slice requirements with a native Mach-O parser on user machines).
-4. Build the app (`make app`), then run `scripts/build/verify_signing.sh` and
-   `scripts/build/verify_launch.sh`. Signing verification fails when the
-   helper is absent from a release bundle. The launch check spawns the
-   bundled helper (`imsg --version`) under the signed bundle.
-5. Re-run the app-surface proof checklist below.
+3. In a build with the new pins, use the Download button in iMessage
+   settings and confirm the installer verifies, installs, and reports the
+   helper as Verified (the installer enforces digest and Mach-O slice
+   requirements with a native parser on user machines).
+4. Re-run the app-surface proof checklist below.
 
 Trust verification at spawn time is fail-closed with two accepted paths:
 
-- Digest pin: the bundled helper is byte-identical to the pinned upstream
-  release (dev `make app` staging, which does not re-sign).
-- Same-team signature: release pipelines re-sign the helper (changing its
-  digest), so a helper with a valid signature from the same TeamIdentifier as
-  the host app is accepted — but only when it resolved from inside the app
-  bundle, never from the user-writable downloaded directory.
+- Digest pin: the helper is byte-identical to the pinned upstream release.
+  This is the only path a downloaded copy can take.
+- Same-team signature: accepted only for a copy sealed inside the app
+  bundle (defense in depth — kept so a future bundling lane that re-signs
+  the helper, changing its digest, stays trusted; never applies to the
+  user-writable downloaded directory).
 
 A stale pin therefore degrades to a hard "helper unavailable" failure — the
 channel refuses to spawn an unpinned binary and falls back to configured-only
@@ -113,7 +105,7 @@ through the live app surface (`agent_channel_*` tools plus settings UI).
 
 | Area | Required proof |
 | --- | --- |
-| Helper integrity | Settings shows the bundled helper as Verified (or Dev override in a dev build); `agent_channel_diagnostics` reports `helper_verified`, `helper_state`, and no home-directory paths in any failure text. |
+| Helper integrity | Settings shows the downloaded helper as Verified (or Dev override in a dev build); `agent_channel_diagnostics` reports `helper_verified`, `helper_state`, and no home-directory paths in any failure text. |
 | Connection listing | `agent_channel_list_connections` shows `imessage` with helper availability, action policy, read/write allowlists, and confirmation metadata. No credential fields appear (the channel has none). |
 | Chat discovery | Load recent Messages chats in settings returns rows from the helper; with the helper unavailable, listing falls back to configured allowlist ids only. |
 | Read/store | `agent_channel_read_messages` and `agent_channel_search_messages` return only from the local message store and only for read-allowlisted chats. |
@@ -174,8 +166,8 @@ chats are acceptable; real contacts are not.
 
 ## Release Dependencies
 
-- The release pipeline must run `scripts/build/fetch_imsg.sh` before signing
-  so the helper ships in `Contents/Helpers` with its entitlements
-  (`scripts/build/imsg.entitlements`) applied during re-sign.
-- `scripts/build/verify_signing.sh` and `scripts/build/verify_launch.sh` must
-  pass for the release artifact, including the bundled-helper rows.
+None. The helper is intentionally NOT part of the release artifact — it is
+acquired at runtime through the digest-pinned download flow, so the app
+build, signing, and notarization pipeline is unchanged by this channel. A
+release only interacts with the helper through the pins compiled into
+`IMessageRuntimeAssets` (locked to the manifest by the pin-sync test).

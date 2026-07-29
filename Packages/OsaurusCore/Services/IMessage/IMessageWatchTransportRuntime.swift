@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Watch-based iMessage receive transport. Holds one long-lived
-//  `watch.subscribe` session against the bundled `imsg` helper, resuming from
+//  `watch.subscribe` session against the pinned `imsg` helper, resuming from
 //  the persisted chat.db ROWID cursor after helper restarts so no messages
 //  are lost, and feeds events through the iMessage connection service's
 //  authorization + relay pipeline.

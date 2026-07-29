@@ -2,7 +2,7 @@
 //  IMessageRPCClient.swift
 //  osaurus
 //
-//  Local JSON-RPC transport over the bundled `imsg rpc` helper.
+//  Local JSON-RPC transport over the pinned `imsg rpc` helper.
 //
 //  The helper is a long-lived child process that speaks newline-framed
 //  JSON-RPC 2.0 on stdin/stdout. This actor owns the `Process`, matches
@@ -38,9 +38,9 @@ enum IMessageRPCError: LocalizedError, Equatable, Sendable {
     var errorDescription: String? {
         switch self {
         case .helperUnavailable(let detail):
-            return "The bundled iMessage helper is unavailable: \(detail)"
+            return "The iMessage helper is unavailable: \(detail)"
         case .helperUnverified(let detail):
-            return "The bundled iMessage helper failed integrity verification: \(detail)"
+            return "The iMessage helper failed integrity verification: \(detail)"
         case .spawnFailed(let detail):
             return "Could not launch the iMessage helper: \(detail)"
         case .notRunning:
@@ -408,7 +408,8 @@ enum IMessageRPCSecurity {
             guard let executableURL = verification.trustedURL else {
                 switch verification {
                 case .missing:
-                    throw IMessageRPCError.helperUnavailable("no bundled imsg helper found")
+                    throw IMessageRPCError.helperUnavailable(
+                        "no imsg helper is installed — download it from iMessage settings")
                 case .unpinned:
                     throw IMessageRPCError.helperUnverified("release digests are not pinned")
                 case .digestMismatch(let expected, let actual):

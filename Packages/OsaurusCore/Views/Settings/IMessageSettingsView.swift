@@ -5,7 +5,7 @@
 //  Configuration sheet for the native iMessage channel.
 //
 //  Unlike the token-based providers, iMessage is entirely local: the
-//  "connection" is this Mac's Messages.app plus the bundled, digest-verified
+//  "connection" is this Mac's Messages.app plus the downloaded, digest-verified
 //  `imsg` helper. Connect therefore verifies helper integrity and macOS
 //  permissions (Full Disk Access, Messages Automation, Messages sign-in)
 //  instead of credentials. Advanced private-API actions carry an explicit
@@ -1264,7 +1264,7 @@ struct IMessageSettingsView: View {
                     isDiscovering = false
                     if discoveredChats.isEmpty {
                         showStatus(
-                            L("No chats came back. Verify the helper is bundled and Full Disk Access is granted."),
+                            L("No chats came back. Verify the helper is downloaded and Full Disk Access is granted."),
                             isError: true
                         )
                     } else {

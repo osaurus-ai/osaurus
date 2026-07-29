@@ -2,17 +2,18 @@
 //  IMessageRuntimeAssets.swift
 //  osaurus
 //
-//  Single source of truth for the pinned, bundled `imsg` helper the native
-//  iMessage channel drives. `imsg` (MIT) is an open-source CLI/daemon that
-//  talks to Messages.app and the local `chat.db`. Osaurus ships a pinned
-//  release inside the signed app bundle under `Contents/Helpers` so the
-//  channel never fetches or executes an unpinned binary at runtime.
+//  Single source of truth for the pinned `imsg` helper the native iMessage
+//  channel drives. `imsg` (MIT) is an open-source CLI/daemon that talks to
+//  Messages.app and the local `chat.db`. The helper is not part of the app
+//  bundle: it is downloaded on demand (like the sandbox runtime and models)
+//  by `IMessageHelperInstaller`, which verifies the archive and each Mach-O
+//  against the digests pinned here before anything is installed.
 //
-//  Everything here is version- and digest-pinned. The release pipeline
-//  (`scripts/build/fetch_imsg.sh`) verifies the same SHA-256 values before it
-//  stages the files, and this file verifies the bundled copy again at spawn
-//  time — fail-closed on either side. A mirror/registry compromise cannot swap
-//  the bytes Osaurus executes without failing verification on the host.
+//  Everything here is version- and digest-pinned, and every spawn re-verifies
+//  the installed copy — fail-closed on both sides, so a mirror/registry
+//  compromise cannot swap the bytes Osaurus executes without failing
+//  verification on the host. The pins are locked to
+//  `scripts/build/imsg-helper-manifest.json` by a unit test.
 //
 
 import CryptoKit
@@ -41,16 +42,16 @@ import Security
 
         // MARK: - Digests (fail-closed pins)
         //
-        // These MUST match the artifacts published for `version` and the pins
-        // in `scripts/build/fetch_imsg.sh`. The fetch script fails the build
-        // if the downloaded files' digests do not match, and
-        // `verifyBundledExecutable()` refuses to spawn a bundled copy that
-        // neither matches the digest (unmodified upstream staging, e.g. a dev
-        // `make app`) nor carries a valid code signature from the same team
-        // as the host app (the release pipeline re-signs the helper, which
-        // necessarily changes its digest). A stale pin degrades to a hard
-        // failure (no iMessage helper) rather than a silently wrong binary —
-        // see docs/CHANNEL_RELEASE_RUNBOOK_IMESSAGE.md.
+        // These MUST match the artifacts published for `version` and the
+        // manifest in `scripts/build/imsg-helper-manifest.json` (a unit test
+        // locks them together). `verifyBundledExecutable()` refuses to spawn
+        // any copy that does not match the digest pin — with one carve-out
+        // for a copy sealed inside the app bundle carrying a valid signature
+        // from the host app's team (kept as defense in depth for a future
+        // bundling lane; no build lane stages a copy today). A stale pin
+        // degrades to a hard failure (no iMessage helper) rather than a
+        // silently wrong binary — see
+        // docs/CHANNEL_RELEASE_RUNBOOK_IMESSAGE.md.
 
         /// SHA-256 of the published (fat) `imsg` executable, pre re-sign.
         public static let executableSHA256 =
@@ -78,16 +79,15 @@ import Security
             "SQLite.swift_SQLite.bundle",
         ]
 
-        /// Mach-O slices each artifact must carry (mirrors the build lane's
-        /// `lipo -verify_arch` checks). The helper must run on Apple
-        /// silicon; the bridge additionally needs arm64e because
+        /// Mach-O slices each artifact must carry. The helper must run on
+        /// Apple silicon; the bridge additionally needs arm64e because
         /// Messages.app runs arm64e and dylib injection requires a matching
         /// ABI.
         public static let executableRequiredArchitectures = ["arm64"]
         public static let bridgeDylibRequiredArchitectures = ["arm64", "arm64e"]
 
         /// True once the digests above have been filled with real release
-        /// values. Until then the channel treats the bundled helper as
+        /// values. Until then the channel treats every helper copy as
         /// unverified and stays in basic-only fallback mode instead of
         /// spawning an unpinned binary.
         public static var digestsPinned: Bool {
@@ -97,8 +97,9 @@ import Security
 
         // MARK: - Bundle resolution
 
-        /// Subdirectory under `Contents/` where the release pipeline stages the
-        /// helper. Mirrors the existing CLI helper layout (`Contents/Helpers`).
+        /// Subdirectory under `Contents/` checked for an app-sealed helper
+        /// copy (defense in depth; no build lane stages one today). Mirrors
+        /// the existing CLI helper layout (`Contents/Helpers`).
         public static let bundleSubdirectory = "Helpers"
 
         /// Env override for local testing against a dev-built `imsg` without a

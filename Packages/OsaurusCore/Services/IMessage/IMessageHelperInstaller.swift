@@ -9,10 +9,9 @@
 //  and the install lands atomically under
 //  `~/.osaurus/helpers/imsg/<version>/`.
 //
-//  This removes the build-lane dependency: dev/Xcode builds that don't run
-//  `scripts/build/fetch_imsg.sh` can install the identical, pin-verified
-//  helper from the iMessage setup UI instead. Release builds that do bundle
-//  the helper are unaffected — the bundled copy always resolves first.
+//  This is the only acquisition lane: the helper is never part of the app
+//  bundle or the release pipeline (same model as the sandbox runtime and
+//  models — download on demand, verify against compiled-in pins).
 //
 
 import Foundation
@@ -89,9 +88,10 @@ import Foundation
         var executableSHA256: String
         var bridgeDylibSHA256: String
         var resourceBundleNames: [String]
-        /// Mach-O slices each member must carry (mirrors the build-lane
-        /// `lipo -verify_arch` checks in fetch_imsg.sh). Tests that install
-        /// crafted non-Mach-O fixtures pass empty arrays to opt out.
+        /// Mach-O slices each member must carry (from the pinned manifest;
+        /// the bridge additionally needs arm64e because Messages.app runs
+        /// arm64e). Tests that install crafted non-Mach-O fixtures pass
+        /// empty arrays to opt out.
         var executableRequiredArchitectures: [String] =
             IMessageRuntimeAssets.executableRequiredArchitectures
         var bridgeDylibRequiredArchitectures: [String] =

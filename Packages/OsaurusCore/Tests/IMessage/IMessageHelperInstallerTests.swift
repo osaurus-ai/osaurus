@@ -35,8 +35,8 @@ struct IMessageHelperInstallerTests {
 
     /// Pin-sync lock: the Swift constants must match
     /// `scripts/build/imsg-helper-manifest.json`, the single source of truth
-    /// that `fetch_imsg.sh` also reads. A pin bump that touches only one
-    /// side fails here in CI.
+    /// for the pinned helper release. A pin bump that touches only one side
+    /// fails here in CI.
     @Test func pinsStayInSyncWithBuildManifest() throws {
         let manifestURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()  // file name
