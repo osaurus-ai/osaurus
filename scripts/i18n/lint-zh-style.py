@@ -27,9 +27,20 @@ DEFAULT_CATALOG = Path(__file__).resolve().parents[2] / "Packages/OsaurusCore/Re
 
 CJK = r"㐀-䶿一-鿿"
 LATIN = r"A-Za-z0-9"
-# spans we must never touch or space-pad inside
-PROTECTED = re.compile(r"`[^`]*`|https?://\S+|www\.\S+")
+# spans we must never touch or space-pad inside. A shell command is protected
+# even without backticks: its straight quotes are part of the command, and
+# curling them produces something the reader cannot paste into a terminal
+# (`mkdir -p "%@"` -> `mkdir -p “%@”`). A lowercase word followed by at least
+# one -flag is a strong enough signal, and it stops before any CJK character
+# so surrounding prose is still linted.
+SHELL = r"[a-z][\w.-]*(?:\s+-{1,2}[\w-]+)+(?:\s+(?:\"[^\"]*\"|'[^']*'|[^\s\"'㐀-䶿一-鿿]+))*"
+PROTECTED = re.compile(rf"`[^`]*`|https?://\S+|www\.\S+|{SHELL}")
 PLACEHOLDER = re.compile(r"%(\d+\$)?[#0\- +']*\d*(\.\d+)?(hh|h|ll|l|q|z|t|L)?[@dDuUxXoOfeEgGaAcCsSpF]|%%")
+
+# Xcode writes an entry with no localizations as "key" : {\n\n    }, which
+# json.dumps collapses to "key" : {}. Left uncorrected that makes the catalog
+# fail its own byte-exact round-trip, and the linter refuses to run at all.
+EMPTY_ENTRY = re.compile(r'\n    "((?:[^"\\]|\\.)*)" : \{\n\n    \}')
 
 def protect(value):
     """Replace protected spans with sentinels; return (masked, spans)."""
@@ -60,6 +71,20 @@ def fix_quotes(value):
 
 def fix_colon(value):
     return re.sub(rf"([{CJK}]):(?!//)\s?", "\\1：", value)
+
+def empty_entry_keys(text):
+    """Escaped key text of every entry Xcode serialised as "{\\n\\n    }"."""
+    return EMPTY_ENTRY.findall(text)
+
+def serialize(catalog, empty_keys):
+    """json.dumps in Xcode's exact shape, with empty entries written back."""
+    out = json.dumps(catalog, ensure_ascii=False, indent=2, separators=(",", " : "))
+    for key in empty_keys:
+        collapsed = f'"{key}" : {{}}'
+        if collapsed not in out:
+            continue
+        out = out.replace(collapsed, f'"{key}" : {{\n\n    }}')
+    return out
 
 def apply_rules(value, rules):
     masked, spans = protect(value)
@@ -94,10 +119,10 @@ def main():
             except ValueError:
                 excluded.add(line)
 
-    raw = args.catalog.read_bytes()
+    raw = args.catalog.read_text(encoding="utf-8")
     catalog = json.loads(raw)
-    rendered = json.dumps(catalog, ensure_ascii=False, indent=2, separators=(",", " : ")).encode()
-    if rendered != raw:
+    empties = empty_entry_keys(raw)
+    if serialize(catalog, empties) != raw:
         sys.exit("refusing to run: catalog does not round-trip byte-exactly; check serialization recipe")
 
     changed = []
@@ -118,7 +143,7 @@ def main():
     print(f"\n{len(changed)} value(s) {'fixed' if args.fix else 'need fixing'}")
 
     if args.fix and changed:
-        args.catalog.write_bytes(json.dumps(catalog, ensure_ascii=False, indent=2, separators=(",", " : ")).encode())
+        args.catalog.write_text(serialize(catalog, empties), encoding="utf-8")
     if args.check and changed:
         sys.exit(1)
 
