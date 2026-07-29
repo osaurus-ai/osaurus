@@ -78,7 +78,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                         .string("input"),
                     ]),
                 ]),
-            ]),
+            ])
         ]),
         "required": .array([.string("jobs")]),
     ])
@@ -625,7 +625,8 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             )
         case .userDenied(let reason):
             let cancelled = interrupt.isInterrupted || Task.isCancelled
-            let message = cancelled
+            let message =
+                cancelled
                 ? "Batch preparation was cancelled before any jobs started."
                 : reason
             feed.finish(success: false, summary: message)
@@ -647,10 +648,12 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             jobs: jobs,
             parentScope: parentScope
         )
-        guard Self.matchesApprovedAuthority(
-            approvalAuthority,
-            current: approvedAuthority
-        ) else {
+        guard
+            Self.matchesApprovedAuthority(
+                approvalAuthority,
+                current: approvedAuthority
+            )
+        else {
             let message =
                 "Batch settings, launcher, or target agents changed while approval was open. "
                 + "No jobs were started; review the current Subagents settings and retry."
@@ -743,8 +746,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 retryable: false
             )
         }
-        let localAdmissionPlanOverride:
-            (@Sendable () async -> SubagentBatchAdmissionPlan)?
+        let localAdmissionPlanOverride: (@Sendable () async -> SubagentBatchAdmissionPlan)?
         if let plan = evaluationOverrides?.localAdmissionPlan {
             localAdmissionPlanOverride = { plan }
         } else {
@@ -919,7 +921,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         // linearizable read. A cold load must not look like a mutation.
         let storeSnapshot =
             SubagentConfigurationStore
-                .snapshotWithSpawnAuthorityRevisions()
+            .snapshotWithSpawnAuthorityRevisions()
         let configuration = storeSnapshot.configuration
         let isDefaultLauncher = parentScope.agentId == Agent.defaultId
         var targetAgentIDs = Set<UUID>()
@@ -1006,8 +1008,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             current.effectivePermission == .alwaysAllow
         else { return false }
         if approved.isDefaultLauncher {
-            guard let approvedDefault =
-                approved.configurationRevision.defaultLauncher,
+            guard
+                let approvedDefault =
+                    approved.configurationRevision.defaultLauncher,
                 let currentDefault =
                     current.configurationRevision.defaultLauncher
             else { return false }
@@ -1045,6 +1048,24 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                         message: "Arguments must be a JSON object containing `jobs`.",
                         field: "jobs",
                         expected: "an array of spawn jobs",
+                        tool: tool
+                    )
+                )
+            )
+        }
+        let unsupportedRootFields = Set(root.keys)
+            .subtracting(["jobs"])
+            .sorted()
+        guard unsupportedRootFields.isEmpty else {
+            let fields = unsupportedRootFields.map { "`\($0)`" }
+                .joined(separator: ", ")
+            return .failure(
+                SpawnBatchParseError(
+                    envelope: ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "Unsupported spawn_batch argument field(s): \(fields).",
+                        field: unsupportedRootFields[0],
+                        expected: "only the documented `jobs` field",
                         tool: tool
                     )
                 )
@@ -1088,6 +1109,20 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                     SpawnBatchParseError.invalidJob(
                         index: index,
                         message: "must be an object",
+                        tool: tool
+                    )
+                )
+            }
+            let unsupportedJobFields = Set(object.keys)
+                .subtracting(["id", "target_type", "target", "input"])
+                .sorted()
+            guard unsupportedJobFields.isEmpty else {
+                let fields = unsupportedJobFields.map { "`\($0)`" }
+                    .joined(separator: ", ")
+                return .failure(
+                    SpawnBatchParseError.invalidJob(
+                        index: index,
+                        message: "contains unsupported field(s): \(fields)",
                         tool: tool
                     )
                 )
@@ -1419,7 +1454,8 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             if wasInterrupted || interrupt.isInterrupted || Task.isCancelled {
                 let completedIDs = Set(results.map(\.job.id))
                 results.append(
-                    contentsOf: jobs
+                    contentsOf:
+                        jobs
                         .filter { !completedIDs.contains($0.job.id) }
                         .map {
                             cancelledResult(
@@ -2628,7 +2664,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 break
             }
             let end = min(start + slots, group.jobs.count)
-            let subwave = Array(group.jobs[start..<end])
+            let subwave = Array(group.jobs[start ..< end])
             feed.emitPhase(
                 "local subwave",
                 detail:

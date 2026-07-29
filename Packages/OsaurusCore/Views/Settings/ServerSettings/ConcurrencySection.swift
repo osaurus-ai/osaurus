@@ -4,8 +4,8 @@
 //
 //  Concurrency & batching controls. `continuousBatching` gates the
 //  multi-slot scheduler, `maxConcurrentSequences` hot-resizes the resident
-//  BatchEngine, and `prefillStepSize` is passed per request. The remaining
-//  contract fields persist for a follow-up runtime bridge.
+//  BatchEngine, and `prefillStepSize` is passed per request. Other serialized
+//  contract fields remain hidden until they have real runtime consumers.
 //
 //  Live BatchEngine diagnostics live in `LiveActivitySection` (its own
 //  sidebar anchor) so users can monitor activity without scrolling
@@ -63,43 +63,6 @@ struct ConcurrencySection: View {
                 value: $draft.concurrency.prefillStepSize
             )
 
-            SettingsDivider()
-
-            SettingsSubsection(label: "Planned Batching Controls") {
-                VStack(alignment: .leading, spacing: 12) {
-                    ServerSettingsPlannedBanner(
-                        blurb: "Persisted today; runtime consumers for these fields are not yet implemented."
-                    )
-
-                    OptionalIntField(
-                        label: "Prefill Batch Size",
-                        placeholder: "Empty = engine default",
-                        help: "Number of prefill chunks decoded together.",
-                        value: $draft.concurrency.prefillBatchSize
-                    )
-
-                    OptionalIntField(
-                        label: "Completion Batch Size",
-                        placeholder: "Empty = engine default",
-                        help: "Number of decode steps run together.",
-                        value: $draft.concurrency.completionBatchSize
-                    )
-
-                    SettingsField(
-                        label: "SMELT Mode",
-                        hint: "Selects the SMELT execution mode when supported by the model."
-                    ) {
-                        Picker("", selection: $draft.concurrency.smeltMode) {
-                            ForEach(VMLXServerSmeltMode.allCases, id: \.self) { mode in
-                                Text(mode.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
-                                    .tag(mode)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                    }
-                }
-            }
         }
         .onAppear {
             guard !initialized else { return }

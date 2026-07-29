@@ -838,9 +838,9 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     public var browserUseEnabled: Bool
     /// Per-agent opt-in for the `spawn` tool. Default off; gated
     /// authoritatively in `resolveTools` (stripped unless enabled AND the agent
-    /// has at least one spawnable agent). The global `SubagentConfiguration`
-    /// still supplies the system defaults (budgets, RAM safety, permissions);
-    /// this is the per-agent enable.
+    /// has at least one spawnable agent or model). Custom agents resolve their
+    /// own pool, notes, permissions, worker-tool access, and budgets; global
+    /// engine and RAM-safety ceilings still apply to every local launch.
     public var spawnDelegationEnabled: Bool
     /// Per-agent opt-in for the `image` tool (generate + edit). Default off;
     /// split from `spawnDelegationEnabled` so an agent can spawn without image.

@@ -1,5 +1,10 @@
 # Image / Spawn / Delegation — Completion Tracker (living, pre-merge)
 
+> **Archived 2026-07-29.** This tracker covers an older pre-unification branch
+> and is no longer a living release gate. Use
+> `SUBAGENT_BATCHING_CAMPAIGN_2026_07_27.md` for the current spawn/delegation
+> source, automated, and live UI evidence.
+
 The single "what is actually proven" list for PR #1682. Updated continuously as
 verification runs. Companion to `REMAINING_WORK.md` (what's still broken/to-build).
 

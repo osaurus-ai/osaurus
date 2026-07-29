@@ -527,8 +527,22 @@ struct SpawnBatchToolTests {
         #expect(jobs.map(\.index) == [0, 1])
     }
 
-    @Test("duplicate ids and malformed targets fail before preparation")
+    @Test("unknown fields, duplicate ids, and malformed targets fail before preparation")
     func rejectsMalformedJobs() {
+        let staleRootSetting = SpawnBatchTool.parseJobs(
+            #"{"jobs":[{"id":"a","target_type":"model","target":"M","input":"x"}],"max_parallel":2}"#,
+            tool: "spawn_batch"
+        )
+        #expect(staleRootSetting.failureEnvelope?.contains("max_parallel") == true)
+        #expect(staleRootSetting.failureEnvelope?.contains("Unsupported") == true)
+
+        let unknownJobSetting = SpawnBatchTool.parseJobs(
+            #"{"jobs":[{"id":"a","target_type":"model","target":"M","input":"x","temperature":0.2}]}"#,
+            tool: "spawn_batch"
+        )
+        #expect(unknownJobSetting.failureEnvelope?.contains("temperature") == true)
+        #expect(unknownJobSetting.failureEnvelope?.contains("unsupported") == true)
+
         let duplicate = SpawnBatchTool.parseJobs(
             """
             {"jobs":[
@@ -1254,7 +1268,7 @@ struct SpawnBatchToolTests {
         let execution = BatchExecutionProbe()
         let planCalls = BatchLivePlanProbe()
         let diagnostics = SpawnBatchTool.BatchDiagnosticsCollector()
-        let jobs = (0..<2).map { index in
+        let jobs = (0 ..< 2).map { index in
             prepared(
                 index: index,
                 id: "local-\(index)",
@@ -1318,7 +1332,7 @@ struct SpawnBatchToolTests {
     func concurrentSameModelSequencesShareSlotCapacity() async {
         let admission = SubagentAdmission(pollNanoseconds: 1_000_000)
         let probe = BatchExecutionProbe()
-        let firstJobs = (0..<2).map { index in
+        let firstJobs = (0 ..< 2).map { index in
             prepared(
                 index: index,
                 id: "first-\(index)",
@@ -1332,7 +1346,7 @@ struct SpawnBatchToolTests {
                 delayMilliseconds: 250
             )
         }
-        let secondJobs = (0..<2).map { index in
+        let secondJobs = (0 ..< 2).map { index in
             prepared(
                 index: index,
                 id: "second-\(index)",
@@ -2244,7 +2258,7 @@ struct SpawnBatchToolTests {
     func localCapacityCreatesSubwavesWithoutReloading() async {
         let probe = BatchExecutionProbe()
         let handoff = CountingBatchHandoff()
-        let jobs = (0..<3).map { index in
+        let jobs = (0 ..< 3).map { index in
             prepared(
                 index: index,
                 id: "local-\(index)",

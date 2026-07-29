@@ -12,7 +12,7 @@
           "kind": "toolCall",
           "callId": "batch-1",
           "tool": "spawn_batch",
-          "arguments": "{\"jobs\":[{\"id\":\"ok-worker\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000201\",\"input\":\"Return the sibling result.\"},{\"id\":\"failed-worker\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000202\",\"input\":\"Run the failure probe.\"}],\"max_parallel\":2}"
+          "arguments": "{\"jobs\":[{\"id\":\"ok-worker\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000201\",\"input\":\"Return the sibling result.\"},{\"id\":\"failed-worker\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000202\",\"input\":\"Run the failure probe.\"}]}"
         },
         {
           "kind": "toolResult",

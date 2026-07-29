@@ -24,7 +24,7 @@
           "kind": "toolCall",
           "callId": "batch-1",
           "tool": "spawn_batch",
-          "arguments": "{\"jobs\":[{\"id\":\"todo-alpha\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000401\",\"input\":\"Return the alpha result.\"},{\"id\":\"todo-beta\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000402\",\"input\":\"Return the beta result.\"}],\"max_parallel\":2}"
+          "arguments": "{\"jobs\":[{\"id\":\"todo-alpha\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000401\",\"input\":\"Return the alpha result.\"},{\"id\":\"todo-beta\",\"target_type\":\"agent\",\"target\":\"A11CE001-0000-4000-8000-000000000402\",\"input\":\"Return the beta result.\"}]}"
         },
         {
           "kind": "toolResult",

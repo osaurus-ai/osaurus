@@ -90,8 +90,9 @@ evals-test:
 	@echo "Running OsaurusEvals harness tests…"
 	OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 swift test --package-path Packages/OsaurusEvals
 
-# Mirrors the CI `test-core` job: same xcodebuild flags, same xcbeautify
-# pipe, same xcresult bundle. Run this locally to repro a failed CI run.
+# Mirrors the CI `test-core` execution policy: one xctest worker, the same
+# timeout allowances, xcbeautify pipe, and xcresult bundle. Run this locally
+# to reproduce a failed CI run without Xcode's parallel-worker starvation.
 # After it finishes (pass or fail) you can `open build/Tests.xcresult` to
 # get the same Test Navigator UI as Xcode.
 ci-test:
@@ -109,9 +110,12 @@ ci-test:
 		-skipPackagePluginValidation \
 		-skipMacroValidation \
 		-enableCodeCoverage NO \
+		-parallel-testing-enabled NO \
+		-parallel-testing-worker-count 1 \
+		-maximum-parallel-testing-workers 1 \
 		-test-timeouts-enabled YES \
-		-default-test-execution-time-allowance 60 \
-		-maximum-test-execution-time-allowance 120 \
+		-default-test-execution-time-allowance 180 \
+		-maximum-test-execution-time-allowance 300 \
 		COMPILER_INDEX_STORE_ENABLE=NO \
 		SWIFT_COMPILATION_MODE=incremental \
 		| xcbeautify --renderer terminal

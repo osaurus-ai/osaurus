@@ -1243,8 +1243,8 @@ struct RuntimePolicySourceTests {
         #expect(http.contains(#""resolved_kv_retention_tokens""#))
     }
 
-    @Test("Server settings concurrency UI does not advertise false restart or runtime wiring")
-    func serverSettingsConcurrencyUIDoesNotAdvertiseFalseRestartOrRuntimeWiring() throws {
+    @Test("Server settings concurrency UI exposes only runtime-wired controls")
+    func serverSettingsConcurrencyUIExposesOnlyRuntimeWiredControls() throws {
         let tab = try Self.source("Views/Settings/ServerSettingsTabContent.swift")
         let concurrency = try Self.source("Views/Settings/ServerSettings/ConcurrencySection.swift")
 
@@ -1261,11 +1261,17 @@ struct RuntimePolicySourceTests {
         #expect(!pendingRestart.contains("concurrency.maxConcurrentSequences"))
 
         #expect(concurrency.contains("`maxConcurrentSequences` hot-resizes"))
-        #expect(concurrency.contains("runtime consumers for these fields are not yet implemented"))
         #expect(concurrency.contains("pins each local model to one active job"))
         #expect(concurrency.contains("Concurrent Sessions"))
         #expect(concurrency.contains("Continuous Batching"))
         #expect(concurrency.contains("Prompt Prefill Chunk Size"))
+        #expect(!concurrency.contains("Planned Batching Controls"))
+        #expect(!concurrency.contains("Prefill Batch Size"))
+        #expect(!concurrency.contains("Completion Batch Size"))
+        #expect(!concurrency.contains("SMELT Mode"))
+        #expect(!concurrency.contains("$draft.concurrency.prefillBatchSize"))
+        #expect(!concurrency.contains("$draft.concurrency.completionBatchSize"))
+        #expect(!concurrency.contains("$draft.concurrency.smeltMode"))
         #expect(concurrency.contains("if trimmed.isEmpty"))
         #expect(concurrency.contains("draft.concurrency.maxConcurrentSequences = nil"))
     }
@@ -2234,12 +2240,14 @@ struct RuntimePolicySourceTests {
         )
         let remoteConnect = try #require(
             appDelegate.range(
-                of: "async let remoteConnects: Void =\n                    RemoteProviderManager.shared.connectEnabledProviders()"
+                of:
+                    "async let remoteConnects: Void =\n                    RemoteProviderManager.shared.connectEnabledProviders()"
             )
         )
         let connectGate = try #require(
             appDelegate.range(
-                of: "if !keychainDisabledTestMode {\n                // MCP and remote-provider startup connects run concurrently:"
+                of:
+                    "if !keychainDisabledTestMode {\n                // MCP and remote-provider startup connects run concurrently:"
             )
         )
         #expect(connectGate.lowerBound < mcpConnect.lowerBound)

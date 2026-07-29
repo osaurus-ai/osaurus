@@ -1,5 +1,10 @@
 # Spawn / Image-Gen / Edit / Delegation — Production Readiness
 
+> **Archived 2026-07-29.** This assessment predates the current unified
+> spawn/delegation and batching implementation. Its historical evidence remains
+> useful, but its readiness claims are not current. Use
+> `SUBAGENT_BATCHING_CAMPAIGN_2026_07_27.md` for the active proof matrix.
+
 Living assessment. Updated as stress tests + fixes land. Honest status only —
 "ready" requires live proof, not code-reading.
 

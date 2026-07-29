@@ -1,5 +1,10 @@
 # Image / Spawn / Delegation — Remaining Work (canonical backlog)
 
+> **Archived 2026-07-29.** This is a historical pre-unification backlog and is
+> no longer canonical. Use `SUBAGENT_BATCHING_CAMPAIGN_2026_07_27.md` for the
+> current spawn/delegation contract and live proof. Do not treat open or fixed
+> claims below as current release status without re-verifying the live source.
+
 Single source of truth for open work on the native image gen/edit + spawn/delegation
 feature. Created 2026-06-23 because open items were scattered across 6+ docs with
 contradictions. Supersedes the "open work / TODO / not implemented" sections of the

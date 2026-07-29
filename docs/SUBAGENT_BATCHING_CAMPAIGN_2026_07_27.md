@@ -108,8 +108,10 @@ the per-agent maximum and live RAM-Safety plan may clamp it further. Those
 controls must share one runtime contract rather than becoming duplicate
 batching knobs.
 
-The persisted but explicitly `Planned` prefill/completion batch-size controls
-remain out of scope until their runtime consumers exist.
+The serialized prefill/completion batch-size and SMELT contract fields remain
+available to the server/API compatibility layer, but their Settings controls
+were removed on 2026-07-29. They must not return to the visible UI until real
+runtime consumers and end-to-end proof exist.
 
 ## Current-source audit
 
