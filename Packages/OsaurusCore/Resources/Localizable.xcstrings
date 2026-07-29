@@ -4080,7 +4080,38 @@
       }
     },
     "%lld conversations imported" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Unterhaltungen importiert"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화 %lld개 가져옴"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импортировано разговоров: %lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已导入 %lld 个对话"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已導入 %lld 個對話"
+          }
+        }
+      }
     },
     "%lld conversations will be removed permanently. This can't be undone." : {
       "localizations" : {
@@ -4454,7 +4485,38 @@
       }
     },
     "%lld duplicates skipped" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Duplikate übersprungen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "중복 %lld개 건너뜀"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пропущено дубликатов: %lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已跳过 %lld 个重复项"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已跳過 %lld 個重複項"
+          }
+        }
+      }
     },
     "%lld earlier steps" : {
       "localizations" : {
@@ -9861,7 +9923,38 @@
       }
     },
     "1 conversation imported" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 Unterhaltung importiert"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화 1개 가져옴"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импортирован 1 разговор"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已导入 1 个对话"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已導入 1 個對話"
+          }
+        }
+      }
     },
     "1 day" : {
       "localizations" : {
@@ -19179,7 +19272,38 @@
       }
     },
     "All conversations in the file were already imported." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alle Unterhaltungen in der Datei wurden bereits importiert."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일의 모든 대화를 이미 가져왔습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Все разговоры из файла уже были импортированы."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文件中的所有对话均已导入。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文件中的所有對話均已導入。"
+          }
+        }
+      }
     },
     "All disabled by default. Enable individually — Osaurus will redact matches and block sends that leak them." : {
       "comment" : "A longer description of the purpose of the \"Preset Rules\" section.",
@@ -39474,7 +39598,38 @@
       }
     },
     "Choose an export from ChatGPT, Claude, Grok, Gemini, or Open WebUI (.zip or .json), or an Osaurus import JSON file." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wählen Sie einen Export von ChatGPT, Claude, Grok, Gemini oder Open WebUI (.zip oder .json) oder eine Osaurus-Import-JSON-Datei."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT, Claude, Grok, Gemini 또는 Open WebUI 내보내기 파일(.zip 또는 .json)이나 Osaurus 가져오기 JSON 파일을 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите экспорт из ChatGPT, Claude, Grok, Gemini или Open WebUI (.zip или .json) либо JSON-файл импорта Osaurus."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择来自 ChatGPT、Claude、Grok、Gemini 或 Open WebUI 的导出文件（.zip 或 .json），或 Osaurus 导入 JSON 文件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇來自 ChatGPT、Claude、Grok、Gemini 或 Open WebUI 的導出文件（.zip 或 .json），或 Osaurus 導入 JSON 文件。"
+          }
+        }
+      }
     },
     "Choose a CSV, TSV, JSON, or JSONL file to import." : {
       "localizations" : {
@@ -90062,7 +90217,38 @@
       }
     },
     "Import complete" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import abgeschlossen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "가져오기 완료"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импорт завершен"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导入完成"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "導入完成"
+          }
+        }
+      }
     },
     "Import Complete" : {
       "localizations" : {
@@ -90105,7 +90291,38 @@
       }
     },
     "Import Conversations" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unterhaltungen importieren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화 가져오기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импорт разговоров"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导入对话"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "導入對話"
+          }
+        }
+      }
     },
     "Import diagnostics" : {
       "comment" : "The title of the section that displays the import diagnostics for a theme.",
@@ -90144,7 +90361,38 @@
       }
     },
     "Import failed" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import fehlgeschlagen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "가져오기 실패"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импорт не удался"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导入失败"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "導入失敗"
+          }
+        }
+      }
     },
     "Import Failed" : {
       "localizations" : {
@@ -116153,7 +116401,38 @@
       }
     },
     "No importable conversations were found in the file." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In der Datei wurden keine importierbaren Unterhaltungen gefunden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일에서 가져올 수 있는 대화를 찾지 못했습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В файле не найдено разговоров для импорта."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文件中未找到可导入的对话。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文件中未找到可導入的對話。"
+          }
+        }
+      }
     },
     "No incoming Discord messages yet this session. Send the test message and press “Verify incoming message”." : {
       "comment" : "A hint text that appears when there are no incoming messages to verify in the current session. It instructs the user to send a test message and press the \"Verify incoming message\" button.",
@@ -122668,7 +122947,38 @@
       }
     },
     "Nothing to import" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nichts zu importieren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "가져올 항목 없음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нечего импортировать"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有可导入的内容"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沒有可導入的內容"
+          }
+        }
+      }
     },
     "Nothing to import into Osaurus" : {
       "localizations" : {
@@ -191152,16 +191462,140 @@
       }
     },
     "The file is not valid JSON." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Datei ist kein gültiges JSON."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일이 올바른 JSON이 아닙니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл не является корректным JSON."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "该文件不是有效的 JSON。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "該文件不是有效的 JSON。"
+          }
+        }
+      }
     },
     "The file is not a zip archive." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Datei ist kein Zip-Archiv."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일이 zip 아카이브가 아닙니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл не является zip-архивом."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "该文件不是 zip 压缩包。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "該文件不是 zip 壓縮包。"
+          }
+        }
+      }
     },
     "The zip archive is damaged and can't be read." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Zip-Archiv ist beschädigt und kann nicht gelesen werden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "zip 아카이브가 손상되어 읽을 수 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zip-архив поврежден и не может быть прочитан."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "zip 压缩包已损坏，无法读取。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "zip 壓縮包已損壞，無法讀取。"
+          }
+        }
+      }
     },
     "The zip entry \"%@\" uses an unsupported format." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Zip-Eintrag „%@“ verwendet ein nicht unterstütztes Format."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "zip 항목 \"%@\"이(가) 지원되지 않는 형식을 사용합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Элемент zip-архива «%@» использует неподдерживаемый формат."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "zip 条目“%@”使用了不受支持的格式。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "zip 條目「%@」使用了不受支持的格式。"
+          }
+        }
+      }
     },
     "The file isn't a readable database (corruption or a key mismatch). Reset to recreate it; the original is quarantined." : {
       "extractionState" : "manual",
@@ -203722,7 +204156,38 @@
       }
     },
     "Unrecognized export format. Supported: ChatGPT conversations.json, Claude export JSON, Grok account export, Gemini Takeout MyActivity.json, Open WebUI chat export, or Osaurus generic import JSON." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unbekanntes Exportformat. Unterstützt: ChatGPT conversations.json, Claude-Export-JSON, Grok-Kontoexport, Gemini Takeout MyActivity.json, Open WebUI-Chatexport oder generisches Osaurus-Import-JSON."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "인식할 수 없는 내보내기 형식입니다. 지원 형식: ChatGPT conversations.json, Claude 내보내기 JSON, Grok 계정 내보내기, Gemini Takeout MyActivity.json, Open WebUI 채팅 내보내기 또는 Osaurus 일반 가져오기 JSON."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нераспознанный формат экспорта. Поддерживаются: ChatGPT conversations.json, JSON-экспорт Claude, экспорт аккаунта Grok, Gemini Takeout MyActivity.json, экспорт чатов Open WebUI или универсальный JSON импорта Osaurus."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法识别的导出格式。支持：ChatGPT conversations.json、Claude 导出 JSON、Grok 账户导出、Gemini Takeout MyActivity.json、Open WebUI 聊天导出，或 Osaurus 通用导入 JSON。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法識別的導出格式。支持：ChatGPT conversations.json、Claude 導出 JSON、Grok 帳戶導出、Gemini Takeout MyActivity.json、Open WebUI 聊天導出，或 Osaurus 通用導入 JSON。"
+          }
+        }
+      }
     },
     "Unsaved changes" : {
       "extractionState" : "manual",
