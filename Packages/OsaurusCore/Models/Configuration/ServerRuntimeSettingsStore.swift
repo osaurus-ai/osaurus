@@ -278,7 +278,7 @@ public enum ServerRuntimeSettingsStore {
         return min(max(resolved, 1), 32)
     }
 
-    /// Canonicalize the single user-owned KV-retention override.
+    /// Canonicalize Osaurus-owned runtime policy.
     ///
     /// Older builds exposed the same effective cap in two places:
     /// `cache.defaultMaxKVSize` and
@@ -291,12 +291,16 @@ public enum ServerRuntimeSettingsStore {
     public nonisolated static func canonicalizedContextAndKVPolicy(
         _ settings: VMLXServerRuntimeSettings
     ) -> VMLXServerRuntimeSettings {
-        guard let legacyCap = settings.memorySafety.customDefaultMaxKVSize else {
-            return settings
-        }
         var canonical = settings
-        canonical.cache.defaultMaxKVSize = legacyCap
-        canonical.memorySafety.customDefaultMaxKVSize = nil
+        // Osaurus does not currently expose or execute a SMELT path. Persist
+        // an explicit disabled value rather than the vMLX contract's
+        // forward-compatible engine-selected default, so a future engine pin
+        // cannot silently activate it behind the absent UI.
+        canonical.concurrency.smeltMode = .disabled
+        if let legacyCap = settings.memorySafety.customDefaultMaxKVSize {
+            canonical.cache.defaultMaxKVSize = legacyCap
+            canonical.memorySafety.customDefaultMaxKVSize = nil
+        }
         return canonical
     }
 
@@ -577,7 +581,7 @@ public enum ServerRuntimeSettingsStore {
             prefillStepSize: nil,
             completionBatchSize: nil,
             continuousBatching: true,
-            smeltMode: .engineSelected
+            smeltMode: .disabled
         )
 
         // Cache: seed the engine-owned topology with automatic policy.

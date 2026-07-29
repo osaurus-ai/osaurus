@@ -1247,6 +1247,9 @@ struct RuntimePolicySourceTests {
     func serverSettingsConcurrencyUIExposesOnlyRuntimeWiredControls() throws {
         let tab = try Self.source("Views/Settings/ServerSettingsTabContent.swift")
         let concurrency = try Self.source("Views/Settings/ServerSettings/ConcurrencySection.swift")
+        let store = try Self.source(
+            "Models/Configuration/ServerRuntimeSettingsStore.swift"
+        )
 
         guard let restartStart = tab.range(of: "private var pendingRestart: Bool"),
             let restartEnd = tab.range(
@@ -1274,6 +1277,7 @@ struct RuntimePolicySourceTests {
         #expect(!concurrency.contains("$draft.concurrency.prefillBatchSize"))
         #expect(!concurrency.contains("$draft.concurrency.completionBatchSize"))
         #expect(!concurrency.contains("$draft.concurrency.smeltMode"))
+        #expect(store.contains("canonical.concurrency.smeltMode = .disabled"))
         #expect(concurrency.contains("if trimmed.isEmpty"))
         #expect(concurrency.contains("draft.concurrency.maxConcurrentSequences = nil"))
     }

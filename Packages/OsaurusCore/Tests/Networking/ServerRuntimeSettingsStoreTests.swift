@@ -51,6 +51,7 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(migrated.memorySafety.mode == .safeAuto)
             #expect(migrated.memorySafety.slider == 2)
             #expect(migrated.memorySafety.allowExperimentalMLXPress == false)
+            #expect(migrated.concurrency.smeltMode == .disabled)
 
             // File should now exist.
             let url = dir.appendingPathComponent("server-runtime.json")
@@ -89,6 +90,7 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(snapshot.memorySafety.mode == .safeAuto)
             #expect(snapshot.memorySafety.slider == 2)
             #expect(snapshot.memorySafety.allowExperimentalMLXPress == false)
+            #expect(snapshot.concurrency.smeltMode == .disabled)
         }
     }
 
@@ -216,6 +218,18 @@ struct ServerRuntimeSettingsStoreTests {
                 for: canonical
             ) == 98_304
         )
+    }
+
+    @Test func canonicalPolicyKeepsUnusedSmeltPathDisabled() {
+        var settings = VMLXServerRuntimeSettings()
+        settings.concurrency.smeltMode = .ssdStreaming
+
+        let canonical =
+            ServerRuntimeSettingsStore.canonicalizedContextAndKVPolicy(
+                settings
+            )
+
+        #expect(canonical.concurrency.smeltMode == .disabled)
     }
 
     @Test func resolvedKVRetentionCapUsesProfileUnlessCacheOverridesIt() {
@@ -380,6 +394,7 @@ struct ServerRuntimeSettingsStoreTests {
                 compiledDecode: false
             )
             settings.concurrency.maxConcurrentSequences = 5
+            settings.concurrency.smeltMode = .disabled
             settings.cache.defaultMaxKVSize = 16_384
             settings.memorySafety.mode = .strict
             settings.memorySafety.slider = 3
