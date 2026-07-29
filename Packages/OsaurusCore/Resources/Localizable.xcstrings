@@ -78531,7 +78531,7 @@
       }
     },
     "Fireworks AI" : {
-
+      "shouldTranslate" : false
     },
     "Fit" : {
       "localizations" : {
@@ -81735,7 +81735,38 @@
       }
     },
     "Get a key from app.fireworks.ai." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hol dir einen Schlüssel von app.fireworks.ai."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "app.fireworks.ai에서 키를 받으세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Получите ключ на app.fireworks.ai."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "从 app.fireworks.ai 获取密钥。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "從 app.fireworks.ai 獲取密鑰。"
+          }
+        }
+      }
     },
     "Get a key from console.mistral.ai." : {
       "localizations" : {
@@ -83182,7 +83213,38 @@
       }
     },
     "Go to the Fireworks AI API keys page" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zur Fireworks AI-API-Schlüsselseite gehen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fireworks AI API 키 페이지로 이동"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перейдите на страницу ключей API Fireworks AI"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "前往 Fireworks AI API 密钥页面"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "前往 Fireworks AI API 密鑰頁面"
+          }
+        }
+      }
     },
     "Go to the MiniMax platform API keys page" : {
       "localizations" : {
@@ -172596,7 +172658,38 @@
       }
     },
     "Serverless open models" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Serverlose offene Modelle"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "서버리스 오픈 모델"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Бессерверные открытые модели"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无服务器开源模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "無伺服器開源模型"
+          }
+        }
+      }
     },
     "Service: com.osaurus.storage" : {
       "localizations" : {
