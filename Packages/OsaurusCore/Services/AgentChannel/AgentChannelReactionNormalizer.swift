@@ -188,6 +188,62 @@ enum AgentChannelReactionNormalizer {
         return nil
     }
 
+    // MARK: - iMessage
+
+    /// The six canonical iMessage tapback kinds accepted by the pinned imsg
+    /// helper (`--kind love|like|dislike|laugh|emphasize|question`). Custom
+    /// emoji tapbacks can be read from history but cannot be sent.
+    static let imessageTapbackKinds: Set<String> = [
+        "love", "like", "dislike", "laugh", "emphasize", "question",
+    ]
+
+    /// Emoji / alias → canonical tapback kind. Indexed with and without the
+    /// variation selector so either presentation form resolves.
+    private static let imessageTapbackTable: [String: String] = {
+        let canonical: [String: String] = [
+            "❤️": "love", "❤": "love", "💗": "love", "😍": "love", "heart": "love",
+            "love": "love", "heart_eyes": "love", "sparkling_heart": "love",
+            "👍": "like", "+1": "like", "like": "like", "thumbsup": "like",
+            "thumbs_up": "like", "ok_hand": "like", "👌": "like",
+            "👎": "dislike", "-1": "dislike", "dislike": "dislike",
+            "thumbsdown": "dislike", "thumbs_down": "dislike",
+            "😂": "laugh", "😄": "laugh", "😆": "laugh", "🤣": "laugh",
+            "haha": "laugh", "laugh": "laugh", "joy": "laugh", "smile": "laugh",
+            "laughing": "laugh", "lol": "laugh",
+            "‼️": "emphasize", "‼": "emphasize", "❗": "emphasize", "❗️": "emphasize",
+            "💯": "emphasize", "emphasize": "emphasize", "emphasis": "emphasize",
+            "exclamation": "emphasize", "bangbang": "emphasize", "100": "emphasize",
+            "❓": "question", "❓️": "question", "?": "question",
+            "question": "question", "question_mark": "question",
+            "🤔": "question", "thinking_face": "question",
+        ]
+        var result: [String: String] = [:]
+        for (key, kind) in canonical {
+            result[key] = kind
+            result[stripVariationSelectors(key)] = kind
+        }
+        return result
+    }()
+
+    /// The imsg `tapback` RPC wants one of the six canonical kind names.
+    /// Accepts the kind names themselves, `:alias:` names, and the Unicode
+    /// emoji Messages renders for each tapback. Returns nil when the reaction
+    /// has no tapback equivalent (arbitrary emoji cannot be sent as tapbacks
+    /// through the pinned helper).
+    static func imessageTapbackKind(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 64 else { return nil }
+        let unColoned = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: ":")).lowercased()
+        if imessageTapbackKinds.contains(unColoned) { return unColoned }
+        if let kind = imessageTapbackTable[unColoned]
+            ?? imessageTapbackTable[stripVariationSelectors(trimmed)]
+            ?? imessageTapbackTable[trimmed]
+        {
+            return kind
+        }
+        return nil
+    }
+
     // MARK: - Helpers
 
     private static func isPlausibleAliasName(_ value: String) -> Bool {

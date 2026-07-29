@@ -86,6 +86,12 @@ chmod +x "$ARCHIVE_APP/Contents/Helpers/osaurus"
 echo "Bundling sandbox kernel into Resources/SandboxRuntime..."
 ./scripts/build/fetch_sandbox_kernel.sh "$ARCHIVE_APP/Contents/Resources/SandboxRuntime"
 
+# 3c. Bundle the pinned imsg helper (digest-verified fetch, with provenance
+# sidecar) for the native iMessage channel. Runs before the re-sign below so
+# the helper is signed and sealed with the rest of the bundle.
+echo "Bundling imsg helper into Contents/Helpers..."
+./scripts/build/fetch_imsg.sh "$ARCHIVE_APP/Contents/Helpers"
+
 # Re-sign the archived app (now carrying the embedded CLI) with the same
 # entitlements used for the archive. `--deep` also signs the nested CLI binary
 # so Helpers/osaurus carries the hardened runtime before export seals the
@@ -93,6 +99,24 @@ echo "Bundling sandbox kernel into Resources/SandboxRuntime..."
 # without a provisioning profile and no post-export re-sign is needed.
 echo "Re-signing modified app bundle..."
 codesign --force --deep --options runtime --entitlements "App/osaurus/osaurus.entitlements" --sign "${CODE_SIGN_IDENTITY_VALUE}" "$ARCHIVE_APP"
+
+# 3d. The --deep pass above stamped the app's entitlements onto every nested
+# Mach-O, but the imsg helper needs its own (Apple Events + Contacts) or
+# Messages sends fail at runtime. Re-sign the helper binaries with their own
+# entitlements, then re-seal the outer bundle (non-deep) so the app signature
+# covers the corrected nested code.
+echo "Re-signing imsg helper with its own entitlements..."
+codesign --force --options runtime --timestamp \
+  --entitlements "scripts/build/imsg.entitlements" \
+  --sign "${CODE_SIGN_IDENTITY_VALUE}" \
+  "$ARCHIVE_APP/Contents/Helpers/imsg"
+codesign --force --options runtime --timestamp \
+  --sign "${CODE_SIGN_IDENTITY_VALUE}" \
+  "$ARCHIVE_APP/Contents/Helpers/imsg-bridge-helper.dylib"
+codesign --force --options runtime \
+  --entitlements "App/osaurus/osaurus.entitlements" \
+  --sign "${CODE_SIGN_IDENTITY_VALUE}" \
+  "$ARCHIVE_APP"
 
 cat > ExportOptions.plist <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

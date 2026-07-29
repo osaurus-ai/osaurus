@@ -249,6 +249,31 @@ private extension OsaurusTool {
             }
         }
 
+        if let error = error as? IMessageConnectionServiceError {
+            switch error {
+            case .invalidChatId, .sendConfirmationRequired, .messageTooLong, .emptyMessage,
+                .invalidAdvancedParameter:
+                return ToolEnvelope.failure(kind: .invalidArgs, message: error.localizedDescription, tool: tool)
+            case .chatNotReadable, .chatNotWritable, .writeDisabled, .advancedActionDisabled,
+                .attachmentNotAllowed:
+                return ToolEnvelope.failure(kind: .rejected, message: error.localizedDescription, tool: tool)
+            case .notConfigured, .messageStoreUnavailable, .advancedActionUnavailable:
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            case .configurationSaveFailed, .helper:
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            }
+        }
+
         if let error = error as? TelegramAPIError {
             switch error {
             case .invalidToken:
@@ -301,7 +326,7 @@ private extension OsaurusTool {
 final class AgentChannelListConnectionsTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable {
     let name = "agent_channel_list_connections"
     let description =
-        "List configured agent communication channel connections such as Discord, Slack, Telegram, or custom JSON channels."
+        "List configured agent communication channel connections such as Discord, Slack, Telegram, iMessage, or custom JSON channels."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -330,7 +355,9 @@ final class AgentChannelDiagnosticsTool: OsaurusTool, PermissionedTool, AgentCha
         "properties": .object([
             "connection_id": .object([
                 "type": .string("string"),
-                "description": .string("Channel connection id. Defaults to `discord` when omitted."),
+                "description": .string(
+                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                ),
             ])
         ]),
     ])
@@ -362,7 +389,9 @@ final class AgentChannelListSpacesTool: OsaurusTool, PermissionedTool, AgentChan
         "properties": .object([
             "connection_id": .object([
                 "type": .string("string"),
-                "description": .string("Channel connection id. Defaults to `discord` when omitted."),
+                "description": .string(
+                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                ),
             ])
         ]),
     ])
@@ -401,7 +430,9 @@ final class AgentChannelListRoomsTool: OsaurusTool, PermissionedTool, AgentChann
         "properties": .object([
             "connection_id": .object([
                 "type": .string("string"),
-                "description": .string("Channel connection id. Defaults to `discord` when omitted."),
+                "description": .string(
+                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                ),
             ]),
             "space_id": .object([
                 "type": .string("string"),
@@ -449,7 +480,9 @@ final class AgentChannelReadMessagesTool: OsaurusTool, PermissionedTool, AgentCh
         "properties": .object([
             "connection_id": .object([
                 "type": .string("string"),
-                "description": .string("Channel connection id. Defaults to `discord` when omitted."),
+                "description": .string(
+                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                ),
             ]),
             "room_id": .object([
                 "type": .string("string"),
@@ -502,7 +535,9 @@ final class AgentChannelReadThreadTool: OsaurusTool, PermissionedTool, AgentChan
         "properties": .object([
             "connection_id": .object([
                 "type": .string("string"),
-                "description": .string("Channel connection id. Defaults to `discord` when omitted."),
+                "description": .string(
+                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                ),
             ]),
             "thread_id": .object([
                 "type": .string("string"),
@@ -555,7 +590,9 @@ final class AgentChannelSearchMessagesTool: OsaurusTool, PermissionedTool, Agent
         "properties": .object([
             "connection_id": .object([
                 "type": .string("string"),
-                "description": .string("Channel connection id. Defaults to `discord` when omitted."),
+                "description": .string(
+                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                ),
             ]),
             "query": .object([
                 "type": .string("string"),
@@ -619,7 +656,9 @@ final class AgentChannelDraftMessageTool: OsaurusTool, PermissionedTool, AgentCh
         "properties": .object([
             "connection_id": .object([
                 "type": .string("string"),
-                "description": .string("Channel connection id. Defaults to `discord` when omitted."),
+                "description": .string(
+                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                ),
             ]),
             "room_id": .object([
                 "type": .string("string"),
@@ -671,7 +710,9 @@ final class AgentChannelSendMessageTool: OsaurusTool, PermissionedTool, AgentCha
         "properties": .object([
             "connection_id": .object([
                 "type": .string("string"),
-                "description": .string("Channel connection id. Defaults to `discord` when omitted."),
+                "description": .string(
+                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                ),
             ]),
             "room_id": .object([
                 "type": .string("string"),
@@ -731,7 +772,9 @@ final class AgentChannelReplyThreadTool: OsaurusTool, PermissionedTool, AgentCha
         "properties": .object([
             "connection_id": .object([
                 "type": .string("string"),
-                "description": .string("Channel connection id. Defaults to `discord` when omitted."),
+                "description": .string(
+                    "Channel connection id: `discord`, `slack`, `telegram`, `imessage`, or a custom connection id (see agent_channel_list_connections). Defaults to `discord` when omitted."
+                ),
             ]),
             "thread_id": .object([
                 "type": .string("string"),
@@ -940,7 +983,7 @@ final class AgentChannelAddReactionTool: AgentChannelReactionTool, @unchecked Se
     init(service: AgentChannelConnectionService = .shared) {
         super.init(
             name: "agent_channel_add_reaction",
-            description: "Add an emoji reaction to a message in a write-allowlisted room. Requires `confirm_send: true`. `reaction` accepts a Unicode emoji (🎉), a Slack-style alias (`:white_check_mark:`), a Discord custom emoji (`name:id` or `<:name:id>`), or a Telegram custom emoji (`custom_emoji:<id>`); it is normalized to the connection's native format.",
+            description: "Add an emoji reaction to a message in a write-allowlisted room. Requires `confirm_send: true`. `reaction` accepts a Unicode emoji (🎉), a Slack-style alias (`:white_check_mark:`), a Discord custom emoji (`name:id` or `<:name:id>`), a Telegram custom emoji (`custom_emoji:<id>`), or an iMessage tapback kind (love, like, dislike, laugh, emphasize, question); it is normalized to the connection's native format.",
             adding: true,
             service: service
         )
@@ -990,6 +1033,304 @@ final class AgentChannelSendTypingTool: OsaurusTool, PermissionedTool, AgentChan
                 result: try await service.sendTyping(
                     connectionId: connectionId,
                     roomId: roomId,
+                    confirmSend: coerceBool(args["confirm_send"]) ?? false
+                )
+            )
+        } catch {
+            return agentChannelFailure(error, tool: name)
+        }
+    }
+}
+
+// MARK: - iMessage-only advanced tools (private API)
+//
+// Narrowly-typed tools for iMessage capabilities that have no
+// provider-neutral standard action. Every one requires the operator to have
+// enabled the specific advanced action in iMessage settings AND a live
+// bridge capability probe to pass, on top of the usual write allowlist,
+// `confirm_send`, and the global write kill switch. Because their names are
+// in `agentChannelToolNames`, they are automatically denied on external
+// HTTP/MCP surfaces.
+
+final class AgentChannelIMessageSendAttachmentTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable {
+    let name = "agent_channel_imessage_send_attachment"
+    let description =
+        "iMessage only: send a file attachment to a write-allowlisted chat. Requires "
+        + "`confirm_send: true`, the Send Attachments advanced action enabled in iMessage "
+        + "settings, an active private-API bridge, and a `path` inside an allowlisted "
+        + "attachment root."
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "connection_id": .object([
+                "type": .string("string"),
+                "description": .string("Channel connection id. Defaults to `imessage`."),
+            ]),
+            "room_id": .object([
+                "type": .string("string"),
+                "description": .string("iMessage chat id allowlisted for write access."),
+            ]),
+            "path": .object([
+                "type": .string("string"),
+                "description": .string("Absolute file path inside an allowlisted attachment root."),
+            ]),
+            "confirm_send": .object([
+                "type": .string("boolean"),
+                "description": .string("Must be true to send. False or omitted refuses."),
+            ]),
+        ]),
+        "required": .array([.string("room_id"), .string("path"), .string("confirm_send")]),
+    ])
+    let service: AgentChannelConnectionService
+    var requirements: [String] { AgentChannelToolPolicy.writeRequirements }
+    var defaultPermissionPolicy: ToolPermissionPolicy { AgentChannelToolPolicy.defaultPolicy }
+
+    init(service: AgentChannelConnectionService = .shared) { self.service = service }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let connectionReq = optionalString(args, "connection_id", expected: "channel connection id", tool: name)
+        guard case .value(let connectionId) = connectionReq else { return connectionReq.failureEnvelope ?? "" }
+        let roomReq = requireString(args, "room_id", expected: "iMessage chat id", tool: name)
+        guard case .value(let roomId) = roomReq else { return roomReq.failureEnvelope ?? "" }
+        let pathReq = requireString(args, "path", expected: "attachment file path", tool: name)
+        guard case .value(let path) = pathReq else { return pathReq.failureEnvelope ?? "" }
+        do {
+            return ToolEnvelope.success(
+                tool: name,
+                result: try await service.imessageSendAttachment(
+                    connectionId: connectionId,
+                    roomId: roomId,
+                    path: path,
+                    confirmSend: coerceBool(args["confirm_send"]) ?? false
+                )
+            )
+        } catch {
+            return agentChannelFailure(error, tool: name)
+        }
+    }
+}
+
+final class AgentChannelIMessageSendEffectTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable {
+    let name = "agent_channel_imessage_send_effect"
+    let description =
+        "iMessage only: send a message with a screen or bubble effect (e.g. `confetti`, "
+        + "`fireworks`, `slam`, `invisible-ink`) to a write-allowlisted chat. Requires "
+        + "`confirm_send: true`, the Message Effects advanced action enabled in iMessage "
+        + "settings, and an active private-API bridge."
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "connection_id": .object([
+                "type": .string("string"),
+                "description": .string("Channel connection id. Defaults to `imessage`."),
+            ]),
+            "room_id": .object([
+                "type": .string("string"),
+                "description": .string("iMessage chat id allowlisted for write access."),
+            ]),
+            "content": .object([
+                "type": .string("string"),
+                "description": .string("Message body to send."),
+            ]),
+            "effect": .object([
+                "type": .string("string"),
+                "description": .string("Effect name, e.g. `confetti`, `fireworks`, `slam`, `invisible-ink`."),
+            ]),
+            "confirm_send": .object([
+                "type": .string("boolean"),
+                "description": .string("Must be true to send. False or omitted refuses."),
+            ]),
+        ]),
+        "required": .array([
+            .string("room_id"), .string("content"), .string("effect"), .string("confirm_send"),
+        ]),
+    ])
+    let service: AgentChannelConnectionService
+    var requirements: [String] { AgentChannelToolPolicy.writeRequirements }
+    var defaultPermissionPolicy: ToolPermissionPolicy { AgentChannelToolPolicy.defaultPolicy }
+
+    init(service: AgentChannelConnectionService = .shared) { self.service = service }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let connectionReq = optionalString(args, "connection_id", expected: "channel connection id", tool: name)
+        guard case .value(let connectionId) = connectionReq else { return connectionReq.failureEnvelope ?? "" }
+        let roomReq = requireString(args, "room_id", expected: "iMessage chat id", tool: name)
+        guard case .value(let roomId) = roomReq else { return roomReq.failureEnvelope ?? "" }
+        let contentReq = requireString(args, "content", expected: "message body", tool: name)
+        guard case .value(let content) = contentReq else { return contentReq.failureEnvelope ?? "" }
+        let effectReq = requireString(args, "effect", expected: "iMessage effect name", tool: name)
+        guard case .value(let effect) = effectReq else { return effectReq.failureEnvelope ?? "" }
+        do {
+            return ToolEnvelope.success(
+                tool: name,
+                result: try await service.imessageSendEffect(
+                    connectionId: connectionId,
+                    roomId: roomId,
+                    content: content,
+                    effect: effect,
+                    confirmSend: coerceBool(args["confirm_send"]) ?? false
+                )
+            )
+        } catch {
+            return agentChannelFailure(error, tool: name)
+        }
+    }
+}
+
+final class AgentChannelIMessageCreatePollTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable {
+    let name = "agent_channel_imessage_create_poll"
+    let description =
+        "iMessage only: create a native Apple Messages poll in a write-allowlisted group "
+        + "chat. Requires `confirm_send: true`, the Polls advanced action enabled in "
+        + "iMessage settings, and an active private-API bridge. Provide 2-12 options."
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "connection_id": .object([
+                "type": .string("string"),
+                "description": .string("Channel connection id. Defaults to `imessage`."),
+            ]),
+            "room_id": .object([
+                "type": .string("string"),
+                "description": .string("iMessage group chat id allowlisted for write access."),
+            ]),
+            "question": .object([
+                "type": .string("string"),
+                "description": .string("Poll question."),
+            ]),
+            "options": .object([
+                "type": .string("array"),
+                "items": .object(["type": .string("string")]),
+                "description": .string("2-12 poll answer options."),
+            ]),
+            "confirm_send": .object([
+                "type": .string("boolean"),
+                "description": .string("Must be true to send. False or omitted refuses."),
+            ]),
+        ]),
+        "required": .array([
+            .string("room_id"), .string("question"), .string("options"), .string("confirm_send"),
+        ]),
+    ])
+    let service: AgentChannelConnectionService
+    var requirements: [String] { AgentChannelToolPolicy.writeRequirements }
+    var defaultPermissionPolicy: ToolPermissionPolicy { AgentChannelToolPolicy.defaultPolicy }
+
+    init(service: AgentChannelConnectionService = .shared) { self.service = service }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let connectionReq = optionalString(args, "connection_id", expected: "channel connection id", tool: name)
+        guard case .value(let connectionId) = connectionReq else { return connectionReq.failureEnvelope ?? "" }
+        let roomReq = requireString(args, "room_id", expected: "iMessage chat id", tool: name)
+        guard case .value(let roomId) = roomReq else { return roomReq.failureEnvelope ?? "" }
+        let questionReq = requireString(args, "question", expected: "poll question", tool: name)
+        guard case .value(let question) = questionReq else { return questionReq.failureEnvelope ?? "" }
+        let optionsReq = requireStringArray(args, "options", expected: "poll options", tool: name)
+        guard case .value(let options) = optionsReq else { return optionsReq.failureEnvelope ?? "" }
+        do {
+            return ToolEnvelope.success(
+                tool: name,
+                result: try await service.imessageCreatePoll(
+                    connectionId: connectionId,
+                    roomId: roomId,
+                    question: question,
+                    options: options,
+                    confirmSend: coerceBool(args["confirm_send"]) ?? false
+                )
+            )
+        } catch {
+            return agentChannelFailure(error, tool: name)
+        }
+    }
+}
+
+final class AgentChannelIMessageManageGroupTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable {
+    let name = "agent_channel_imessage_manage_group"
+    let description =
+        "iMessage only: manage a write-allowlisted group chat. `operation` is `rename` "
+        + "(with `value` as the new name), `add_participant`, or `remove_participant` "
+        + "(with `value` as the participant handle). Requires `confirm_send: true`, the "
+        + "Group Management advanced action enabled in iMessage settings, and an active "
+        + "private-API bridge."
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "connection_id": .object([
+                "type": .string("string"),
+                "description": .string("Channel connection id. Defaults to `imessage`."),
+            ]),
+            "room_id": .object([
+                "type": .string("string"),
+                "description": .string("iMessage group chat id allowlisted for write access."),
+            ]),
+            "operation": .object([
+                "type": .string("string"),
+                "enum": .array([
+                    .string("rename"), .string("add_participant"), .string("remove_participant"),
+                ]),
+                "description": .string("Group operation to perform."),
+            ]),
+            "value": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "New group name for `rename`, or the participant handle (phone/email) "
+                        + "for `add_participant` / `remove_participant`."
+                ),
+            ]),
+            "confirm_send": .object([
+                "type": .string("boolean"),
+                "description": .string("Must be true to apply. False or omitted refuses."),
+            ]),
+        ]),
+        "required": .array([
+            .string("room_id"), .string("operation"), .string("value"), .string("confirm_send"),
+        ]),
+    ])
+    let service: AgentChannelConnectionService
+    var requirements: [String] { AgentChannelToolPolicy.writeRequirements }
+    var defaultPermissionPolicy: ToolPermissionPolicy { AgentChannelToolPolicy.defaultPolicy }
+
+    init(service: AgentChannelConnectionService = .shared) { self.service = service }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let connectionReq = optionalString(args, "connection_id", expected: "channel connection id", tool: name)
+        guard case .value(let connectionId) = connectionReq else { return connectionReq.failureEnvelope ?? "" }
+        let roomReq = requireString(args, "room_id", expected: "iMessage chat id", tool: name)
+        guard case .value(let roomId) = roomReq else { return roomReq.failureEnvelope ?? "" }
+        let operationReq = requireString(args, "operation", expected: "group operation", tool: name)
+        guard case .value(let operationRaw) = operationReq else { return operationReq.failureEnvelope ?? "" }
+        guard let operation = IMessageConnectionService.GroupOperation(rawValue: operationRaw) else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "`operation` must be one of: "
+                    + IMessageConnectionService.GroupOperation.allCases.map(\.rawValue)
+                        .joined(separator: ", "),
+                tool: name
+            )
+        }
+        let valueReq = requireString(args, "value", expected: "group name or participant handle", tool: name)
+        guard case .value(let value) = valueReq else { return valueReq.failureEnvelope ?? "" }
+        do {
+            return ToolEnvelope.success(
+                tool: name,
+                result: try await service.imessageManageGroup(
+                    connectionId: connectionId,
+                    roomId: roomId,
+                    operation: operation,
+                    value: value,
                     confirmSend: coerceBool(args["confirm_send"]) ?? false
                 )
             )

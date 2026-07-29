@@ -1327,7 +1327,7 @@ actor AgentChannelPublishService {
 
     /// Best-effort provider message id extraction from the heterogeneous
     /// provider payload shapes (Discord nests `message.id`, Slack uses
-    /// `ts`, Telegram uses `message_id`).
+    /// `ts`, Telegram uses `message_id`, iMessage uses a top-level `guid`).
     static func extractProviderMessageId(_ payload: [String: Any]) -> String? {
         func stringValue(_ value: Any?) -> String? {
             if let string = value as? String, !string.isEmpty { return string }
@@ -1335,10 +1335,14 @@ actor AgentChannelPublishService {
             return nil
         }
         if let direct = stringValue(payload["message_id"]) { return direct }
+        if let guid = stringValue(payload["guid"]) { return guid }
         if let message = payload["message"] as? [String: Any] {
             if let id = stringValue(message["id"]) { return id }
             if let ts = stringValue(message["ts"]) { return ts }
             if let id = stringValue(message["message_id"]) { return id }
+            // iMessage nests the helper's send result, which identifies the
+            // sent message by its Messages GUID.
+            if let guid = stringValue(message["guid"]) { return guid }
         }
         if let ts = stringValue(payload["ts"]) { return ts }
         return nil

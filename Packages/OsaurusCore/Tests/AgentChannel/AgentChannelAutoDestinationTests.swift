@@ -215,6 +215,43 @@ struct AgentChannelAutoDestinationResolverTests {
     }
 
     @Test
+    func imessageSourceDerivesOnlyWithVerifiedHelperCredential() {
+        // iMessage has no bot token: the verified local helper plays the
+        // credential role in the source projection. Without it, no automatic
+        // destination may appear even with writable chats and a dispatch
+        // agent configured.
+        let chat = "iMessage;-;+15551234567"
+        let helperMissing = makeSource(
+            connectionId: "imessage",
+            displayName: "iMessage",
+            hasCredential: false,
+            writableRoomIds: [chat]
+        )
+        #expect(
+            AgentChannelAutoDestinationResolver.derivedBindings(
+                sources: [helperMissing],
+                storedBindings: []
+            ).isEmpty
+        )
+
+        let helperVerified = makeSource(
+            connectionId: "imessage",
+            displayName: "iMessage",
+            hasCredential: true,
+            writableRoomIds: [chat]
+        )
+        let derived = AgentChannelAutoDestinationResolver.derivedBindings(
+            sources: [helperVerified],
+            storedBindings: []
+        )
+        #expect(derived.count == 1)
+        #expect(derived[0].connectionId == "imessage")
+        #expect(derived[0].roomId == chat)
+        #expect(derived[0].outboundMode == .confirm)
+        #expect(AgentChannelAutoDestinationResolver.isAutomaticBindingId(derived[0].id))
+    }
+
+    @Test
     func storedBindingReusingAutomaticIdWinsWithoutDuplicates() {
         let source = makeSource(writableRoomIds: ["room-1"])
         let autoId = AgentChannelAutoDestinationResolver.automaticBindingId(

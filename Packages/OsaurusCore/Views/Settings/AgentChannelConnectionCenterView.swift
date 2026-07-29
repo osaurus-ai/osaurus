@@ -133,6 +133,8 @@ struct AgentChannelConnectionCenterView: View {
                 SlackSettingsView()
             case .native(.telegram):
                 TelegramSettingsView()
+            case .native(.imessage):
+                IMessageSettingsView()
             case .native(.customHTTP):
                 // Custom HTTP is never presented as a native channel.
                 EmptyView()
@@ -650,13 +652,14 @@ struct AgentChannelConnectionCenterView: View {
 
     // MARK: - Channel Data
 
-    private static let nativeProviderKinds: [AgentChannelKind] = [.discord, .slack, .telegram]
+    private static let nativeProviderKinds: [AgentChannelKind] = [.discord, .slack, .telegram, .imessage]
 
     private static func nativeSubtitle(for kind: AgentChannelKind) -> String {
         switch kind {
         case .discord: return L("Bot access to allowlisted servers and channels")
         case .slack: return L("Bot access to allowlisted channels and DMs")
         case .telegram: return L("Bot access to allowlisted chats and groups")
+        case .imessage: return L("This Mac's Messages app, allowlisted chats only")
         case .customHTTP: return L("JSON-defined HTTP channel")
         }
     }
@@ -692,6 +695,16 @@ struct AgentChannelConnectionCenterView: View {
         slackReceiveExpected: Bool,
         telegramConfigured: Bool
     ) {
+        // iMessage has no remote credential; "configured" means a verified
+        // helper is present AND allowlisted chats exist. Without the helper
+        // check, a machine that lost its helper (failed download, tampered
+        // digest) would still show Configured/Connected while every action
+        // fails.
+        let imessageConfig = IMessageConnectionService.shared.configuration()
+        let imessageConfigured =
+            IMessageConnectionService.shared.helperAvailable()
+            && (!imessageConfig.readableChatIds.isEmpty || !imessageConfig.writableChatIds.isEmpty)
+        let imessageReceiveExpected = imessageConfig.canStartReceive()
         let discordConfig = DiscordConnectionService.shared.configuration()
         let discordReceiveExpected = discordConfigured
             && !discordConfig.readableChannelIds.isEmpty
@@ -700,10 +713,12 @@ struct AgentChannelConnectionCenterView: View {
         let telegramReceiveExpected = telegramConfig.longPollingEnabled
         let slackDispatch = SlackConnectionService.shared.configuration().inboundDispatch
 
-        anyNativeConfigured = discordConfigured || slackConfigured || telegramConfigured
+        anyNativeConfigured =
+            discordConfigured || slackConfigured || telegramConfigured || imessageConfigured
         nativeConfigured[.discord] = discordConfigured
         nativeConfigured[.slack] = slackConfigured
         nativeConfigured[.telegram] = telegramConfigured
+        nativeConfigured[.imessage] = imessageConfigured
         // Reply state only makes sense on configured channels; the
         // "Available" list would otherwise show a noisy "Replies off".
         nativeRoutingDetails[.discord] =
@@ -712,6 +727,8 @@ struct AgentChannelConnectionCenterView: View {
             slackConfigured ? Self.routingSummary(slackDispatch) : nil
         nativeRoutingDetails[.telegram] =
             telegramConfigured ? Self.routingSummary(telegramConfig.inboundDispatch) : nil
+        nativeRoutingDetails[.imessage] =
+            imessageConfigured ? Self.routingSummary(imessageConfig.inboundDispatch) : nil
 
         Task {
             let discordHealth = await AgentChannelTransportHealthCenter.shared.state(
@@ -725,6 +742,10 @@ struct AgentChannelConnectionCenterView: View {
             let telegramHealth = await AgentChannelTransportHealthCenter.shared.state(
                 connectionId: AgentChannelConnection.nativeTelegramConnectionId,
                 transportId: TelegramLongPollTransportRuntime.transportId
+            )
+            let imessageHealth = await AgentChannelTransportHealthCenter.shared.state(
+                connectionId: AgentChannelConnection.nativeIMessageConnectionId,
+                transportId: IMessageWatchTransportRuntime.transportId
             )
             await MainActor.run {
                 nativeBadges[.discord] = Self.nativeBadge(
@@ -741,6 +762,11 @@ struct AgentChannelConnectionCenterView: View {
                     configured: telegramConfigured,
                     receiveExpected: telegramReceiveExpected,
                     health: telegramHealth
+                )
+                nativeBadges[.imessage] = Self.nativeBadge(
+                    configured: imessageConfigured,
+                    receiveExpected: imessageReceiveExpected,
+                    health: imessageHealth
                 )
             }
         }
@@ -865,6 +891,7 @@ struct AgentChannelConnectionCenterView: View {
             AgentChannelConnection.nativeDiscordConnectionId,
             AgentChannelConnection.nativeSlackConnectionId,
             AgentChannelConnection.nativeTelegramConnectionId,
+            AgentChannelConnection.nativeIMessageConnectionId,
         ]
         for connection in connections where !options.contains(connection.id) {
             options.append(connection.id)
@@ -880,6 +907,8 @@ struct AgentChannelConnectionCenterView: View {
             return AgentChannelKind.slack.displayName
         case AgentChannelConnection.nativeTelegramConnectionId:
             return AgentChannelKind.telegram.displayName
+        case AgentChannelConnection.nativeIMessageConnectionId:
+            return AgentChannelKind.imessage.displayName
         default:
             if let match = connections.first(where: { $0.id == connectionId }), !match.name.isEmpty {
                 return match.name

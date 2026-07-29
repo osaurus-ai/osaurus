@@ -19,6 +19,7 @@ enum AgentChannelConnectionPresentation {
         case AgentChannelConnection.nativeDiscordConnectionId: return .discord
         case AgentChannelConnection.nativeSlackConnectionId: return .slack
         case AgentChannelConnection.nativeTelegramConnectionId: return .telegram
+        case AgentChannelConnection.nativeIMessageConnectionId: return .imessage
         default:
             return AgentChannelConnectionManager.shared.connection(id: connectionId)?.kind
                 ?? .customHTTP
@@ -30,6 +31,7 @@ enum AgentChannelConnectionPresentation {
         case AgentChannelConnection.nativeDiscordConnectionId: return "Discord"
         case AgentChannelConnection.nativeSlackConnectionId: return "Slack"
         case AgentChannelConnection.nativeTelegramConnectionId: return "Telegram"
+        case AgentChannelConnection.nativeIMessageConnectionId: return "iMessage"
         default:
             let connection = AgentChannelConnectionManager.shared.connection(id: connectionId)
             guard let connection, !connection.name.isEmpty else { return connectionId }
@@ -538,6 +540,16 @@ struct AgentChannelAgentRepliesSection: View {
         {
             next.append(Row(kind: .telegram, detail: detail))
         }
+        // iMessage has no remote credential; the verified local helper plays
+        // that role.
+        if IMessageConnectionService.shared.helperAvailable(),
+            let detail = AgentChannelAgentReplySummary.detail(
+                for: agentId,
+                dispatch: IMessageConnectionService.shared.configuration().inboundDispatch
+            )
+        {
+            next.append(Row(kind: .imessage, detail: detail))
+        }
         rows = next
     }
 }
@@ -755,6 +767,7 @@ struct AgentChannelDestinationEditorSheet: View {
             AgentChannelConnection.nativeDiscordConnectionId,
             AgentChannelConnection.nativeSlackConnectionId,
             AgentChannelConnection.nativeTelegramConnectionId,
+            AgentChannelConnection.nativeIMessageConnectionId,
         ]
         options.append(contentsOf: manager.editableConnections().map(\.id))
         if !options.contains(connectionId) {

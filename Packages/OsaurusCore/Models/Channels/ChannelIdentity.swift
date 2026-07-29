@@ -11,6 +11,7 @@ enum ChannelKind: String, Codable, CaseIterable, Sendable {
     case discord
     case slack
     case telegram
+    case imessage
     case jsonAgent = "json_agent"
 }
 

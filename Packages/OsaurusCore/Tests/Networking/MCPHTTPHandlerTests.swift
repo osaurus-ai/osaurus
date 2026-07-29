@@ -32,6 +32,10 @@ struct MCPHTTPHandlerTests {
         "agent_channel_add_reaction",
         "agent_channel_remove_reaction",
         "agent_channel_send_typing",
+        "agent_channel_imessage_send_attachment",
+        "agent_channel_imessage_send_effect",
+        "agent_channel_imessage_create_poll",
+        "agent_channel_imessage_manage_group",
         "agent_channel_publish",
     ]
 

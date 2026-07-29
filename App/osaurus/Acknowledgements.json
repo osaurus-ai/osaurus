@@ -75,6 +75,14 @@
       "licenseUrl": ""
     },
     {
+      "name": "imsg",
+      "identity": "imsg",
+      "version": "0.13.4",
+      "repository": "https://github.com/openclaw/imsg",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/openclaw/imsg/blob/main/LICENSE"
+    },
+    {
       "name": "IkigaJSON",
       "identity": "ikigajson",
       "version": "2.4.4",

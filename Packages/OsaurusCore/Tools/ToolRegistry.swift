@@ -359,6 +359,14 @@ public final class ToolRegistry: ObservableObject {
         AgentChannelAddReactionTool(),
         AgentChannelRemoveReactionTool(),
         AgentChannelSendTypingTool(),
+        // iMessage-only advanced (private-API) actions. Gated inside the
+        // service on per-action operator enablement AND a live bridge
+        // capability probe, in addition to the family-wide external-surface
+        // deny list below.
+        AgentChannelIMessageSendAttachmentTool(),
+        AgentChannelIMessageSendEffectTool(),
+        AgentChannelIMessageCreatePollTool(),
+        AgentChannelIMessageManageGroupTool(),
         // Proactive, binding-scoped publish. Joins the family deny list
         // below automatically, so it can never run from external surfaces.
         AgentChannelPublishTool(),
@@ -380,6 +388,10 @@ public final class ToolRegistry: ObservableObject {
         "agent_channel_add_reaction",
         "agent_channel_remove_reaction",
         "agent_channel_send_typing",
+        "agent_channel_imessage_send_attachment",
+        "agent_channel_imessage_send_effect",
+        "agent_channel_imessage_create_poll",
+        "agent_channel_imessage_manage_group",
         "agent_channel_publish",
     ]
 

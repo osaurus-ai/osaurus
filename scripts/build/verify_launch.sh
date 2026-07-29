@@ -66,4 +66,20 @@ else
   echo "ℹ️ CLI helper not found at $CLI_BIN (skipping)"
 fi
 
+# The bundled imsg helper is another separately-signed Mach-O; a signature or
+# entitlement problem shows up here as an AMFI kill before it can print its
+# version, failing the build before publish.
+IMSG_BIN="$APP/Contents/Helpers/imsg"
+if [[ -x "$IMSG_BIN" ]]; then
+  echo "Spawn-checking imsg helper: $IMSG_BIN"
+  if IMSG_OUT="$("$IMSG_BIN" --version 2>&1)"; then
+    echo "✅ imsg helper runs: $IMSG_OUT"
+  else
+    echo "❌ imsg helper failed to run (--version exited nonzero): $IMSG_OUT" >&2
+    exit 1
+  fi
+else
+  echo "ℹ️ imsg helper not found at $IMSG_BIN (skipping)"
+fi
+
 echo "✅ launch verification passed"

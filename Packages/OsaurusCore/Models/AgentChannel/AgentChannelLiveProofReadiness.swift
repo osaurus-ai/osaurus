@@ -200,6 +200,85 @@ enum AgentChannelLiveProofReadiness {
         )
     }
 
+    static func imessage(_ diagnostics: IMessageConnectionDiagnostics) -> AgentChannelLiveProofReadinessReport {
+        var blockers: [String] = []
+        var manualProof: [String] = []
+        var notes: [String] = diagnostics.notes
+        let readableChatIds = nonEmptyEntries(diagnostics.readableChatIds)
+        let writableChatIds = nonEmptyEntries(diagnostics.writableChatIds)
+        let senderAllowlist = nonEmptyEntries(diagnostics.senderAllowlist)
+
+        if !diagnostics.helperVerified {
+            blockers.append(
+                "Install and verify the imsg helper — bundled or downloaded from iMessage settings (state: \(diagnostics.helperState))."
+            )
+        }
+        if !diagnostics.fullDiskAccess {
+            blockers.append("Grant Full Disk Access so Osaurus can read the Messages database.")
+        }
+        // imsg exposes no sign-in probe; only a future helper release could
+        // report a definite signed-out state.
+        if diagnostics.messagesSignedIn == false {
+            blockers.append("Sign in to Messages.app with an iMessage account on this Mac.")
+        } else if diagnostics.messagesSignedIn == nil {
+            manualProof.append(
+                "Confirm Messages.app is signed in with an Apple Account on this Mac (Osaurus cannot probe this)."
+            )
+        }
+        if !diagnostics.receiveStorageEnabled {
+            blockers.append("Enable Store Incoming Messages for receive proof.")
+        }
+        if !diagnostics.receivePollingEnabled {
+            blockers.append("Enable iMessage receive polling for local desktop receive proof.")
+        }
+        if readableChatIds.isEmpty {
+            blockers.append("Add at least one readable iMessage chat.")
+        }
+        if senderAllowlist.isEmpty {
+            blockers.append("Add at least one authorized iMessage sender.")
+        }
+        if diagnostics.writeEnabled {
+            if writableChatIds.isEmpty {
+                blockers.append("Add at least one writable iMessage chat or turn writes off.")
+            }
+            if !diagnostics.automationMessages {
+                blockers.append("Grant Messages Automation so Osaurus can send through Messages.app.")
+            }
+        }
+        appendDiagnosticFailures(diagnostics.failures, to: &blockers)
+
+        if diagnostics.writeEnabled {
+            manualProof.append("Send one confirmed message to a write-allowlisted iMessage chat.")
+        } else {
+            notes.append("iMessage writes are off; live proof can cover receive/read-only behavior.")
+        }
+        manualProof.append("Receive one inbound iMessage from an authorized sender.")
+        manualProof.append("Confirm an unauthorized sender in the same chat is ignored.")
+        manualProof.append("Restart Osaurus and confirm the iMessage cursor, inbox, and configuration persist.")
+        if diagnostics.advancedActionsEnabled {
+            if diagnostics.bridgeAvailable {
+                manualProof.append(
+                    "Exercise each enabled advanced action (edit, unsend, tapback, typing, attachments) against a write-allowlisted chat."
+                )
+                manualProof.append(
+                    "Restart Messages.app and confirm the bridge re-injects before calling advanced actions again."
+                )
+            } else {
+                notes.append(
+                    "Advanced actions are enabled but the private-API bridge is not active; advanced live proof is blocked until the operator disables SIP and Library Validation on a dedicated Mac."
+                )
+            }
+        }
+
+        return AgentChannelLiveProofReadinessReport(
+            kind: .imessage,
+            status: blockers.isEmpty ? .ready : .blocked,
+            blockers: blockers,
+            manualProof: manualProof,
+            notes: notes
+        )
+    }
+
     static func routeFeedback(source: AgentChannelFeedbackSource) -> AgentChannelFeedbackRouting {
         switch source {
         case .nativeAgentChannel(let kind):
@@ -231,6 +310,8 @@ enum AgentChannelLiveProofReadiness {
             return "Slack"
         case .telegram:
             return "Telegram"
+        case .imessage:
+            return "iMessage"
         case .customHTTP:
             return "Custom HTTP"
         }

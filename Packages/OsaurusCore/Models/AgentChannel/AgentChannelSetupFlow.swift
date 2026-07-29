@@ -140,7 +140,7 @@ enum AgentChannelProviderSetupSection: String, CaseIterable, Sendable {
 /// The unified "Add Channel" picker's catalog: guided native providers first,
 /// the advanced custom HTTP definition last.
 enum AgentChannelAddCatalog {
-    static let choices: [AgentChannelKind] = [.discord, .slack, .telegram, .customHTTP]
+    static let choices: [AgentChannelKind] = [.discord, .slack, .telegram, .imessage, .customHTTP]
 
     /// Custom HTTP is the advanced integration path, visually set apart from
     /// the guided native providers.
@@ -153,6 +153,7 @@ enum AgentChannelAddCatalog {
         case .discord: return L("Guided setup — bot access to allowlisted servers and channels")
         case .slack: return L("Guided setup — bot access to allowlisted channels and DMs")
         case .telegram: return L("Guided setup — bot access to allowlisted chats and groups")
+        case .imessage: return L("Guided setup — this Mac's Messages app, allowlisted chats only")
         case .customHTTP: return L("Advanced — define your own HTTP JSON channel")
         }
     }

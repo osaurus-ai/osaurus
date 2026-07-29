@@ -147,6 +147,12 @@ public enum OsaurusPaths {
         root().appendingPathComponent("cache", isDirectory: true)
     }
 
+    /// Downloaded, digest-pinned helper executables (e.g. the iMessage `imsg`
+    /// helper), one subdirectory per helper name + pinned version.
+    public static func helpers() -> URL {
+        root().appendingPathComponent("helpers", isDirectory: true)
+    }
+
     /// Output directory for locally generated images (vMLXFlux). The image
     /// engine writes the final PNG here and returns the URL; the chat layer
     /// copies the bytes into its attachment store and HTTP `response_format:url`

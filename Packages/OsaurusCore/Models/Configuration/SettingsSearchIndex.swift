@@ -486,7 +486,7 @@ public enum SettingsSearchIndex {
             title: "Channels",
             keywords: [
                 "agent channels", "integrations", "channels", "discord", "slack", "telegram",
-                "custom json", "custom http", "remote channel",
+                "imessage", "custom json", "custom http", "remote channel",
             ]
         ),
         .init(
@@ -525,6 +525,17 @@ public enum SettingsSearchIndex {
                 "telegram bot token", "telegram chat ids", "sender allowlist",
                 "telegram channel allowlist", "telegram long polling",
                 "telegram getupdates", "store incoming messages",
+            ]
+        ),
+        .init(
+            id: "agentChannels.imessage",
+            tab: .agentChannels,
+            section: "Native Integrations",
+            title: "iMessage",
+            keywords: [
+                "imessage", "messages app", "imessage chats", "full disk access",
+                "messages automation", "imsg helper", "sender allowlist",
+                "tapback", "unsend", "sip", "library validation",
             ]
         ),
         .init(

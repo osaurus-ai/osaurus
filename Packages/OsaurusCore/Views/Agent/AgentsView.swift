@@ -981,7 +981,7 @@ private enum DetailTab: String, CaseIterable {
             return L("Peers granted access to this agent — usage and revocation.")
         case .channels:
             return L(
-                "Where this agent replies on Discord, Slack, and Telegram — and where it may start messages of its own."
+                "Where this agent replies on Discord, Slack, Telegram, and iMessage — and where it may start messages of its own."
             )
         case .sandbox: return L("Sandboxed code execution.")
         case .automation: return L("Schedules and file watchers for autonomous behavior.")

@@ -163,7 +163,7 @@ enum AgentChannelAutoDestinationResolver {
         return ids
     }
 
-    /// Live derivation inputs for the three native providers. The write
+    /// Live derivation inputs for the native providers. The write
     /// allowlists come from the same resolved connection views the publish
     /// path enforces at send time, so a derived destination can never
     /// advertise a room the send-time policy would refuse.
@@ -185,6 +185,13 @@ enum AgentChannelAutoDestinationResolver {
                 AgentChannelConnection.nativeTelegramConnectionId,
                 TelegramConnectionService.shared.hasBotToken(),
                 TelegramConnectionService.shared.configuration().inboundDispatch
+            ),
+            (
+                AgentChannelConnection.nativeIMessageConnectionId,
+                // iMessage has no token; a verified helper is what makes
+                // sends possible, so it plays the credential role here.
+                IMessageConnectionService.shared.helperAvailable(),
+                IMessageConnectionService.shared.configuration().inboundDispatch
             ),
         ]
         return natives.compactMap { native in

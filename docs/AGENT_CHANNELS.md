@@ -1,8 +1,8 @@
 # Agent Channels
 
 Agent Channels are provider-neutral communication connections that expose the
-same agent actions across Discord, Slack, Telegram, and custom channel
-definitions.
+same agent actions across Discord, Slack, Telegram, iMessage, and custom
+channel definitions.
 
 ## Standard Actions
 
@@ -23,7 +23,10 @@ definitions.
 
 The model-facing tools use these standard verbs through `agent_channel_*`
 tools. Provider-specific adapters translate the standard action into the
-provider API. Native adapters currently include Discord, Slack, and Telegram.
+provider API. Native adapters currently include Discord, Slack, Telegram, and
+iMessage (macOS only, backed by a pinned, digest-verified `imsg` helper —
+bundled in release builds or downloaded on demand from settings — instead of a
+remote bot API).
 
 The `agent_channel_*` tools are native dynamic tools. They are available to the
 app runtime and can be loaded through the capability flow, but they are not part
@@ -90,16 +93,20 @@ server, bot, or chat and prove:
 
 The smoke boundary uses the visible Agent Channels settings surface and the
 app-managed receive transports: Slack Socket Mode, Telegram Bot API long polling,
-and cursor-based Discord REST polling. It does not require production webhook
-hosting. The transport supervisor starts each configured runtime at launch and
-after settings changes. Live health is shown in each provider's settings.
+cursor-based Discord REST polling, and the iMessage `watch.subscribe` stream
+(with since-rowid cursor resume) against the bundled helper. It does not require production webhook hosting. The
+transport supervisor starts each configured runtime at launch and after settings
+changes. Live health is shown in each provider's settings.
 
 Slack/Telegram release proof uses
 [`AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md`](AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md)
 and
 [`CHANNEL_RELEASE_RUNBOOK_SLACK_TELEGRAM.md`](CHANNEL_RELEASE_RUNBOOK_SLACK_TELEGRAM.md).
-Primary desktop transports are Slack Socket Mode and Telegram long-poll; public
-webhooks are advanced/future proof paths.
+iMessage release proof (helper pin rotation, macOS permissions, advanced
+private-API gating) uses
+[`CHANNEL_RELEASE_RUNBOOK_IMESSAGE.md`](CHANNEL_RELEASE_RUNBOOK_IMESSAGE.md).
+Primary desktop transports are Slack Socket Mode, Telegram long-poll, and
+the iMessage local watch stream; public webhooks are advanced/future proof paths.
 
 ## Release Readiness and Plugin Migration
 
@@ -118,6 +125,14 @@ Use the native readiness classifier in code for support tooling or future UI:
 - Telegram is blocked until the bot token validates, receive storage and long
   polling are enabled, readable chats and authorized senders are configured, and
   no webhook conflicts with long polling.
+- iMessage is blocked until the helper (bundled or downloaded) passes
+  verification, Full Disk
+  Access is granted, receive storage and receiving are enabled, and readable
+  chats and authorized senders are configured. Sending additionally needs Messages
+  Automation permission. Advanced (private-API) actions stay unavailable until
+  the operator both enables them per action in settings and has independently
+  disabled SIP and Library Validation — Osaurus only diagnoses that state and
+  never changes it.
 - Writes remain a separate gate: enabled writes require write-allowlisted
   destinations and confirmed send calls.
 
@@ -439,6 +454,7 @@ The connection center validates channel definitions before saving:
 - `discord` is reserved for the native Discord adapter.
 - `slack` is reserved for the native Slack adapter.
 - `telegram` is reserved for the native Telegram adapter.
+- `imessage` is reserved for the native iMessage adapter.
 - Custom HTTP connections require an HTTP or HTTPS base URL.
 - Custom HTTP base URLs run through the same blocked-host policy used by the
   runner, so localhost/private/link-local targets are rejected before save.

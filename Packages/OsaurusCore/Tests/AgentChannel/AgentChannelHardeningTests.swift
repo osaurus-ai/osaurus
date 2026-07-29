@@ -825,6 +825,7 @@ struct AgentChannelNativeManifestVisibilityTests {
                 let previousDiscord = DiscordConnectionConfigurationStore.overrideDirectory
                 let previousSlack = SlackConnectionConfigurationStore.overrideDirectory
                 let previousTelegram = TelegramConnectionConfigurationStore.overrideDirectory
+                let previousIMessage = IMessageConnectionConfigurationStore.overrideDirectory
                 AgentChannelConfigurationStore.overrideDirectory =
                     root.appendingPathComponent("agent-channels")
                 DiscordConnectionConfigurationStore.overrideDirectory =
@@ -833,11 +834,14 @@ struct AgentChannelNativeManifestVisibilityTests {
                     root.appendingPathComponent("slack")
                 TelegramConnectionConfigurationStore.overrideDirectory =
                     root.appendingPathComponent("telegram")
+                IMessageConnectionConfigurationStore.overrideDirectory =
+                    root.appendingPathComponent("imessage")
                 defer {
                     AgentChannelConfigurationStore.overrideDirectory = previousAgentChannel
                     DiscordConnectionConfigurationStore.overrideDirectory = previousDiscord
                     SlackConnectionConfigurationStore.overrideDirectory = previousSlack
                     TelegramConnectionConfigurationStore.overrideDirectory = previousTelegram
+                    IMessageConnectionConfigurationStore.overrideDirectory = previousIMessage
                     try? FileManager.default.removeItem(at: root)
                 }
 
@@ -863,6 +867,20 @@ struct AgentChannelNativeManifestVisibilityTests {
                     )
                 }
                 try SlackConnectionConfigurationStore.save(SlackConnectionConfiguration())
+
+                // iMessage allowlisted chats light up the manifest too, so
+                // iMessage-only agents discover the channel tools.
+                try IMessageConnectionConfigurationStore.save(
+                    IMessageConnectionConfiguration(readableChatIds: ["iMessage;-;+15551234567"])
+                )
+                await MainActor.run {
+                    #expect(
+                        SystemPromptComposer.hasAnyConfiguredAgentChannel(
+                            configuration: AgentChannelConfiguration()
+                        )
+                    )
+                }
+                try IMessageConnectionConfigurationStore.save(IMessageConnectionConfiguration())
 
                 // An outbound binding alone is also enough.
                 await MainActor.run {

@@ -103,11 +103,15 @@ actor AgentChannelTransportSupervisor {
     private let discordHasBotToken: @Sendable () -> Bool
     private let discordRuntime: any AgentChannelReceiveTransportRuntime
     private let discordPresenceRuntime: any DiscordGatewayPresenceMaintaining
+    private let imessageConfiguration: @Sendable () -> IMessageConnectionConfiguration
+    private let imessageHelperAvailable: @Sendable () -> Bool
+    private let imessageRuntime: any AgentChannelReceiveTransportRuntime
     private var additionalSlackRuntimes: [String: SlackSocketModeTransportRuntime] = [:]
     private var slackStarted = false
     private var telegramStarted = false
     private var discordStarted = false
     private var discordPresenceStarted = false
+    private var imessageStarted = false
 
     init(
         slackConfiguration: @escaping @Sendable () -> SlackConnectionConfiguration = {
@@ -134,7 +138,14 @@ actor AgentChannelTransportSupervisor {
             DiscordConnectionService.shared.hasBotToken()
         },
         discordRuntime: any AgentChannelReceiveTransportRuntime = DiscordPollingTransportRuntime(),
-        discordPresenceRuntime: any DiscordGatewayPresenceMaintaining = DiscordGatewayPresenceRuntime()
+        discordPresenceRuntime: any DiscordGatewayPresenceMaintaining = DiscordGatewayPresenceRuntime(),
+        imessageConfiguration: @escaping @Sendable () -> IMessageConnectionConfiguration = {
+            IMessageConnectionService.shared.configuration()
+        },
+        imessageHelperAvailable: @escaping @Sendable () -> Bool = {
+            IMessageConnectionService.shared.helperAvailable()
+        },
+        imessageRuntime: any AgentChannelReceiveTransportRuntime = IMessageWatchTransportRuntime()
     ) {
         self.slackConfiguration = slackConfiguration
         self.slackHasBotToken = slackHasBotToken
@@ -147,12 +158,16 @@ actor AgentChannelTransportSupervisor {
         self.discordHasBotToken = discordHasBotToken
         self.discordRuntime = discordRuntime
         self.discordPresenceRuntime = discordPresenceRuntime
+        self.imessageConfiguration = imessageConfiguration
+        self.imessageHelperAvailable = imessageHelperAvailable
+        self.imessageRuntime = imessageRuntime
     }
 
     func startFromLaunch() async {
         await refreshSlackRuntime()
         await refreshTelegramRuntime()
         await refreshDiscordRuntime()
+        await refreshIMessageRuntime()
     }
 
     func refreshSlackRuntime(now: Date = Date()) async {
@@ -245,6 +260,19 @@ actor AgentChannelTransportSupervisor {
         await discordRuntime.stop(now: now)
     }
 
+    func refreshIMessageRuntime(now: Date = Date()) async {
+        let configuration = imessageConfiguration()
+        if imessageHelperAvailable() && configuration.canStartReceive() {
+            guard !imessageStarted else { return }
+            imessageStarted = true
+            await imessageRuntime.start(pollInterval: TimeInterval(configuration.pollIntervalSeconds))
+            return
+        }
+        guard imessageStarted else { return }
+        imessageStarted = false
+        await imessageRuntime.stop(now: now)
+    }
+
     func stop(now: Date = Date()) async {
         if slackStarted {
             slackStarted = false
@@ -261,6 +289,10 @@ actor AgentChannelTransportSupervisor {
         if discordPresenceStarted {
             discordPresenceStarted = false
             await discordPresenceRuntime.stop()
+        }
+        if imessageStarted {
+            imessageStarted = false
+            await imessageRuntime.stop(now: now)
         }
         for runtime in additionalSlackRuntimes.values {
             await runtime.stop(now: now)

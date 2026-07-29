@@ -157,7 +157,9 @@ enum AgentChannelInboundActivityPresentation {
             return L("The message had no readable text (stickers and media-only messages are ignored).")
         case "message_too_long":
             return L("The message exceeded the maximum inbound length and was ignored.")
-        case "self_message_denied", "bot_message_denied":
+        case "self_message_denied":
+            return L("Messages sent from your own account are ignored (Ignore Self Messages in Advanced settings).")
+        case "bot_message_denied":
             return L("Messages from bot accounts are ignored (see Advanced settings).")
         case "telegram_mention_detection_unavailable":
             return L("Telegram dispatch does not support mention gating. Turn off Require an @mention for Telegram.")

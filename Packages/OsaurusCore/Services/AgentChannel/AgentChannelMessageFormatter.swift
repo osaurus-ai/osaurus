@@ -44,6 +44,10 @@ enum AgentChannelMessageFormatter {
     static let discordChunkLimit = 2_000
     /// Telegram message `text` caps at 4,096 UTF-16 code units.
     static let telegramChunkLimit = 4_096
+    /// iMessage renders literal plain text (no Markdown). It has no hard
+    /// per-message cap comparable to the others, but very long messages are
+    /// split so a single logical reply doesn't produce one unwieldy bubble.
+    static let plainTextChunkLimit = 8_000
     /// Upper bound on the number of native messages one logical send may
     /// produce. Beyond this the send fails as too long instead of flooding
     /// the room.
@@ -69,6 +73,102 @@ enum AgentChannelMessageFormatter {
 
     static func telegramHTML(_ markdown: String) -> String {
         telegramBlocks(markdown).map(\.joined).joined(separator: "\n\n")
+    }
+
+    // MARK: - Plain text (iMessage)
+
+    /// Render agent Markdown to readable plain text (no markup) and pack it
+    /// into `limit`-sized chunks. iMessage shows literal characters, so
+    /// emphasis markers would otherwise appear as `**bold**` in the bubble.
+    static func plainTextChunks(_ markdown: String, limit: Int = plainTextChunkLimit) -> [String] {
+        pack(plainTextBlocks(markdown), limit: limit)
+    }
+
+    private static func plainTextBlocks(_ markdown: String) -> [AgentChannelRenderedBlock] {
+        parseBlocks(markdown).map { block in
+            switch block.kind {
+            case .paragraph(let text):
+                return AgentChannelRenderedBlock(body: stripInlineMarkdown(text))
+            case .heading(_, let text):
+                return AgentChannelRenderedBlock(body: stripInlineMarkdown(text))
+            case .blockquote(let content):
+                let quoted = content
+                    .split(separator: "\n", omittingEmptySubsequences: false)
+                    .map { "> \(stripInlineMarkdown(String($0)))" }
+                    .joined(separator: "\n")
+                return AgentChannelRenderedBlock(body: quoted)
+            case .list(let items):
+                let lines = items.map { item -> String in
+                    let indent = String(repeating: "  ", count: max(0, item.indentLevel))
+                    let marker = item.isOrdered ? "\(item.displayNumber)." : "•"
+                    return "\(indent)\(marker) \(stripInlineMarkdown(item.text))"
+                }
+                return AgentChannelRenderedBlock(body: lines.joined(separator: "\n"))
+            case .code(let code, _):
+                return AgentChannelRenderedBlock(body: code)
+            case .table(let headers, let rows):
+                return AgentChannelRenderedBlock(body: renderPipeTable(headers: headers, rows: rows))
+            case .math(let latex):
+                return AgentChannelRenderedBlock(body: latex)
+            case .image(let url, let altText):
+                let label = altText.isEmpty ? "attachment" : altText
+                return AgentChannelRenderedBlock(body: "\(label): \(url)")
+            case .horizontalRule:
+                return AgentChannelRenderedBlock(body: "———")
+            }
+        }
+    }
+
+    /// Remove inline emphasis / code / link markup, keeping the human-readable
+    /// text (link labels with the URL appended in parentheses).
+    static func stripInlineMarkdown(_ text: String) -> String {
+        var output = ""
+        var index = text.startIndex
+
+        while index < text.endIndex {
+            let rest = text[index...]
+            if rest.hasPrefix("`") {
+                if let close = findClosing(in: text, after: text.index(index, offsetBy: 1), marker: "`") {
+                    output += String(text[text.index(index, offsetBy: 1) ..< close])
+                    index = text.index(after: close)
+                    continue
+                }
+            } else if rest.hasPrefix("**") || rest.hasPrefix("__") {
+                let marker = String(rest.prefix(2))
+                let innerStart = text.index(index, offsetBy: 2)
+                if let close = findClosing(in: text, after: innerStart, marker: marker) {
+                    output += stripInlineMarkdown(String(text[innerStart ..< close]))
+                    index = text.index(close, offsetBy: 2)
+                    continue
+                }
+            } else if rest.hasPrefix("~~") {
+                let innerStart = text.index(index, offsetBy: 2)
+                if let close = findClosing(in: text, after: innerStart, marker: "~~") {
+                    output += stripInlineMarkdown(String(text[innerStart ..< close]))
+                    index = text.index(close, offsetBy: 2)
+                    continue
+                }
+            } else if rest.hasPrefix("*") || rest.hasPrefix("_") {
+                let marker = String(rest.prefix(1))
+                let innerStart = text.index(index, offsetBy: 1)
+                if let close = findClosing(in: text, after: innerStart, marker: marker), close > innerStart {
+                    output += stripInlineMarkdown(String(text[innerStart ..< close]))
+                    index = text.index(after: close)
+                    continue
+                }
+            } else if rest.hasPrefix("["), let link = parseInlineLink(in: text, from: index) {
+                if isSafeLinkURL(link.url) {
+                    output += "\(link.label) (\(link.url))"
+                } else {
+                    output += link.label
+                }
+                index = link.end
+                continue
+            }
+            output += String(text[index])
+            index = text.index(after: index)
+        }
+        return output
     }
 
     // MARK: - Markdown flavors (Slack markdown_text / Discord content)
