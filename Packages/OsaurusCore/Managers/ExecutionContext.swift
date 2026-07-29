@@ -133,30 +133,19 @@ public final class ExecutionContext: ObservableObject {
         chatSession.send(prompt)
     }
 
-    /// Resolve the stored bookmark and set the work folder context before execution.
+    /// Resolve the stored bookmark onto THIS context's session folder state
+    /// before execution. An explicit dispatch bookmark overrides whatever
+    /// folder the session had persisted (the dispatch asked for that folder);
+    /// without one, a reattached session keeps its own restored folder. Never
+    /// touches any other session's folder or process-wide state.
     private func activateFolderContextIfNeeded() async {
         guard let bookmark = folderBookmark else { return }
-        do {
-            // Resolving a security-scoped bookmark does synchronous IPC to the
-            // scoped-bookmarks agent and can take seconds; keep it off the main
-            // actor so it doesn't trip the app-hang watchdog.
-            let (url, isStale) = try await Task.detached(priority: .userInitiated) {
-                var isStale = false
-                let url = try URL(
-                    resolvingBookmarkData: bookmark,
-                    options: .withSecurityScope,
-                    relativeTo: nil,
-                    bookmarkDataIsStale: &isStale
-                )
-                return (url, isStale)
-            }.value
-            guard !isStale else {
-                print("[ExecutionContext] Folder bookmark is stale, skipping")
-                return
-            }
-            await FolderContextService.shared.setFolder(url)
-        } catch {
-            print("[ExecutionContext] Failed to resolve folder bookmark: \(error)")
+        let restored = await chatSession.folderState.restoreAndWait(
+            bookmark: bookmark,
+            path: nil
+        )
+        if restored == nil {
+            print("[ExecutionContext] Folder bookmark could not be restored, skipping")
         }
     }
 

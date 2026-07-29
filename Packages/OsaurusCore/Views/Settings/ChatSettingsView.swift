@@ -8,7 +8,7 @@
 //
 //  Persistence is scoped to the fields this view owns. Saving does a
 //  load-modify-write on `ChatConfiguration` touching only the chat-owned
-//  fields (context length, top-P, tool attempts, clipboard, greeting
+//  fields (top-P, tool attempts, clipboard, greeting
 //  persona) so the General settings' hotkey + core-model values — which
 //  live in the same struct — are never clobbered. The default-agent
 //  persona / generation knobs persist to `DefaultAgentConfiguration`.
@@ -33,11 +33,14 @@ struct ChatSettingsView: View {
     @State private var tempSystemPrompt: String = ""
     @State private var tempChatTemperature: String = ""
     @State private var tempChatMaxTokens: String = ""
-    @State private var tempChatContextLength: String = ""
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
     @State private var tempEnableClipboardMonitoring: Bool = false
     @State private var tempWarmModelsOnLoad: Bool = true
+    /// AI-generated chat titles from the first completed exchange. Default
+    /// off while the feature bakes across releases (see
+    /// `ChatConfiguration.autoGenerateChatTitles`).
+    @State private var tempAutoGenerateChatTitles: Bool = false
     /// Smooth streaming: pace the visible reveal at ~180 tok/s regardless
     /// of how fast / bursty the network delivers tokens. Default on.
     /// Bound to `UserDefaults` key `chatSmoothStreamingEnabled` which
@@ -51,6 +54,15 @@ struct ChatSettingsView: View {
     /// immediately, so it's excluded from the debounced save baseline.
     @AppStorage("chatExpandThinkingWhileStreamingEnabled")
     private var expandThinkingWhileStreamingEnabled: Bool = false
+    /// Roll up runs of consecutive thinking / tool-call rows into a single
+    /// expandable "Worked for …" row so agent loops don't push the
+    /// conversation out of view. Default off. Bound to `UserDefaults` key
+    /// `ContentBlock.ActivityRollupSetting.defaultsKey`, read by
+    /// `BlockMemoizer` on every display rebuild. Applied immediately (a
+    /// notification rebuilds open chats), so it's excluded from the
+    /// debounced save baseline.
+    @AppStorage(ContentBlock.ActivityRollupSetting.defaultsKey)
+    private var activityRollupEnabled: Bool = false
     /// Free-text "voice" instruction for AI-generated empty-state
     /// greetings — the global default voice. The on/off is per-agent
     /// (`AgentSettings.generativeGreetingsEnabled`). Empty = use the
@@ -274,6 +286,19 @@ struct ChatSettingsView: View {
                 )
 
                 SettingsToggle(
+                    title: L("Group Thinking & Tool Activity"),
+                    description:
+                        "Group consecutive thinking and tool-call rows into a single expandable summary row, so long agent runs don't push the conversation out of view. Turn off to always show every step as its own row.",
+                    isOn: $activityRollupEnabled
+                )
+                .onChange(of: activityRollupEnabled) { _, _ in
+                    NotificationCenter.default.post(
+                        name: ContentBlock.activityRollupSettingChanged,
+                        object: nil
+                    )
+                }
+
+                SettingsToggle(
                     title: L("Clipboard Monitoring"),
                     description:
                         "Automatically detect and offer text from any app as context. Includes 'grab selection' feature when summoning Osaurus.",
@@ -286,6 +311,8 @@ struct ChatSettingsView: View {
                         "Preload the selected local model and prefill your chat context so the first response starts faster. The model selector shows yellow while warming and green when ready.",
                     isOn: $tempWarmModelsOnLoad
                 )
+
+                autoTitleToggleRow
 
                 SettingsToggle(
                     title: L("Show Notch Overlay on Menu Bar"),
@@ -300,7 +327,7 @@ struct ChatSettingsView: View {
                 SettingsSubsection(label: "Generative Greetings") {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(
-                            "Default voice for AI-generated greetings + quick actions. Turn greetings on per agent under the agent's Features tab; each agent can also override this voice in its Customization tab.",
+                            "Default voice for AI-generated greetings + quick actions. Turn greetings on per agent under the agent's Appearance tab, where each agent can also override this voice.",
                             bundle: .module
                         )
                         .font(.system(size: 11))
@@ -331,22 +358,14 @@ struct ChatSettingsView: View {
                     anchorId: "settings.chat.temperature"
                 )
                 SettingsStepperField(
-                    label: "Max Tokens",
-                    help: "Maximum response tokens",
+                    label: "Default Agent Max Output Tokens",
+                    help:
+                        "Optional per-response output cap for the default agent. Leave blank to inherit the active model bundle's generation_config maximum. This is not the model context window or KV retention.",
                     text: $tempChatMaxTokens,
                     range: 1 ... 65536,
                     step: 1024,
                     defaultValue: 16384,
                     anchorId: "settings.chat.maxTokens"
-                )
-                SettingsStepperField(
-                    label: "Context Length",
-                    help: "Context window for remote models",
-                    text: $tempChatContextLength,
-                    range: 2048 ... 256000,
-                    step: 1024,
-                    defaultValue: 128000,
-                    anchorId: "settings.chat.contextLength"
                 )
                 SettingsSliderField(
                     label: "Top P Override",
@@ -369,6 +388,69 @@ struct ChatSettingsView: View {
                 )
             }
         }
+    }
+
+    /// Hand-built `SettingsToggle` twin: the stock control only takes a plain
+    /// string description, and this one styles "core model" as an underlined
+    /// accent-colored deep link into the General tab's Core Model picker —
+    /// same pattern as the transcription cleanup toggle.
+    private var autoTitleToggleRow: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Automatically Name Chats", bundle: .module)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(theme.primaryText)
+                Text(autoTitleDescription)
+                    .font(.system(size: 11))
+                    .tint(theme.accentColor)
+                    .environment(
+                        \.openURL,
+                        OpenURLAction { _ in
+                            navigateToCoreModelSetting()
+                            return .handled
+                        }
+                    )
+            }
+
+            Spacer()
+
+            Toggle("", isOn: $tempAutoGenerateChatTitles)
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .labelsHidden()
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.inputBorder, lineWidth: 1)
+                )
+        )
+        .settingsLandingAnchor("settings.chat.autoGenerateTitles")
+    }
+
+    /// Description for the auto-title toggle, with "core model" rendered as
+    /// an underlined link in the theme's accent color.
+    private var autoTitleDescription: AttributedString {
+        var text = AttributedString(
+            L(
+                "Use the core model to generate a short descriptive title after a chat's first response, replacing the first-message preview. Runs in the background and never interrupts your conversation; manual renames always win."
+            )
+        )
+        text.foregroundColor = theme.tertiaryText
+        if let range = text.range(of: L("core model")) {
+            text[range].foregroundColor = theme.accentColor
+            text[range].underlineStyle = .single
+            text[range].link = URL(string: "osaurus-settings://core-model")
+        }
+        return text
+    }
+
+    /// Deep-links to the Core Model picker in the General settings tab.
+    private func navigateToCoreModelSetting() {
+        SettingsHighlightCoordinator.shared.request("settings.general.coreModel")
+        ManagementStateManager.shared.selectedTab = .settings
     }
 
     private var personalityEditorBlock: some View {
@@ -453,7 +535,7 @@ struct ChatSettingsView: View {
     ) {
         // The Default agent's persona and generation knobs live on
         // `DefaultAgentConfiguration` (split off from `ChatConfiguration`);
-        // the numeric generation knobs (context length, top-P, tool
+        // the numeric generation knobs (top-P and tool
         // attempts) and clipboard / greeting voice live on `ChatConfiguration`.
         // Tools and memory are intentionally NOT surfaced here: the default
         // agent's tools toggle lives in the Agents tab and the global memory
@@ -461,11 +543,11 @@ struct ChatSettingsView: View {
         tempSystemPrompt = defaultAgent.systemPrompt
         tempChatTemperature = defaultAgent.temperature.map { String($0) } ?? ""
         tempChatMaxTokens = defaultAgent.maxTokens.map(String.init) ?? ""
-        tempChatContextLength = chat.contextLength.map(String.init) ?? ""
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
         tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
         tempWarmModelsOnLoad = chat.warmModelsOnLoad
+        tempAutoGenerateChatTitles = chat.autoGenerateChatTitles
         // Storage convention: empty string = "use the built-in default."
         // The editor never displays an empty state — we hydrate it with the
         // built-in default so the text is editable in place. `saveConfiguration`
@@ -489,11 +571,11 @@ struct ChatSettingsView: View {
         tempSystemPrompt = ""
         tempChatTemperature = ""
         tempChatMaxTokens = ""
-        tempChatContextLength = ""
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
         tempEnableClipboardMonitoring = chatDefaults.enableClipboardMonitoring
         tempWarmModelsOnLoad = chatDefaults.warmModelsOnLoad
+        tempAutoGenerateChatTitles = chatDefaults.autoGenerateChatTitles
         tempGreetingPersona = GenerativeGreetingService.defaultPersonaInstruction
 
         showSuccess("Chat settings restored to defaults")
@@ -506,11 +588,11 @@ struct ChatSettingsView: View {
         var systemPrompt: String
         var temperature: String
         var maxTokens: String
-        var contextLength: String
         var topP: String
         var maxToolAttempts: String
         var enableClipboardMonitoring: Bool
         var warmModelsOnLoad: Bool
+        var autoGenerateChatTitles: Bool
         var greetingPersona: String
     }
 
@@ -519,11 +601,11 @@ struct ChatSettingsView: View {
             systemPrompt: tempSystemPrompt,
             temperature: tempChatTemperature,
             maxTokens: tempChatMaxTokens,
-            contextLength: tempChatContextLength,
             topP: tempChatTopP,
             maxToolAttempts: tempChatMaxToolAttempts,
             enableClipboardMonitoring: tempEnableClipboardMonitoring,
             warmModelsOnLoad: tempWarmModelsOnLoad,
+            autoGenerateChatTitles: tempAutoGenerateChatTitles,
             greetingPersona: tempGreetingPersona
         )
     }
@@ -566,12 +648,6 @@ struct ChatSettingsView: View {
             return max(1, v)
         }()
 
-        let trimmedContext = tempChatContextLength.trimmingCharacters(in: .whitespacesAndNewlines)
-        let parsedContext: Int? = {
-            guard !trimmedContext.isEmpty, let v = Int(trimmedContext) else { return nil }
-            return max(2048, v)
-        }()
-
         let trimmedTopPChat = tempChatTopP.trimmingCharacters(in: .whitespacesAndNewlines)
         let parsedTopP: Float? = {
             guard !trimmedTopPChat.isEmpty, let v = Float(trimmedTopPChat) else { return nil }
@@ -592,11 +668,15 @@ struct ChatSettingsView: View {
         chatCfg.systemPrompt = ""
         chatCfg.temperature = nil
         chatCfg.maxTokens = nil
-        chatCfg.contextLength = parsedContext
+        // Unknown-model context metadata fallback is owned by
+        // Server → Cache → Context & KV Policy. Never rewrite it from the
+        // Chat form, which otherwise recreates a competing "context length"
+        // control that users can mistake for the live KV cap.
         chatCfg.topPOverride = parsedTopP
         chatCfg.maxToolAttempts = parsedMaxToolAttempts
         chatCfg.enableClipboardMonitoring = tempEnableClipboardMonitoring
         chatCfg.warmModelsOnLoad = tempWarmModelsOnLoad
+        chatCfg.autoGenerateChatTitles = tempAutoGenerateChatTitles
         chatCfg.greetingPersona = {
             // Collapse an unedited built-in default back to "" so storage stays
             // in "inherit the default" mode.

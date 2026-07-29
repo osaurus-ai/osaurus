@@ -308,14 +308,23 @@ struct RemoteProvidersView: View {
 
     private func refreshCredentialPresence() {
         let providers = userConfiguredProviders
+        let previous = credentialPresence
         Task {
             var next: [UUID: RemoteProviderCredentialPresence] = [:]
             for provider in providers {
                 let providerID = provider.id
+                let previousPresence = previous[providerID]
+                // Typed availability: a transiently unavailable keychain
+                // (locked, interaction required) keeps the previous known
+                // presence instead of flashing a false "missing key" warning.
                 let presence = await RemoteProviderKeychain.runOffCooperativeExecutor {
                     RemoteProviderCredentialPresence(
-                        apiKeyPresent: RemoteProviderKeychain.hasAPIKey(for: providerID),
-                        oauthTokensPresent: RemoteProviderKeychain.hasOAuthTokens(for: providerID)
+                        apiKeyPresent: RemoteProviderKeychain.apiKeyAvailability(for: providerID)
+                            .presenceForUI(previous: previousPresence?.apiKeyPresent),
+                        oauthTokensPresent: RemoteProviderKeychain.oauthTokensAvailability(
+                            for: providerID
+                        )
+                        .presenceForUI(previous: previousPresence?.oauthTokensPresent)
                     )
                 }
                 next[providerID] = presence
@@ -532,8 +541,9 @@ private struct ProviderConnectivityCenterPanel: View {
     }
 
     private var summaryText: String {
-        L(
-            "\(snapshot.connectedCount)/\(snapshot.totalCount) connected - \(snapshot.attentionCount) attention - \(snapshot.modelCount) models"
+        let modelLabel = snapshot.modelCount == 1 ? L("1 model") : L("\(snapshot.modelCount) models")
+        return L(
+            "\(snapshot.connectedCount)/\(snapshot.totalCount) connected - \(snapshot.attentionCount) attention - \(modelLabel)"
         )
     }
 

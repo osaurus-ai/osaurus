@@ -103,8 +103,8 @@ All `db_*` tools live in [`Tools/Database/DatabaseTools.swift`](../Packages/Osau
 | ---------------- | ----------------------------------------------------------------------------------------- |
 | `db_query`       | Run a read-only SELECT. Accepts `limit` / `offset` for paging; rows are capped (hard max **5000**) and a `truncated` flag flips when the cap or an oversized payload kicks in. |
 | `db_execute`     | First-class SQL, including **multi-statement** transform scripts (`INSERT … SELECT`, CTEs, window functions) inside one transaction. Pass `path` instead of `sql` to run a `.sql` script from disk. Restricted by host policy (see below); reach for the typed tools first. |
-| `db_define_view` | Save a parameterised SELECT under a name. Surfaces in the Views tab.                       |
-| `db_run_view`    | Execute a saved view with arguments.                                                       |
+| `db_define_view` | Save a SELECT/CTE definition under a name. Surfaces in the Views tab.                      |
+| `db_run_view`    | Execute a saved view by name. Saved views are stored definitions, not SQL tables — this is the only way to run one; `db_query` cannot reference a view name in FROM. |
 | `db_list_views`  | Enumerate saved views.                                                                     |
 | `db_drop_view`   | Delete a saved view definition.                                                            |
 
@@ -125,7 +125,7 @@ The agent DB's first wall used to be data movement: a model that needed to load 
 
 ### Three ways to load data
 
-1. **`db_import(table, path, …)` — host-mediated file load.** When the data already lives in a file in the agent's sandbox workspace (`/workspace/...`) or host working folder, this is the right tool. The host resolves the path (sandbox agent dir or [`FolderToolManager`](../Packages/OsaurusCore/Services/Folder/FolderToolManager.swift) root), reads and parses it (CSV/TSV/JSON/JSONL, auto-detected), creates the table from the file's columns when needed, and bulk-loads every row — in **one** tool call, with **zero** row bytes in the model context. Pass `keyColumns` to upsert instead of append. Parsing and schema resolution are shared with the UI importer through [`AgentImportRunner`](../Packages/OsaurusCore/Tools/Database/AgentImportRunner.swift).
+1. **`db_import(table, path, …)` — host-mediated file load.** When the data already lives in a file in the agent's sandbox workspace (`/workspace/...`) or host working folder, this is the right tool. The host resolves the path (sandbox agent dir or [`FolderToolManager`](../Packages/OsaurusCore/Services/Folder/FolderToolManager.swift) root), reads and parses it (CSV/TSV/JSON/JSONL, auto-detected), creates the table from the file's columns when needed, and bulk-loads every row — in **one** tool call, with **zero** row bytes in the model context. `mode` accepts exactly `insert` (the default; plain row appends) or `upsert` with `key_columns` (dedupes on the conflict columns) — there is no `append` mode. Parsing and schema resolution are shared with the UI importer through [`AgentImportRunner`](../Packages/OsaurusCore/Tools/Database/AgentImportRunner.swift).
 2. **`db_insert` / `db_upsert` with `rows[]` — in-context bulk write.** When the rows are something the model *computed* (not a file), it can hand the whole batch over in a single call instead of looping. Backed by [`AgentDatabase.insertMany` / `upsertMany`](../Packages/OsaurusCore/Storage/AgentDatabase.swift), which chunk the write and run it inside one transaction.
 3. **`db_execute` multi-statement transforms — don't move the data at all.** For aggregation/derivation, the most efficient path is to compute *in SQL* (`INSERT INTO totals SELECT … GROUP BY …`) rather than pulling rows into context. The whole script runs in one transaction.
 

@@ -15,7 +15,7 @@
 //       3. drop oldest-touched tables last.
 //   - Always include all table names + purposes.
 //   - Append a trailer when truncated: "Schema is large. Call
-//     `db.schema()` for full details on specific tables."
+//     `db_schema` for full details on specific tables."
 //   - Never include sample data — privacy: cloud models would see
 //     row values in every request.
 //
@@ -85,7 +85,7 @@ public enum SchemaSnapshot {
         }
 
         if truncated || output.count > charBudget {
-            output += "\n\nSchema is large. Call `db.schema()` for full details on specific tables."
+            output += "\n\nSchema is large. Call `db_schema` for full details on specific tables."
         }
         return output
     }
@@ -94,7 +94,7 @@ public enum SchemaSnapshot {
     public static let emptyStateBlock: String = """
         ## Current database state
 
-        No tables yet. When the user asks you to track or organize something, propose a schema in chat first, get their confirmation, then call db.create_table().
+        No tables yet. When the user asks you to track or organize something, propose a schema in chat first, get their confirmation, then call `db_create_table`.
         """
 
     // MARK: - Renderer
@@ -137,7 +137,9 @@ public enum SchemaSnapshot {
         }
 
         if !views.isEmpty {
-            lines.append("Views:")
+            lines.append(
+                "Views (stored SELECT definitions — run with `db_run_view(name)`; not queryable as tables in `db_query`):"
+            )
             lines.append("")
             for view in views {
                 lines.append("- \(view.name) (\(view.renderHint), refreshes \(view.refresh))")
@@ -151,7 +153,7 @@ public enum SchemaSnapshot {
         lines.append("System columns on every user table: _created_at, _updated_at, _deleted_at.")
         lines.append(
             "Soft-deleted rows have a non-null `_deleted_at`. Typed tools hide them by default; "
-            + "add `_deleted_at IS NULL` in your `db_query` SQL when you want the same filter."
+                + "add `_deleted_at IS NULL` in your `db_query` SQL when you want the same filter."
         )
         return lines.joined(separator: "\n")
     }

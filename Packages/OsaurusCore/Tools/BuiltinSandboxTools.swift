@@ -251,15 +251,15 @@ internal func hostPathRedirectHint(path: String) -> String? {
         if path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/") {
             return
                 "`\(path)` is on your read-only host workspace (`\(root)`), which the "
-                + "Linux sandbox cannot see. Use `file_read` to list the directory or read "
+                + "sandbox cannot see. Use `file_read` to list the directory or read "
                 + "host files, or `file_search` to search them — not `sandbox_*` tools."
         }
     }
 
     if macHostPathPrefixes.contains(where: { path.hasPrefix($0) }) {
         return
-            "`\(path)` looks like a macOS host path; the Linux sandbox cannot see the "
-            + "host filesystem. If you meant a file in your host workspace, use "
+            "`\(path)` looks like a host path outside the sandbox, which the sandbox "
+            + "cannot see. If you meant a file in your host workspace, use "
             + "`file_read` / `file_search` instead."
     }
 
@@ -281,7 +281,7 @@ internal func sandboxDirectoryReadHint(stderr: String) -> String? {
     if ChatExecutionContext.hostReadOnlyScope != nil {
         hint +=
             " To list your read-only host workspace instead, use `file_read` — "
-            + "the Linux sandbox cannot see the host workspace."
+            + "the sandbox cannot see the host workspace."
     }
     return hint
 }
@@ -304,7 +304,7 @@ internal func hostWorkspaceSearchRedirectHint(resolvedPath: String, home: String
     }
     guard normalize(resolvedPath) == normalize(home) else { return nil }
     return
-        "No matches — this searched your Linux sandbox home, which is separate "
+        "No matches — this searched your sandbox home, which is separate "
         + "from (and usually empty compared to) your read-only host workspace. "
         + "If you meant your workspace, use `file_read` to list it or "
         + "`file_search` to search it."
@@ -479,6 +479,23 @@ internal func sandboxBridgeSearch(
     )
 }
 
+/// Write or edit a sandbox file for a WRITABLE-combined-mode
+/// `file_write` / `file_edit` call on a `/workspace/...` path. Forwards
+/// the (already-validated) arguments to the sandbox writer — presence of
+/// `old_string` selects the in-place edit branch, exactly like the host
+/// tools' argument shapes — and re-labels the success envelope with the
+/// calling tool's name so each tool has one output shape on both routes.
+internal func sandboxBridgeWrite(
+    _ bridge: SandboxReadBridge,
+    tool: String,
+    args: [String: Any]
+) async throws -> String {
+    let raw = try await SandboxWriteFileTool(agentName: bridge.agentName, home: bridge.home)
+        .execute(argumentsJSON: encodeBridgeArgs(args))
+    guard !ToolEnvelope.isError(raw) else { return raw }
+    return ToolEnvelope.success(tool: tool, result: ToolEnvelope.successPayload(raw))
+}
+
 /// Re-shape a sandbox read/search success envelope into the host-style
 /// text envelope the unified `file_*` tools return, so a given tool has
 /// one output shape regardless of route. Sandbox failure envelopes (which
@@ -596,7 +613,7 @@ internal func sandboxExecHostPathHint(
             || lowered.isEmpty)
     guard looksMissing else { return nil }
     return
-        "That path looks like a macOS host path, which the Linux sandbox can't "
+        "That path looks like a host path outside the sandbox, which it can't "
         + "see. To read your read-only host workspace, use `file_read` "
         + "(reads files, lists directories) / `file_search` — not `sandbox_exec`."
 }
@@ -1531,7 +1548,10 @@ private func shellEscapeSingleQuoted(_ s: String) -> String {
 
 // MARK: - sandbox_write_file
 
-private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
+// Internal (not private): writable combined mode routes host
+// `file_write` / `file_edit` calls with `/workspace/...` paths through
+// this tool via `sandboxBridgeWrite`.
+internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_write_file"
     let description =
         "Write a file, or edit it in place — always pass `path` (that exact key) as the FIRST argument. "
@@ -1542,6 +1562,8 @@ private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         + "context lines if needed; it fails if `old_string` is missing or matches multiple locations."
     let agentName: String
     let home: String
+
+    var mutatesSandboxWorkspace: Bool { true }
 
     var parameters: JSONValue? {
         .object([
@@ -1879,6 +1901,9 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
     /// `timeout` (idle ceiling) as the safety net.
     var bypassRegistryTimeout: Bool { true }
 
+    /// Arbitrary shell (mv/rm/redirects/build output) mutates the workspace.
+    var mutatesSandboxWorkspace: Bool { true }
+
     var parameters: JSONValue? {
         // The "Ignored when `background:true`" caveat only makes sense when
         // the background flag is actually advertised.
@@ -2023,6 +2048,19 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
                     logFile: logFile,
                     command: command
                 )
+                // The job's file mutations land after this tool call
+                // returns, so the foreground checkpoint can't see them.
+                // Record a pending pre-manifest now; the tracker
+                // reconciles when the job exits/is killed (or after
+                // relaunch for jobs that died with the previous run).
+                if let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty {
+                    await SandboxWorkspaceChangeTracker.shared.registerBackgroundJob(
+                        sessionId: sessionId,
+                        agentName: agentName,
+                        pid: pid,
+                        sourceTool: name
+                    )
+                }
                 // Tee the log file into the chat UI so background jobs
                 // get the same Cursor-style live tail as foreground
                 // ones. Terminate maps to `kill -<sig> <pid>` via
@@ -2217,6 +2255,10 @@ private func registerBackgroundLiveExec(
                 let killedByUser = await userTerminated.value
                 statusBox.send(killedByUser ? .killed(reason: "user") : .exited(0))
                 tailer.stop()
+                // Fold the finished job's workspace mutations into the
+                // owning chat's tracked change set.
+                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                    agentName: agentName, pid: pid)
                 // Pid is gone — release the registry entry (after its grace
                 // tail) so it doesn't leak for the lifetime of the process.
                 // The grace window keeps the terminal status observable for a
@@ -2341,6 +2383,10 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
     let agentName: String
     let home: String
 
+    /// `kill` can stop a job mid-write; wrapping in a checkpoint keeps the
+    /// change list honest about whatever state the files were left in.
+    var mutatesSandboxWorkspace: Bool { true }
+
     var parameters: JSONValue? {
         .object([
             "type": .string("object"),
@@ -2422,6 +2468,8 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             let tail = await tailIfTracked(job: job, lines: tailLines)
             if !alive {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
+                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                    agentName: agentName, pid: pid)
             }
             return sandboxSuccess(
                 tool: name,
@@ -2453,6 +2501,8 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             let tail = await tailIfTracked(job: job, lines: tailLines)
             if exited {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
+                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                    agentName: agentName, pid: pid)
             }
             return sandboxSuccess(
                 tool: name,
@@ -2476,6 +2526,8 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             let dead = killResult.stdout.contains("dead")
             if dead {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
+                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                    agentName: agentName, pid: pid)
             }
             return sandboxSuccess(
                 tool: name,
@@ -2623,17 +2675,33 @@ actor SandboxInstallLock {
 /// dispatch layer.
 private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_install"
-    let description =
-        "Install packages into the sandbox. Pass `manager`: `apk` for system packages "
-        + "(runs as root, e.g. `ffmpeg`), `pip` for Python packages (into the agent venv at "
-        + "`~/.venv/`), or `npm` for Node packages (into a per-agent workspace). "
-        + "**Use this instead of `sandbox_exec(\"apk add …\" / \"pip install …\" / \"npm install …\")`** "
-        + "so the index refresh, venv/workspace bootstrap, retry harness, and per-agent "
-        + "serialization apply. Installed `python3`/CLI binaries land on your PATH — call them "
-        + "from any `sandbox_exec` cwd. Example: `{\"manager\": \"pip\", \"packages\": [\"numpy\", \"flask\"]}`."
+    /// `apk` only exists in the Linux VM backend — on Seatbelt the schema
+    /// and description omit it entirely so the model is never offered a
+    /// manager that can only fail.
+    private static var hasApk: Bool { SandboxBackend.current == .virtualMachine }
+    var description: String {
+        Self.hasApk
+            ? "Install packages into the sandbox. Pass `manager`: `apk` for system packages "
+                + "(runs as root, e.g. `ffmpeg`), `pip` for Python packages (into the agent venv at "
+                + "`~/.venv/`), or `npm` for Node packages (into a per-agent workspace). "
+                + "**Use this instead of `sandbox_exec(\"apk add …\" / \"pip install …\" / \"npm install …\")`** "
+                + "so the index refresh, venv/workspace bootstrap, retry harness, and per-agent "
+                + "serialization apply. Installed `python3`/CLI binaries land on your PATH — call them "
+                + "from any `sandbox_exec` cwd. Example: `{\"manager\": \"pip\", \"packages\": [\"numpy\", \"flask\"]}`."
+            : "Install packages into the sandbox. Pass `manager`: `pip` for Python packages "
+                + "(into the agent venv at `~/.venv/`) or `npm` for Node packages (into a per-agent "
+                + "workspace). **Use this instead of `sandbox_exec(\"pip install …\" / \"npm install …\")`** "
+                + "so the venv/workspace bootstrap, retry harness, and per-agent serialization apply. "
+                + "Installed `python3`/CLI binaries land on your PATH — call them from any "
+                + "`sandbox_exec` cwd. Example: `{\"manager\": \"pip\", \"packages\": [\"numpy\", \"flask\"]}`."
+    }
     let agentId: String
     let agentName: String
     let home: String
+
+    /// pip/npm write lockfiles + manifests into the agent workspace
+    /// (dependency dirs themselves are excluded from tracking).
+    var mutatesSandboxWorkspace: Bool { true }
 
     var parameters: JSONValue? {
         .object([
@@ -2642,16 +2710,24 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
             "properties": .object([
                 "manager": .object([
                     "type": .string("string"),
-                    "enum": .array([.string("apk"), .string("pip"), .string("npm")]),
+                    "enum": .array(
+                        Self.hasApk
+                            ? [.string("apk"), .string("pip"), .string("npm")]
+                            : [.string("pip"), .string("npm")]
+                    ),
                     "description": .string(
-                        "Package manager: `apk` (system, root-wide), `pip` (Python venv), `npm` (Node workspace)."
+                        Self.hasApk
+                            ? "Package manager: `apk` (system, root-wide), `pip` (Python venv), `npm` (Node workspace)."
+                            : "Package manager: `pip` (Python venv), `npm` (Node workspace)."
                     ),
                 ]),
                 "packages": .object([
                     "type": .string("array"),
                     "items": .object(["type": .string("string")]),
                     "description": .string(
-                        "Package names, e.g. `[\"ffmpeg\"]` (apk), `[\"numpy\"]` (pip), `[\"express\"]` (npm)."
+                        Self.hasApk
+                            ? "Package names, e.g. `[\"ffmpeg\"]` (apk), `[\"numpy\"]` (pip), `[\"express\"]` (npm)."
+                            : "Package names, e.g. `[\"numpy\"]` (pip), `[\"express\"]` (npm)."
                     ),
                 ]),
             ]),
@@ -2666,7 +2742,7 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
         let managerReq = requireString(
             args,
             "manager",
-            expected: "one of `apk`, `pip`, `npm`",
+            expected: Self.hasApk ? "one of `apk`, `pip`, `npm`" : "one of `pip`, `npm`",
             tool: name
         )
         guard case .value(let managerRaw) = managerReq else { return managerReq.failureEnvelope ?? "" }
@@ -2681,6 +2757,16 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 
         switch managerRaw.lowercased() {
         case "apk":
+            guard SandboxBackend.current == .virtualMachine else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "`apk` is only available in the Linux VM sandbox (macOS 26+). "
+                        + "This sandbox runs directly on macOS — use `pip` or `npm` instead.",
+                    tool: name,
+                    retryable: false
+                )
+            }
             return try await installApk(packages: packages)
         case "pip":
             return try await installPip(packages: packages)
@@ -2689,7 +2775,9 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
         default:
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
-                message: "Unknown `manager` \"\(managerRaw)\". Use one of `apk`, `pip`, `npm`.",
+                message:
+                    "Unknown `manager` \"\(managerRaw)\". Use one of "
+                    + (Self.hasApk ? "`apk`, `pip`, `npm`." : "`pip`, `npm`."),
                 tool: name,
                 retryable: false
             )

@@ -289,4 +289,12 @@ public actor TaskCoalescer<Value: Sendable> {
     public func resolvedValues() -> [Value] {
         Array(values.values)
     }
+
+    /// Returns the currently-resolved key/value pairs. Read-only diagnostic
+    /// helper for per-model runtime telemetry; the actor snapshots the map so
+    /// callers never enumerate it concurrently with mutation.
+    public func resolvedEntries() -> [(key: String, value: Value)] {
+        values.map { (key: $0.key, value: $0.value) }
+            .sorted { $0.key < $1.key }
+    }
 }

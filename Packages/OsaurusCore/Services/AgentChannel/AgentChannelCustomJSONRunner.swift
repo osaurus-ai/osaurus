@@ -108,6 +108,32 @@ protocol AgentChannelCustomJSONRunning {
         content: String,
         confirmSend: Bool
     ) async throws -> [String: Any]
+    func editMessage(
+        connection: AgentChannelConnection,
+        roomId: String,
+        messageId: String,
+        content: String,
+        confirmSend: Bool
+    ) async throws -> [String: Any]
+    func deleteMessage(
+        connection: AgentChannelConnection,
+        roomId: String,
+        messageId: String,
+        confirmSend: Bool
+    ) async throws -> [String: Any]
+    func setReaction(
+        connection: AgentChannelConnection,
+        roomId: String,
+        messageId: String,
+        reaction: String,
+        adding: Bool,
+        confirmSend: Bool
+    ) async throws -> [String: Any]
+    func sendTyping(
+        connection: AgentChannelConnection,
+        roomId: String,
+        confirmSend: Bool
+    ) async throws -> [String: Any]
 }
 
 enum AgentChannelCustomJSONRunnerError: LocalizedError, Equatable, Sendable {
@@ -305,7 +331,7 @@ final class AgentChannelCustomJSONRunner: AgentChannelCustomJSONRunning, @unchec
         let normalizedThreadId = try requireReadableRoom(threadId, connection: connection)
         let safeLimit = AgentChannelConnection.clampReadLimit(limit ?? connection.defaultReadLimit)
         return try await execute(
-            .readMessages,
+            .readThread,
             connection: connection,
             input: [
                 "thread_id": .string(normalizedThreadId),
@@ -314,7 +340,7 @@ final class AgentChannelCustomJSONRunner: AgentChannelCustomJSONRunning, @unchec
             ],
             mode: .read,
             targetRoomId: normalizedThreadId,
-            resultAction: .readMessages,
+            resultAction: .readThread,
             standardKindOverride: "thread_messages"
         ).merging(["thread_id": normalizedThreadId]) { _, new in new }
     }
@@ -409,6 +435,96 @@ final class AgentChannelCustomJSONRunner: AgentChannelCustomJSONRunning, @unchec
             ],
             mode: .write,
             targetRoomId: normalizedThreadId
+        )
+    }
+
+    func editMessage(
+        connection: AgentChannelConnection,
+        roomId: String,
+        messageId: String,
+        content: String,
+        confirmSend: Bool
+    ) async throws -> [String: Any] {
+        guard confirmSend else { throw AgentChannelCustomJSONRunnerError.sendConfirmationRequired }
+        let roomId = try requireWritableRoom(roomId, connection: connection)
+        return try await execute(
+            .editMessage,
+            connection: connection,
+            input: [
+                "room_id": .string(roomId),
+                "message_id": .string(messageId),
+                "content": .string(try validateMessageContent(content)),
+                "confirm_send": .bool(true),
+            ],
+            mode: .write,
+            targetRoomId: roomId
+        )
+    }
+
+    func deleteMessage(
+        connection: AgentChannelConnection,
+        roomId: String,
+        messageId: String,
+        confirmSend: Bool
+    ) async throws -> [String: Any] {
+        guard confirmSend else { throw AgentChannelCustomJSONRunnerError.sendConfirmationRequired }
+        let roomId = try requireWritableRoom(roomId, connection: connection)
+        return try await execute(
+            .deleteMessage,
+            connection: connection,
+            input: [
+                "room_id": .string(roomId),
+                "message_id": .string(messageId),
+                "confirm_send": .bool(true),
+            ],
+            mode: .write,
+            targetRoomId: roomId
+        )
+    }
+
+    func setReaction(
+        connection: AgentChannelConnection,
+        roomId: String,
+        messageId: String,
+        reaction: String,
+        adding: Bool,
+        confirmSend: Bool
+    ) async throws -> [String: Any] {
+        guard confirmSend else { throw AgentChannelCustomJSONRunnerError.sendConfirmationRequired }
+        let roomId = try requireWritableRoom(roomId, connection: connection)
+        let reaction = reaction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reaction.isEmpty else { throw AgentChannelCustomJSONRunnerError.invalidRequest("reaction is required") }
+        let action: AgentChannelAction = adding ? .addReaction : .removeReaction
+        return try await execute(
+            action,
+            connection: connection,
+            input: [
+                "room_id": .string(roomId),
+                "message_id": .string(messageId),
+                "reaction": .string(reaction),
+                "confirm_send": .bool(true),
+            ],
+            mode: .write,
+            targetRoomId: roomId
+        )
+    }
+
+    func sendTyping(
+        connection: AgentChannelConnection,
+        roomId: String,
+        confirmSend: Bool
+    ) async throws -> [String: Any] {
+        guard confirmSend else { throw AgentChannelCustomJSONRunnerError.sendConfirmationRequired }
+        let roomId = try requireWritableRoom(roomId, connection: connection)
+        return try await execute(
+            .sendTyping,
+            connection: connection,
+            input: [
+                "room_id": .string(roomId),
+                "confirm_send": .bool(true),
+            ],
+            mode: .write,
+            targetRoomId: roomId
         )
     }
 
@@ -881,7 +997,7 @@ final class AgentChannelCustomJSONRunner: AgentChannelCustomJSONRunning, @unchec
                 "rooms": rows,
                 "provider_status_code": statusCode,
             ]
-        case .readMessages:
+        case .readMessages, .readThread:
             return try mapMessagesResult(
                 json,
                 defaultItemsPath: "messages",
@@ -912,7 +1028,7 @@ final class AgentChannelCustomJSONRunner: AgentChannelCustomJSONRunning, @unchec
             result["room_ids"] = input["room_ids"]?.stringArrayValue ?? []
             result["match_count"] = (result["messages"] as? [[String: Any]])?.count ?? 0
             return result
-        case .sendMessage, .replyThread:
+        case .sendMessage, .replyThread, .editMessage:
             var mapping = customAction.responseMapping
             if mapping.idPath == nil, let responseIdPath = customAction.idempotency?.responseIdPath {
                 mapping.idPath = responseIdPath
@@ -927,8 +1043,10 @@ final class AgentChannelCustomJSONRunner: AgentChannelCustomJSONRunning, @unchec
             )
             var result: [String: Any] = [
                 "connection_id": connection.id,
-                "kind": action == .replyThread ? "custom_json_thread_reply_sent" : "custom_json_message_sent",
-                "standard_kind": action == .replyThread ? "thread_reply_sent" : "message_sent",
+                "kind": action == .replyThread ? "custom_json_thread_reply_sent"
+                    : (action == .editMessage ? "custom_json_message_edited" : "custom_json_message_sent"),
+                "standard_kind": action == .replyThread ? "thread_reply_sent"
+                    : (action == .editMessage ? "message_edited" : "message_sent"),
                 "channel_id": targetRoomId ?? input["room_id"]?.rawString ?? "",
                 "message": message,
                 "provider_status_code": statusCode,
@@ -941,6 +1059,18 @@ final class AgentChannelCustomJSONRunner: AgentChannelCustomJSONRunning, @unchec
                 result["idempotency_key"] = redactor.redact(idempotencyKey)
             }
             return result
+        case .deleteMessage, .addReaction, .removeReaction, .sendTyping:
+            return [
+                "connection_id": connection.id,
+                "kind": "custom_json_\(action.rawValue)",
+                "standard_kind": action.rawValue,
+                "channel_id": targetRoomId ?? input["room_id"]?.rawString ?? "",
+                "message_id": input["message_id"]?.rawString ?? "",
+                "reaction": input["reaction"]?.rawString ?? "",
+                "provider_status_code": statusCode,
+                "partial_write": false,
+                "raw": redactor.redactJSON(json),
+            ]
         case .diagnostics, .draftMessage:
             throw AgentChannelCustomJSONRunnerError.invalidResponse(
                 "`\(action.rawValue)` is not a network response mapping action.",
@@ -1229,13 +1359,16 @@ final class AgentChannelCustomJSONRunner: AgentChannelCustomJSONRunning, @unchec
         return trimmed
     }
 
-    private static func makeDefaultHTTPClient() -> URLSession {
+    /// Not `private`: exposed so tests can inspect the session's proxy
+    /// configuration directly, matching the pattern used by the other
+    /// `GlobalProxySettings`-backed call sites.
+    static func makeDefaultHTTPClient() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpShouldSetCookies = false
         configuration.httpCookieAcceptPolicy = .never
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        return URLSession(
-            configuration: configuration,
+        return GlobalProxySettings.makeSession(
+            base: configuration,
             delegate: AgentChannelNoRedirectDelegate(),
             delegateQueue: nil
         )

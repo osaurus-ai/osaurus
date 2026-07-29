@@ -272,14 +272,18 @@ final class NativeFileDiffView: NSView {
             fileLabel.leadingAnchor.constraint(equalTo: iconLabel.trailingAnchor, constant: 7),
             fileLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
 
+            // Baseline-align the counts/badge to the file name — these labels
+            // use different fonts (semibold name vs smaller monospaced-digit
+            // counts), so centering their frames leaves the text visibly
+            // off-axis.
             addedLabel.leadingAnchor.constraint(equalTo: fileLabel.trailingAnchor, constant: 8),
-            addedLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            addedLabel.firstBaselineAnchor.constraint(equalTo: fileLabel.firstBaselineAnchor),
 
             removedLabel.leadingAnchor.constraint(equalTo: addedLabel.trailingAnchor, constant: 5),
-            removedLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            removedLabel.firstBaselineAnchor.constraint(equalTo: fileLabel.firstBaselineAnchor),
 
             previewBadge.leadingAnchor.constraint(equalTo: removedLabel.trailingAnchor, constant: 8),
-            previewBadge.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            previewBadge.firstBaselineAnchor.constraint(equalTo: fileLabel.firstBaselineAnchor),
             previewBadge.trailingAnchor.constraint(
                 lessThanOrEqualTo: copyButton.leadingAnchor,
                 constant: -8
@@ -378,9 +382,9 @@ final class NativeFileDiffView: NSView {
             loadingIndicator.stopAnimation(nil)
         }
 
-        // The path argument may not have streamed yet — hold the name slot with
-        // an ellipsis so the header doesn't render as a bare count.
-        fileLabel.stringValue = diff.fileName.isEmpty ? "…" : diff.fileName
+        // The path argument may not have streamed yet — hold the name slot
+        // with a placeholder so the header doesn't render as a bare count.
+        fileLabel.stringValue = diff.fileName.isEmpty ? L("Untitled") : diff.fileName
         fileLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize), weight: .semibold)
         fileLabel.textColor = NSColor(theme.primaryText)
 

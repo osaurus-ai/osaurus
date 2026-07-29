@@ -63,6 +63,191 @@ struct DiscordConnectionTests {
         }
     }
 
+    @Test func discoveryLoadsServersAndSelectableChannels() async throws {
+        try await withIsolatedDiscordStores { credentials in
+            let service = DiscordConnectionService(
+                client: FakeDiscordAPIClient(),
+                credentialStore: credentials
+            )
+            try service.saveBotToken("discord-bot-token-super-secret")
+
+            let discovery = try await service.discoverConfigurationOptions()
+
+            #expect(discovery.guilds.map(\.id) == ["111111111111111111"])
+            #expect(discovery.channelsByGuildId["111111111111111111"]?.count == 2)
+            #expect(discovery.warnings.isEmpty)
+        }
+    }
+
+    @Test func pollingBootstrapsCursorWithoutReplayingHistoryThenStoresNewMessages() async throws {
+        try await withIsolatedDiscordStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+            let fake = FakeDiscordAPIClient()
+            await fake.setMessages([
+                "222222222222222222": [
+                    .fixture(id: "90001", channelId: "222222222222222222", content: "existing"),
+                ],
+            ])
+            let service = DiscordConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store,
+                recordMessageSnapshotsInline: true
+            )
+            try service.saveBotToken("discord-bot-token-super-secret")
+            try service.saveConfiguration(
+                DiscordConnectionConfiguration(
+                    configuredGuildIds: ["111111111111111111"],
+                    readableChannelIds: ["222222222222222222"],
+                    senderAllowlist: ["555555555555555555"]
+                )
+            )
+
+            let bootstrap = try await service.pollInboundMessages()
+            #expect(bootstrap.received == 0)
+            #expect(try store.messageCount(connectionId: "discord", roomId: "222222222222222222") == 0)
+
+            await fake.setMessages([
+                "222222222222222222": [
+                    .fixture(id: "90002", channelId: "222222222222222222", content: "new"),
+                    .fixture(id: "90001", channelId: "222222222222222222", content: "existing"),
+                ],
+            ])
+            let next = try await service.pollInboundMessages()
+
+            #expect(next.received == 1)
+            #expect(next.stored == 1)
+            #expect(next.dispatchSuppressed == 1)
+            #expect(try store.cursor(connectionId: "discord", roomId: "222222222222222222") == "90002")
+        }
+    }
+
+    @Test func pollingRecordsPerEventInboundActivityStages() async throws {
+        try await withIsolatedDiscordStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+            let fake = FakeDiscordAPIClient()
+            await fake.setMessages([
+                "222222222222222222": [
+                    .fixture(id: "90001", channelId: "222222222222222222", content: "existing"),
+                ],
+            ])
+            let activity = AgentChannelInboundActivityCenter()
+            let service = DiscordConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store,
+                recordMessageSnapshotsInline: true,
+                activityCenter: activity
+            )
+            try service.saveBotToken("discord-bot-token-super-secret")
+            try service.saveConfiguration(
+                DiscordConnectionConfiguration(
+                    configuredGuildIds: ["111111111111111111"],
+                    readableChannelIds: ["222222222222222222"],
+                    senderAllowlist: ["555555555555555555"]
+                )
+            )
+
+            // First poll only arms the cursor; nothing should be recorded.
+            _ = try await service.pollInboundMessages()
+            #expect(await activity.recent(connectionId: "discord").isEmpty)
+
+            await fake.setMessages([
+                "222222222222222222": [
+                    .fixture(
+                        id: "90003",
+                        channelId: "222222222222222222",
+                        content: "intruder question",
+                        author: DiscordMessageAuthor(
+                            id: "999999999999999999",
+                            username: "intruder",
+                            globalName: nil,
+                            bot: false
+                        )
+                    ),
+                    .fixture(id: "90002", channelId: "222222222222222222", content: "authorized question"),
+                    .fixture(id: "90001", channelId: "222222222222222222", content: "existing"),
+                ],
+            ])
+            _ = try await service.pollInboundMessages()
+
+            let events = await activity.recent(connectionId: "discord", limit: 20)
+
+            // Authorized message travels received → stored, then dispatch is
+            // suppressed because no agent dispatch is configured.
+            let acceptedStages = events
+                .filter { $0.providerEventId == "discord:90002" }
+                .map(\.stage)
+                .reversed()
+            #expect(Array(acceptedStages) == [.received, .stored, .dispatchSuppressed])
+            let suppressed = events.first {
+                $0.providerEventId == "discord:90002" && $0.stage == .dispatchSuppressed
+            }
+            #expect(suppressed?.reason == "inbound_dispatch_not_configured")
+
+            // Unauthorized sender is rejected with the boundary reason.
+            let rejectedStages = events
+                .filter { $0.providerEventId == "discord:90003" }
+                .map(\.stage)
+                .reversed()
+            #expect(Array(rejectedStages) == [.received, .rejected])
+            let rejected = events.first {
+                $0.providerEventId == "discord:90003" && $0.stage == .rejected
+            }
+            #expect(rejected?.reason == "sender_not_allowlisted")
+        }
+    }
+
+    @Test func diagnosticsReportsReceiveReadinessAndRoutedAgents() async throws {
+        try await withIsolatedDiscordStores { credentials in
+            let liveAgent = UUID()
+            let missingAgent = UUID()
+            let fake = FakeDiscordAPIClient()
+            let service = DiscordConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                inboundAgentAvailability: { $0 == liveAgent },
+                runningInstanceCount: { 1 }
+            )
+            try service.saveBotToken("discord-bot-token-super-secret")
+
+            // Token alone is not receive capability.
+            try service.saveConfiguration(DiscordConnectionConfiguration())
+            let tokenOnly = await service.diagnostics()
+            #expect(!tokenOnly.receiveReady)
+
+            // Full receive prerequisites flip readiness on.
+            try service.saveConfiguration(
+                DiscordConnectionConfiguration(
+                    configuredGuildIds: ["111111111111111111"],
+                    readableChannelIds: ["222222222222222222"],
+                    senderAllowlist: ["555555555555555555"],
+                    inboundDispatch: AgentChannelInboundDispatchConfiguration(
+                        enabled: true,
+                        targetAgentId: liveAgent,
+                        routes: [
+                            AgentChannelDispatchRoute(
+                                roomId: "222222222222222222", agentId: missingAgent
+                            )
+                        ]
+                    )
+                )
+            )
+            let diagnostics = await service.diagnostics()
+            #expect(diagnostics.receiveReady)
+            #expect(diagnostics.inboundDispatchEnabled)
+            #expect(diagnostics.inboundDispatchIssue == "inbound_agent_unavailable")
+
+            let report = AgentChannelLiveProofReadiness.discord(diagnostics)
+            #expect(report.status == .blocked)
+            #expect(report.blockers.contains { $0.contains("routed agent no longer exists") })
+        }
+    }
+
     @Test func apiClientRedactsTokenEchoedByDiscordErrorBody() async throws {
         let token = "discord-bot-token-super-secret"
         let session = DiscordHTTPStubProtocol.session(
@@ -165,6 +350,16 @@ struct DiscordConnectionTests {
             authorId: "555555555555555555",
             authorName: "Mike",
             content: "eval reports landed",
+            attachments: [
+                AgentChannelStoredAttachment(
+                    providerId: "attachment-1",
+                    kind: .image,
+                    filename: "report.png",
+                    contentType: "image/png",
+                    sizeBytes: 1234,
+                    remoteURL: "https://cdn.discord.test/report.png"
+                ),
+            ],
             payloadJSON: #"{"id":"9001"}"#,
             providerTimestamp: "2026-06-19T20:00:00.000000+00:00"
         )
@@ -181,6 +376,8 @@ struct DiscordConnectionTests {
         #expect(rows.count == 1)
         #expect(rows.first?.direction == .inbound)
         #expect(rows.first?.payloadJSON.contains("9001") == true)
+        #expect(rows.first?.attachments.first?.filename == "report.png")
+        #expect(rows.first?.attachments.first?.kind == .image)
     }
 
     @Test func agentChannelMessageStorePrunesOldMessagesPerRoom() throws {
@@ -812,7 +1009,9 @@ struct DiscordConnectionTests {
             )
             let channelService = AgentChannelConnectionService(discordService: service)
             let tool = AgentChannelSendMessageTool(service: channelService)
-            let emojiMessage = String(repeating: "😀", count: 1001)
+            // 5,001 emoji = 10,002 UTF-16 units, above the chunked-send input
+            // cap (5 chunks x 2,000 units).
+            let emojiMessage = String(repeating: "😀", count: 5_001)
 
             let result = try await tool.execute(
                 argumentsJSON:
@@ -821,6 +1020,41 @@ struct DiscordConnectionTests {
 
             #expect(EnvelopeAssertions.failureKind(result) == "invalid_args")
             #expect(await fake.sentMessageCount() == 0)
+        }
+    }
+
+    @Test func agentChannelSendToolChunksLongContentWithoutSplittingEmoji() async throws {
+        try await withIsolatedDiscordStores { credentials in
+            let fake = FakeDiscordAPIClient()
+            let service = DiscordConnectionService(client: fake, credentialStore: credentials)
+            try service.saveBotToken("discord-bot-token-super-secret")
+            try service.saveConfiguration(
+                DiscordConnectionConfiguration(
+                    writableChannelIds: ["333333333333333333"],
+                    writeEnabled: true
+                )
+            )
+            let channelService = AgentChannelConnectionService(discordService: service)
+            let tool = AgentChannelSendMessageTool(service: channelService)
+            // 1,001 emoji = 2,002 UTF-16 units: one unit over Discord's limit,
+            // so the send must split into two messages at a grapheme boundary.
+            let emojiMessage = String(repeating: "😀", count: 1_001)
+
+            let result = try await tool.execute(
+                argumentsJSON:
+                    #"{"connection_id":"discord","room_id":"333333333333333333","content":"\#(emojiMessage)","confirm_send":true}"#
+            )
+
+            let payload = try #require(EnvelopeAssertions.successPayload(result))
+            #expect(payload["chunk_count"] as? Int == 2)
+            #expect(await fake.sentMessageCount() == 2)
+            let contents = await fake.sentContents()
+            #expect(contents.joined() == emojiMessage)
+            for chunk in contents {
+                #expect(chunk.utf16.count <= 2_000)
+                // No torn surrogate pairs: every chunk is whole emoji.
+                #expect(chunk.allSatisfy { $0 == "😀" })
+            }
         }
     }
 
@@ -848,6 +1082,54 @@ struct DiscordConnectionTests {
             #expect(payload["kind"] as? String == "discord_message_sent")
             #expect(await fake.sentMessageCount() == 1)
         }
+    }
+
+    @Test func transportSupervisorRunsGatewayPresenceWheneverBotTokenExists() async {
+        let presence = DiscordPresenceRuntimeSpy()
+        let receive = DiscordReceiveTransportRuntimeSpy()
+        let hasToken = DiscordTokenPresenceBox(true)
+        let supervisor = AgentChannelTransportSupervisor(
+            discordConfiguration: {
+                // Send-only setup: no readable channels or sender allowlist,
+                // so the polling receive runtime must stay off while the
+                // presence session still runs.
+                DiscordConnectionConfiguration(
+                    writableChannelIds: ["333333333333333333"],
+                    writeEnabled: true
+                )
+            },
+            discordHasBotToken: { hasToken.value() },
+            discordRuntime: receive,
+            discordPresenceRuntime: presence
+        )
+
+        await supervisor.refreshDiscordRuntime()
+        #expect(await presence.startCount() == 1)
+        #expect(await receive.startCount() == 0)
+
+        // Refresh is idempotent while the token stays saved.
+        await supervisor.refreshDiscordRuntime()
+        #expect(await presence.startCount() == 1)
+
+        hasToken.set(false)
+        await supervisor.refreshDiscordRuntime()
+        #expect(await presence.stopCount() == 1)
+    }
+
+    @Test func transportSupervisorStopsGatewayPresenceOnShutdown() async {
+        let presence = DiscordPresenceRuntimeSpy()
+        let supervisor = AgentChannelTransportSupervisor(
+            discordConfiguration: { DiscordConnectionConfiguration() },
+            discordHasBotToken: { true },
+            discordRuntime: DiscordReceiveTransportRuntimeSpy(),
+            discordPresenceRuntime: presence
+        )
+
+        await supervisor.refreshDiscordRuntime()
+        await supervisor.stop()
+
+        #expect(await presence.startCount() == 1)
+        #expect(await presence.stopCount() == 1)
     }
 
     @Test func nativeDiscordConnectionIdIsCaseInsensitive() async throws {
@@ -1911,21 +2193,34 @@ struct DiscordConnectionTests {
     }
 
     private func withIsolatedDiscordStores(
-        _ body: (any DiscordCredentialStorage) async throws -> Void
+        _ body: @Sendable (any DiscordCredentialStorage) async throws -> Void
     ) async throws {
-        let previousDirectory = DiscordConnectionConfigurationStore.overrideDirectory
-        let previousChannelDirectory = AgentChannelConfigurationStore.overrideDirectory
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("osaurus-discord-tests-\(UUID().uuidString)", isDirectory: true)
-        let credentials = FakeDiscordCredentialStore()
-        DiscordConnectionConfigurationStore.overrideDirectory = directory
-        AgentChannelConfigurationStore.overrideDirectory = directory
-        defer {
-            DiscordConnectionConfigurationStore.overrideDirectory = previousDirectory
-            AgentChannelConfigurationStore.overrideDirectory = previousChannelDirectory
-            try? FileManager.default.removeItem(at: directory)
+        // BOTH process-wide locks (fixed order: StoragePaths →
+        // AgentChannelConfiguration): this helper mutates
+        // `AgentChannelConfigurationStore.overrideDirectory`, a global also
+        // guarded by these locks in the runner/coexistence/hardening suites;
+        // holding neither raced them and intermittently pointed mid-test
+        // reads at a foreign temp directory.
+        try await StoragePathsTestLock.shared.run {
+            try await AgentChannelConfigurationTestLock.shared.run {
+                let previousDirectory = DiscordConnectionConfigurationStore.overrideDirectory
+                let previousChannelDirectory = AgentChannelConfigurationStore.overrideDirectory
+                let directory = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(
+                        "osaurus-discord-tests-\(UUID().uuidString)",
+                        isDirectory: true
+                    )
+                let credentials = FakeDiscordCredentialStore()
+                DiscordConnectionConfigurationStore.overrideDirectory = directory
+                AgentChannelConfigurationStore.overrideDirectory = directory
+                defer {
+                    DiscordConnectionConfigurationStore.overrideDirectory = previousDirectory
+                    AgentChannelConfigurationStore.overrideDirectory = previousChannelDirectory
+                    try? FileManager.default.removeItem(at: directory)
+                }
+                try await body(credentials)
+            }
         }
-        try await body(credentials)
     }
 
     private func policy(named action: String, in policies: [[String: Any]]) -> [String: Any]? {
@@ -2020,6 +2315,10 @@ private actor FakeDiscordAPIClient: DiscordAPIClientProtocol {
         sentMessages.last?.content
     }
 
+    func sentContents() -> [String] {
+        sentMessages.map(\.content)
+    }
+
     func currentUser(token: String) async throws -> DiscordBotIdentity {
         if shouldEchoTokenFailure {
             throw DiscordAPIError.requestFailed("transport included token \(token)")
@@ -2032,8 +2331,26 @@ private actor FakeDiscordAPIClient: DiscordAPIClientProtocol {
         )
     }
 
+    func guilds(token _: String) async throws -> [DiscordGuild] {
+        [DiscordGuild(id: "111111111111111111", name: "Test Guild")]
+    }
+
     func guild(id: String, token: String) async throws -> DiscordGuild {
         DiscordGuild(id: id, name: "Test Guild")
+    }
+
+    func members(guildId _: String, token _: String) async throws -> [DiscordGuildMember] {
+        [
+            DiscordGuildMember(
+                user: DiscordMessageAuthor(
+                    id: "555555555555555555",
+                    username: "mike",
+                    globalName: "Mike",
+                    bot: false
+                ),
+                nick: nil
+            ),
+        ]
     }
 
     func channels(guildId: String, token: String) async throws -> [DiscordChannel] {
@@ -2057,6 +2374,12 @@ private actor FakeDiscordAPIClient: DiscordAPIClientProtocol {
 
     func messages(channelId: String, token: String, limit: Int) async throws -> [DiscordMessage] {
         Array((messagesByChannel[channelId] ?? []).prefix(limit))
+    }
+
+    func messages(channelId: String, token _: String, limit: Int, after: String?) async throws -> [DiscordMessage] {
+        let messages = messagesByChannel[channelId] ?? []
+        let filtered = after.map { cursor in messages.filter { $0.id > cursor } } ?? messages
+        return Array(filtered.prefix(limit))
     }
 
     func sendMessage(channelId: String, content: String, token: String) async throws -> DiscordMessage {
@@ -2146,6 +2469,60 @@ private struct AgentChannelRegistrySnapshot {
     let pluginNames: Set<String>
     let alwaysLoadedNames: Set<String>
     let phantomNames: Set<String>
+}
+
+/// Mutable token-presence flag usable from the supervisor's @Sendable closures.
+private final class DiscordTokenPresenceBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var present: Bool
+
+    init(_ present: Bool) {
+        self.present = present
+    }
+
+    func value() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return present
+    }
+
+    func set(_ newValue: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        present = newValue
+    }
+}
+
+private actor DiscordPresenceRuntimeSpy: DiscordGatewayPresenceMaintaining {
+    private var starts = 0
+    private var stops = 0
+
+    func start() async {
+        starts += 1
+    }
+
+    func stop() async {
+        stops += 1
+    }
+
+    func startCount() -> Int { starts }
+    func stopCount() -> Int { stops }
+}
+
+private actor DiscordReceiveTransportRuntimeSpy: AgentChannelReceiveTransportRuntime {
+    private var starts = 0
+    private var stops = 0
+
+    func start(pollInterval: TimeInterval) async {
+        starts += 1
+    }
+
+    func stop(now: Date) async {
+        stops += 1
+    }
+
+    func startCount() -> Int { starts }
+    func stopCount() -> Int { stops }
 }
 
 private extension DiscordMessage {

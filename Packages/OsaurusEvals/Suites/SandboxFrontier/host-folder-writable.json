@@ -1,0 +1,37 @@
+{
+  "id": "sandbox.host-folder-writable",
+  "domain": "agent_loop",
+  "label": "sandbox • writable combined mode: read host CSV, compute in VM, file_write result to host",
+  "query": "The host workspace contains data/sales.csv. Read it with file_read, compute the total of the amount column in your sandbox, then write a file total.txt containing exactly that total to the workspace using file_write with the relative path total.txt.",
+  "notes": "Writable combined mode end to end (allowHostFolderWrites=true): host reads stay on file_read, computation happens in the VM, and the result lands back in the HOST workspace via file_write with a relative path — the write is change-tracked host-side. sandbox_write_file is hidden in this mode, so any call to it is a schema hallucination. Total pinned: 1200+2500+3200 = 6900.",
+  "fixtures": {
+    "sandbox": {
+      "hostFolder": true,
+      "allowHostFolderWrites": true
+    },
+    "workspaceFiles": [
+      {
+        "path": "data/sales.csv",
+        "contents": "month,amount\njan,1200\nfeb,2500\nmar,3200\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 14,
+      "mustCallTools": [
+        "file_read",
+        "file_write"
+      ],
+      "mustNotCallTools": [
+        "sandbox_write_file"
+      ],
+      "files": [
+        {
+          "path": "total.txt",
+          "contains": "6900"
+        }
+      ]
+    }
+  }
+}

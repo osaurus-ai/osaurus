@@ -238,7 +238,8 @@ public enum EvalRunner {
             telemetry: row.telemetry,
             trials: row.trials,
             trialsPassed: row.trialsPassed,
-            judge: row.judge
+            judge: row.judge,
+            context: row.context
         )
     }
 
@@ -493,7 +494,12 @@ public enum EvalRunner {
     /// runner already attached (decode tok/s, TTFT, prefill from the
     /// agent-loop transcript). KV deltas are only recorded when both
     /// snapshots exist (a remote-only run has neither).
-    private static func mergeResourceTelemetry(
+    ///
+    /// Internal (not private) for the regression test that pins the row
+    /// rebuild preserving `context` — this wrapper silently dropping the
+    /// attribution block for every resource-sampled domain is exactly the
+    /// bug that shipped once.
+    static func mergeResourceTelemetry(
         into row: EvalCaseReport,
         sample: ResourceSample,
         kvBefore: BatchDiagnosticsSnapshot?,
@@ -552,7 +558,8 @@ public enum EvalRunner {
             telemetry: merged,
             trials: row.trials,
             trialsPassed: row.trialsPassed,
-            judge: row.judge
+            judge: row.judge,
+            context: row.context
         )
     }
 
@@ -590,6 +597,8 @@ public enum EvalRunner {
             )
         case "prefix_hash":
             return runPrefixHashCase(testCase, modelId: modelId)
+        case "prompt_surface":
+            return await runPromptSurfaceCase(testCase, modelId: modelId)
         case "argument_coercion":
             return runArgumentCoercionCase(testCase, modelId: modelId)
         case "sandbox_diagnostics":
@@ -1188,16 +1197,16 @@ public enum EvalRunner {
             }
         }
 
-        // Per-case fixture setup. Both `seedMethods` and `enableSkills`
-        // mutate persistent state (SQLite + on-disk skill files) — the
-        // wrap snapshots prior state and restores it after the case
-        // body runs. Every eval process now runs against an isolated
-        // throwaway root (`EvalBootstrap.configureIsolatedRunStorage`),
-        // so a crash mid-case at worst leaks `eval-` prefixed methods
-        // into the temp root the orphan sweep later deletes — never
-        // into the developer's real databases.
+        // Per-case fixture setup. `seedMethods` mutates persistent state
+        // (SQLite) — the wrap snapshots prior state and restores it after
+        // the case body runs. Every eval process now runs against an
+        // isolated throwaway root
+        // (`EvalBootstrap.configureIsolatedRunStorage`), so a crash
+        // mid-case at worst leaks `eval-` prefixed methods into the temp
+        // root the orphan sweep later deletes — never into the developer's
+        // real databases. Skills need no per-case mutation: every installed
+        // skill is universally searchable.
         let seededMethods = await applySeedMethods(testCase.fixtures.seedMethods)
-        let priorSkillState = await applyEnableSkills(testCase.fixtures.enableSkills)
 
         let threshold = cliThresholdOverride ?? exp.thresholdOverride
         let topK = exp.topK ?? 10
@@ -1208,7 +1217,6 @@ public enum EvalRunner {
             embedCosineFloor: cliEmbedCosineFloorOverride
         )
 
-        await restoreSkillEnabledState(priorSkillState)
         await cleanupSeededMethods(seededMethods)
 
         var notes: [String] = []
@@ -1308,10 +1316,11 @@ public enum EvalRunner {
     /// rubric. Off-CI (token cost).
     ///
     /// Fixture setup mirrors `capability_search`: `requirePlugins` skips,
-    /// `enableSkills` / `enableTools` grant capabilities for the run
-    /// window and restore afterwards. `ensureToolsDisabled` skips the
-    /// case when a tool that must be absent is actually enabled, since
-    /// the runner can't safely disable globally-enabled tools.
+    /// `enableTools` grants tools for the run window and restores
+    /// afterwards. `ensureToolsDisabled` skips the case when a tool that
+    /// must be absent is actually enabled, since the runner can't safely
+    /// disable globally-enabled tools. Skills need no grant — every
+    /// installed skill is universally available.
     private static func runCapabilityClaimsCase(
         _ testCase: EvalCase,
         modelId: String
@@ -1396,8 +1405,8 @@ public enum EvalRunner {
         // suite:
         //  - Absence cases (`ensureToolsDisabled`) get an allowlist that
         //    EXCLUDES the forbidden names, so "you have no X" is provable.
-        //  - Positive cases (`enableTools` / `enableSkills` for a real
-        //    capability — e.g. the browser plugin) need the manifest to NAME
+        //  - Positive cases (`enableTools` for a real capability — e.g. the
+        //    browser plugin) need the manifest to NAME
         //    the enabled capability. The active Default agent is the
         //    config-only agent: it is not in `.auto` mode, so it renders NO
         //    capability manifest, and it is designed to disclaim non-config
@@ -1410,7 +1419,6 @@ public enum EvalRunner {
         // (no fixtures to make authoritative).
         let claimsPositiveCapability =
             !(testCase.fixtures.enableTools?.isEmpty ?? true)
-            || !(testCase.fixtures.enableSkills?.isEmpty ?? true)
         let isolatedClaimsAgentId: UUID?
         if !claimsAbsenceNames.isEmpty {
             isolatedClaimsAgentId = installCapabilityClaimsAgent(excluding: claimsAbsenceNames)
@@ -1459,13 +1467,12 @@ public enum EvalRunner {
             }
         }
 
-        ccPhase("enable-skills-begin")
-        let priorSkillState = await applyEnableSkills(testCase.fixtures.enableSkills)
+        ccPhase("enable-tools-begin")
         let priorToolGrant = await applyEnableTools(
             testCase.fixtures.enableTools,
             agentId: resolvedAgentId
         )
-        ccPhase("enable-skills-done")
+        ccPhase("enable-tools-done")
 
         let judgeModel = EvalJudgeModel.resolveAndWarnOnce(runModelId: modelId)
         let started = Date()
@@ -1520,7 +1527,6 @@ public enum EvalRunner {
         ccPhase("judge-done restore-begin")
 
         await restoreToolGrant(priorToolGrant, agentId: resolvedAgentId)
-        await restoreSkillEnabledState(priorSkillState)
         ccPhase("restore-done")
 
         // Score.
@@ -1538,7 +1544,8 @@ public enum EvalRunner {
                     outcome: .errored,
                     notes: ["agent loop error: \(err)"],
                     modelId: modelId,
-                    latencyMs: elapsed
+                    latencyMs: elapsed,
+                    telemetry: claimsTelemetry(from: transcript)
                 ),
                 query: testCase.query
             )
@@ -1610,6 +1617,7 @@ public enum EvalRunner {
                 modelId: modelId,
                 latencyMs: elapsed,
                 judgeLatencyMs: judgeElapsed,
+                telemetry: claimsTelemetry(from: transcript),
                 judge: judgeAudit
             ),
             query: testCase.query
@@ -1643,6 +1651,27 @@ public enum EvalRunner {
             )
         )
         return report
+    }
+
+    /// Project shared capability-claims/default-agent loop telemetry into the
+    /// persisted report. Input estimates are deterministic and therefore
+    /// available for local and remote models even when runtime usage omits
+    /// completion/decode statistics.
+    private static func claimsTelemetry(
+        from transcript: CapabilityClaimsTranscript
+    ) -> EvalCaseTelemetry? {
+        let total = transcript.promptTokensTotal.map {
+            $0 + (transcript.completionTokens ?? 0)
+        }
+        let telemetry = EvalCaseTelemetry(
+            decodeTokensPerSecond: transcript.decodeTokensPerSecond,
+            completionTokens: transcript.completionTokens,
+            promptTokensTotal: transcript.promptTokensTotal,
+            peakContextTokens: transcript.peakContextTokens,
+            totalModelTokens: total,
+            modelSteps: transcript.modelSteps
+        )
+        return telemetry.isEmpty ? nil : telemetry
     }
 
     /// Agent-loop evaluator for `domain == "default_agent"`. Drives the
@@ -1738,7 +1767,8 @@ public enum EvalRunner {
                     outcome: .errored,
                     notes: ["agent loop error: \(err)"],
                     modelId: modelId,
-                    latencyMs: elapsed
+                    latencyMs: elapsed,
+                    telemetry: claimsTelemetry(from: transcript)
                 ),
                 query: testCase.query
             )
@@ -1837,10 +1867,7 @@ public enum EvalRunner {
                 modelId: modelId,
                 latencyMs: elapsed,
                 judgeLatencyMs: judgeElapsed,
-                telemetry: EvalCaseTelemetry(
-                    decodeTokensPerSecond: transcript.decodeTokensPerSecond,
-                    completionTokens: transcript.completionTokens
-                ),
+                telemetry: claimsTelemetry(from: transcript),
                 judge: judgeAudit
             ),
             query: testCase.query
@@ -2029,8 +2056,7 @@ public enum EvalRunner {
 
     /// Grant `names` to the agent for a case run. Returns the prior
     /// allowlist to restore, or nil when no mutation was needed (legacy
-    /// global mode, or every name already enabled). Snapshot/restore
-    /// mirrors `applyEnableSkills`.
+    /// global mode, or every name already enabled).
     private static func applyEnableTools(
         _ names: [String]?,
         agentId: UUID
@@ -2131,39 +2157,6 @@ public enum EvalRunner {
         for id in ids {
             try? MethodDatabase.shared.deleteMethod(id: id)
             await MethodSearchService.shared.removeMethod(id: id)
-        }
-    }
-
-    /// Snapshot the prior `enabled` flag of every named skill, then
-    /// flip them all on. Returns `[(skillId, priorEnabled)]` for
-    /// `restoreSkillEnabledState` to walk in reverse.
-    ///
-    /// Skill lookup is by name (case-insensitive, mirrors
-    /// `SkillManager.skill(named:)`). Names that don't resolve are
-    /// silently ignored — the `expectedSkills` matcher will surface
-    /// the miss as a real recall failure rather than a config error.
-    private static func applyEnableSkills(_ names: [String]?) async -> [(UUID, Bool)] {
-        guard let names, !names.isEmpty else { return [] }
-        var prior: [(UUID, Bool)] = []
-        for name in names {
-            guard let skill = SkillManager.shared.skill(named: name) else { continue }
-            prior.append((skill.id, skill.enabled))
-            if !skill.enabled {
-                await SkillManager.shared.setEnabled(true, for: skill.id)
-            }
-        }
-        return prior
-    }
-
-    /// Restore the snapshot taken by `applyEnableSkills`. Skips
-    /// entries whose current state already matches the prior state
-    /// to avoid an unnecessary disk write.
-    private static func restoreSkillEnabledState(_ prior: [(UUID, Bool)]) async {
-        for (id, wasEnabled) in prior {
-            guard let current = SkillManager.shared.skill(for: id) else { continue }
-            if current.enabled != wasEnabled {
-                await SkillManager.shared.setEnabled(wasEnabled, for: id)
-            }
         }
     }
 

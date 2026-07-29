@@ -39,6 +39,14 @@ struct SlackConnectionTests {
             #expect(saved.senderAllowlist == ["U55555"])
             #expect(saved.defaultReadLimit == 100)
             #expect(!SlackConnectionConfiguration.isValidSlackId("T١٢٣"))
+            #expect(SlackConnectionConfiguration.isValidSlackId(
+                "T12345",
+                allowedPrefixes: ["T"]
+            ))
+            #expect(!SlackConnectionConfiguration.isValidSlackId(
+                "U12345",
+                allowedPrefixes: ["T"]
+            ))
 
             let disk = try String(
                 contentsOf: SlackConnectionConfigurationStore.configurationFileURL(),
@@ -52,6 +60,33 @@ struct SlackConnectionTests {
             #expect(!disk.localizedCaseInsensitiveContains("signing_secret"))
             #expect(!disk.localizedCaseInsensitiveContains("app_token"))
         }
+    }
+
+    @Test func workspaceAccountsExtendTeamChannelAndSenderPolicies() {
+        let configuration = SlackConnectionConfiguration(
+            configuredTeamIds: ["TPRIMARY"],
+            readableChannelIds: ["CPRIMARY"],
+            writableChannelIds: ["WPRIMARY"],
+            senderAllowlist: ["UPRIMARY"],
+            writeEnabled: true,
+            workspaceAccounts: [
+                SlackWorkspaceAccountConfiguration(
+                    teamId: "TSECOND",
+                    teamName: "Second Workspace",
+                    readableChannelIds: ["CSECOND"],
+                    writableChannelIds: ["WSECOND"],
+                    senderAllowlist: ["USECOND"],
+                    botUserId: "UBOTSECOND",
+                    botId: "BBOTSECOND"
+                ),
+            ]
+        )
+
+        #expect(configuration.canUseTeam(teamId: "TSECOND"))
+        #expect(configuration.canRead(channelId: "CSECOND"))
+        #expect(configuration.canWrite(channelId: "WSECOND"))
+        #expect(configuration.canUseSender(senderId: "USECOND"))
+        #expect(!configuration.canRead(channelId: "CUNKNOWN"))
     }
 
     @Test func diagnosticsRedactsSavedSecretsEchoedByTransportError() async throws {
@@ -237,11 +272,62 @@ struct SlackConnectionTests {
         )
 
         let body = try #require(SlackHTTPStubProtocol.lastRequestJSONBody())
-        #expect(body["parse"] as? String == "none")
+        // Agent sends post native Markdown through `markdown_text`; `parse`
+        // only applies to the plain-text mode.
+        #expect(body["markdown_text"] as? String == "Hello @channel <@U23456>")
+        #expect(body["text"] == nil)
+        #expect(body["parse"] == nil)
         #expect(body["link_names"] as? Bool == false)
         #expect(body["reply_broadcast"] as? Bool == false)
         #expect(body["unfurl_links"] as? Bool == false)
         #expect(body["unfurl_media"] as? Bool == false)
+    }
+
+    @Test func apiClientPlainTextModeStillDisablesParse() async throws {
+        let token = "xoxb-slack-bot-token-super-secret"
+        let session = SlackHTTPStubProtocol.session(
+            statusCode: 200,
+            body: """
+            {
+              "ok": true,
+              "channel": "C34567",
+              "ts": "1718800000.000100",
+              "message": {
+                "type": "message",
+                "user": "U12345",
+                "text": "plain",
+                "ts": "1718800000.000100"
+              }
+            }
+            """
+        )
+        let client = SlackAPIClient(
+            baseURL: URL(string: "https://slack.test/api")!,
+            sessionProvider: { session }
+        )
+
+        _ = try await client.sendMessage(
+            SlackOutboundMessageRequest(
+                channelId: "C34567",
+                content: "plain",
+                threadTs: nil,
+                useMarkdownText: false
+            ),
+            token: token
+        )
+
+        let body = try #require(SlackHTTPStubProtocol.lastRequestJSONBody())
+        #expect(body["text"] as? String == "plain")
+        #expect(body["markdown_text"] == nil)
+        #expect(body["parse"] as? String == "none")
+    }
+
+    @Test func recommendedManifestMarksBotAlwaysOnlineWithSocketMode() {
+        // Slack has no runtime presence API for bot tokens: `always_online`
+        // in the manifest is the only supported way to show the bot online.
+        let manifest = SlackSettingsView.recommendedManifest
+        #expect(manifest.contains("always_online: true"))
+        #expect(manifest.contains("socket_mode_enabled: true"))
     }
 
     @Test func apiClientHonorsBoundedConversationListLimit() async throws {
@@ -262,6 +348,78 @@ struct SlackConnectionTests {
         #expect(form["exclude_archived"] == "true")
         #expect(SlackHTTPStubProtocol.lastRawRequestBody()
             .contains("types=public_channel%2Cprivate_channel%2Cmpim%2Cim"))
+    }
+
+    @Test func apiClientParsesWorkspaceUsersAndCursor() async throws {
+        let token = "xoxb-slack-bot-token-super-secret"
+        let session = SlackHTTPStubProtocol.session(
+            statusCode: 200,
+            body: """
+            {
+              "ok": true,
+              "members": [
+                {
+                  "id": "U55555",
+                  "team_id": "T12345",
+                  "name": "mike",
+                  "real_name": "Mike Example",
+                  "deleted": false,
+                  "is_bot": false,
+                  "profile": {
+                    "display_name": "Mike",
+                    "real_name": "Mike Example"
+                  }
+                }
+              ],
+              "response_metadata": {"next_cursor": "next-users"}
+            }
+            """
+        )
+        let client = SlackAPIClient(
+            baseURL: URL(string: "https://slack.test/api")!,
+            sessionProvider: { session }
+        )
+
+        let page = try await client.users(token: token, limit: 150, cursor: "users-cursor")
+
+        #expect(page.users.count == 1)
+        #expect(page.users.first?.id == "U55555")
+        #expect(page.users.first?.displayName == "Mike")
+        #expect(page.nextCursor == "next-users")
+        let form = SlackHTTPStubProtocol.lastRequestFormBody()
+        #expect(form["limit"] == "150")
+        #expect(form["cursor"] == "users-cursor")
+    }
+
+    @Test func apiClientExplainsMissingSlackScope() async throws {
+        let token = "xoxb-slack-bot-token-super-secret"
+        let session = SlackHTTPStubProtocol.session(
+            statusCode: 200,
+            body: """
+            {
+              "ok": false,
+              "error": "missing_scope",
+              "needed": "users:read",
+              "provided": "chat:write,channels:read"
+            }
+            """
+        )
+        let client = SlackAPIClient(
+            baseURL: URL(string: "https://slack.test/api")!,
+            sessionProvider: { session }
+        )
+
+        do {
+            _ = try await client.users(token: token, limit: 100, cursor: nil)
+            Issue.record("Slack users request should have failed")
+        } catch let error as SlackAPIError {
+            guard case .missingPermissions(let message) = error else {
+                Issue.record("Expected a missing-permissions error")
+                return
+            }
+            #expect(message.contains("users:read"))
+            #expect(message.contains("chat:write,channels:read"))
+        }
     }
 
     @Test func apiClientMapsSlackRateLimitWithRetryAfterHint() async throws {
@@ -409,6 +567,64 @@ struct SlackConnectionTests {
             #expect(rows.count == 2)
             #expect(rows.compactMap { $0["id"] as? String } == ["C11111", "C22222"])
             #expect(await fake.conversationCursorsRequested() == [nil, "cursor-1"])
+        }
+    }
+
+    @Test func listChannelsResolvesDirectMessageNamesFromUsers() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let fake = FakeSlackAPIClient()
+            // A DM has no name — only the peer user id. The row must surface
+            // the person's name (from users.list), never a bare D… id.
+            await fake.setConversationPages([
+                [
+                    SlackConversation(id: "C11111", name: "content", isChannel: true, isMember: true),
+                    SlackConversation(id: "D77777", user: "U55555", isIM: true),
+                ]
+            ])
+            let service = SlackConnectionService(client: fake, credentialStore: credentials)
+            try service.saveBotToken("xoxb-slack-bot-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C11111"]
+                )
+            )
+
+            let rows = try await service.listChannels(teamId: "T12345")
+
+            let dmRow = try #require(rows.first { $0["id"] as? String == "D77777" })
+            #expect(dmRow["name"] as? String == "Mike")
+            #expect(dmRow["type"] as? String == "im")
+            let channelRow = try #require(rows.first { $0["id"] as? String == "C11111" })
+            #expect(channelRow["name"] as? String == "content")
+        }
+    }
+
+    @Test func discoveryLoadsWorkspaceChannelsAndUsersBeforeAllowlistsExist() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let fake = FakeSlackAPIClient()
+            await fake.setConversationPages([
+                [SlackConversation(id: "C22222", name: "zeta", isChannel: true, isMember: true)],
+                [SlackConversation(id: "C11111", name: "alpha", isChannel: true, isMember: true)],
+            ])
+            await fake.setUserPages([
+                [SlackUser(id: "U22222", name: "zoe", realName: "Zoe")],
+                [SlackUser(id: "U11111", name: "alex", realName: "Alex")],
+            ])
+            let service = SlackConnectionService(client: fake, credentialStore: credentials)
+            try service.saveBotToken("xoxb-slack-bot-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(configuredTeamIds: ["T-STALE"])
+            )
+
+            let discovery = try await service.discoverConfigurationOptions()
+
+            #expect(discovery.identity.teamId == "T12345")
+            #expect(discovery.conversations.map(\.id) == ["C11111", "C22222"])
+            #expect(discovery.users.map(\.id) == ["U11111", "U22222"])
+            #expect(discovery.warnings.isEmpty)
+            #expect(await fake.conversationCursorsRequested() == [nil, "cursor-1"])
+            #expect(await fake.userCursorsRequested() == [nil, "cursor-1"])
         }
     }
 
@@ -1675,6 +1891,389 @@ struct SlackConnectionTests {
         }
     }
 
+    // MARK: - Receive readiness and per-event stage telemetry
+
+    @Test func recordInboundEventOutcomeExplainsRejectionBoundaries() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let service = SlackConnectionService(
+                client: FakeSlackAPIClient(),
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
+                    botUserId: "UOSABOT"
+                )
+            )
+
+            func envelope(eventId: String, channel: String, user: String) -> SlackEventEnvelope {
+                SlackEventEnvelope(
+                    token: nil,
+                    teamId: "T12345",
+                    apiAppId: "A12345",
+                    event: SlackEventMessage(
+                        type: "app_mention",
+                        subtype: nil,
+                        channel: channel,
+                        user: user,
+                        botId: nil,
+                        text: "<@UOSABOT> stage check",
+                        ts: "1718800010.000100",
+                        threadTs: nil,
+                        channelType: "channel"
+                    ),
+                    type: "event_callback",
+                    eventId: eventId,
+                    eventTime: 1_718_800_010
+                )
+            }
+
+            let unreadable = try service.recordInboundEventOutcome(
+                envelope(eventId: "EvUNREADABLE", channel: "C99999", user: "U55555")
+            )
+            #expect(unreadable == .rejected(reason: "channel_not_readable"))
+
+            let unauthorized = try service.recordInboundEventOutcome(
+                envelope(eventId: "EvUNAUTHORIZED", channel: "C23456", user: "U99999")
+            )
+            #expect(unauthorized == .rejected(reason: "sender_not_allowlisted"))
+
+            let accepted = try service.recordInboundEventOutcome(
+                envelope(eventId: "EvACCEPTED", channel: "C23456", user: "U55555")
+            )
+            guard case .accepted(let normalized) = accepted else {
+                Issue.record("Allowlisted event should be accepted, got \(accepted)")
+                return
+            }
+            #expect(normalized.roomId == "C23456")
+
+            let duplicate = try service.recordInboundEventOutcome(
+                envelope(eventId: "EvACCEPTED", channel: "C23456", user: "U55555")
+            )
+            #expect(duplicate == .rejected(reason: "duplicate_event_acknowledge_without_dispatch"))
+            #expect(AgentChannelInboundActivityPresentation.guidance(
+                stage: .rejected,
+                reason: "duplicate_event_acknowledge_without_dispatch"
+            ) != nil)
+        }
+    }
+
+    @Test func diagnosticsValidatesSocketModeAppTokenSeparatelyFromBotToken() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let appToken = "xapp-slack-app-token-super-secret"
+            let fake = FakeSlackAPIClient()
+            await fake.failSocketOpen(
+                SlackAPIError.requestFailed("invalid_auth for \(appToken)")
+            )
+            let service = SlackConnectionService(client: fake, credentialStore: credentials)
+            try service.saveBotToken("xoxb-slack-bot-token-super-secret")
+            try service.saveAppToken(appToken)
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"]
+                )
+            )
+
+            let diagnostics = await service.diagnostics()
+
+            // Bot API connectivity is healthy, receive is not: the two must
+            // not be conflated.
+            #expect(diagnostics.identity != nil)
+            #expect(diagnostics.socketModeStatus == "invalid")
+            #expect(!diagnostics.receiveReady)
+            let failures = diagnostics.failures.joined(separator: " ")
+            #expect(failures.contains("connections:write"))
+            #expect(failures.contains("[REDACTED:SLACK_APP_TOKEN]"))
+            #expect(!failures.contains(appToken))
+        }
+    }
+
+    @Test func diagnosticsReportsReceiveReadyOnlyWithValidatedSocketModePrerequisites() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let service = SlackConnectionService(client: FakeSlackAPIClient(), credentialStore: credentials)
+            try service.saveBotToken("xoxb-slack-bot-token-super-secret")
+            try service.saveAppToken("xapp-slack-app-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"]
+                )
+            )
+
+            let diagnostics = await service.diagnostics()
+
+            #expect(diagnostics.socketModeStatus == "ok")
+            #expect(diagnostics.receiveReady)
+            #expect(diagnostics.failures.isEmpty)
+        }
+    }
+
+    @Test func diagnosticsNeverTreatsSigningSecretAsReceiveCapability() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let service = SlackConnectionService(client: FakeSlackAPIClient(), credentialStore: credentials)
+            try service.saveBotToken("xoxb-slack-bot-token-super-secret")
+            try service.saveSigningSecret("slack-signing-secret-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"]
+                )
+            )
+
+            let diagnostics = await service.diagnostics()
+
+            #expect(diagnostics.signingSecretSaved)
+            #expect(diagnostics.socketModeStatus == "not_configured")
+            #expect(!diagnostics.receiveReady)
+        }
+    }
+
+    @Test func diagnosticsFlagsInboundDispatchAgentProblems() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let service = SlackConnectionService(
+                client: FakeSlackAPIClient(),
+                credentialStore: credentials,
+                inboundAgentAvailability: { _ in false }
+            )
+            try service.saveBotToken("xoxb-slack-bot-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
+                    inboundDispatch: AgentChannelInboundDispatchConfiguration(
+                        enabled: true,
+                        targetAgentId: UUID()
+                    )
+                )
+            )
+
+            let diagnostics = await service.diagnostics()
+
+            #expect(diagnostics.inboundDispatchEnabled)
+            #expect(diagnostics.inboundDispatchIssue == "inbound_agent_unavailable")
+            #expect(diagnostics.failures.contains {
+                $0.localizedCaseInsensitiveContains("routed agent no longer exists")
+            })
+        }
+    }
+
+    @Test func diagnosticsValidatesEveryRoutedAgentNotJustTheDefault() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let liveAgent = UUID()
+            let missingAgent = UUID()
+            let service = SlackConnectionService(
+                client: FakeSlackAPIClient(),
+                credentialStore: credentials,
+                inboundAgentAvailability: { $0 == liveAgent }
+            )
+            try service.saveBotToken("xoxb-slack-bot-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
+                    inboundDispatch: AgentChannelInboundDispatchConfiguration(
+                        enabled: true,
+                        targetAgentId: liveAgent,
+                        routes: [
+                            AgentChannelDispatchRoute(roomId: "C23456", agentId: missingAgent)
+                        ]
+                    )
+                )
+            )
+
+            let diagnostics = await service.diagnostics()
+
+            #expect(diagnostics.inboundDispatchIssue == "inbound_agent_unavailable")
+
+            // Routes-only config (no default agent) counts as configured.
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
+                    inboundDispatch: AgentChannelInboundDispatchConfiguration(
+                        enabled: true,
+                        routes: [
+                            AgentChannelDispatchRoute(roomId: "C23456", agentId: liveAgent)
+                        ]
+                    )
+                )
+            )
+            let routesOnly = await service.diagnostics()
+            #expect(routesOnly.inboundDispatchIssue == nil)
+        }
+    }
+
+    @Test func diagnosticsWarnsWhenMultipleOsaurusInstancesCompeteForSocketMode() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let service = SlackConnectionService(
+                client: FakeSlackAPIClient(),
+                credentialStore: credentials,
+                runningInstanceCount: { 2 }
+            )
+            try service.saveBotToken("xoxb-slack-bot-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(readableChannelIds: ["C23456"])
+            )
+
+            let diagnostics = await service.diagnostics()
+
+            #expect(diagnostics.warnings.contains {
+                $0.contains("Socket Mode") && $0.contains("2 Osaurus instances")
+            })
+
+            // Readiness folds the environment warning into its notes so the
+            // setup checklist can display it.
+            let report = AgentChannelLiveProofReadiness.slack(diagnostics)
+            #expect(report.notes.contains { $0.contains("2 Osaurus instances") })
+        }
+    }
+
+    @Test func socketModeRuntimeRecordsPerEventStagesWithReasons() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let fake = FakeSlackAPIClient()
+            let service = SlackConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveAppToken("xapp-slack-app-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
+                    botUserId: "UOSABOT",
+                    botId: "BOSABOT",
+                    apiAppId: "A12345"
+                )
+            )
+            let socket = FakeSlackSocketModeWebSocket(messages: [
+                Self.socketModeEnvelope(
+                    envelopeId: "env-stage-ok",
+                    eventId: "EvSTAGEOK",
+                    userId: "U55555",
+                    text: "<@UOSABOT> stage-probe-accepted-body"
+                ),
+                Self.socketModeEnvelope(
+                    envelopeId: "env-stage-denied",
+                    eventId: "EvSTAGEDENIED",
+                    userId: "U99999",
+                    text: "<@UOSABOT> stage-probe-denied-body"
+                ),
+            ])
+            let activityCenter = AgentChannelInboundActivityCenter()
+            let runtime = SlackSocketModeTransportRuntime(
+                service: service,
+                client: fake,
+                webSocketFactory: FakeSlackSocketModeWebSocketFactory(socket: socket),
+                activityCenter: activityCenter
+            )
+
+            let result = await runtime.runStep(maxMessages: 2)
+
+            #expect(result.disposition == .succeeded)
+            #expect(result.received == 2)
+            #expect(result.stored == 1)
+
+            let events = await activityCenter.recent(connectionId: "slack", limit: 20)
+            func stages(for eventId: String) -> [(AgentChannelInboundActivityStage, String?)] {
+                events.reversed()
+                    .filter { $0.providerEventId == eventId }
+                    .map { ($0.stage, $0.reason) }
+            }
+
+            let accepted = stages(for: "EvSTAGEOK")
+            #expect(accepted.map(\.0) == [.received, .stored, .dispatchSuppressed])
+            #expect(accepted.last?.1 == "inbound_dispatch_not_configured")
+
+            let denied = stages(for: "EvSTAGEDENIED")
+            #expect(denied.map(\.0) == [.received, .rejected])
+            #expect(denied.last?.1 == "sender_not_allowlisted")
+
+            // Stage telemetry must never carry message content or secrets.
+            let dump = String(describing: events)
+            #expect(!dump.contains("stage-probe-accepted-body"))
+            #expect(!dump.contains("stage-probe-denied-body"))
+            #expect(!dump.contains("xapp-slack-app-token-super-secret"))
+        }
+    }
+
+    @Test func socketModeRuntimePublishesHealthPerEnvelopeWhileSocketStaysOpen() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let fake = FakeSlackAPIClient()
+            let service = SlackConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveAppToken("xapp-slack-app-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
+                    botUserId: "UOSABOT",
+                    botId: "BOSABOT",
+                    apiAppId: "A12345"
+                )
+            )
+            let socket = StallingSlackSocketModeWebSocket(messages: [
+                Self.socketModeEnvelope(
+                    envelopeId: "env-live-1",
+                    eventId: "EvLIVE1",
+                    userId: "U55555",
+                    text: "<@UOSABOT> progress should publish now"
+                ),
+            ])
+            let healthCenter = AgentChannelTransportHealthCenter()
+            let runtime = SlackSocketModeTransportRuntime(
+                service: service,
+                client: fake,
+                webSocketFactory: AnySlackSocketModeWebSocketFactory(socket: socket),
+                healthCenter: healthCenter,
+                activityCenter: AgentChannelInboundActivityCenter()
+            )
+
+            let step = Task { await runtime.runStep() }
+
+            // The socket is still open (no maxMessages reached, no disconnect),
+            // yet the processed envelope must already be visible in health.
+            let published = await waitForTransportCondition {
+                let state = await healthCenter.state(
+                    connectionId: "slack",
+                    transportId: SlackSocketModeTransportRuntime.transportId
+                )
+                return state?.lastReceivedCount == 1 && state?.lastStoredCount == 1
+            }
+            #expect(published)
+            #expect(socket.isReceiveParked())
+
+            socket.cancel()
+            _ = await step.value
+        }
+    }
+
     private static func socketModeEnvelope(
         envelopeId: String,
         eventId: String,
@@ -1848,11 +2447,13 @@ private actor FakeSlackAPIClient: SlackAPIClientProtocol {
     private var messagesByChannel: [String: [SlackMessage]] = [:]
     private var messagePagesByChannel: [String: [SlackMessagePage]] = [:]
     private var conversationPages: [[SlackConversation]]?
+    private var userPages: [[SlackUser]]?
     private var sentMessages: [(channelId: String, content: String, threadTs: String?)] = []
     private var openedAppToken: String?
     private var socketOpenError: (any Error)?
     private var requestedMessageCursors: [String?] = []
     private var requestedConversationCursors: [String?] = []
+    private var requestedUserCursors: [String?] = []
 
     func setAuthFailureEchoingSecrets(botToken: String, signingSecret: String, appToken: String) {
         authFailureMessage = """
@@ -1882,12 +2483,21 @@ private actor FakeSlackAPIClient: SlackAPIClientProtocol {
         conversationPages = pages
     }
 
+    /// Configure explicit cursor-linked user pages.
+    func setUserPages(_ pages: [[SlackUser]]) {
+        userPages = pages
+    }
+
     func messageCursorsRequested() -> [String?] {
         requestedMessageCursors
     }
 
     func conversationCursorsRequested() -> [String?] {
         requestedConversationCursors
+    }
+
+    func userCursorsRequested() -> [String?] {
+        requestedUserCursors
     }
 
     private static func pageIndex(for cursor: String?) -> Int {
@@ -1970,6 +2580,21 @@ private actor FakeSlackAPIClient: SlackAPIClientProtocol {
         let index = min(Self.pageIndex(for: cursor), pages.count - 1)
         return SlackConversationPage(
             conversations: pages[index],
+            nextCursor: Self.cursor(forNextPageAfter: index, pageCount: pages.count)
+        )
+    }
+
+    func users(token: String, limit: Int, cursor: String?) async throws -> SlackUserPage {
+        requestedUserCursors.append(cursor)
+        let pages = userPages ?? [
+            [
+                SlackUser(id: "U55555", teamId: "T12345", name: "mike", realName: "Mike"),
+                SlackUser(id: "U66666", teamId: "T12345", name: "sarah", realName: "Sarah"),
+            ]
+        ]
+        let index = min(Self.pageIndex(for: cursor), pages.count - 1)
+        return SlackUserPage(
+            users: pages[index],
             nextCursor: Self.cursor(forNextPageAfter: index, pageCount: pages.count)
         )
     }
@@ -2257,6 +2882,60 @@ private final class HangingSlackSocketModeWebSocket: SlackSocketModeWebSocket, @
 
     func wasCancelled() -> Bool {
         lock.withLock { cancelled }
+    }
+}
+
+/// Delivers queued messages, then parks like a real WebSocket waiting for
+/// more Slack traffic. Used to prove health publishes per envelope while the
+/// long-lived socket is still open.
+private final class StallingSlackSocketModeWebSocket: SlackSocketModeWebSocket, @unchecked Sendable {
+    private let lock = NSLock()
+    private var messages: [String]
+    private var continuation: CheckedContinuation<String, any Error>?
+    private var cancelled = false
+
+    init(messages: [String]) {
+        self.messages = messages
+    }
+
+    func receiveText() async throws -> String {
+        enum NextAction {
+            case deliver(String)
+            case cancelledAlready
+            case park
+        }
+        return try await withCheckedThrowingContinuation { cont in
+            let action: NextAction = lock.withLock {
+                if cancelled { return .cancelledAlready }
+                if !messages.isEmpty { return .deliver(messages.removeFirst()) }
+                continuation = cont
+                return .park
+            }
+            switch action {
+            case .deliver(let message):
+                cont.resume(returning: message)
+            case .cancelledAlready:
+                cont.resume(throwing: URLError(.cancelled))
+            case .park:
+                break
+            }
+        }
+    }
+
+    func sendText(_ text: String) async throws {}
+
+    func cancel() {
+        let held: CheckedContinuation<String, any Error>? = lock.withLock {
+            cancelled = true
+            let current = continuation
+            continuation = nil
+            return current
+        }
+        held?.resume(throwing: URLError(.cancelled))
+    }
+
+    func isReceiveParked() -> Bool {
+        lock.withLock { continuation != nil }
     }
 }
 

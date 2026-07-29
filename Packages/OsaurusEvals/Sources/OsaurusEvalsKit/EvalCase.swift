@@ -12,7 +12,7 @@
 //      (required plugins, seeded methods, enabled skills/tools). The
 //      runner uses `requirePlugins` to skip cases the local install
 //      can't satisfy instead of failing them — a contributor without
-//      `osaurus.browser` should still be able to run the rest of the suite.
+//      `osaurus.calendar` should still be able to run the rest of the suite.
 //    - `expect` is what we'd score against. All matchers are optional
 //      so a case can scope to just the components it cares about.
 //
@@ -93,21 +93,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `EvalRunner.runCapabilitySearchCase`. Other domains
         /// ignore this field.
         public let seedMethods: [SeedMethod]?
-        /// Skill names to flip `enabled = true` on for the duration
-        /// of the case (and restore afterwards). Used by
-        /// `capability_search` skill-lane fixtures because every
-        /// built-in skill ships disabled-by-default and
-        /// `SkillSearchService.search` post-filters disabled skills
-        /// out — so a recall fixture against e.g. "Research Analyst"
-        /// silently returns 0 unless we toggle it on first.
-        ///
-        /// Mutates the user's persistent skill state for the run
-        /// window only; the runner snapshots prior state and
-        /// restores it after the case body. Restoration is
-        /// best-effort, not crash-safe — a process crash mid-case
-        /// can leave a built-in skill flipped on. Re-running any
-        /// case that names the same skill converges the state back.
-        public let enableSkills: [String]?
         /// Tool names to grant the agent for the duration of a
         /// `capability_claims` case (and restore afterwards). The agent's
         /// enabled set is what the enabled-capabilities manifest is built
@@ -210,7 +195,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public init(
             requirePlugins: [String]? = nil,
             seedMethods: [SeedMethod]? = nil,
-            enableSkills: [String]? = nil,
             enableTools: [String]? = nil,
             ensureToolsDisabled: [String]? = nil,
             workspaceFiles: [WorkspaceFile]? = nil,
@@ -223,7 +207,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         ) {
             self.requirePlugins = requirePlugins
             self.seedMethods = seedMethods
-            self.enableSkills = enableSkills
             self.enableTools = enableTools
             self.ensureToolsDisabled = ensureToolsDisabled
             self.workspaceFiles = workspaceFiles
@@ -288,6 +271,13 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Combined mode only: let host read tools open secret-shaped
         /// files (`.env`, keys) in the read-only host workspace.
         public let allowHostSecretReads: Bool?
+        /// Combined mode only: the writable opt-in
+        /// (`AutonomousExecConfig.allowHostFolderWrites`) — `file_write` /
+        /// `file_edit` join the schema and may mutate the host workspace
+        /// (relative paths) or the sandbox (`/workspace/...` paths);
+        /// `sandbox_write_file` is hidden. Default false → the workspace
+        /// stays read-only.
+        public let allowHostFolderWrites: Bool?
         /// `sandbox_exec` per-turn call budget.
         public let maxCommandsPerTurn: Int?
         /// Combined mode: the case's temp workspace (with
@@ -311,6 +301,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             backgroundProcessEnabled: Bool? = nil,
             networkEnabled: Bool? = nil,
             allowHostSecretReads: Bool? = nil,
+            allowHostFolderWrites: Bool? = nil,
             maxCommandsPerTurn: Int? = nil,
             hostFolder: Bool? = nil,
             seedFiles: [WorkspaceFile]? = nil,
@@ -320,6 +311,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.backgroundProcessEnabled = backgroundProcessEnabled
             self.networkEnabled = networkEnabled
             self.allowHostSecretReads = allowHostSecretReads
+            self.allowHostFolderWrites = allowHostFolderWrites
             self.maxCommandsPerTurn = maxCommandsPerTurn
             self.hostFolder = hostFolder
             self.seedFiles = seedFiles
@@ -623,6 +615,14 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `AgentChannelEvalHarness` — no network, no model — and pins the
         /// allowlist / confirm-send / MCP-exposure contracts.
         public let agentChannels: AgentChannelsExpectations?
+        /// Deterministic composition-census expectation for
+        /// `domain == "prompt_surface"` cases. Composes the REAL preview
+        /// surface (no model call) — optionally under an inline
+        /// `ExperimentProfile` — and pins section/tool presence, token
+        /// budgets, compact selection, byte-determinism, and savings vs
+        /// the production baseline. The census attribution rides in the
+        /// report's `context` block. CI-safe like `schema` / `prefix_hash`.
+        public let promptSurface: PromptSurfaceExpectations?
 
         public init(
             schema: SchemaExpectations? = nil,
@@ -646,7 +646,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             cacheProof: CacheProofExpectations? = nil,
             httpAPI: HTTPAPIExpectations? = nil,
             memory: MemoryExpectations? = nil,
-            agentChannels: AgentChannelsExpectations? = nil
+            agentChannels: AgentChannelsExpectations? = nil,
+            promptSurface: PromptSurfaceExpectations? = nil
         ) {
             self.schema = schema
             self.toolEnvelope = toolEnvelope
@@ -670,6 +671,82 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.httpAPI = httpAPI
             self.memory = memory
             self.agentChannels = agentChannels
+            self.promptSurface = promptSurface
+        }
+    }
+
+    /// Expectation for `domain == "prompt_surface"` cases — the
+    /// deterministic feature/prompt census lane. The runner composes the
+    /// production preview surface for the run model in host-folder mode
+    /// (an empty temp workspace; `fixtures.agentCapabilities` installs a
+    /// temp agent when capability toggles matter), then composes AGAIN
+    /// under `profile` when one is declared, and scores:
+    ///   - profile validation itself (`expectInvalidProfile` pins that the
+    ///     validator REFUSES protected/unknown ablation — the negative
+    ///     contract);
+    ///   - section/tool presence and absence in the (profiled) surface;
+    ///   - hard token ceilings (`max*Tokens`);
+    ///   - compact/full selection (`expectCompactPrompt`);
+    ///   - byte determinism (`expectDeterministic` — two composes must
+    ///     hash identically, the KV-prefix stability requirement);
+    ///   - `requireSavingsVsBaseline` — the profiled surface must cost
+    ///     strictly fewer estimated tokens than the production baseline.
+    /// Every field is optional so a case scopes to exactly what it pins.
+    public struct PromptSurfaceExpectations: Sendable, Codable {
+        /// Inline experiment profile the census composes under. nil →
+        /// census the production baseline itself.
+        public let profile: ExperimentProfile?
+        /// True → the case PASSES iff `profile` FAILS validation (and no
+        /// compose happens). Pins the protected-contract refusal path.
+        public let expectInvalidProfile: Bool?
+        /// Section ids that must survive composition.
+        public let mustIncludeSections: [String]?
+        /// Section ids that must NOT appear in the composed manifest.
+        public let mustExcludeSections: [String]?
+        /// Tool names that must be in the request schema.
+        public let mustIncludeTools: [String]?
+        /// Tool names that must NOT be in the request schema.
+        public let mustExcludeTools: [String]?
+        /// Hard ceiling on the estimated system-prompt tokens.
+        public let maxSystemPromptTokens: Int?
+        /// Hard ceiling on the estimated tool-schema tokens.
+        public let maxToolSchemaTokens: Int?
+        /// Hard ceiling on prompt + tool schema combined.
+        public let maxSurfaceTokens: Int?
+        /// Compact/full selection the resolved window must land on.
+        public let expectCompactPrompt: Bool?
+        /// Two identical composes must produce the identical prompt hash.
+        public let expectDeterministic: Bool?
+        /// The profiled surface must cost strictly fewer tokens than the
+        /// no-profile baseline (requires `profile`).
+        public let requireSavingsVsBaseline: Bool?
+
+        public init(
+            profile: ExperimentProfile? = nil,
+            expectInvalidProfile: Bool? = nil,
+            mustIncludeSections: [String]? = nil,
+            mustExcludeSections: [String]? = nil,
+            mustIncludeTools: [String]? = nil,
+            mustExcludeTools: [String]? = nil,
+            maxSystemPromptTokens: Int? = nil,
+            maxToolSchemaTokens: Int? = nil,
+            maxSurfaceTokens: Int? = nil,
+            expectCompactPrompt: Bool? = nil,
+            expectDeterministic: Bool? = nil,
+            requireSavingsVsBaseline: Bool? = nil
+        ) {
+            self.profile = profile
+            self.expectInvalidProfile = expectInvalidProfile
+            self.mustIncludeSections = mustIncludeSections
+            self.mustExcludeSections = mustExcludeSections
+            self.mustIncludeTools = mustIncludeTools
+            self.mustExcludeTools = mustExcludeTools
+            self.maxSystemPromptTokens = maxSystemPromptTokens
+            self.maxToolSchemaTokens = maxToolSchemaTokens
+            self.maxSurfaceTokens = maxSurfaceTokens
+            self.expectCompactPrompt = expectCompactPrompt
+            self.expectDeterministic = expectDeterministic
+            self.requireSavingsVsBaseline = requireSavingsVsBaseline
         }
     }
 
@@ -749,6 +826,17 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// shared prefix). nil → the runner sends `query` twice, the
         /// minimal prefix-sharing shape.
         public let followUpTurns: [String]?
+        /// Optional stable system/tool prefix included at the start of every
+        /// session. Cross-session cases use this to prove a processor-valid
+        /// prompt boundary rather than treating an arbitrary shared substring
+        /// inside a changed user message as reusable KV state.
+        public let systemPrompt: String?
+        /// Optional session-specific system prompts. The array must contain
+        /// exactly one entry per session (initial session plus every valid
+        /// `startNewSessionBeforeTurns` boundary). This enables a three-chat
+        /// proof where chat 1 stores a short prefix, chat 2 extends and stores
+        /// it, and chat 3 must restore the longer valid candidate.
+        public let systemPromptsPerSession: [String]?
         /// Per-turn decode cap. nil → 128 (cache proof needs turns, not prose).
         public let maxTokens: Int?
         /// Floor on `prefixHits` delta (full-attention reuse proof).
@@ -766,18 +854,108 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Default true: hybrid-SSM models must show companion hits for the
         /// case to pass, regardless of which floors the case declares.
         public let requireCompanionOnHybrid: Bool?
+        /// Per-turn `enable_thinking` values (index-aligned with the turn
+        /// order; missing indices keep the model default). The hybrid-SSM
+        /// boundary stressor: toggling Thinking mid-conversation re-derives
+        /// companion states — the path the bounded companion LRU must keep
+        /// from re-growing to the model's full on-disk size.
+        public let thinkingPerTurn: [Bool]?
+        /// When true and the topology is hybrid-SSM, the case additionally
+        /// requires disk-L2 evidence (stores or hits) alongside companion
+        /// movement — per the AGENTS.md hybrid cache rule that a KV or
+        /// companion hit alone is not full reuse proof for a Qwen 3.5-class
+        /// hybrid whose older boundaries must spill to disk-L2. Skipped
+        /// (with a note) on non-hybrid topologies.
+        public let requireDiskL2EvidenceOnHybrid: Bool?
+        /// When true, the case's peak physical footprint is gated against
+        /// the PRODUCTION-resolved memory-safety load budget (the same
+        /// resolver the runtime loads under, including a simulated-RAM
+        /// profile when `OSAURUS_EVALS_SIM_RAM_GB` is in force). Fails when
+        /// the budget resolves and the peak exceeds it; notes when no
+        /// budget resolves (unlimited/diagnostic mode).
+        public let gatePeakFootprintToResolvedBudget: Bool?
+        /// Ceiling (MB) on footprint growth across the conversation:
+        /// last-turn footprint − first-turn footprint. The multi-turn
+        /// memory-growth gate — monotonic growth back toward the model's
+        /// on-disk size fails here even when every reuse floor passes.
+        public let maxFootprintGrowthMb: Double?
+        /// One-based turn numbers that begin a fresh chat/session. History is
+        /// cleared and a new session id is used before each listed turn.
+        public let startNewSessionBeforeTurns: [Int]?
+        /// Minimum structured cache-restore count on at least one turn after
+        /// the first. The count comes from vMLX prefill progress, not logs.
+        public let minCacheRestoredTokens: Int?
+        /// Require at least one post-first turn to restore a nonzero prefix
+        /// while still prefilling a nonzero divergent tail.
+        public let requirePartialCacheRestore: Bool?
+        /// Require the satisfying restore event to identify the disk tier.
+        public let requireDiskCacheRestore: Bool?
+        /// Minimum number of post-first turns that must carry a nonzero typed
+        /// cache-restore event. Unlike aggregate counters, this proves which
+        /// individual turns actually restored prompt work.
+        public let minStructuredCacheRestoreTurns: Int?
+        /// Require the final turn's typed restore event to identify disk.
+        public let requireFinalDiskCacheRestore: Bool?
+        /// One-based turns that must not report any restored prompt tokens.
+        /// Used when a prompt/config revision diverges before the first
+        /// cacheable block: accepting an older full checkpoint is stale-state
+        /// reuse, not a speedup.
+        public let requireNoCacheRestoreOnTurns: [Int]?
+        /// One-based turns that must report a nonzero typed restore from the
+        /// disk tier.
+        public let requireDiskCacheRestoreOnTurns: [Int]?
+        /// One-based turns that must restore a nonzero compatible prefix and
+        /// still prefill a nonzero divergent tail.
+        public let requirePartialCacheRestoreOnTurns: [Int]?
+        /// Minimum final-turn restore gain over the immediately preceding
+        /// turn. Used by the three-session longest-match case: after both a
+        /// short and a longer prefix have been persisted, the final request
+        /// must select the longer valid candidate.
+        public let minFinalRestoreGainTokens: Int?
+        /// Require every turn's typed progress sequence to be bounded,
+        /// monotonic, total-consistent, and terminal at complete=total. A
+        /// restore must also become the baseline for subsequent prefill.
+        public let requirePrefillProgressAccounting: Bool?
+        /// Require every completed turn to produce non-empty visible content.
+        public let requireNonEmptyVisibleTurns: Bool?
+        /// Require no turn to end with an unclosed reasoning channel.
+        public let requireClosedReasoning: Bool?
+        /// Optional per-turn TTFT ceiling, applied to every measured turn.
+        public let maxTtftMs: Double?
 
         public init(
             followUpTurns: [String]? = nil,
+            systemPrompt: String? = nil,
+            systemPromptsPerSession: [String]? = nil,
             maxTokens: Int? = nil,
             minKvPrefixHitsDelta: Int? = nil,
             minSsmCompanionHitsDelta: Int? = nil,
             minDiskL2HitsDelta: Int? = nil,
             minDiskL2StoresDelta: Int? = nil,
             maxPeakPhysFootprintMb: Double? = nil,
-            requireCompanionOnHybrid: Bool? = nil
+            requireCompanionOnHybrid: Bool? = nil,
+            thinkingPerTurn: [Bool]? = nil,
+            requireDiskL2EvidenceOnHybrid: Bool? = nil,
+            gatePeakFootprintToResolvedBudget: Bool? = nil,
+            maxFootprintGrowthMb: Double? = nil,
+            startNewSessionBeforeTurns: [Int]? = nil,
+            minCacheRestoredTokens: Int? = nil,
+            requirePartialCacheRestore: Bool? = nil,
+            requireDiskCacheRestore: Bool? = nil,
+            minStructuredCacheRestoreTurns: Int? = nil,
+            requireFinalDiskCacheRestore: Bool? = nil,
+            requireNoCacheRestoreOnTurns: [Int]? = nil,
+            requireDiskCacheRestoreOnTurns: [Int]? = nil,
+            requirePartialCacheRestoreOnTurns: [Int]? = nil,
+            minFinalRestoreGainTokens: Int? = nil,
+            requirePrefillProgressAccounting: Bool? = nil,
+            requireNonEmptyVisibleTurns: Bool? = nil,
+            requireClosedReasoning: Bool? = nil,
+            maxTtftMs: Double? = nil
         ) {
             self.followUpTurns = followUpTurns
+            self.systemPrompt = systemPrompt
+            self.systemPromptsPerSession = systemPromptsPerSession
             self.maxTokens = maxTokens
             self.minKvPrefixHitsDelta = minKvPrefixHitsDelta
             self.minSsmCompanionHitsDelta = minSsmCompanionHitsDelta
@@ -785,6 +963,24 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.minDiskL2StoresDelta = minDiskL2StoresDelta
             self.maxPeakPhysFootprintMb = maxPeakPhysFootprintMb
             self.requireCompanionOnHybrid = requireCompanionOnHybrid
+            self.thinkingPerTurn = thinkingPerTurn
+            self.requireDiskL2EvidenceOnHybrid = requireDiskL2EvidenceOnHybrid
+            self.gatePeakFootprintToResolvedBudget = gatePeakFootprintToResolvedBudget
+            self.maxFootprintGrowthMb = maxFootprintGrowthMb
+            self.startNewSessionBeforeTurns = startNewSessionBeforeTurns
+            self.minCacheRestoredTokens = minCacheRestoredTokens
+            self.requirePartialCacheRestore = requirePartialCacheRestore
+            self.requireDiskCacheRestore = requireDiskCacheRestore
+            self.minStructuredCacheRestoreTurns = minStructuredCacheRestoreTurns
+            self.requireFinalDiskCacheRestore = requireFinalDiskCacheRestore
+            self.requireNoCacheRestoreOnTurns = requireNoCacheRestoreOnTurns
+            self.requireDiskCacheRestoreOnTurns = requireDiskCacheRestoreOnTurns
+            self.requirePartialCacheRestoreOnTurns = requirePartialCacheRestoreOnTurns
+            self.minFinalRestoreGainTokens = minFinalRestoreGainTokens
+            self.requirePrefillProgressAccounting = requirePrefillProgressAccounting
+            self.requireNonEmptyVisibleTurns = requireNonEmptyVisibleTurns
+            self.requireClosedReasoning = requireClosedReasoning
+            self.maxTtftMs = maxTtftMs
         }
     }
 
@@ -1019,13 +1215,31 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let minDecodeTokensPerSecond: Double?
         /// Optional ceiling on the MEDIAN time-to-first-token (ms).
         public let maxTtftMs: Double?
-        /// Model-lifecycle mode: `"cold_load"` measures a full unload →
-        /// reload → first-token cycle per rep (the cold-start row), then a
-        /// warm first-token reading for the swap-latency contrast. nil →
-        /// the standard fixed-decode generation benchmark. Lifecycle rows
-        /// are trend telemetry — no hard floors — and SKIP on hosts whose
-        /// run model is not a local MLX model (nothing to unload).
+        /// Model-lifecycle mode:
+        ///   - `"cold_load"` measures a full unload → reload → first-token
+        ///     cycle per rep (the cold-start row), then a warm first-token
+        ///     reading for the swap-latency contrast. Trend telemetry —
+        ///     no hard floors.
+        ///   - `"cold_load_cancel"` dispatches a generation against a fully
+        ///     evicted model, cancels it `cancelAfterMs` after dispatch (i.e.
+        ///     inside the cold load), and requires prompt stream
+        ///     termination plus a successful full recovery generation — the
+        ///     zombie-load / startup-cancellation reliability row.
+        ///   - `"midgen_cancel"` warms the model, cancels `cancelAfterMs`
+        ///     after the FIRST streamed delta, and requires the same
+        ///     termination + recovery proof mid-decode.
+        /// nil → the standard fixed-decode generation benchmark. Lifecycle
+        /// rows SKIP on hosts whose run model is not a local MLX model
+        /// (nothing to unload / cancel).
         public let lifecycle: String?
+        /// Cancellation lanes: ms from the anchor point (dispatch for
+        /// `cold_load_cancel`, first delta for `midgen_cancel`) to the
+        /// cancel signal. nil → 750.
+        public let cancelAfterMs: Double?
+        /// Cancellation lanes: ceiling (ms) on cancel-signal → stream
+        /// termination. nil → 15000. A cancel that outlives this is a
+        /// wedged cancel and fails the row.
+        public let maxCancelLatencyMs: Double?
 
         public init(
             reps: Int,
@@ -1033,7 +1247,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             promptRepeat: Int? = nil,
             minDecodeTokensPerSecond: Double? = nil,
             maxTtftMs: Double? = nil,
-            lifecycle: String? = nil
+            lifecycle: String? = nil,
+            cancelAfterMs: Double? = nil,
+            maxCancelLatencyMs: Double? = nil
         ) {
             self.reps = reps
             self.maxTokens = maxTokens
@@ -1041,6 +1257,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.minDecodeTokensPerSecond = minDecodeTokensPerSecond
             self.maxTtftMs = maxTtftMs
             self.lifecycle = lifecycle
+            self.cancelAfterMs = cancelAfterMs
+            self.maxCancelLatencyMs = maxCancelLatencyMs
         }
     }
 
@@ -1206,6 +1424,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     public struct AgentLoopExpectations: Sendable, Codable {
         /// Loop budget (model steps). nil → evaluator default (10).
         public let maxIterations: Int?
+        /// Scoreable ceiling on model steps actually consumed. Unlike
+        /// `maxIterations` (a safety budget), this fails needless post-success
+        /// continuation and repeated-final loops.
+        public let maxModelSteps: Int?
         /// Tool names that MUST be called somewhere in the run.
         public let mustCallTools: [String]?
         /// At least ONE of these tool names must be called (OR semantics).
@@ -1274,11 +1496,22 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// false keeps the headless policy (hand the model the error and
         /// keep looping). Lets cases pin BOTH behaviours.
         public let stopOnToolRejection: Bool?
+        /// Explicitly mirrors the chat model dropdown's Thinking choice for
+        /// every model step in this logical run. nil preserves production's
+        /// unspecified-agent default; true/false exercises the user-selected
+        /// reasoning/direct rails without changing bundle or app defaults.
+        public let enableThinking: Bool?
         /// Todo discipline: when true, some `todo` call with at least one
         /// checked (`[x]`) box must appear BEFORE the first `complete`
         /// call (or before the run ends, when there is no `complete`) —
         /// pins "mark items done as you go", not just "made a list once".
         public let todoUpdatedBeforeComplete: Bool?
+        /// Stronger opt-in Todo outcome: the last parseable `todo` call
+        /// before `complete` (or before the run ends) must contain at least
+        /// one checklist item and every item must be checked. This is an eval
+        /// assertion only; a stale/pending Todo never overrides a model final
+        /// in the production loop.
+        public let todoCompletedBeforeFinal: Bool?
         /// Ordered-subsequence assertion: these tool names must appear in
         /// the transcript IN THIS ORDER (other calls may interleave).
         /// Pins procedures where order matters (todo before edits, backup
@@ -1321,6 +1554,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
 
         public init(
             maxIterations: Int? = nil,
+            maxModelSteps: Int? = nil,
             mustCallTools: [String]? = nil,
             mustCallAnyTools: [String]? = nil,
             mustNotCallTools: [String]? = nil,
@@ -1339,7 +1573,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             rubric: [String]? = nil,
             contextWindowOverride: Int? = nil,
             stopOnToolRejection: Bool? = nil,
+            enableThinking: Bool? = nil,
             todoUpdatedBeforeComplete: Bool? = nil,
+            todoCompletedBeforeFinal: Bool? = nil,
             mustCallToolsInOrder: [String]? = nil,
             artifactShared: ArtifactSharedAssertion? = nil,
             scheduledRun: ScheduledRunAssertion? = nil,
@@ -1350,6 +1586,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             cancelAfterToolCalls: Int? = nil
         ) {
             self.maxIterations = maxIterations
+            self.maxModelSteps = maxModelSteps
             self.mustCallTools = mustCallTools
             self.mustCallAnyTools = mustCallAnyTools
             self.mustNotCallTools = mustNotCallTools
@@ -1368,7 +1605,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.rubric = rubric
             self.contextWindowOverride = contextWindowOverride
             self.stopOnToolRejection = stopOnToolRejection
+            self.enableThinking = enableThinking
             self.todoUpdatedBeforeComplete = todoUpdatedBeforeComplete
+            self.todoCompletedBeforeFinal = todoCompletedBeforeFinal
             self.mustCallToolsInOrder = mustCallToolsInOrder
             self.artifactShared = artifactShared
             self.scheduledRun = scheduledRun
@@ -2194,6 +2433,66 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     /// Live lanes SKIP (not fail) when the host can't satisfy them (no
     /// spawnable agent/model / image delegation off / model not ready),
     /// mirroring `requirePlugins`. Every present matcher must pass.
+    /// One deterministic page in the `browser_use` fixture world.
+    public struct BrowserFixturePage: Sendable, Codable {
+        /// The page's canonical URL — `browser_navigate` matches on it
+        /// (exact, or the navigated URL has this as a prefix).
+        public let url: String
+        public let title: String?
+        /// Readable page text (`browser_read_page` returns it; snapshots show
+        /// a 500-char prefix at `full` detail — plugin parity).
+        public let bodyText: String?
+        /// When true, navigating here without a completed `browser_open_login`
+        /// returns the structured LOGIN_REQUIRED failure — the login-wall lane.
+        public let loginRequired: Bool?
+        public let elements: [BrowserFixtureElement]?
+
+        public init(
+            url: String,
+            title: String? = nil,
+            bodyText: String? = nil,
+            loginRequired: Bool? = nil,
+            elements: [BrowserFixtureElement]? = nil
+        ) {
+            self.url = url
+            self.title = title
+            self.bodyText = bodyText
+            self.loginRequired = loginRequired
+            self.elements = elements
+        }
+    }
+
+    /// One interactive element on a fixture page. `id` is the stable key the
+    /// case's `successValues` / `successClicked` predicates read back.
+    public struct BrowserFixtureElement: Sendable, Codable {
+        public let id: String
+        /// Snapshot type tag: `input` / `button` / `link` / `select` / …
+        public let type: String
+        /// Visible text / label.
+        public let text: String?
+        public let placeholder: String?
+        /// Initial value (inputs/selects).
+        public let value: String?
+        /// Clicking (or type+submit on) this element navigates to this URL.
+        public let goto: String?
+
+        public init(
+            id: String,
+            type: String,
+            text: String? = nil,
+            placeholder: String? = nil,
+            value: String? = nil,
+            goto: String? = nil
+        ) {
+            self.id = id
+            self.type = type
+            self.text = text
+            self.placeholder = placeholder
+            self.value = value
+            self.goto = goto
+        }
+    }
+
     public struct SubagentExpectations: Sendable, Codable {
         /// `"scripted"` | `"spawn"` | `"spawn_model"` | `"image"`. Selects the lane.
         public let lane: String
@@ -2342,6 +2641,17 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// (subsequence). Encodes a required plan shape.
         public let expectVerbsInOrder: [String]?
 
+        // --- live browser_use lane inputs (fixture web world) ---
+        /// The deterministic pages `FixtureBrowserWorld` serves. The child
+        /// model drives the REAL `browser_use` host against these instead of
+        /// live WebKit, so a failure attributes to planning/tool use. Reuses
+        /// `successValues` / `successClicked` / `failIfClicked` /
+        /// `expectVerbsInOrder` for world read-back.
+        public let pages: [BrowserFixturePage]?
+        /// URL of the page the world treats as current before the first
+        /// navigate (rarely needed; navigation normally comes first).
+        public let startURL: String?
+
         // --- expectations (any subset; an empty set just records) ---
         /// Whether the run must end in a success envelope.
         public let expectSuccess: Bool?
@@ -2435,6 +2745,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             successClicked: [String]? = nil,
             failIfClicked: [String]? = nil,
             expectVerbsInOrder: [String]? = nil,
+            pages: [BrowserFixturePage]? = nil,
+            startURL: String? = nil,
             expectSuccess: Bool? = nil,
             expectEnvelopeKind: String? = nil,
             expectResultKind: String? = nil,
@@ -2492,6 +2804,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.successClicked = successClicked
             self.failIfClicked = failIfClicked
             self.expectVerbsInOrder = expectVerbsInOrder
+            self.pages = pages
+            self.startURL = startURL
             self.expectSuccess = expectSuccess
             self.expectEnvelopeKind = expectEnvelopeKind
             self.expectResultKind = expectResultKind

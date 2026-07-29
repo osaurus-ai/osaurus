@@ -88,6 +88,20 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
         return SchemaSnapshot.render(schema)
     }
 
+    /// Non-opening variant of `schemaSnapshot`: reads only an
+    /// already-open cached connection and returns nil otherwise.
+    /// Safe to call from the main thread: uses the database's cached
+    /// schema value rather than `schema()`, which hops onto the serial
+    /// DB queue and can park on SQLite's WAL lock for seconds while
+    /// another connection writes.
+    public func schemaSnapshotIfOpen(agentId: UUID) -> String? {
+        guard let database = AgentDatabaseStore.shared.cachedOpenDatabase(for: agentId) else {
+            return nil
+        }
+        guard let schema = database.schemaNonBlocking() else { return nil }
+        return SchemaSnapshot.render(schema)
+    }
+
     // MARK: - AgentRuntimeBridge (writes)
 
     @discardableResult
@@ -328,6 +342,27 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
             let affected = try database.softDelete(
                 table: table,
                 whereClause: whereClause,
+                actor: self.currentActor(),
+                runId: ChatExecutionContext.currentRunId
+            )
+            return AgentMutationResult(rowsAffected: affected)
+        }
+    }
+
+    /// Soft-delete many rows by primary key in a single serialized
+    /// transaction. Used by the Database workspace's bulk delete so a
+    /// large selection doesn't queue N separate bridge writes.
+    @discardableResult
+    public func softDeleteMany(
+        agentId: UUID,
+        table: String,
+        ids: [AgentSQLValue]
+    ) throws -> AgentMutationResult {
+        try serialized(agentId) {
+            let database = try AgentDatabaseStore.shared.database(for: agentId)
+            let affected = try database.softDeleteMany(
+                table: table,
+                ids: ids,
                 actor: self.currentActor(),
                 runId: ChatExecutionContext.currentRunId
             )

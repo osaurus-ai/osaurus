@@ -24,7 +24,7 @@ struct ModelResidencySection: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Picker("", selection: $draft.modelEvictionPolicy) {
                         ForEach(ModelEvictionPolicy.allCases, id: \.self) { policy in
-                            Text(policy.rawValue).tag(policy)
+                            Text(policy.displayName).tag(policy)
                         }
                     }
                     .pickerStyle(.segmented)

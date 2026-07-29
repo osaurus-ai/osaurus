@@ -129,17 +129,32 @@ actor SessionToolStateStore {
     func setInitial(
         _ sessionId: String,
         alwaysLoadedNames: LoadedTools?,
+        toolSpecs: [Tool]? = nil,
         fingerprint: String? = nil,
         manifest: String? = nil,
         soul: String? = nil
     ) {
-        guard states[sessionId] == nil else { return }
-        states[sessionId] = SessionToolState(
-            initialAlwaysLoadedNames: alwaysLoadedNames,
-            sessionFingerprint: fingerprint,
-            frozenManifest: manifest,
-            frozenSoul: soul
-        )
+        // A capabilities load or frozen-memory write can legitimately create
+        // the entry before the first compose reaches this point. Fill only
+        // missing first-compose fields instead of returning early, preserving
+        // anything already accumulated on the entry.
+        var entry = states[sessionId] ?? SessionToolState()
+        if entry.initialAlwaysLoadedNames == nil {
+            entry.initialAlwaysLoadedNames = alwaysLoadedNames
+        }
+        if entry.initialToolSpecs == nil {
+            entry.initialToolSpecs = toolSpecs
+        }
+        if entry.sessionFingerprint == nil {
+            entry.sessionFingerprint = fingerprint
+        }
+        if entry.frozenManifest == nil {
+            entry.frozenManifest = manifest
+        }
+        if entry.frozenSoul == nil {
+            entry.frozenSoul = soul
+        }
+        states[sessionId] = entry
     }
 
     /// Drop the cached state for a session if its recorded (mode, toolMode)

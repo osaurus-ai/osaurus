@@ -136,6 +136,7 @@ enum AgentChannelLiveProofReadiness {
             notes.append("Broadcast mentions are enabled; release proof should confirm this is intentional.")
         }
         appendDiagnosticFailures(diagnostics.failures, to: &blockers)
+        notes.append(contentsOf: diagnostics.warnings)
 
         if diagnostics.writeEnabled {
             manualProof.append("Send one confirmed message to a write-allowlisted Slack channel.")
@@ -148,6 +149,50 @@ enum AgentChannelLiveProofReadiness {
 
         return AgentChannelLiveProofReadinessReport(
             kind: .slack,
+            status: blockers.isEmpty ? .ready : .blocked,
+            blockers: blockers,
+            manualProof: manualProof,
+            notes: notes
+        )
+    }
+
+    static func discord(_ diagnostics: DiscordConnectionDiagnostics) -> AgentChannelLiveProofReadinessReport {
+        var blockers: [String] = []
+        var manualProof: [String] = []
+        var notes: [String] = []
+        let readableChannelIds = nonEmptyEntries(diagnostics.readableChannelIds)
+        let writableChannelIds = nonEmptyEntries(diagnostics.writableChannelIds)
+        let senderAllowlist = nonEmptyEntries(diagnostics.senderAllowlist)
+
+        if !diagnostics.tokenSaved {
+            blockers.append("Save a Discord bot token.")
+        }
+        if diagnostics.bot == nil {
+            blockers.append("Run Test Connection until Discord accepts the bot token.")
+        }
+        if readableChannelIds.isEmpty {
+            blockers.append("Mark at least one Discord channel as readable.")
+        }
+        if senderAllowlist.isEmpty {
+            blockers.append("Add at least one authorized Discord sender.")
+        }
+        if diagnostics.writeEnabled && writableChannelIds.isEmpty {
+            blockers.append("Mark at least one Discord channel as writable or turn writes off.")
+        }
+        appendDiagnosticFailures(diagnostics.failures, to: &blockers)
+        notes.append(contentsOf: diagnostics.warnings)
+
+        if diagnostics.writeEnabled {
+            manualProof.append("Send one confirmed message to a write-allowlisted Discord channel.")
+        } else {
+            notes.append("Discord writes are off; live proof can cover receive/read-only behavior.")
+        }
+        manualProof.append("Receive one Discord message through polling from an authorized sender.")
+        manualProof.append("Confirm an unauthorized sender in the same channel is ignored.")
+        manualProof.append("Restart Osaurus and confirm Discord transport health and configuration persist.")
+
+        return AgentChannelLiveProofReadinessReport(
+            kind: .discord,
             status: blockers.isEmpty ? .ready : .blocked,
             blockers: blockers,
             manualProof: manualProof,

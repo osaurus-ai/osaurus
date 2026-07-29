@@ -234,6 +234,28 @@ public final class BackgroundTaskManager: ObservableObject {
         backgroundTasks[id]
     }
 
+    /// Resolve a still-retained channel conversation so an inbound follow-up
+    /// can answer a clarification or continue the same task without creating
+    /// a second session.
+    public func replyableTaskId(
+        source: SessionSource,
+        externalSessionKey: String,
+        agentId: UUID
+    ) -> UUID? {
+        backgroundTasks.values.first { state in
+            guard state.source == source,
+                  state.externalSessionKey == externalSessionKey,
+                  state.agentId == agentId
+            else { return false }
+            switch state.status {
+            case .waitingForInput, .completed:
+                return true
+            case .queued, .running, .failed, .cancelled:
+                return false
+            }
+        }?.id
+    }
+
     /// Rename a notch session and its canonical persisted conversation.
     /// There is intentionally no notch-only alias: the same title appears in
     /// the notch, Chat window, and conversation sidebar.
@@ -823,11 +845,25 @@ public final class BackgroundTaskManager: ObservableObject {
             // widened, never narrowed: an inherited external context stays
             // external for loopback/plugin/schedule requests too.
             let externalSurface = Self.resolvedExternalSurface(for: request)
-            await ChatExecutionContext.$isExternalSurface.withValue(externalSurface) {
-                await ChatExecutionContext.$currentRunId.withValue(boundRunId) {
-                    await ChatExecutionContext.$currentRunActor.withValue(boundActor) {
-                        await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {
-                            await context.start(prompt: request.prompt)
+            // An unattended, app-authored trigger (recurring schedule, self-
+            // scheduled wake-up, or watcher) fires with no interactive user to
+            // answer an approval card. Marked only when NOT external, so the
+            // narrow `.ask` auto-approval it unlocks can never be reached from a
+            // loopback/HTTP/MCP/plugin dispatch.
+            let unattended =
+                !externalSurface
+                && (request.source == .schedule
+                    || request.source == .selfSchedule
+                    || request.source == .watcher)
+            await ChatExecutionContext.$currentSessionSource.withValue(request.source) {
+                await ChatExecutionContext.$isUnattendedDispatch.withValue(unattended) {
+                    await ChatExecutionContext.$isExternalSurface.withValue(externalSurface) {
+                        await ChatExecutionContext.$currentRunId.withValue(boundRunId) {
+                            await ChatExecutionContext.$currentRunActor.withValue(boundActor) {
+                                await ChatExecutionContext.$currentBackgroundId.withValue(context.id) {
+                                    await context.start(prompt: request.prompt)
+                                }
+                            }
                         }
                     }
                 }
@@ -1132,7 +1168,7 @@ public final class BackgroundTaskManager: ObservableObject {
     /// is the minimal mapping that's stable for Phase 1.
     private static func triggerKind(for source: SessionSource) -> AgentRunTriggerKind {
         switch source {
-        case .chat, .plugin, .http, .imported: return .user
+        case .chat, .plugin, .http, .channel, .imported: return .user
         case .schedule: return .recurringSchedule
         case .watcher: return .watcher
         case .selfSchedule: return .schedule

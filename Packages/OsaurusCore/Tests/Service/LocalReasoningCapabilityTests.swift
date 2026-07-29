@@ -215,6 +215,29 @@ struct LocalReasoningCapabilityTests {
         // mode. From osaurus's perspective there is no on-disk Jinja to
         // analyse for an injection regex, so this signal is false.
         #expect(cap?.templateInjectsThinkTag == false)
+        #expect(cap?.defaultThinkingOn == false)
+    }
+
+    @Test("jang_config default_enabled=true preserves vendor thinking default")
+    func jangConfigDefaultEnabledThinkingOn() {
+        let data = Data(
+            #"""
+            {
+              "chat": {
+                "reasoning": {
+                  "supported": true,
+                  "parser": "deepseek_r1",
+                  "default_enabled": true,
+                  "default_mode": "think",
+                  "modes": ["think", "no_think"]
+                }
+              }
+            }
+            """#.utf8
+        )
+        let cap = LocalReasoningCapability.analyzeJangConfig(data: data)
+        #expect(cap?.supportsThinking == true)
+        #expect(cap?.defaultThinkingOn == true)
     }
 
     @Test("jang_config: reasoning.supported=false → nil (fall through to .none)")

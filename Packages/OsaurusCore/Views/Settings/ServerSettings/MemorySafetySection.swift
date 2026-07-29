@@ -5,7 +5,8 @@
 //  User-facing controls for the vMLX memory-safety policy. These
 //  controls persist into `VMLXServerRuntimeSettings.memorySafety` and
 //  take effect through `ModelRuntime.resolveMemorySafetyLoadPlan(...)`
-//  on the next model load.
+//  on the next model load. The explicit KV retention override is owned by
+//  CacheSection; this panel only reports the profile's resolved consequence.
 //
 
 @preconcurrency import MLXLMCommon
@@ -27,7 +28,7 @@ struct MemorySafetySection: View {
             section: .memorySafety,
             status: .engineReady,
             blurb:
-                "Controls the load-time memory policy used by local vMLX models. Changes apply on the next model load."
+                "Controls the load-time memory policy used by local vMLX models. Saving a changed profile unloads resident models so the next request reloads them with the new policy."
         ) {
             SettingsField(
                 label: "Mode",
@@ -112,13 +113,6 @@ struct MemorySafetySection: View {
                         help: "Maximum MLX allocator cache, in MiB.",
                         value: allocatorCacheMB,
                         clamp: 1 ... 262144
-                    )
-
-                    OptionalIntField(
-                        label: "Per-Session KV Cap (tokens)",
-                        placeholder: "Blank = mode default",
-                        help: "Maximum cached tokens per chat slot for this memory mode.",
-                        value: $draft.memorySafety.customDefaultMaxKVSize
                     )
 
                     OptionalIntField(

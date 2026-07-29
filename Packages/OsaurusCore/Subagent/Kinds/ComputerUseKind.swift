@@ -198,6 +198,7 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
                 policySummary: "",
                 vision: evalHarness.vision,
                 sessionId: scope.sessionId,
+                enableThinking: scope.enableThinking,
                 nextAction: evalHarness.scriptedActions.map {
                     ComputerUseLoop.scriptedProvider(rawArguments: $0)
                 }
@@ -237,7 +238,8 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
             limits: limits,
             policySummary: config.policySummary,
             vision: config.vision,
-            sessionId: scope.sessionId
+            sessionId: scope.sessionId,
+            enableThinking: scope.enableThinking
         )
 
         await MainActor.run {

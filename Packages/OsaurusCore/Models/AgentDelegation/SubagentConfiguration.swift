@@ -195,6 +195,11 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
     /// call regardless).
     public var maxToolCalls: Int
     public var maxElapsedSeconds: Int
+    /// Maximum number of jobs accepted by one `spawn_batch` call and the
+    /// maximum number that may execute concurrently. The scheduler still
+    /// groups local jobs by canonical model and serializes different local
+    /// models, so actual local concurrency may be lower.
+    public var maxParallelSpawns: Int
 
     /// Accepted bounds for each budget — the single source of truth shared by
     /// `normalized` (the save-time clamp) and the Subagents UI steppers, so the
@@ -203,17 +208,20 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
     public static let turnBounds: ClosedRange<Int> = 1 ... 8
     public static let toolCallBounds: ClosedRange<Int> = 0 ... 32
     public static let elapsedBounds: ClosedRange<Int> = 15 ... 1_800
+    public static let parallelSpawnBounds: ClosedRange<Int> = 1 ... 8
 
     public init(
         maxDelegateTokens: Int = 2048,
         maxDelegateTurns: Int = 2,
         maxToolCalls: Int = 0,
-        maxElapsedSeconds: Int = 120
+        maxElapsedSeconds: Int = 120,
+        maxParallelSpawns: Int = 3
     ) {
         self.maxDelegateTokens = maxDelegateTokens
         self.maxDelegateTurns = maxDelegateTurns
         self.maxToolCalls = maxToolCalls
         self.maxElapsedSeconds = maxElapsedSeconds
+        self.maxParallelSpawns = maxParallelSpawns
     }
 
     public var normalized: SubagentBudgets {
@@ -221,8 +229,55 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
             maxDelegateTokens: Self.clamp(maxDelegateTokens, to: Self.tokenBounds),
             maxDelegateTurns: Self.clamp(maxDelegateTurns, to: Self.turnBounds),
             maxToolCalls: Self.clamp(maxToolCalls, to: Self.toolCallBounds),
-            maxElapsedSeconds: Self.clamp(maxElapsedSeconds, to: Self.elapsedBounds)
+            maxElapsedSeconds: Self.clamp(maxElapsedSeconds, to: Self.elapsedBounds),
+            maxParallelSpawns: Self.clamp(maxParallelSpawns, to: Self.parallelSpawnBounds)
         )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case maxDelegateTokens
+        case maxDelegateTurns
+        case maxToolCalls
+        case maxElapsedSeconds
+        case maxParallelSpawns
+    }
+
+    /// Backward-compatible decode for configurations written before batched
+    /// spawning. Each value falls back independently so a missing or malformed
+    /// field never discards the rest of the delegation configuration.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            maxDelegateTokens: (try? container.decodeIfPresent(
+                Int.self,
+                forKey: .maxDelegateTokens
+            )) ?? 2048,
+            maxDelegateTurns: (try? container.decodeIfPresent(
+                Int.self,
+                forKey: .maxDelegateTurns
+            )) ?? 2,
+            maxToolCalls: (try? container.decodeIfPresent(
+                Int.self,
+                forKey: .maxToolCalls
+            )) ?? 0,
+            maxElapsedSeconds: (try? container.decodeIfPresent(
+                Int.self,
+                forKey: .maxElapsedSeconds
+            )) ?? 120,
+            maxParallelSpawns: (try? container.decodeIfPresent(
+                Int.self,
+                forKey: .maxParallelSpawns
+            )) ?? 3
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(maxDelegateTokens, forKey: .maxDelegateTokens)
+        try container.encode(maxDelegateTurns, forKey: .maxDelegateTurns)
+        try container.encode(maxToolCalls, forKey: .maxToolCalls)
+        try container.encode(maxElapsedSeconds, forKey: .maxElapsedSeconds)
+        try container.encode(maxParallelSpawns, forKey: .maxParallelSpawns)
     }
 
     private static func clamp(_ value: Int, to range: ClosedRange<Int>) -> Int {

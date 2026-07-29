@@ -15,6 +15,7 @@ keychain — these rows join the token-free CI-safe set.
 | `agent_channels.unauthorized-sender-denied` | `sender_allowlist` | Allowed sender stores a snapshot; denied sender → `sender_not_allowlisted`, stores nothing. |
 | `agent_channels.no-unapproved-send` | `unconfirmed_send` | Send without `confirm_send: true` fails before provider dispatch (fake client records zero sends). |
 | `agent_channels.external-mcp-denial` | `mcp_denial` | Every `agent_channel_*` tool is externally denied (`/mcp/tools` omission, `/mcp/call` 403). |
+| `agent_channels.proactive-publish-policy` | `proactive_publish` | No binding → no publish capability/prompt payload; external and channel-triggered runs denied; autonomous scheduled runs send only to their own binding; repeated `intent_key` yields one provider write; draft/unattended-confirm never silently send; ambiguous provider failures park as `delivery_unknown` (replays never resend); approvals refuse a binding repointed since queuing (`binding_route_changed`); zero-config derived destinations are confirm-only, surface in the prompt, queue unattended sends, refuse queued approvals with `binding_removed` once the room leaves the write allowlist, and are suppressed by stored customizations. |
 
 ## Run
 

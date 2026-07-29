@@ -390,7 +390,7 @@ struct ModelCompatibilityDiagnosticsTests {
         )
     }
 
-    @Test func dflashGenerationConfigReference_reportsPartialEvenWhenModelTypeIsGeneric() {
+    @Test func dflashGenerationConfigReference_keepsBaseRuntimeReady() {
         let root = makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
         writeBundle(
@@ -407,8 +407,46 @@ struct ModelCompatibilityDiagnosticsTests {
             externalSource: nil
         )
 
-        #expect(report.runtime.kind == .partial)
-        #expect(report.runtime.reason == .partialDFlashSpeculativeDecoding)
+        #expect(report.runtime.kind == .ready)
+        #expect(report.runtime.reason == .localBundleReady)
+        #expect(report.preflight.status == .supported)
+        #expect(!report.preflight.blocksRuntimeLoad)
+        #expect(report.featureHooks.map(\.code).contains(.dflashSpeculativeDecoding))
+        #expect(
+            report.evidence.contains {
+                $0.source == "generation_config.json" && $0.key == "keys"
+                    && $0.value.contains("draft")
+            }
+        )
+    }
+
+    @Test func lagunaTargetWithDFlashRecommendation_keepsBaseRuntimeReady() throws {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config:
+                #"{"model_type":"laguna","architectures":["LagunaForCausalLM"]}"#,
+            generationConfig:
+                #"{"speculative_config":{"method":"dflash","model":"poolside/Laguna-S-2.1-DFlash","num_speculative_tokens":15},"max_new_tokens":32768}"#
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "JANGQ-AI/Laguna-S-2.1-JANG_2L",
+            modelName: "Laguna S 2.1 JANG_2L",
+            modelTypeHint: "laguna",
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.runtime.kind == .ready)
+        #expect(report.preflight.status == .supported)
+        #expect(!report.preflight.blocksRuntimeLoad)
+        #expect(report.localBundle.config?.generation?.hasDFlashReference == true)
+        try ModelCompatibilityDiagnostics.validateLoadAllowed(
+            report,
+            modelName: "Laguna S 2.1 JANG_2L"
+        )
     }
 
     @Test func validateLoadAllowedThrowsForPartialAndUnsupportedReports() {

@@ -33,6 +33,11 @@ public struct FileOperation: Codable, Sendable, Identifiable {
     /// Owning chat session id (used to scope undo per conversation).
     public let sessionId: String
     public let batchId: UUID?  // For batch operations (nil for non-batch)
+    /// Absolute root the operation was performed under, captured at log time
+    /// so undo always targets the folder that was actually mutated — even if
+    /// the owning chat switched folders (or another chat uses a different
+    /// folder concurrently) between the operation and the undo.
+    public let rootPath: String?
 
     public init(
         id: UUID = UUID(),
@@ -42,7 +47,8 @@ public struct FileOperation: Codable, Sendable, Identifiable {
         previousContent: String? = nil,
         timestamp: Date = Date(),
         sessionId: String,
-        batchId: UUID? = nil
+        batchId: UUID? = nil,
+        rootPath: String? = nil
     ) {
         self.id = id
         self.type = type
@@ -52,6 +58,7 @@ public struct FileOperation: Codable, Sendable, Identifiable {
         self.timestamp = timestamp
         self.sessionId = sessionId
         self.batchId = batchId
+        self.rootPath = rootPath
     }
 }
 

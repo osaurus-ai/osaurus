@@ -250,6 +250,92 @@ final class ComputerUseLoopActTests: XCTestCase {
         XCTAssertEqual(metrics.coordinateFallbacks, 1)
     }
 
+    func testTextVerificationWaitsForSettledAXValue() async {
+        let pid: Int32 = 4242
+        let window = CUWindowSummary(
+            id: 7,
+            title: "Untitled",
+            focused: true,
+            x: 0,
+            y: 0,
+            w: 600,
+            h: 400
+        )
+        func snapshot(_ id: Int, _ value: String) -> CUSnapshot {
+            CUSnapshot(
+                snapshotId: id,
+                pid: pid,
+                app: "TextEdit",
+                focusedWindow: "Untitled",
+                tier: .ax,
+                truncated: false,
+                windows: [window],
+                elements: [
+                    CUElement(
+                        id: "s\(id)-1",
+                        role: "textarea",
+                        value: value,
+                        path: "Window[Untitled] > textarea",
+                        windowId: 7,
+                        focused: true,
+                        enabled: true
+                    )
+                ],
+                image: nil
+            )
+        }
+
+        let driver = MockMacDriver(
+            snapshots: [
+                pid: [
+                    snapshot(2, "Hello agai"),
+                    snapshot(3, "Hello again"),
+                ]
+            ]
+        )
+        let original = CUElement(
+            id: "s1-1",
+            role: "textarea",
+            value: "Hello from OracHQ",
+            path: "Window[Untitled] > textarea",
+            windowId: 7,
+            focused: true,
+            enabled: true
+        )
+        var currentTier: CaptureTier = .ax
+        var pendingFrame: CUImage?
+        var lastView: AgentView?
+        var lastSnapshot: CUSnapshot?
+        var metrics = ComputerUseRunMetrics()
+        let feed = SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "g")
+
+        let out = await ComputerUseLoop.act(
+            action: AgentAction(
+                verb: .type,
+                target: AgentTarget(mark: 1),
+                text: "Hello again",
+                replace: true
+            ),
+            element: original,
+            pid: pid,
+            driver: driver,
+            availability: grantedAvailability(),
+            currentTier: &currentTier,
+            pendingFrameImage: &pendingFrame,
+            lastView: &lastView,
+            lastSnapshot: &lastSnapshot,
+            metrics: &metrics,
+            feed: feed,
+            step: 1
+        )
+
+        let captureCount = await driver.captureCount
+        XCTAssertEqual(captureCount, 2)
+        XCTAssertTrue(out.contains(#"= "Hello again""#), "The settled value must reach the planner: \(out)")
+        XCTAssertFalse(out.contains(#"= "Hello agai""#), "A transient prefix must not reach the planner: \(out)")
+        XCTAssertEqual(lastSnapshot?.snapshotId, 3)
+    }
+
     // MARK: - New verbs (Phase 2)
 
     private func actNoFallbackHelper(_ action: AgentAction, destination: CUElement? = nil) async -> (

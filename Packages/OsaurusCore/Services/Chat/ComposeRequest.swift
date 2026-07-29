@@ -18,11 +18,20 @@ struct ComposeRequest: Sendable {
     let agentId: UUID
     let executionMode: ExecutionMode
     let model: String?
+    /// Canonical local-bundle `config.json.model_type`, captured with the
+    /// picker selection. Nil for remote/unresolved models, which deliberately
+    /// fall back to identifier-based family routing.
+    let modelType: String?
     let query: String
     let messages: [ChatMessage]
     let toolsDisabled: Bool
     let additionalToolNames: LoadedTools
     let frozenAlwaysLoadedNames: LoadedTools?
+    /// Exact first-compose tool payloads. Names are still resolved through
+    /// the live permission/feature gates; surviving baseline names reuse these
+    /// canonical schemas so async registry metadata cannot rewrite a session's
+    /// tokenizer prefix between turns.
+    let frozenToolSpecs: [Tool]?
     /// Turn-1 rendered enabled-capabilities manifest echoed back on turn 2+
     /// so the static system-prompt prefix stays byte-identical across the
     /// session (mirrors `frozenAlwaysLoadedNames`). `nil` = render fresh;
@@ -38,11 +47,13 @@ struct ComposeRequest: Sendable {
         agentId: UUID,
         executionMode: ExecutionMode,
         model: String? = nil,
+        modelType: String? = nil,
         query: String = "",
         messages: [ChatMessage] = [],
         toolsDisabled: Bool = false,
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
+        frozenToolSpecs: [Tool]? = nil,
         frozenManifest: String? = nil,
         frozenSoul: String? = nil,
         trace: TTFTTrace? = nil
@@ -50,11 +61,13 @@ struct ComposeRequest: Sendable {
         self.agentId = agentId
         self.executionMode = executionMode
         self.model = model
+        self.modelType = modelType
         self.query = query
         self.messages = messages
         self.toolsDisabled = toolsDisabled
         self.additionalToolNames = additionalToolNames
         self.frozenAlwaysLoadedNames = frozenAlwaysLoadedNames
+        self.frozenToolSpecs = frozenToolSpecs
         self.frozenManifest = frozenManifest
         self.frozenSoul = frozenSoul
         self.trace = trace

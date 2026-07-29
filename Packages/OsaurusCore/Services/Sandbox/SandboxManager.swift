@@ -79,9 +79,16 @@
         /// download from silently growing into a multi-GB hash job.
         private static let maxArtifactDownloadBytes: Int = 512 * 1024 * 1024
 
-        /// Host-side Unix socket path for the bridge server (relayed into guest via vsock)
+        /// Host-side Unix socket path for the bridge server (relayed into guest via vsock).
+        /// Symlinks are resolved because a Unix socket path is capped at 104
+        /// bytes: the evals harness points `OsaurusPaths` at a deep temp root
+        /// whose `container/` is a symlink to the real (short) container dir,
+        /// and binding through the unresolved path overflows the cap
+        /// (`unixDomainSocketPathTooLong`) and kills every VM boot. In
+        /// production the path has no symlinks and is unchanged.
         private static var bridgeSocketPath: String {
-            OsaurusPaths.container().appendingPathComponent("bridge.sock").path
+            OsaurusPaths.container().resolvingSymlinksInPath()
+                .appendingPathComponent("bridge.sock").path
         }
         /// Where the bridge socket appears inside the guest container
         private static let guestBridgeSocketPath = "/tmp/osaurus-bridge.sock"
@@ -220,10 +227,7 @@
             @Published public var isPrefetchingRuntime: Bool = false
 
             private static var initialAvailability: SandboxAvailability {
-                let osVersion = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
-                return osVersion >= 26
-                    ? .available
-                    : .unavailable(reason: "Requires macOS 26 or later")
+                SandboxManager.resolveAvailability()
             }
         }
 
@@ -237,18 +241,28 @@
         public func refreshAvailability() async -> SandboxAvailability {
             _availability = nil
 
-            let osVersion = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
-            guard osVersion >= 26 else {
-                let result = SandboxAvailability.unavailable(reason: "Requires macOS 26 or later")
-                _availability = result
-                await MainActor.run { State.shared.availability = result }
-                return result
-            }
-
-            let result = SandboxAvailability.available
+            let result = Self.resolveAvailability()
             _availability = result
             await MainActor.run { State.shared.availability = result }
             return result
+        }
+
+        /// Availability by backend. macOS 26+ always uses the VM. Older
+        /// systems fall back to Seatbelt (`sandbox-exec`) host confinement
+        /// when the binary is present — the fallback is never selected on
+        /// macOS 26+ (see `SandboxBackend.current`).
+        static func resolveAvailability() -> SandboxAvailability {
+            switch SandboxBackend.current {
+            case .virtualMachine:
+                return .available
+            case .seatbelt:
+                return SeatbeltSandbox.isSupported
+                    ? .available
+                    : .unavailable(
+                        reason:
+                            "Requires macOS 26 or later (and no sandbox-exec fallback was found)"
+                    )
+            }
         }
 
         // MARK: - Container Status
@@ -337,6 +351,22 @@
         }
 
         public func refreshStatus() async -> ContainerStatus {
+            if SandboxBackend.current == .seatbelt {
+                // No VM or on-disk assets to inspect — the Seatbelt backend
+                // is "running" purely by virtue of having been provisioned
+                // this session. `notProvisioned` is still meaningful:
+                // it's what drives the first-run "Set Up Sandbox" flow and
+                // keeps a user-removed sandbox removed until re-setup.
+                if _status.isRunning {
+                    _status = .running
+                } else if _removedByUser || !SandboxConfigurationStore.load().setupComplete {
+                    _status = .notProvisioned
+                } else {
+                    _status = .stopped
+                }
+                syncStatus()
+                return _status
+            }
             if linuxContainer != nil {
                 _status = .running
             } else if FileManager.default.fileExists(atPath: staleContainerDir.path) {
@@ -377,25 +407,27 @@
 
         /// The single host directory mounted into the sandbox at
         /// `/workspace`. Centralised + guarded so the combined sandbox +
-        /// host-read mode invariant cannot regress: the user's selected
-        /// folder is NEVER a sandbox mount source. Combined mode reads
+        /// host-read mode invariant cannot regress: no chat's selected
+        /// folder is EVER a sandbox mount source. Combined mode reads
         /// the host folder through host-side tools only (`file_read`
         /// etc.); the sandbox has no mount of it, which is the entire
-        /// security argument for the mode. If a future change ever wires
-        /// the folder root in as the workspace, the precondition trips
-        /// loudly instead of silently opening a hole. `nonisolated` so
-        /// the regression test can exercise it without the actor hop.
+        /// security argument for the mode. Folder ownership is per chat
+        /// session now, so the check runs against every live chat folder
+        /// root in the process, not one global folder. If a future change
+        /// ever wires a folder root in as the workspace, the precondition
+        /// trips loudly instead of silently opening a hole. `nonisolated`
+        /// so the regression test can exercise it without the actor hop.
         nonisolated static func validatedWorkspaceMountSource(
             workspace: String,
-            folderRoot: String?
+            folderRoots: [String]
         ) -> String {
-            if let folderRoot {
-                let normalizedWorkspace = URL(fileURLWithPath: workspace).standardized.path
+            let normalizedWorkspace = URL(fileURLWithPath: workspace).standardized.path
+            for folderRoot in folderRoots {
                 let normalizedFolder = URL(fileURLWithPath: folderRoot).standardized.path
                 precondition(
                     normalizedWorkspace != normalizedFolder,
-                    "Sandbox workspace mount must never be the host folder root — combined "
-                        + "mode reads the host via host-side tools, never a bind mount."
+                    "Sandbox workspace mount must never be a chat's host folder root — "
+                        + "combined mode reads the host via host-side tools, never a bind mount."
                 )
             }
             return workspace
@@ -727,11 +759,51 @@
             }
         }
 
+        /// "Provision" the Seatbelt fallback: no VM, no image download —
+        /// just make sure the host workspace tree exists and flip status
+        /// to running. Instant, so none of the journey/progress UI runs.
+        private func provisionSeatbelt() throws {
+            guard SeatbeltSandbox.isSupported else {
+                throw SandboxError.provisionFailed(
+                    "sandbox-exec not found at \(SeatbeltSandbox.sandboxExecPath)")
+            }
+            let fm = FileManager.default
+            for dir in [
+                OsaurusPaths.containerWorkspace(),
+                OsaurusPaths.containerAgentsDir(),
+                OsaurusPaths.containerSharedDir(),
+            ] {
+                try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            }
+            var config = SandboxConfigurationStore.load()
+            if !config.setupComplete {
+                config.setupComplete = true
+                SandboxConfigurationStore.save(config)
+            }
+            _status = .running
+            _lastBootReadyAt = Date()
+            syncStatus()
+            let workspacePath = OsaurusPaths.containerWorkspace().path
+            Task { @MainActor in
+                SandboxLogBuffer.shared.append(
+                    level: .info,
+                    message:
+                        "Seatbelt backend ready — commands run under sandbox-exec confinement (workspace: \(workspacePath))",
+                    source: "seatbelt"
+                )
+            }
+        }
+
         public func provision() async throws {
             guard _availability?.isAvailable == true else {
                 throw SandboxError.unavailable
             }
             _removedByUser = false
+
+            if SandboxBackend.current == .seatbelt {
+                try provisionSeatbelt()
+                return
+            }
 
             // Take over from any in-flight background prefetch. The
             // journey-driven asset resolution below resumes whatever
@@ -882,7 +954,7 @@
                     let inputs = BootInputs(
                         workspace: Self.validatedWorkspaceMountSource(
                             workspace: OsaurusPaths.containerWorkspace().path,
-                            folderRoot: FolderContextService.cachedRootPath?.path
+                            folderRoots: ChatFolderState.liveRootPaths
                         ),
                         bridgeSocketPath: Self.bridgeSocketPath,
                         guestBridgeSocketPath: Self.guestBridgeSocketPath,
@@ -1289,6 +1361,13 @@
         /// UI moves directly from running to starting instead of briefly
         /// rendering the stopped dashboard between lifecycle phases.
         private func stopContainer(publishStoppedStatus: Bool) async throws {
+            if SandboxBackend.current == .seatbelt {
+                // Nothing persistent to tear down — Seatbelt confinement
+                // is per-exec; stopping just gates future execs.
+                _status = .stopped
+                if publishStoppedStatus { syncStatus() }
+                return
+            }
             if let container = linuxContainer {
                 try await container.stop()
             }
@@ -1498,6 +1577,20 @@
             stderrTee: (any Writer)? = nil,
             onProcessStarted: (@Sendable (ProcessHandle) -> Void)? = nil
         ) async throws -> ContainerExecResult {
+            if SandboxBackend.current == .seatbelt {
+                // Host confinement has no per-user separation — `user` is
+                // ignored; the Seatbelt profile is the isolation boundary.
+                return try await execViaSeatbelt(
+                    command: command,
+                    env: env,
+                    cwd: cwd,
+                    timeout: timeout,
+                    stdoutTee: stdoutTee,
+                    stderrTee: stderrTee,
+                    onProcessStarted: onProcessStarted
+                )
+            }
+
             guard linuxContainer != nil else {
                 throw SandboxError.containerNotRunning
             }
@@ -1526,6 +1619,53 @@
                 stderrTee: stderrTee,
                 onProcessStarted: onProcessStarted
             )
+        }
+
+        /// Seatbelt-backend exec: run the command as a host process under
+        /// `sandbox-exec` confinement. Guest-style `/workspace/…` paths in
+        /// the command, cwd, and env are rewritten to the host workspace
+        /// so the model-facing path contract matches the VM backend.
+        private func execViaSeatbelt(
+            command: String,
+            env: [String: String],
+            cwd: String?,
+            timeout: TimeInterval?,
+            stdoutTee: (any Writer)?,
+            stderrTee: (any Writer)?,
+            onProcessStarted: (@Sendable (ProcessHandle) -> Void)?
+        ) async throws -> ContainerExecResult {
+            guard _status.isRunning else {
+                throw SandboxError.containerNotRunning
+            }
+            let root = OsaurusPaths.containerWorkspace().path
+            let network = SeatbeltSandbox.NetworkPolicy.from(
+                configNetwork: SandboxConfigurationStore.load().network)
+            let profile = SeatbeltSandbox.profile(
+                workspaceRoot: root,
+                tempDir: SeatbeltSandbox.scratchDir,
+                network: network
+            )
+            let mappedCwd = cwd.map { SeatbeltPathMapper.mapToHost($0, workspaceRoot: root) }
+            let netLabel = network == .allowed ? "allowed" : "denied"
+            let commandPreview = String(command.prefix(160))
+            Task { @MainActor in
+                SandboxLogBuffer.shared.append(
+                    level: .debug,
+                    message: "sandbox-exec [net:\(netLabel)] $ \(commandPreview)",
+                    source: "seatbelt"
+                )
+            }
+            return try await SeatbeltExecutor.run(
+                SeatbeltExecutor.Request(
+                    command: SeatbeltPathMapper.mapToHost(command, workspaceRoot: root),
+                    env: SeatbeltPathMapper.mapEnvToHost(env, workspaceRoot: root),
+                    cwd: mappedCwd ?? root,
+                    timeout: timeout,
+                    profile: profile,
+                    stdoutTee: stdoutTee,
+                    stderrTee: stderrTee,
+                    onProcessStarted: onProcessStarted
+                ))
         }
 
         public func execAsRoot(
@@ -1598,6 +1738,13 @@
             stdout: any Writer,
             stderr: any Writer
         ) async throws -> LinuxProcess {
+            if SandboxBackend.current == .seatbelt {
+                // Long-lived bidirectional-stdio processes (stdio MCP
+                // servers) are VM-only for now — the return type is the
+                // SDK's LinuxProcess, which has no host equivalent.
+                throw SandboxError.execFailed(
+                    "Interactive sandbox processes require the VM backend (macOS 26 or later)")
+            }
             guard let container = linuxContainer else {
                 throw SandboxError.containerNotRunning
             }
@@ -1648,6 +1795,14 @@
             agentId: UUID?,
             soulSeedBody: String?
         ) async throws {
+            if SandboxBackend.current == .seatbelt {
+                // No guest, no Linux users, no bridge shim — bootstrap is
+                // just the host-side directory tree plus the first-run
+                // SOUL seed. Bridge tokens are skipped: the vsock shim
+                // that consumes them doesn't exist on this backend.
+                try Self.bootstrapAgentOnHost(agentName: agentName, soulSeedBody: soulSeedBody)
+                return
+            }
             let linuxName = "agent-\(agentName)"
             var token: String?
             if let agentId {
@@ -1722,7 +1877,34 @@
             return lines.joined(separator: "\n")
         }
 
+        /// Host-side equivalent of the guest bootstrap script, used by the
+        /// Seatbelt backend. Static so it's testable without the actor.
+        static func bootstrapAgentOnHost(agentName: String, soulSeedBody: String?) throws {
+            let root = OsaurusPaths.containerWorkspace().path
+            let home = SeatbeltPathMapper.mapToHost(
+                OsaurusPaths.inContainerAgentHome(agentName), workspaceRoot: root)
+            let fm = FileManager.default
+            try fm.createDirectory(
+                atPath: home + "/plugins",
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+            // chmod 700, mirroring the guest script — other host users
+            // (not other agents) are kept out.
+            try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: home)
+            if let soulSeedBody {
+                let soulPath = home + "/SOUL.md"
+                if !fm.fileExists(atPath: soulPath) {
+                    try soulSeedBody.write(toFile: soulPath, atomically: true, encoding: .utf8)
+                }
+            }
+        }
+
         public func ensureAgentUser(_ agentName: String) async throws {
+            if SandboxBackend.current == .seatbelt {
+                try Self.bootstrapAgentOnHost(agentName: agentName, soulSeedBody: nil)
+                return
+            }
             let checkResult = try await exec(command: "id agent-\(agentName) 2>/dev/null")
             if checkResult.succeeded { return }
 
@@ -1745,6 +1927,16 @@
         }
 
         public func removeAgentUser(_ agentName: String) async throws -> Bool {
+            if SandboxBackend.current == .seatbelt {
+                // No Linux user exists — remove the host-side agent home.
+                let root = OsaurusPaths.containerWorkspace().path
+                let home = SeatbeltPathMapper.mapToHost(
+                    OsaurusPaths.inContainerAgentHome(agentName), workspaceRoot: root)
+                let fm = FileManager.default
+                guard fm.fileExists(atPath: home) else { return false }
+                try fm.removeItem(atPath: home)
+                return true
+            }
             let linuxUser = "agent-\(agentName)"
             let checkResult = try await exec(command: "id \(linuxUser) 2>/dev/null")
             guard checkResult.succeeded else { return false }
@@ -1888,7 +2080,46 @@
                 )
             }
 
+            if SandboxBackend.current == .seatbelt {
+                return await collectSeatbeltInfo(status: currentStatus)
+            }
             return await collectRunningContainerInfo(status: currentStatus)
+        }
+
+        /// Seatbelt backend metrics. There is no guest `/proc` to read and
+        /// no VM to have an uptime, CPU, or memory budget — the meaningful
+        /// numbers are the host-side ones: agent homes under
+        /// `workspace/agents`, workspace disk usage, and time since the
+        /// backend was marked ready. The VM-only fields stay `nil` so the
+        /// dashboard simply omits those tiles.
+        private func collectSeatbeltInfo(status: ContainerStatus) async -> ContainerInfo {
+            let fm = FileManager.default
+            let agentsDir = OsaurusPaths.containerAgentsDir()
+            let users =
+                ((try? fm.contentsOfDirectory(atPath: agentsDir.path)) ?? [])
+                .filter { !$0.hasPrefix(".") }
+                .sorted()
+
+            var uptime: String? = nil
+            if let ready = _lastBootReadyAt {
+                uptime = "\(Int(Date().timeIntervalSince(ready))) seconds"
+            }
+
+            var disk: String? = nil
+            if let r = try? await exec(command: "du -sh /workspace 2>/dev/null | cut -f1", timeout: 5) {
+                let out = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !out.isEmpty { disk = out }
+            }
+
+            return ContainerInfo(
+                status: status,
+                agentUsers: users,
+                diskUsage: disk,
+                uptime: uptime,
+                memoryUsage: nil,
+                cpuLoad: nil,
+                processCount: nil
+            )
         }
 
         /// Single round-trip metric collection for the running container.
@@ -1993,6 +2224,9 @@
         /// concurrent checks still overlap with the sequential pair. The
         /// returned array preserves the UI ordering.
         public func runDiagnostics() async -> [DiagnosticResult] {
+            if SandboxBackend.current == .seatbelt {
+                return await runSeatbeltDiagnostics()
+            }
             async let execD = diagnose("exec") {
                 let r = try await self.exec(command: "echo hello from sandbox")
                 let out = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2095,6 +2329,81 @@
             ]
 
             return results
+        }
+
+        /// Seatbelt diagnostics. The VM suite's NAT / apk / agent-user /
+        /// vsock-bridge checks have no equivalent here — instead verify the
+        /// properties this backend actually promises: commands execute,
+        /// the workspace is read-write, the profile blocks writes OUTSIDE
+        /// the workspace, and network access matches the configured mode.
+        private func runSeatbeltDiagnostics() async -> [DiagnosticResult] {
+            let execResult = await diagnose("exec") {
+                let r = try await self.exec(command: "echo hello from sandbox")
+                let out = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard out == "hello from sandbox" else {
+                    throw SandboxError.execFailed("expected 'hello from sandbox', got '\(out)'")
+                }
+                return out
+            }
+
+            let writeResult = await diagnose("workspace-rw") {
+                let r = try await self.exec(
+                    command: "f=/workspace/.osaurus-diag-$$; echo ok > \"$f\" && cat \"$f\" && rm -f \"$f\""
+                )
+                guard r.succeeded, r.stdout.contains("ok") else {
+                    throw SandboxError.execFailed(
+                        "workspace write failed (exit \(r.exitCode)): \(r.stderr)")
+                }
+                return "workspace read/write OK"
+            }
+
+            let confinementResult = await diagnose("confinement") {
+                // A write outside the workspace MUST be denied by the
+                // profile. The app itself is not confined, so checking the
+                // host filesystem afterwards is authoritative.
+                let escapePath = "/private/tmp/osaurus-seatbelt-escape"
+                _ = try await self.exec(command: "touch \(escapePath) 2>/dev/null")
+                if FileManager.default.fileExists(atPath: escapePath) {
+                    try? FileManager.default.removeItem(atPath: escapePath)
+                    throw SandboxError.execFailed(
+                        "a write outside the workspace succeeded — the sandbox profile is not being enforced"
+                    )
+                }
+                return "writes outside the workspace are blocked"
+            }
+
+            let networkAllowed =
+                SeatbeltSandbox.NetworkPolicy.from(
+                    configNetwork: SandboxConfigurationStore.load().network
+                ) == .allowed
+            let networkResult = await diagnose("network") {
+                let r = try await self.exec(
+                    command: "curl -s -m 10 https://example.com | head -5",
+                    timeout: 15
+                )
+                let gotResponse = !r.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                if networkAllowed {
+                    guard gotResponse else {
+                        throw SandboxError.execFailed(
+                            Self.sandboxDiagnosticHint(
+                                check: "nat-networking",
+                                exitCode: r.exitCode,
+                                stderr: r.stderr
+                            )
+                        )
+                    }
+                    return "outbound network OK"
+                } else {
+                    guard !gotResponse else {
+                        throw SandboxError.execFailed(
+                            "network is configured off but an outbound request succeeded — the sandbox profile is not being enforced"
+                        )
+                    }
+                    return "outbound network blocked as configured"
+                }
+            }
+
+            return [execResult, writeResult, confinementResult, networkResult]
         }
 
         private func diagnose(_ name: String, _ block: () async throws -> String) async -> DiagnosticResult {
@@ -3176,7 +3485,9 @@
         /// every event without thrashing SwiftUI.
         private func setActivity(_ text: String?) async {
             await MainActor.run {
-                State.shared.currentActivity = text
+                if State.shared.currentActivity != text {
+                    State.shared.currentActivity = text
+                }
             }
         }
 
@@ -3189,12 +3500,30 @@
         /// emits steady ~10–30 Hz updates, and the noisier full-history
         /// rate makes the ETA decay more predictably than a windowed
         /// estimate spiking near the tail of the download.
+        /// Last time a byte-progress event for each step was reflected into
+        /// the published journey. Byte callbacks arrive per network chunk —
+        /// far faster than the UI can meaningfully display — and every
+        /// publish re-renders every provisioning observer (the settings
+        /// journey view, the composer's sandbox chip), which surfaced as
+        /// visible flicker during runtime downloads. Coalesced to 10 Hz;
+        /// a step's first event and its terminal event always pass.
+        private var lastByteProgressPublish: [ProvisioningStepID: Date] = [:]
+
         private func applyByteProgress(
             stepID: ProvisioningStepID,
             bytes: Int64,
             total: Int64,
             detail: String? = nil
         ) async {
+            let now = Date()
+            let isTerminal = total > 0 && bytes >= total
+            if !isTerminal,
+                let last = lastByteProgressPublish[stepID],
+                now.timeIntervalSince(last) < 0.1
+            {
+                return
+            }
+            lastByteProgressPublish[stepID] = now
             await MainActor.run {
                 var activityLine: String?
                 Self.mutateJourney(stepID: stepID) { journey, step in
@@ -3230,7 +3559,9 @@
                         )
                     }
                 }
-                if let activityLine { State.shared.currentActivity = activityLine }
+                if let activityLine, State.shared.currentActivity != activityLine {
+                    State.shared.currentActivity = activityLine
+                }
             }
         }
 
@@ -3324,12 +3655,24 @@
                 }
                 return journey.steps.first { $0.status == .inProgress }
             }()
+            // Skip equal writes: `@Published` fires `objectWillChange` on
+            // every assignment, and re-setting the same phase string on each
+            // byte event re-rendered every provisioning observer.
             if let step = activeStep {
-                State.shared.provisioningPhase = step.label + "…"
-                State.shared.provisioningProgress = step.progress
+                let phase = step.label + "…"
+                if State.shared.provisioningPhase != phase {
+                    State.shared.provisioningPhase = phase
+                }
+                if State.shared.provisioningProgress != step.progress {
+                    State.shared.provisioningProgress = step.progress
+                }
             } else if journey.finishedAt != nil {
-                State.shared.provisioningPhase = nil
-                State.shared.provisioningProgress = nil
+                if State.shared.provisioningPhase != nil {
+                    State.shared.provisioningPhase = nil
+                }
+                if State.shared.provisioningProgress != nil {
+                    State.shared.provisioningProgress = nil
+                }
             }
         }
 

@@ -109,6 +109,12 @@ public struct AgentLoopTranscript: Sendable, Codable {
     public let peakContextTokens: Int?
     /// Number of model steps (loop iterations that called the model).
     public let modelSteps: Int?
+    /// Per-contributor context-cost attribution (system-prompt sections,
+    /// per-tool schema cost, memory, first/peak/cumulative step inputs,
+    /// end-of-run history composition). Built from the SAME composed
+    /// context the loop sent, so it reconciles with `promptTokensTotal` /
+    /// `peakContextTokens` above. nil on aborted runs that never composed.
+    public let contextAttribution: ContextAttribution?
 
     public init(
         toolCalls: [ToolInvocation],
@@ -127,7 +133,8 @@ public struct AgentLoopTranscript: Sendable, Codable {
         completionTokens: Int? = nil,
         promptTokensTotal: Int? = nil,
         peakContextTokens: Int? = nil,
-        modelSteps: Int? = nil
+        modelSteps: Int? = nil,
+        contextAttribution: ContextAttribution? = nil
     ) {
         self.toolCalls = toolCalls
         self.finalText = finalText
@@ -146,6 +153,7 @@ public struct AgentLoopTranscript: Sendable, Codable {
         self.promptTokensTotal = promptTokensTotal
         self.peakContextTokens = peakContextTokens
         self.modelSteps = modelSteps
+        self.contextAttribution = contextAttribution
     }
 }
 
@@ -158,9 +166,11 @@ public enum AgentLoopSandboxMode: Sendable, Equatable {
     /// Pure sandbox: every file/exec tool is a `sandbox_*` tool; no
     /// host folder tools are registered (`.sandbox(hostRead: nil)`).
     case pure
-    /// Combined mode: the eval workspace becomes the READ-ONLY host
-    /// context — `file_read` / `file_search` stay host-side while
-    /// writes/execution happen in the VM (`.sandbox(hostRead: ctx)`).
+    /// Combined mode: the eval workspace becomes the host context —
+    /// `file_read` / `file_search` stay host-side while execution happens
+    /// in the VM (`.sandbox(hostRead: ctx)`). Read-only by default; the
+    /// evaluator's `hostFolderWritesEnabled` flag composes the writable
+    /// shape (`hostWrite: true`) instead.
     case combined
 }
 
@@ -189,6 +199,8 @@ public enum AgentLoopEvaluator {
     ///   - streaming: when true (default, matching the chat surface) each
     ///     model step uses the streaming path — where the delta routing,
     ///     tool-call assembly, and most local-model parser bugs live.
+    ///   - enableThinking: explicit chat-toggle choice copied to every model
+    ///     step. nil preserves the production unspecified-agent policy.
     ///   - maxTokens: per-step response cap; falls back to the user's
     ///     chat configuration, then 2048.
     ///   - sandbox: non-nil switches the run into live-sandbox mode —
@@ -215,8 +227,10 @@ public enum AgentLoopEvaluator {
         contextWindowOverride: Int? = nil,
         streaming: Bool = true,
         maxTokens: Int? = nil,
+        enableThinking: Bool? = nil,
         stopOnToolRejection: Bool = false,
         sandbox: AgentLoopSandboxMode? = nil,
+        hostFolderWritesEnabled: Bool = false,
         cancelAfterToolCalls: Int? = nil
     ) async -> AgentLoopTranscript {
         // The Default agent's schema is hard-restricted to the 8-tool
@@ -226,24 +240,6 @@ public enum AgentLoopEvaluator {
         // agent, run under an ephemeral non-default agent id so the
         // composed schema matches a regular chat agent working in a
         // folder (folder tools in, configure tools stripped).
-        // In-process interleaving guard: this evaluator swaps the
-        // PROCESS-WIDE folder toolset to the eval workspace. Running it
-        // while a user folder session is live would point the user's
-        // chat tools at the eval temp directory mid-conversation —
-        // refuse instead.
-        if FolderContextService.shared.hasActiveFolder {
-            return AgentLoopTranscript(
-                toolCalls: [],
-                finalText: "",
-                iterations: 0,
-                exit: "errored",
-                systemPrompt: "",
-                toolSchemaNames: [],
-                error:
-                    "AgentLoopEvaluator refused to run: a user folder session is active in this process."
-            )
-        }
-
         let activeId = AgentManager.shared.activeAgent.id
         let resolvedAgentId = agentId ?? (activeId == Agent.defaultId ? UUID() : activeId)
         let resolvedModel =
@@ -253,44 +249,23 @@ public enum AgentLoopEvaluator {
         let engine = ChatEngine()
 
         // Workspace context + folder tools, mirroring the chat path's
-        // host-folder mode. Pure sandbox mode registers NO host folder
-        // tools — the model's whole file/exec surface is `sandbox_*`.
-        // On exit the eval registration is torn down and any PRIOR
-        // registration (snapshot below) is restored, so eval cases can't
-        // leak tools into each other or clobber a toolset registered
-        // outside a folder session.
+        // host-folder mode. Pure sandbox mode composes with NO host folder
+        // context — the model's whole file/exec surface is `sandbox_*`.
+        // Folder tools are registered process-wide (idempotent) and resolve
+        // the eval workspace from the TaskLocal folder root bound around
+        // every dispatch below, so a concurrent user folder chat is never
+        // redirected at the eval temp directory (and vice versa).
         let wantsHostFolder = (sandbox == nil || sandbox == .combined)
-        let priorFolderContext = FolderToolManager.shared.registeredContext
         var folderContext: FolderContext?
         if wantsHostFolder {
-            let built = await FolderContextService.shared.buildContext(from: workspace)
-            folderContext = built
-            FolderToolManager.shared.registerFolderTools(for: built)
+            folderContext = await FolderContextService.shared.buildContext(from: workspace)
+            FolderToolManager.shared.ensureFolderToolsRegistered()
         }
-        defer {
-            if wantsHostFolder {
-                FolderToolManager.shared.unregisterFolderTools()
-                if let priorFolderContext {
-                    FolderToolManager.shared.registerFolderTools(for: priorFolderContext)
-                }
-            }
-        }
-
-        // Combined mode also activates the context on the service so
-        // `ToolRegistry.execute`'s per-call combined-mode chokepoint
-        // (`cachedRootPath` → read-only scope, secret-read policy,
-        // sandbox read bridge) resolves exactly as production would.
-        // Plain host-folder eval runs deliberately DON'T activate —
-        // their tools take the root at registration and the combined
-        // policy must stay inert for them.
-        if sandbox == .combined, let folderContext {
-            FolderContextService.shared.activateEvalContext(folderContext)
-        }
-        defer {
-            if sandbox == .combined {
-                FolderContextService.shared.deactivateEvalContext()
-            }
-        }
+        // The eval's folder root, bound per dispatch (nil in pure sandbox
+        // mode). `ToolRegistry.execute`'s combined-mode chokepoint reads the
+        // same TaskLocal, so read-only scope / secret policy / sandbox read
+        // bridge resolve exactly as production would.
+        let evalFolderRoot: URL? = wantsHostFolder ? workspace : nil
 
         // Live-sandbox mode: boot/provision through the SAME registrar
         // the chat surface uses (container start is coalesced + kept
@@ -329,7 +304,12 @@ public enum AgentLoopEvaluator {
             // `wantsHostFolder` guarantees folderContext is non-nil here.
             executionMode = .hostFolder(folderContext!)
         case .combined:
-            executionMode = .sandbox(hostRead: folderContext)
+            // `hostFolderWritesEnabled` is the eval-side mirror of the
+            // agent's `allowHostFolderWrites` opt-in: default (false) keeps
+            // the read-only combined shape; true composes the writable
+            // combined shape (unified `file_write`/`file_edit`,
+            // `sandbox_write_file` hidden).
+            executionMode = .sandbox(hostRead: folderContext, hostWrite: hostFolderWritesEnabled)
         case .pure:
             executionMode = .sandbox(hostRead: nil)
         }
@@ -403,6 +383,9 @@ public enum AgentLoopEvaluator {
         var promptTokensTotal = 0
         var peakContextTokens = 0
         var modelStepCount = 0
+        // First model step's input estimate — the cold-prefill cost the
+        // attribution block reports separately from the cumulative total.
+        var firstStepInputTokens: Int?
         // Set when a successful `complete` intercept ends the run; the
         // summary becomes the final answer (mirrors the chat surface,
         // where the summary renders as the completion banner).
@@ -439,7 +422,18 @@ public enum AgentLoopEvaluator {
                 completionTokens: sawAnyModelStep ? completionTokensTotal : nil,
                 promptTokensTotal: modelStepCount > 0 ? promptTokensTotal : nil,
                 peakContextTokens: modelStepCount > 0 ? peakContextTokens : nil,
-                modelSteps: modelStepCount > 0 ? modelStepCount : nil
+                modelSteps: modelStepCount > 0 ? modelStepCount : nil,
+                contextAttribution: ContextAttribution.build(
+                    manifest: composed.manifest,
+                    tools: composed.tools,
+                    memorySection: composed.memorySection,
+                    staticPrefixHash: composed.cacheHint,
+                    firstStepInputTokens: firstStepInputTokens,
+                    peakStepInputTokens: modelStepCount > 0 ? peakContextTokens : nil,
+                    cumulativeInputTokens: modelStepCount > 0 ? promptTokensTotal : nil,
+                    modelSteps: modelStepCount > 0 ? modelStepCount : nil,
+                    history: history
+                )
             )
         }
 
@@ -448,10 +442,15 @@ public enum AgentLoopEvaluator {
             stream: Bool,
             includeTools: Bool = true
         ) -> ChatCompletionRequest {
-            ChatCompletionRequest(
+            var request = ChatCompletionRequest(
                 model: resolvedModel,
                 messages: messages,
-                temperature: 0.0,
+                // Match the real chat surface: nil means the installed
+                // bundle's generation_config/JANG defaults win. A hidden
+                // greedy override can trap tool-capable models in a
+                // deterministic action loop that users never see with their
+                // configured sampler.
+                temperature: nil,
                 max_tokens: resolvedMaxTokens,
                 stream: stream,
                 top_p: nil,
@@ -463,6 +462,9 @@ public enum AgentLoopEvaluator {
                 tool_choice: (includeTools && !toolSpecs.isEmpty) ? .auto : nil,
                 session_id: sessionId
             )
+            request.samplingParametersAreImplicit = true
+            request.enable_thinking = enableThinking
+            return request
         }
 
         /// Append the assistant turn carrying this step's tool calls.
@@ -511,16 +513,18 @@ public enum AgentLoopEvaluator {
         /// a card nobody can click.
         @Sendable func dispatchOne(_ inv: ServiceToolInvocation) async -> String {
             do {
-                return try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-                    try await ChatExecutionContext.$autoApproveToolPrompts.withValue(true) {
-                        // Headless idle ceiling for `shell_run` when the model
-                        // passed no `timeout`: there is no [Terminate] button
-                        // here, so a hung command would wedge the eval run.
-                        try await ChatExecutionContext.$defaultShellIdleTimeout.withValue(300) {
-                            try await ToolRegistry.shared.execute(
-                                name: inv.toolName,
-                                argumentsJSON: inv.jsonArguments
-                            )
+                return try await ChatExecutionContext.$currentFolderRoot.withValue(evalFolderRoot) {
+                    try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
+                        try await ChatExecutionContext.$autoApproveToolPrompts.withValue(true) {
+                            // Headless idle ceiling for `shell_run` when the model
+                            // passed no `timeout`: there is no [Terminate] button
+                            // here, so a hung command would wedge the eval run.
+                            try await ChatExecutionContext.$defaultShellIdleTimeout.withValue(300) {
+                                try await ToolRegistry.shared.execute(
+                                    name: inv.toolName,
+                                    argumentsJSON: inv.jsonArguments
+                                )
+                            }
                         }
                     }
                 }
@@ -622,6 +626,7 @@ public enum AgentLoopEvaluator {
                     ContextBudgetManager.estimateTokens(for: effective) + composed.toolTokens
                 promptTokensTotal += stepInputTokens
                 peakContextTokens = max(peakContextTokens, stepInputTokens)
+                if firstStepInputTokens == nil { firstStepInputTokens = stepInputTokens }
                 modelStepCount += 1
                 if streaming {
                     // Streaming path (default, matching chat): delta routing
@@ -787,13 +792,15 @@ public enum AgentLoopEvaluator {
                 // here), phase 2 executes the approved set in parallel with
                 // same-path slots serialized. Auto-approve stays bound: eval
                 // runs are headless, an approval panel would hang the run.
-                let results = await ChatExecutionContext.$autoApproveToolPrompts.withValue(true) {
-                    await ChatExecutionContext.$defaultShellIdleTimeout.withValue(300) {
-                        await AgentToolLoop.runBatchInParallel(
-                            calls,
-                            sessionId: sessionId,
-                            agentId: resolvedAgentId
-                        )
+                let results = await ChatExecutionContext.$currentFolderRoot.withValue(evalFolderRoot) {
+                    await ChatExecutionContext.$autoApproveToolPrompts.withValue(true) {
+                        await ChatExecutionContext.$defaultShellIdleTimeout.withValue(300) {
+                            await AgentToolLoop.runBatchInParallel(
+                                calls,
+                                sessionId: sessionId,
+                                agentId: resolvedAgentId
+                            )
+                        }
                     }
                 }
                 var executions: [AgentLoopToolExecution] = []
@@ -854,7 +861,9 @@ public enum AgentLoopEvaluator {
                 )
                 // No tool schema on the wrap-up call (mirrors chat's
                 // `tools: nil`), so the token estimate excludes toolTokens.
-                promptTokensTotal += ContextBudgetManager.estimateTokens(for: trimmed)
+                let wrapUpInputTokens = ContextBudgetManager.estimateTokens(for: trimmed)
+                promptTokensTotal += wrapUpInputTokens
+                peakContextTokens = max(peakContextTokens, wrapUpInputTokens)
                 modelStepCount += 1
                 // STREAMING, like ChatView's post-cap call (`stream: true`,
                 // `tools: nil`): the non-streaming local path is not what
@@ -931,6 +940,8 @@ public enum AgentLoopEvaluator {
         case .cancelled: return "cancelled"
         case .overBudget: return "overBudget"
         case .emptyResponseExhausted: return "emptyResponseExhausted"
+        case .lengthExhausted: return "lengthExhausted"
+        case .incompleteReasoningExhausted: return "incompleteReasoningExhausted"
         }
     }
 }

@@ -41,8 +41,8 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
         case .models: [.models, .providers, .imageGeneration]
         case .agentsAutomation:
             [
-                .agents, .agentChannels, .memory, .tools, .search, .skills, .commands, .plugins,
-                .schedules, .watchers, .sandbox, .computerUse,
+                .agents, .agentChannels, .memory, .knowledge, .tools, .search, .skills, .commands,
+                .plugins, .schedules, .watchers, .sandbox, .computerUse, .browser,
             ]
         case .server: [.server]
         case .privacySecurity: [.privacy, .permissions, .identity, .storage]
@@ -65,6 +65,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case agents
     case agentChannels
     case memory
+    case knowledge
     case tools
     case search
     case skills
@@ -74,6 +75,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case watchers
     case sandbox
     case computerUse
+    case browser
     case server
     case privacy
     case permissions
@@ -94,8 +96,8 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .settings, .chat, .voice, .themes: .general
         case .models, .providers, .imageGeneration: .models
-        case .agents, .agentChannels, .memory, .tools, .search, .skills, .commands, .plugins,
-            .schedules, .watchers, .sandbox, .computerUse:
+        case .agents, .agentChannels, .memory, .knowledge, .tools, .search, .skills, .commands,
+            .plugins, .schedules, .watchers, .sandbox, .computerUse, .browser:
             .agentsAutomation
         case .server: .server
         case .privacy, .permissions, .identity, .storage: .privacySecurity
@@ -127,6 +129,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .skills: "sparkles"
         case .commands: "command"
         case .memory: "brain.head.profile.fill"
+        case .knowledge: "books.vertical.fill"
         case .schedules: "calendar.badge.clock"
         case .watchers: "eye.fill"
         case .voice: "waveform"
@@ -135,6 +138,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .server: "server.rack"
         case .permissions: "lock.shield.fill"
         case .computerUse: "cursorarrow.rays"
+        case .browser: "globe"
         case .imageGeneration: "photo.artframe"
         case .privacy: "hand.raised.fill"
         case .identity: "person.badge.key.fill"
@@ -158,6 +162,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .skills: L("Skills")
         case .commands: L("Commands")
         case .memory: L("Memory")
+        case .knowledge: L("Knowledge")
         case .schedules: L("Schedules")
         case .watchers: L("Watchers")
         case .voice: L("Voice")
@@ -166,6 +171,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .server: L("Server")
         case .permissions: L("Permissions")
         case .computerUse: L("Computer Use")
+        case .browser: L("Browser")
         case .imageGeneration: L("Images")
         case .privacy: L("Privacy")
         case .identity: L("Identity")

@@ -17,6 +17,26 @@ import Testing
 @Suite(.serialized)
 struct AgentLoopToolsTests {
 
+    @Test("shared todo schema stays optional outside targeted family policy")
+    func sharedTodoSchemaStaysOptional() {
+        let description = TodoTool().description
+        #expect(description.contains("OPTIONAL"))
+        #expect(description.contains("never decides whether the turn stays open"))
+        #expect(description.contains("answer the user exactly once and stop"))
+        #expect(description.contains("direct question"))
+        #expect(!description.contains("It is REQUIRED"))
+        #expect(!description.contains("unchecked items keep this agent run open"))
+    }
+
+    @Test("complete schema cannot invite literal protocol text")
+    func completeSchemaRequiresStructuredInvocationOnly() {
+        let description = CompleteTool().description
+        #expect(description.contains("structured tool protocol only"))
+        #expect(description.contains("never by typing `complete(...)`"))
+        #expect(description.contains("successful task does not need this tool"))
+        #expect(!description.contains("same message as"))
+    }
+
     // MARK: - Helpers
 
     private func withSession<T>(
@@ -42,12 +62,57 @@ struct AgentLoopToolsTests {
             #expect(ToolEnvelope.isSuccess(result))
             #expect(result.contains("Todo updated"))
             #expect(result.contains("1/3 complete"))
+            #expect(result.contains("Todo never keeps the turn open"))
+            #expect(!result.contains("Unchecked items keep this agent run open"))
 
             let stored = await AgentTodoStore.shared.todo(for: sessionId)
             #expect(stored?.totalCount == 3)
             #expect(stored?.doneCount == 1)
             #expect(stored?.items.first?.text == "Read existing config")
             #expect(stored?.items.last?.isDone == true)
+        }
+    }
+
+    @Test
+    func todo_unchangedReplayIsSuccessfulNoOp() async throws {
+        try await withSession { sessionId in
+            _ = try await TodoTool().execute(
+                argumentsJSON: #"{"markdown": "- [ ] inspect\n- [ ] fix"}"#
+            )
+            let before = try #require(await AgentTodoStore.shared.todo(for: sessionId))
+
+            let result = try await TodoTool().execute(
+                argumentsJSON: #"""
+                    {"markdown": "# Plan\n* [ ] inspect\n* [ ] fix\n\nUnchanged prose."}
+                    """#
+            )
+
+            #expect(ToolEnvelope.isSuccess(result))
+            #expect(result.contains("Todo unchanged: 0/2 complete"))
+            #expect(result.contains("Do not call `todo` again"))
+            #expect(result.contains("answer the user once and stop"))
+            let after = try #require(await AgentTodoStore.shared.todo(for: sessionId))
+            #expect(after.updatedAt == before.updatedAt)
+            #expect(after.markdown == before.markdown)
+        }
+    }
+
+    @Test
+    func todo_checkboxTransitionStillUpdatesStore() async throws {
+        try await withSession { sessionId in
+            _ = try await TodoTool().execute(
+                argumentsJSON: #"{"markdown": "- [ ] inspect\n- [ ] fix"}"#
+            )
+            let before = try #require(await AgentTodoStore.shared.todo(for: sessionId))
+
+            let result = try await TodoTool().execute(
+                argumentsJSON: #"{"markdown": "- [x] inspect\n- [ ] fix"}"#
+            )
+
+            #expect(result.contains("Todo updated: 1/2 complete"))
+            let after = try #require(await AgentTodoStore.shared.todo(for: sessionId))
+            #expect(after.updatedAt >= before.updatedAt)
+            #expect(after.doneCount == 1)
         }
     }
 
@@ -151,7 +216,7 @@ struct AgentLoopToolsTests {
     }
 
     @Test
-    func complete_warnsOnUncheckedTodoBoxes() async throws {
+    func complete_reportsBlockedOutcomeWhenTodoIsUnchecked() async throws {
         try await withSession { _ in
             _ = try await TodoTool().execute(
                 argumentsJSON: #"{"markdown": "- [x] done step\n- [ ] left one\n- [ ] left two"}"#
@@ -161,9 +226,10 @@ struct AgentLoopToolsTests {
                     {"summary": "Finished the first step; verified by re-reading the file contents."}
                     """#
             )
-            // Soft warning, NOT a rejection — rejecting loops small models.
             #expect(ToolEnvelope.isSuccess(result))
-            #expect(result.contains("2 unchecked item"))
+            #expect(result.contains("\"outcome\":\"blocked\""))
+            #expect(result.contains("\"pending_todo_items\":2"))
+            #expect(result.contains("still pending"))
         }
     }
 
@@ -180,6 +246,69 @@ struct AgentLoopToolsTests {
             )
             #expect(ToolEnvelope.isSuccess(result))
             #expect(!result.contains("unchecked"))
+            #expect(result.contains("\"outcome\":\"completed\""))
+            #expect(result.contains("\"pending_todo_items\":0"))
+        }
+    }
+
+    @Test("prior-turn todo cannot make an unrelated current run blocked")
+    func complete_rejectsStaleSessionTodoInsideCanonicalRun() async throws {
+        try await withSession { sessionId in
+            // Simulate the prior user turn: the checklist remains visible in
+            // the session store after that turn returns a normal final answer.
+            _ = try await TodoTool().execute(
+                argumentsJSON: #"{"markdown": "- [x] report result\n- [ ] optional review"}"#
+            )
+            #expect(await AgentTodoStore.shared.todo(for: sessionId) != nil)
+
+            // A new canonical run gets a fresh marker. It did not call Todo,
+            // so an old unchecked checklist cannot authorize `complete` or
+            // turn this unrelated response into a BLOCKED banner.
+            let runScope = AgentTodoRunScope()
+            let result =
+                try await ChatExecutionContext.$agentTodoRunScope.withValue(runScope) {
+                    try await CompleteTool().execute(
+                        argumentsJSON: #"""
+                            {"summary": "STALE_TODO_FOLLOWUP_OK - verified as the requested exact follow-up."}
+                            """#
+                    )
+                }
+
+            #expect(ToolEnvelope.isError(result))
+            #expect(result.contains("current run called `todo`"))
+            #expect(result.contains("earlier user turn does not apply"))
+        }
+    }
+
+    @Test("an explicit unchanged todo still belongs to the current run")
+    func complete_acceptsReaffirmedCurrentRunTodo() async throws {
+        try await withSession { _ in
+            let argumentsJSON =
+                "{\"markdown\":\"- [x] report result\\n- [ ] optional review\"}"
+            // Seed the same semantic checklist in a prior turn.
+            _ = try await TodoTool().execute(
+                argumentsJSON: argumentsJSON
+            )
+
+            let runScope = AgentTodoRunScope()
+            let result =
+                try await ChatExecutionContext.$agentTodoRunScope.withValue(runScope) {
+                    // This is intentionally unchanged in the session store,
+                    // but the explicit valid call must mark it current-run.
+                    let todoResult = try await TodoTool().execute(
+                        argumentsJSON: argumentsJSON
+                    )
+                    #expect(todoResult.contains("Todo unchanged"))
+                    return try await CompleteTool().execute(
+                        argumentsJSON: #"""
+                            {"summary": "The requested work is blocked; verified the remaining review is still pending."}
+                            """#
+                    )
+                }
+
+            #expect(ToolEnvelope.isSuccess(result))
+            #expect(result.contains("\"outcome\":\"blocked\""))
+            #expect(result.contains("\"pending_todo_items\":1"))
         }
     }
 

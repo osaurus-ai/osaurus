@@ -25,6 +25,30 @@ struct TranscriptionTextNormalizerTests {
     }
 
     @Test
+    func visibleTextPreservesJoinersWhenTextIsVisible() {
+        let text = "a\u{200D}b c\u{200C}d"
+
+        #expect(TranscriptionTextNormalizer.visibleText(text) == "a\u{200D}b c\u{200C}d")
+        #expect(TranscriptionTextNormalizer.hasVisibleText(text))
+    }
+
+    @Test
+    func visibleTextPreservesDirectionMarksWhenTextIsVisible() {
+        let text = "\u{200F}right-to-left\u{200E}"
+
+        #expect(TranscriptionTextNormalizer.visibleText(text) == "\u{200F}right-to-left\u{200E}")
+        #expect(TranscriptionTextNormalizer.hasVisibleText(text))
+    }
+
+    @Test
+    func visibleTextDropsDirectionMarksWithoutVisibleText() {
+        let text = "\u{200F}\u{200E}\u{202A}\u{202C}"
+
+        #expect(TranscriptionTextNormalizer.visibleText(text).isEmpty)
+        #expect(!TranscriptionTextNormalizer.hasVisibleText(text))
+    }
+
+    @Test
     func combinedSkipsHiddenSegments() {
         let combined = TranscriptionTextNormalizer.combined([
             "\u{200B}",
@@ -44,5 +68,15 @@ struct TranscriptionTextNormalizerTests {
         )
 
         #expect(merged == "existing")
+    }
+
+    @Test
+    func mergedJoinsVisibleExistingTextAndTranscript() {
+        let merged = TranscriptionTextNormalizer.merged(
+            existing: " existing ",
+            transcript: "\u{200B} transcript "
+        )
+
+        #expect(merged == "existing transcript")
     }
 }

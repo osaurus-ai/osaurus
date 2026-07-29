@@ -55,6 +55,12 @@ public enum ModelLoadIntent: Sendable, Equatable {
     /// Housekeeping. Reuses a resident model or fills an empty slot; refuses
     /// rather than disturb a model that is resident or already loading.
     case background
+    /// Restore the model that a user-visible residency handoff temporarily
+    /// unloaded. Like an interactive load, this may evict a now-idle resident
+    /// model. Unlike an interactive load, it must never cancel a different
+    /// model whose cold load is already in flight: await that materialization,
+    /// then re-evaluate residency and restore in actor order.
+    case handoffRestore
 }
 
 public actor ModelRuntime {
@@ -104,6 +110,19 @@ public actor ModelRuntime {
         let mlxPressStatus: MLXPressStatus
         let cacheStats: CacheCoordinatorStatsSnapshot?
         let cacheTopology: ModelCacheTopologySnapshot?
+        /// Exact coordinator settings captured by this resident model. These
+        /// remain intentionally separate from the currently saved settings:
+        /// a model loaded before a settings edit can otherwise make a newly
+        /// saved cap look live when it is not.
+        let activeCachePolicy: ActiveCachePolicy?
+    }
+
+    struct ActiveCachePolicy: Equatable, Sendable {
+        let maxKVSize: Int?
+        let longPromptMultiplier: Double
+        let pagedRAMEnabled: Bool
+        let diskL2Enabled: Bool
+        let diskL2MaxGB: Double
     }
 
     struct LiveVoiceAudioPreencodeResult: Sendable, Equatable {
@@ -409,7 +428,8 @@ public actor ModelRuntime {
             }
         }
         return modelCache.values.map { holder in
-            ModelCacheSummary(
+            let activeConfig = holder.container.cacheCoordinator?.config
+            return ModelCacheSummary(
                 name: holder.name,
                 bytes: holder.weightsSizeBytes,
                 isCurrent: holder.name == currentModelName,
@@ -419,7 +439,16 @@ public actor ModelRuntime {
                 nativeMTPReason: holder.nativeMTPReason,
                 mlxPressStatus: holder.container.mlxPressStatus(),
                 cacheStats: holder.container.cacheCoordinator?.snapshotStats(),
-                cacheTopology: holder.cacheTopology
+                cacheTopology: holder.cacheTopology,
+                activeCachePolicy: activeConfig.map {
+                    ActiveCachePolicy(
+                        maxKVSize: $0.defaultMaxKVSize,
+                        longPromptMultiplier: $0.longPromptMultiplier,
+                        pagedRAMEnabled: $0.usePagedCache,
+                        diskL2Enabled: $0.enableDiskCache,
+                        diskL2MaxGB: Double($0.diskCacheMaxGB)
+                    )
+                }
             )
         }.sorted { lhs, rhs in
             if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }
@@ -472,7 +501,21 @@ public actor ModelRuntime {
         // Live voice runs inside the chat UI, so its residency is chat-scoped.
         lastUseSource[holder.name] = .chatUI
         await ModelLease.shared.acquire(holder.name)
-        let soloLease = await MLXBatchAdapter.Registry.shared.acquireSoloLease(for: holder.name)
+        guard
+            let soloLease = await MLXBatchAdapter.Registry.shared.acquireSoloLease(
+                for: holder.name
+            )
+        else {
+            await ModelLease.shared.release(holder.name)
+            await scheduleIdleResidency(for: holder.name)
+            return LiveVoiceAudioPreencodeResult(
+                status: .failed,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: "Cancelled before audio encoding started"
+            )
+        }
 
         final class OutBox: @unchecked Sendable {
             var result: LiveVoiceAudioPreencodeResult?
@@ -737,10 +780,6 @@ public actor ModelRuntime {
         loadingTasks.removeValue(forKey: name)
         currentModelName = name
         Memory.cacheLimit = mlxCacheLimit()
-
-        // Enable multi-tier KV caching via vmlx-swift's CacheCoordinator.
-        // Cache tier config is entirely osaurus-internal — not user-visible.
-        await installCacheCoordinator(on: holder)
 
         // Native-MTP bundles historically ran their FIRST request in plain
         // autoregressive mode (the registry's cold-warmup rule), so the one
@@ -1182,13 +1221,17 @@ public actor ModelRuntime {
     static func estimatedKVHeadroomBytes(
         forWeights weights: Int64,
         modelDirectory: URL? = nil,
-        modelName: String? = nil
+        modelName: String? = nil,
+        kvRetentionCap: Int? = ServerRuntimeSettingsStore.resolvedKVRetentionCap()
     ) -> Int64 {
         if let knownHeadroom = Self.knownMiMoOrN2JANGTQKVHeadroomBytes(modelName: modelName) {
             return knownHeadroom
         }
         if let modelDirectory,
-            let architectureHeadroom = estimatedArchitectureKVHeadroomBytes(at: modelDirectory)
+            let architectureHeadroom = estimatedArchitectureKVHeadroomBytes(
+                at: modelDirectory,
+                kvRetentionCap: kvRetentionCap
+            )
         {
             return architectureHeadroom
         }
@@ -1221,7 +1264,10 @@ public actor ModelRuntime {
         return nil
     }
 
-    private static func estimatedArchitectureKVHeadroomBytes(at directory: URL) -> Int64? {
+    private static func estimatedArchitectureKVHeadroomBytes(
+        at directory: URL,
+        kvRetentionCap: Int?
+    ) -> Int64? {
         let configURL = directory.appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: configURL),
             let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -1261,8 +1307,13 @@ public actor ModelRuntime {
             ?? intValue(config["max_sequence_length"])
             ?? intValue(config["seq_length"])
             ?? 32768
-        let kvCap = ServerRuntimeSettingsStore.snapshot().cache.defaultMaxKVSize ?? 8192
-        let maxPositions = min(declaredPositions, max(kvCap, 4096))
+        // Price the same RESOLVED Memory Safety/cache policy that a newly
+        // loaded coordinator receives. The old raw-field lookup used 8K when
+        // the saved override was blank even though Safe Auto actually loaded
+        // a 64K cap, materially under-reporting projected KV headroom.
+        let maxPositions =
+            kvRetentionCap.map { min(declaredPositions, max($0, 4096)) }
+            ?? declaredPositions
         guard let kvHeads, let headDim, kvHeads > 0, headDim > 0, maxPositions > 0 else {
             return nil
         }
@@ -1746,6 +1797,69 @@ public actor ModelRuntime {
         throw refusal
     }
 
+    /// Await a different model load without cancelling it, then publish the
+    /// resulting holder into the live cache when it completed successfully.
+    /// Used by flexible residency and handoff restoration; both must preserve
+    /// an already-started materialization rather than destroy another
+    /// request's load.
+    private func awaitConflictingLoadWithoutCancellation(
+        name: String,
+        record: LoadingTaskRecord
+    ) async {
+        do {
+            let holder = try await record.task.value
+            _ = try? await finishLoadedContainer(
+                name: name,
+                holder: holder,
+                loadID: record.id
+            )
+        } catch {
+            if loadingTasks[name]?.id == record.id {
+                loadingTasks.removeValue(forKey: name)
+            }
+            supersededLoadingTaskIDs.remove(record.id)
+        }
+    }
+
+    /// Resolve a different model load observed in the current actor segment.
+    ///
+    /// The same decision is required before and after acquiring the cold-load
+    /// slot. Keeping it here prevents those two residency loops from drifting:
+    /// strict interactive loads cancel and drain, strict handoff restoration
+    /// waits, background work refuses atomically, and flexible residency waits.
+    private func resolveConflictingLoad(
+        requestedName: String,
+        otherName: String,
+        otherRecord: LoadingTaskRecord,
+        policy: ModelEvictionPolicy,
+        intent: ModelLoadIntent,
+        afterColdLoadWait: Bool
+    ) async throws {
+        let suffix = afterColdLoadWait ? " after cold-load wait" : ""
+        if policy == .strictSingleModel, intent != .handoffRestore {
+            try refuseBackgroundLoadIfItWouldDisturb(
+                intent: intent,
+                requested: requestedName,
+                conflict: .wouldCancelLoadInFlight(otherName)
+            )
+            genLog.info(
+                "loadContainer: strict drain of in-flight load \(otherName, privacy: .public)\(suffix, privacy: .public)"
+            )
+            await cancelAndDrainLoadingTasks([(otherName, otherRecord)])
+            return
+        }
+
+        if policy == .strictSingleModel {
+            genLog.info(
+                "loadContainer: handoff restore waiting for in-flight load \(otherName, privacy: .public)\(suffix, privacy: .public)"
+            )
+        }
+        await awaitConflictingLoadWithoutCancellation(
+            name: otherName,
+            record: otherRecord
+        )
+    }
+
     /// True while any model load is registered or holds the cold-load slot.
     ///
     /// Diagnostics only. Do **not** gate a load on this: the answer is stale the
@@ -1857,35 +1971,14 @@ public actor ModelRuntime {
             }
 
             if let otherLoading = loadingTasks.first(where: { $0.key != name }) {
-                let otherName = otherLoading.key
-                let otherRecord = otherLoading.value
-                if policy == .strictSingleModel {
-                    // Same actor segment as the `loadingTasks` read above — no
-                    // `await` between observing the conflict and refusing.
-                    try refuseBackgroundLoadIfItWouldDisturb(
-                        intent: intent,
-                        requested: name,
-                        conflict: .wouldCancelLoadInFlight(otherName)
-                    )
-                    genLog.info(
-                        "loadContainer: strict drain of in-flight load \(otherName, privacy: .public)"
-                    )
-                    await cancelAndDrainLoadingTasks([(otherName, otherRecord)])
-                } else {
-                    do {
-                        let holder = try await otherRecord.task.value
-                        _ = try? await finishLoadedContainer(
-                            name: otherName,
-                            holder: holder,
-                            loadID: otherRecord.id
-                        )
-                    } catch {
-                        if loadingTasks[otherName]?.id == otherRecord.id {
-                            loadingTasks.removeValue(forKey: otherName)
-                        }
-                        supersededLoadingTaskIDs.remove(otherRecord.id)
-                    }
-                }
+                try await resolveConflictingLoad(
+                    requestedName: name,
+                    otherName: otherLoading.key,
+                    otherRecord: otherLoading.value,
+                    policy: policy,
+                    intent: intent,
+                    afterColdLoadWait: false
+                )
                 continue
             }
 
@@ -1945,36 +2038,17 @@ public actor ModelRuntime {
             }
 
             if let otherLoading = loadingTasks.first(where: { $0.key != name }) {
-                let otherName = otherLoading.key
-                let otherRecord = otherLoading.value
-                if policy == .strictSingleModel {
-                    // Re-checked after `acquireColdLoadSlot()`, which suspends —
-                    // the actor is reentrant across it, so the pre-slot check
-                    // above proves nothing about the state we see now.
-                    try refuseBackgroundLoadIfItWouldDisturb(
-                        intent: intent,
-                        requested: name,
-                        conflict: .wouldCancelLoadInFlight(otherName)
-                    )
-                    genLog.info(
-                        "loadContainer: strict drain of in-flight load \(otherName, privacy: .public) after cold-load wait"
-                    )
-                    await cancelAndDrainLoadingTasks([(otherName, otherRecord)])
-                } else {
-                    do {
-                        let holder = try await otherRecord.task.value
-                        _ = try? await finishLoadedContainer(
-                            name: otherName,
-                            holder: holder,
-                            loadID: otherRecord.id
-                        )
-                    } catch {
-                        if loadingTasks[otherName]?.id == otherRecord.id {
-                            loadingTasks.removeValue(forKey: otherName)
-                        }
-                        supersededLoadingTaskIDs.remove(otherRecord.id)
-                    }
-                }
+                // Re-checked after `acquireColdLoadSlot()`, which suspends —
+                // the actor is reentrant across it, so the pre-slot check above
+                // proves nothing about the state we see now.
+                try await resolveConflictingLoad(
+                    requestedName: name,
+                    otherName: otherLoading.key,
+                    otherRecord: otherLoading.value,
+                    policy: policy,
+                    intent: intent,
+                    afterColdLoadWait: true
+                )
                 continue
             }
 
@@ -2268,7 +2342,7 @@ public actor ModelRuntime {
             genLog.info(
                 "loadContainer: task loaded model=\(name, privacy: .public) loadID=\(loadID, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public) isVLM=\(isVLM, privacy: .public)"
             )
-            return SessionHolder(
+            let holder = SessionHolder(
                 name: name,
                 container: container,
                 weightsSizeBytes: loadFootprintBytes,
@@ -2282,6 +2356,18 @@ public actor ModelRuntime {
                         physicalMemory: ProcessInfo.processInfo.physicalMemory
                     )
             )
+
+            // Install the cache coordinator before the coalesced load task
+            // returns its holder. `finishLoadedContainer` publishes the holder
+            // in `modelCache` and is actor-reentrant across its post-load MTP
+            // warm-up; installing there let a rapid UI send observe a loaded
+            // model whose BatchEngine still had no coordinator. The request
+            // then generated coherently but could neither fetch nor store its
+            // SSD prefix. Keeping this inside the single shared load task makes
+            // "load complete" mean the configured prefix/paged/L2 policy is
+            // already attached for every waiter.
+            await Self.installCacheCoordinator(on: holder)
+            return holder
         }
 
         loadingTasks[name] = LoadingTaskRecord(id: loadID, task: task)
@@ -2644,9 +2730,8 @@ public actor ModelRuntime {
         // shipped default) therefore resolves to native fp16 KV for every
         // model.
         //
-        // vMLX's settings resolve `.engineSelected -> .turboQuant()`, so this
-        // runtime gate is the single point that decides whether engine-
-        // selected actually turns TurboQuant on. Previously it returned true
+        // This host gate and the pinned vMLX settings default both resolve
+        // engine-selected to native KV. Previously this gate returned true
         // for full-KV families (MiniMax) and for any topology with KV layers
         // and no rotating/hybrid layers — which silently force-enabled
         // TurboQuant on multiple families. TurboQuant's per-step
@@ -2694,7 +2779,8 @@ public actor ModelRuntime {
             let entries = try? fm.contentsOfDirectory(
                 at: directory,
                 includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
-                options: [.skipsHiddenFiles])
+                options: [.skipsHiddenFiles]
+            )
         else {
             // Unreadable bundle: fall back to a value that never matches a previous
             // load, so we take a cold prefill rather than risk a wrong-weights hit.
@@ -2798,10 +2884,10 @@ public actor ModelRuntime {
     }
 
     /// Installs the cache coordinator on a freshly-loaded holder.
-    private func installCacheCoordinator(on holder: SessionHolder) async {
+    private nonisolated static func installCacheCoordinator(on holder: SessionHolder) async {
         let cacheTopology = await holder.container.cacheTopologySnapshot()
         holder.cacheTopology = cacheTopology
-        let cacheConfig = Self.buildCacheCoordinatorConfig(
+        let cacheConfig = buildCacheCoordinatorConfig(
             modelName: holder.name,
             weightsFingerprint: holder.weightsFingerprint,
             cacheTopology: cacheTopology
@@ -2851,6 +2937,15 @@ public actor ModelRuntime {
         // 35B the qwen3_5_moe variant; both need the eager setHybrid flip
         // and the compiled-B=1-trace opt-out that the family already gets.
         if lower.contains("ornith") {
+            return true
+        }
+        // Bonsai (prism-ml, OsaurusAI re-bakes) — qwen3_5 model_type dense
+        // VL backbone (48 linear_attention + 16 full_attention layers →
+        // `MambaCache` companion slots), but the bundle ids carry no "qwen"
+        // substring — same situation as Ornith above. Without this entry the
+        // family silently missed the eager hybrid flip, the compiled-decode
+        // opt-out, and the `layers=hybrid-ssm` cache-key tag.
+        if lower.contains("bonsai") {
             return true
         }
         // Qwen3-Next (qwen3_next model_type) — newer hybrid MoE that vmlx
@@ -3099,7 +3194,14 @@ public actor ModelRuntime {
             events: prepared.stream,
             modelName: modelName,
             trace: trace,
-            suppressProgressUI: parameters.suppressProgressUI
+            suppressProgressUI: parameters.suppressProgressUI,
+            onConsumerCancellation: {
+                // Cancel this exact generation wrapper, not every request
+                // using the same model. The wrapper drains the direct vmlx
+                // producer and releases this stream's ModelLease before a
+                // residency restore can evict the child model.
+                activeTask.cancel()
+            }
         )
     }
 
@@ -3265,17 +3367,14 @@ public actor ModelRuntime {
         )
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
-            // Chat UI streaming should execute a parsed tool call as soon as
-            // the model finishes the step. We surface the tool hints
-            // immediately, then keep draining ONLY to forward the step's
-            // end-of-generation `.completionInfo` (decode/prefill tok/s + token
-            // count) before finishing-by-throw — otherwise a step that ends in
-            // a tool call (the common agentic case) drops its decode stats,
-            // which is why tool-call turns historically reported 0 completion
-            // tokens / no tok/s in both the OpenAI `usage` and the eval
-            // telemetry. Post-tool model text is still suppressed (never
-            // yielded once a tool is pending), preserving the no-leak intent.
-            var pendingTool: ServiceToolInvocation?
+            // Chat UI streaming must dispatch a parsed local tool call as soon
+            // as vmlx emits `.toolInvocation`. A trailing `.completionInfo`
+            // is useful telemetry, but it is not part of the executable tool
+            // contract: the parser has already closed the envelope and built
+            // canonical JSON. Waiting for stats lets a model/runtime stream
+            // that never reaches EOS leave the UI stuck with a complete-looking
+            // tool row and no actual dispatch. Finish-by-throw immediately and
+            // let `onTermination` cancel the now-unneeded decode tail.
             do {
                 for try await ev in events {
                     if case .completionInfo(
@@ -3294,14 +3393,6 @@ public actor ModelRuntime {
                                 prefillTokensPerSecond: promptTokensPerSecond
                             )
                         )
-                        // End-of-generation stats are the terminal event. If a
-                        // tool call is pending, the stats have now been
-                        // forwarded — finish-by-throw so the consumer dispatches
-                        // the tool, with the decode telemetry already delivered.
-                        if let tool = pendingTool {
-                            continuation.finish(throwing: tool)
-                            return
-                        }
                         continue
                     }
 
@@ -3311,56 +3402,46 @@ public actor ModelRuntime {
                     }
                     switch ev {
                     case .tokens(let s):
-                        // Suppress model text once a tool call is pending so the
-                        // pseudo-tool prose never leaks to the UI/consumer.
-                        if pendingTool == nil, !s.isEmpty { continuation.yield(s) }
+                        if !s.isEmpty { continuation.yield(s) }
                     case .reasoning(let s):
-                        if pendingTool == nil, !s.isEmpty {
+                        if !s.isEmpty {
                             continuation.yield(StreamingReasoningHint.encode(s))
                         }
                     case .prefillProgress(let progress):
-                        if pendingTool == nil {
-                            continuation.yield(StreamingPrefillProgressHint.encode(progress))
-                        }
+                        continuation.yield(StreamingPrefillProgressHint.encode(progress))
                     case .toolCallProgress(let envelopeDelta):
                         // Live preview of the tool-call envelope as it is
                         // written. Emitted before the committed
-                        // `.toolInvocation`, so `pendingTool` is still nil here.
+                        // `.toolInvocation`.
                         // Encoded behind the `\u{FFFE}` sentinel so it never
                         // reaches the visible token stream or the OpenAI wire —
                         // only the native ChatView decodes it, to keep the
                         // tool-call card alive instead of showing a frozen
                         // spinner during a long file-write call.
-                        if pendingTool == nil, !envelopeDelta.isEmpty {
+                        if !envelopeDelta.isEmpty {
                             continuation.yield(
                                 StreamingToolCallProgressHint.encode(envelopeDelta)
                             )
                         }
                     case .toolInvocation(let name, let argsJSON):
-                        // Surface the first tool call's hints immediately, then
-                        // keep draining for its trailing `.completionInfo`
-                        // before throwing (see comment above). Arity is
-                        // unchanged: only the first tool is dispatched per step.
-                        if pendingTool == nil {
-                            continuation.yield(StreamingToolHint.encode(name))
-                            continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
-                            pendingTool = ServiceToolInvocation(
-                                toolName: name,
-                                jsonArguments: argsJSON
-                            )
-                        }
+                        // Surface the first parsed tool call and terminate this
+                        // generation step immediately. The stream termination
+                        // cancels any remaining decode tail, so post-tool prose
+                        // cannot leak and the chat loop can execute the tool
+                        // without waiting for an optional stats/EOS event.
+                        continuation.yield(StreamingToolHint.encode(name))
+                        continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
+                        let tool = ServiceToolInvocation(
+                            toolName: name,
+                            jsonArguments: argsJSON
+                        )
+                        continuation.finish(throwing: tool)
+                        return
                     case .completionInfo:
                         continue
                     }
                 }
-                // Stream ended (natural EOS). If the generator never emitted a
-                // trailing `.completionInfo` after the tool call, throw now so
-                // the tool is still dispatched (just without decode stats).
-                if let tool = pendingTool {
-                    continuation.finish(throwing: tool)
-                } else {
-                    continuation.finish()
-                }
+                continuation.finish()
             } catch {
                 if Task.isCancelled {
                     continuation.finish()

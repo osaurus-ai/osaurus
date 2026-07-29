@@ -10,7 +10,7 @@ WORKSPACE := osaurus.xcworkspace
 DERIVED := build/DerivedData
 XCODEBUILD_FLAGS ?=
 
-.PHONY: help cli app install-cli serve status test ci-test computer-use-evidence clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-deterministic evals-capture-screen evals-loop evals-matrix evals-diff evals-contribute evals-compat
+.PHONY: help cli app install-cli serve status test ci-test computer-use-evidence clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-deterministic evals-capture-screen evals-loop evals-matrix evals-diff evals-contribute evals-compat evals-pr-report evals-pr-report-baseline evals-watcher-report evals-scoreboard
 
 help:
 	@echo "Targets:"
@@ -37,6 +37,10 @@ help:
 	@echo "  evals-diff          All-domain before/after diff (BASELINE=, CURRENT=)"
 	@echo "  evals-contribute    Crowdsource: run one model on your Mac -> reports/community/<file>.json (MODEL=, PR=1 auto-PRs; see COMMUNITY_EVALS.md)"
 	@echo "  evals-compat        Fold reports/community/* into the COMPATIBILITY.md leaderboard (COMPAT_DIR=)"
+	@echo "  evals-pr-report     Generate local+frontier eval artifact bundle for PR review"
+	@echo "  evals-pr-report-baseline  Same as evals-pr-report plus BASELINE_DIR comparison"
+	@echo "  evals-watcher-report  Store a watcher eval report bundle and refresh its scoreboard"
+	@echo "  evals-scoreboard    Aggregate stored eval report bundles into scoreboard artifacts"
 	@echo "  test           Run OsaurusCore package tests via 'swift test'"
 	@echo "  evals-test     Run the OsaurusEvals harness unit tests (deterministic, token-free)"
 	@echo "  ci-test        Reproduce the CI test-core job locally (xcodebuild + xcbeautify)"
@@ -184,6 +188,21 @@ EVALS_OUT_DIR ?= build/evals
 # so the flag is a no-op for everything else. Disable with
 # `make evals EVALS_FLOOR_FLAG=`.
 EVALS_FLOOR_FLAG ?= --fail-on-floor
+LOCAL_MODEL ?= foundation
+FRONTIER_MODEL ?= openai/gpt-4o-mini
+EVALS_PR_REPORT_OUT ?= build/evals/pr-report/$(shell date -u +%Y%m%dT%H%M%SZ)
+EVALS_PR_REPORT_OUT := $(EVALS_PR_REPORT_OUT)
+EVALS_WATCHER_CHANNEL ?= main
+EVALS_WATCHER_OUT ?= build/evals/watcher
+EVALS_REPORT_PRESET ?= local-frontier
+EVALS_WATCHER_ARTIFACT_ID ?=
+EVALS_MAX_REGRESSIONS ?= 0
+EVALS_SCOREBOARD_ROOT ?= $(EVALS_WATCHER_OUT)/$(EVALS_WATCHER_CHANNEL)
+EVALS_SCOREBOARD_OUT ?= build/evals/scoreboard/$(shell date -u +%Y%m%dT%H%M%SZ)
+EVALS_SCOREBOARD_OUT := $(EVALS_SCOREBOARD_OUT)
+ifeq ($(strip $(EVALS_FROM_REPORTS)$(PLAN_ONLY)),)
+EVALS_WATCHER_PREP := evals-prep
+endif
 # Auto-discovered list of every subdirectory under Suites/. Adding a new
 # `Suites/MyDomain/` automatically picks it up here — no Makefile edit
 # required when a new suite lands.
@@ -368,6 +387,62 @@ COMPAT_DIR ?= reports/community
 evals-compat:
 	@swift run --package-path Packages/OsaurusEvals osaurus-evals compat $(COMPAT_DIR) \
 		$(if $(VALIDATE),--validate,--out reports/COMPATIBILITY.json --markdown reports/COMPATIBILITY.md)
+
+# Review-oriented artifact bundle for PRs that affect agent-loop behavior.
+# Defaults to the required local+frontier lanes and AgentLoop +
+# AgentLoopFrontier suites. SandboxFrontier is opt-in because it needs host
+# sandbox prerequisites.
+evals-pr-report: evals-prep
+	@mkdir -p "$(EVALS_PR_REPORT_OUT)"
+	swift run --package-path Packages/OsaurusEvals osaurus-evals report \
+		--local-model "$(LOCAL_MODEL)" \
+		--frontier-model "$(FRONTIER_MODEL)" \
+		--out-dir "$(EVALS_PR_REPORT_OUT)" \
+		$(if $(JUDGE_MODEL),--judge-model "$(JUDGE_MODEL)",) \
+		$(if $(FILTER),--filter "$(FILTER)",) \
+		$(if $(INCLUDE_SANDBOX_FRONTIER),--include-sandbox-frontier,)
+	@echo "Wrote eval PR report to $(EVALS_PR_REPORT_OUT)"
+
+evals-pr-report-baseline: evals-prep
+	@if [[ -z "$(BASELINE_DIR)" ]]; then \
+		echo "BASELINE_DIR is required, e.g. make evals-pr-report-baseline BASELINE_DIR=build/evals/main-report"; \
+		exit 2; \
+	fi
+	@mkdir -p "$(EVALS_PR_REPORT_OUT)"
+	swift run --package-path Packages/OsaurusEvals osaurus-evals report \
+		--local-model "$(LOCAL_MODEL)" \
+		--frontier-model "$(FRONTIER_MODEL)" \
+		--baseline "$(BASELINE_DIR)" \
+		--out-dir "$(EVALS_PR_REPORT_OUT)" \
+		$(if $(JUDGE_MODEL),--judge-model "$(JUDGE_MODEL)",) \
+		$(if $(FILTER),--filter "$(FILTER)",) \
+		$(if $(INCLUDE_SANDBOX_FRONTIER),--include-sandbox-frontier,)
+	@echo "Wrote eval PR report with baseline comparison to $(EVALS_PR_REPORT_OUT)"
+
+evals-watcher-report: $(EVALS_WATCHER_PREP)
+	scripts/evals/eval-watcher-report.sh \
+		--channel "$(EVALS_WATCHER_CHANNEL)" \
+		--out-root "$(EVALS_WATCHER_OUT)" \
+		$(if $(EVALS_WATCHER_ARTIFACT_ID),--artifact-id "$(EVALS_WATCHER_ARTIFACT_ID)",) \
+		--preset "$(EVALS_REPORT_PRESET)" \
+		--local-model "$(LOCAL_MODEL)" \
+		--frontier-model "$(FRONTIER_MODEL)" \
+		--max-regressions "$(EVALS_MAX_REGRESSIONS)" \
+		$(if $(BASELINE_DIR),--baseline "$(BASELINE_DIR)",) \
+		$(if $(JUDGE_MODEL),--judge-model "$(JUDGE_MODEL)",) \
+		$(if $(FILTER),--filter "$(FILTER)",) \
+		$(if $(INCLUDE_SANDBOX_FRONTIER),--include-sandbox-frontier,) \
+		$(if $(EVALS_FROM_REPORTS),--from-reports "$(EVALS_FROM_REPORTS)",) \
+		$(if $(OSAURUS_EVALS_STARTUP_TIMEOUT_SECONDS),--startup-timeout "$(OSAURUS_EVALS_STARTUP_TIMEOUT_SECONDS)",) \
+		$(if $(PLAN_ONLY),--plan-only,)
+
+evals-scoreboard:
+	@mkdir -p "$(EVALS_SCOREBOARD_OUT)"
+	swift run --package-path Packages/OsaurusEvals osaurus-evals scoreboard \
+		--reports-root "$(EVALS_SCOREBOARD_ROOT)" \
+		--out-dir "$(EVALS_SCOREBOARD_OUT)" \
+		--max-regressions "$(EVALS_MAX_REGRESSIONS)"
+	@echo "Wrote eval scoreboard to $(EVALS_SCOREBOARD_OUT)"
 
 ## ── Housekeeping ─────────────────────────────────────────────────
 

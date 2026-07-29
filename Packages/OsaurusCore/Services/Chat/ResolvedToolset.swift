@@ -23,6 +23,12 @@ struct ResolvedToolset: Sendable {
     /// alphabetical). Empty when `effectiveToolsOff` is true.
     let tools: [Tool]
 
+    /// Full resolved tool surface before a greeting-only first turn suppresses
+    /// the request schema. Callers persist these exact payloads as the session
+    /// baseline so the next non-trivial turn does not rebuild them from
+    /// asynchronously changing registry state.
+    let sessionBaselineTools: [Tool]
+
     /// Rendered enabled-capabilities manifest section for this session, or
     /// `nil` when the section is gated off / empty. Frozen at session start
     /// and injected as a static prefix section, so it is query- and

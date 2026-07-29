@@ -35,7 +35,7 @@ struct ServerControllerConfigLoadingTests {
         #expect(controller.configuration.exposeToNetwork == true)
     }
 
-    @Test func loadedModelRefreshInputs_coverCacheMultimodalAndMTP() {
+    @Test func loadedModelRefreshInputs_coverCacheMemorySafetyMultimodalAndMTP() {
         let base = VMLXServerRuntimeSettings()
 
         var cacheChanged = base
@@ -55,6 +55,16 @@ struct ServerControllerConfigLoadingTests {
             ServerController.loadedModelRuntimeInputsRequireRefresh(
                 previous: base,
                 next: turboQuantChanged
+            )
+        )
+
+        var memorySafetyChanged = base
+        memorySafetyChanged.memorySafety.mode = .strict
+        memorySafetyChanged.memorySafety.slider = 1
+        #expect(
+            ServerController.loadedModelRuntimeInputsRequireRefresh(
+                previous: base,
+                next: memorySafetyChanged
             )
         )
 

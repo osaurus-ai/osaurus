@@ -60,7 +60,7 @@ display_information:
 features:
   bot_user:
     display_name: osaurus-smoke
-    always_online: false
+    always_online: true
 oauth_config:
   scopes:
     bot:
@@ -74,6 +74,7 @@ oauth_config:
       - im:read
       - mpim:history
       - mpim:read
+      - users:read
 settings:
   event_subscriptions:
     bot_events:
@@ -96,20 +97,68 @@ Scope notes:
 | `channels:read`, `groups:read`, `im:read`, `mpim:read` | Lists rooms/chats the bot can inspect. |
 | `channels:history`, `groups:history`, `im:history`, `mpim:history` | Reads recent messages for allowlisted rooms. |
 | `app_mentions:read` | Receives app mentions for Socket Mode/event proof. |
+| `users:read` | Populates the authorized-sender picker with workspace people. |
 
 Do not add `chat:write.public` for release proof. Invite the bot to the
 disposable channel instead, so channel membership stays explicit.
 
-Socket Mode setup:
+Presence note: `features.bot_user.always_online: true` is what shows the bot
+with a green presence dot. Slack has no runtime presence API for bot tokens,
+so this static manifest flag is the only supported mechanism. Existing Slack
+apps created from an older manifest must reapply the updated manifest on the
+App Manifest page for the change to take effect.
 
-1. Enable Socket Mode in the Slack app settings.
-2. Create an app-level token with `connections:write`.
-3. Save the app-level token only in the local secret store used by the smoke
-   operator. The native configuration stores the Slack bot token under the
-   `bot_token` credential reference, the signing secret under
-   `signing_secret`, and the Socket Mode app token under `app_token`.
-4. Install or reinstall the app after scope changes.
-5. Invite the bot to the read and write smoke channels.
+Guided setup (matches the numbered steps in Settings -> Channels -> Slack):
+
+1. **Create the Slack app.** Open [api.slack.com/apps](https://api.slack.com/apps),
+   choose "Create New App" -> "From a manifest", and paste the manifest copied
+   from the sheet. The manifest already enables Socket Mode and the message
+   event subscriptions. There is **no webhook**: native Slack receive never
+   asks for a Request URL, public HTTPS ingress, or an Events API endpoint.
+2. **Install the app and paste the Bot Token.** Use "Install App" in the Slack
+   app settings, then paste the `xoxb-` Bot User OAuth Token. Reinstall after
+   any scope change.
+3. **Generate the App-Level Token.** Under "Basic Information" ->
+   "App-Level Tokens", generate an `xapp-` token with the `connections:write`
+   scope and paste it into the App Token field. This token is **required to
+   receive messages** — it is what powers the outgoing Socket Mode connection.
+   Test Connection validates it against `apps.connections.open` and reports
+   an invalid token or missing scope explicitly.
+4. **Choose channels and people.** Use **Load from Slack** to fetch the
+   authenticated workspace, visible conversations, and workspace users. Select
+   Read and Write independently for each joined channel (invite the bot to the
+   channel first), then select the users authorized to trigger inbound
+   handling. Discovery never grants access by itself: only the saved
+   selections become allowlists. If workspace policy withholds `users:read` or
+   conversation-list scopes, the sheet shows the missing scope and keeps the
+   Advanced manual-ID fields available.
+5. **Send incoming messages to an agent.** Enable dispatch and pick the target
+   agent. Mention policy, thread continuation, and automatic replies are
+   configured here.
+6. **Verify an incoming message.** Press **Verify incoming message**, then send
+   the suggested test message (for example `@your-slack-bot hello`) from an
+   authorized sender in a readable channel. Mention the **Slack bot user**,
+   not the Osaurus agent name. The sheet shows each stage the event reaches —
+   received, stored, dispatched, replied — or the exact boundary that stopped
+   it (unauthorized sender, unreadable channel, mention required, unavailable
+   agent, and so on).
+
+The signing secret lives under Advanced and is **not part of the native Slack
+path**: it only verifies Slack HTTP (Events API) requests and is retained for
+future webhook compatibility. Saving it never enables receive.
+
+Saving with dispatch enabled keeps the sheet open and lists the exact blockers
+whenever receive cannot actually run (missing app token, empty allowlists,
+missing agent, rejected token). Diagnostics also warn when multiple Osaurus
+instances are running: Slack delivers each Socket Mode envelope to only one
+connection, so a forgotten Xcode debug build can silently consume the events
+the installed app is waiting for.
+
+Use **Add another Slack workspace** for each additional installation. Supply
+that workspace's bot token and optional Socket Mode app token, load its choices,
+select its channels and authorized senders, then save. Tokens remain separate
+in Keychain and each workspace with an app token runs an independent Socket Mode
+connection.
 
 Non-secret native configuration shape:
 
@@ -146,6 +195,12 @@ Use BotFather to create a disposable bot:
    for the disposable bot and disable privacy only in the smoke environment.
 7. Use `getUpdates` long-poll for desktop proof. If a webhook was configured
    during experimentation, delete it before long-poll proof.
+
+Before enabling long polling, send the bot a message and use **Load from
+Telegram** in settings. Osaurus previews pending updates without advancing the
+update cursor and offers the observed chats and human senders as explicit Read,
+Write, and Allow choices. Manual IDs remain available when Telegram has no
+pending updates.
 
 Saving a bot token only proves that Osaurus can store credentials. It does not
 start Telegram receive by itself. For new messages to arrive in the local inbox,
@@ -190,18 +245,48 @@ the channel is ready for user testing:
 ### Slack
 
 - Bot token and Socket Mode app token are saved for local desktop receive proof.
-  Signing secret is also saved when signed HTTP event proof is in scope.
-- **Test Connection** returns bot identity and the configured workspace/team is
-  allowlisted.
+  No signing secret or webhook is required for the native path; save a signing
+  secret only when out-of-scope signed HTTP event proof is planned.
+- **Test Connection** returns bot identity, validates the app token through
+  `apps.connections.open`, and the configured workspace/team is allowlisted.
 - At least one readable channel id is allowlisted.
 - At least one authorized sender id is allowlisted.
-- Send one inbound Socket Mode message from an authorized sender and confirm it
+- Only one Osaurus instance is running (diagnostics warn about duplicates).
+- Use **Verify incoming message** with one inbound Socket Mode message from an
+  authorized sender and confirm the stages reach stored/dispatched and it
   appears in the local Agent Channel inbox.
 - Send one inbound message from an unauthorized sender in the same channel and
   confirm it is ignored.
 - If writes are enabled, send one confirmed message to a write-allowlisted
   channel.
+- Edit and delete a disposable bot-authored message, add and remove a reaction,
+  and confirm attachment metadata is returned by message reads.
+- For multiple workspaces, prove one read and one confirmed write in each and
+  verify the action routes to the correct workspace.
 - Restart Osaurus and confirm transport health and configuration persist.
+
+### Proactive posting (outbound destinations)
+
+Proactive posting needs no separate setup. Once a channel has a saved
+credential, write access to at least one room (`writeEnabled` plus a
+write-allowlisted room id), and inbound dispatch enabled, Osaurus derives an
+automatic **Ask first** posting destination for each writable room × answering
+agent. They appear under Settings → Channels → Agent Posting (and per agent
+under Channel Posting) with an "Automatic" badge.
+
+Outbound spot check, after the inbound checklist above passes:
+
+- Confirm the derived destination is listed for the answering agent.
+- Ask the agent in chat to post to the room; approve the queued message from
+  the outbox (Ask first is the default — nothing sends without approval).
+- Confirm the message arrives in the room, and that the outbox row moves to
+  sent.
+- Remove the room from the write allowlist and confirm the destination
+  disappears and any still-queued approval for it is refused.
+
+Auto-send is opt-in per destination and never the derived default; see
+[AGENT_CHANNEL_SECURITY.md](AGENT_CHANNEL_SECURITY.md) for the write gates and
+[AGENT_CHANNELS.md](AGENT_CHANNELS.md) for the full outbound flow.
 
 Webhook setup is advanced/future. When it is used, set a random webhook secret
 token and verify the `X-Telegram-Bot-Api-Secret-Token` header before decoding

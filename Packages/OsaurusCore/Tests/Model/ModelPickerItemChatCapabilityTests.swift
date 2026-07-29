@@ -202,6 +202,18 @@ struct ModelPickerItemChatCapabilityTests {
         #expect(!item.isLikelyChatCapable)
     }
 
+    @Test func fromMLXModel_carriesCanonicalBundleModelType() {
+        let model = MLXModel(
+            id: "JANGQ-AI/Ornith-1.0-35B-MXFP8",
+            name: "Ornith 1.0 35B MXFP8",
+            description: "fixture",
+            downloadURL: "https://example.invalid/ornith",
+            modelType: "qwen3_5_moe"
+        )
+        let item = ModelPickerItem.fromMLXModel(model)
+        #expect(item.modelType == "qwen3_5_moe")
+    }
+
     @Test func remoteEmbeddingIsNotChatCapable() {
         let item = ModelPickerItem.fromRemoteModel(
             modelId: "openai/text-embedding-3-small",

@@ -38,12 +38,14 @@
   },
   "expect": {
     "agentLoop": {
-      "maxIterations": 22,
+      "maxIterations": 30,
+      "maxModelSteps": 30,
       "mustCallTools": [
         "todo",
         "shell_run"
       ],
       "todoUpdatedBeforeComplete": true,
+      "todoCompletedBeforeFinal": true,
       "commands": [
         {
           "command": "zsh verify.sh",

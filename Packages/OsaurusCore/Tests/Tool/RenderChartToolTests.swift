@@ -57,6 +57,69 @@ struct RenderChartToolTests {
         #expect(marker.contains("\"data\":[1,2,3]"))
     }
 
+    @Test func nestedChartArgumentsAndQuotedHeaderRecoverOnFirstCall() async throws {
+        let argumentsJSON = #"""
+            {
+              "chartType": "bar",
+              "data": "{\"dataFormat\":\"csv\",\"chartType\":\"bar\",\"data\":\"\\\"month,sales\\\"\\nJan,10\\nFeb,15\\nMar,12\",\"title\":\"Quarterly Sales\"}"
+            }
+            """#
+        let tool = RenderChartTool()
+        let normalizedJSON: String
+        switch await ToolRegistry.shared.preflightForTest(
+            argumentsJSON: argumentsJSON,
+            schema: tool.parameters,
+            toolName: tool.name
+        ) {
+        case .ready(let normalized):
+            normalizedJSON = normalized
+        case .rejected(let envelope):
+            Issue.record("preflight rejected the observed nested Bonsai chart arguments: \(envelope)")
+            return
+        }
+
+        let result = try await tool.execute(argumentsJSON: normalizedJSON)
+        #expect(ToolEnvelope.isSuccess(result))
+        let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
+        let marker = try #require(payload["text"] as? String)
+        #expect(marker.contains("\"categories\":[\"Jan\",\"Feb\",\"Mar\"]"))
+        #expect(marker.contains("\"name\":\"sales\""))
+        #expect(marker.contains("\"data\":[10,15,12]"))
+    }
+
+    @Test func yColumnAliasMapsToSingleSeries() async throws {
+        let argumentsJSON = #"""
+            {
+              "chartType": "bar",
+              "data": "month,sales\nJan,10\nFeb,15\nMar,12",
+              "dataFormat": "csv",
+              "xColumn": "month",
+              "yColumn": "sales",
+              "title": "Quarterly Sales"
+            }
+            """#
+        let tool = RenderChartTool()
+        let normalizedJSON: String
+        switch await ToolRegistry.shared.preflightForTest(
+            argumentsJSON: argumentsJSON,
+            schema: tool.parameters,
+            toolName: tool.name
+        ) {
+        case .ready(let normalized):
+            normalizedJSON = normalized
+        case .rejected(let envelope):
+            Issue.record("preflight rejected the observed Bonsai yColumn alias: \(envelope)")
+            return
+        }
+
+        let result = try await tool.execute(argumentsJSON: normalizedJSON)
+        #expect(ToolEnvelope.isSuccess(result))
+        let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
+        let marker = try #require(payload["text"] as? String)
+        #expect(marker.contains("\"categories\":[\"Jan\",\"Feb\",\"Mar\"]"))
+        #expect(marker.contains("\"name\":\"sales\""))
+    }
+
     @Test func omittedSeriesAndHeaderlessRowsPreserveFirstPoint() async throws {
         let argumentsJSON = #"""
             {
@@ -126,6 +189,65 @@ struct RenderChartToolTests {
         let marker = try #require(payload["text"] as? String)
         #expect(marker.contains("\"categories\":[\"Jan\",\"Feb\",\"Mar\"]"))
         #expect(marker.contains("\"name\":\"Revenue\""))
+    }
+
+    @Test func explicitCSVLabelRecoversObservedBonsaiTabDelimitedPayload() async throws {
+        let result = try await RenderChartTool().execute(
+            argumentsJSON: #"""
+                {
+                  "chartType": "bar",
+                  "data": "month\trevenue\nJanuary\t10\nFebruary\t18\nMarch\t13\nApril\t24",
+                  "format": "csv",
+                  "series": "revenue",
+                  "title": "Monthly Revenue",
+                  "xColumn": "month"
+                }
+                """#
+        )
+
+        #expect(ToolEnvelope.isSuccess(result))
+        let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
+        let marker = try #require(payload["text"] as? String)
+        #expect(marker.contains("\"categories\":[\"January\",\"February\",\"March\",\"April\"]"))
+        #expect(marker.contains("\"name\":\"revenue\""))
+        #expect(marker.contains("\"data\":[10,18,13,24]"))
+    }
+
+    @Test func explicitTSVLabelRecoversUnambiguousCommaDelimitedPayload() async throws {
+        let result = try await RenderChartTool().execute(
+            argumentsJSON: #"""
+                {
+                  "chartType": "line",
+                  "data": "month,revenue\nJanuary,10\nFebruary,18",
+                  "format": "tsv",
+                  "series": ["revenue"],
+                  "xColumn": "month"
+                }
+                """#
+        )
+
+        #expect(ToolEnvelope.isSuccess(result))
+        let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
+        let marker = try #require(payload["text"] as? String)
+        #expect(marker.contains("\"categories\":[\"January\",\"February\"]"))
+        #expect(marker.contains("\"data\":[10,18]"))
+    }
+
+    @Test func mixedDelimiterPayloadDoesNotBypassStrictColumnValidation() async throws {
+        let result = try await RenderChartTool().execute(
+            argumentsJSON: #"""
+                {
+                  "chartType": "bar",
+                  "data": "month\trevenue\nJanuary,10\nFebruary\t18",
+                  "format": "csv",
+                  "series": ["revenue"],
+                  "xColumn": "month"
+                }
+                """#
+        )
+
+        #expect(!ToolEnvelope.isSuccess(result))
+        #expect(result.contains("Column(s) not found"))
     }
 
     @Test func textualHeaderWithMisspelledSeriesStillFails() async throws {

@@ -1,0 +1,42 @@
+{
+  "id": "browseruse.navigate-back",
+  "domain": "subagent",
+  "label": "BrowserUse • compare two pages using back history",
+  "query": "Go to https://fixtures.local/models, open the Falcon detail page and note its weight, then go BACK to the list (use browser back, don't retype the URL) and open the Heron detail page. Report both weights.",
+  "notes": "LIVE. Exercises browser_navigate_back: the list page links to two detail pages and the task explicitly requires returning through history between them. Scores the back verb in order (navigate → click → back → click) and both grounded weights in the digest — a run that skips 'back' by re-navigating fails the verb-order check even if the facts are right.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "browser_use",
+      "maxSteps": 14,
+      "pages": [
+        {
+          "url": "https://fixtures.local/models",
+          "title": "Model Catalog",
+          "bodyText": "Model catalog. Two drones are available: Falcon and Heron. Open a model for its full specification.",
+          "elements": [
+            { "id": "falcon-link", "type": "link", "text": "Falcon", "goto": "https://fixtures.local/models/falcon" },
+            { "id": "heron-link", "type": "link", "text": "Heron", "goto": "https://fixtures.local/models/heron" }
+          ]
+        },
+        {
+          "url": "https://fixtures.local/models/falcon",
+          "title": "Falcon — Specification",
+          "bodyText": "Falcon specification. Weight: 742 grams. Flight time: 31 minutes. Range: 8 km.",
+          "elements": []
+        },
+        {
+          "url": "https://fixtures.local/models/heron",
+          "title": "Heron — Specification",
+          "bodyText": "Heron specification. Weight: 1,180 grams. Flight time: 44 minutes. Range: 14 km.",
+          "elements": []
+        }
+      ],
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "browser_use",
+      "summaryContains": ["742", "1,180"],
+      "expectVerbsInOrder": ["navigate", "click", "back", "click"]
+    }
+  }
+}

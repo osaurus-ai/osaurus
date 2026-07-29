@@ -187,7 +187,7 @@ final class BlockMemoizer {
     private func limited(streaming: Bool) -> [ContentBlock] {
         // synthetic stress thread for profiling — must not truncate (see MockChatData)
         if ProcessInfo.processInfo.environment["USE_MOCK_CHAT_DATA"] == "1" {
-            return ContentBlock.coalesceToolGroups(cached)
+            return rolledUp(ContentBlock.coalesceToolGroups(cached))
         }
         // during streaming, cap tightly to prevent layout thrash on every delta.
         // use a smooth transition: once streaming ends the cap rises gradually so
@@ -197,7 +197,16 @@ final class BlockMemoizer {
         // Coalesce adjacent tool groups for display. `cached` keeps the original
         // per-turn group blocks (stable ids for incremental regen); the view sees
         // a single connected timeline, stitched even across the regeneration seam.
-        return ContentBlock.coalesceToolGroups(windowed)
+        return rolledUp(ContentBlock.coalesceToolGroups(windowed))
+    }
+
+    /// Display-time activity rollup, gated by the Chat settings toggle. Same
+    /// contract as coalescing: applied to the array handed to the view, never
+    /// stored in `cached`, so incremental regeneration keeps stable ids.
+    private func rolledUp(_ blocks: [ContentBlock]) -> [ContentBlock] {
+        ContentBlock.ActivityRollupSetting.isEnabled
+            ? ContentBlock.rollupActivityBlocks(blocks)
+            : blocks
     }
 
     func clear() {

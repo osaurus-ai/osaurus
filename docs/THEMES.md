@@ -26,7 +26,8 @@ This document describes the JSON schema for Osaurus custom themes. Themes can be
   "borders": { ... },
   "library": { ... },
   "isBuiltIn": false,
-  "isDark": true
+  "isDark": true,
+  "followsSystemAccent": false
 }
 ```
 
@@ -34,6 +35,7 @@ This document describes the JSON schema for Osaurus custom themes. Themes can be
 |---|---|---|
 | `isBuiltIn` | Bool | Always set to `false` for custom themes. Forced to `false` on import. |
 | `isDark` | Bool | Whether this is a dark theme. Affects system appearance matching. |
+| `followsSystemAccent` | Bool | Optional, defaults to `false`. When `true`, accent-adjacent colors (`accentColor`, `accentColorLight`, `focusBorder`, `cursorColor`, `selectionColor`, `sidebarSelectedBackground`, `infoColor`) are re-derived from the user's macOS system accent color when the theme is applied. The stored hex values are used as-is when the system accent matches the theme's `accentColor` (the palette authored for the default blue accent). |
 
 `messages`, `borders`, and `library` are optional -- missing `messages` and `borders` fall back to defaults, and missing `library` is treated as a local custom theme.
 

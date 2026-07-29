@@ -65,6 +65,15 @@ public final class RemoteProviderManager: ObservableObject {
     /// Runtime state for each provider
     @Published public private(set) var providerStates: [UUID: RemoteProviderState] = [:]
 
+    /// Connectivity-driven offline mode, fed by the network path monitor
+    /// below. While true, the manager exposes no remote chat services or
+    /// cached remote models, so cloud entries vanish from every model picker
+    /// and chat routing without disconnecting providers or erasing their
+    /// catalogs — they come back as-is on the recovery edge. Starts false
+    /// (the monitor's baseline reading arrives asynchronously) so launch
+    /// never flickers through a spurious offline state.
+    @Published public private(set) var isOffline: Bool = false
+
     /// Active service instances keyed by provider ID
     private var services: [UUID: RemoteProviderService] = [:]
 
@@ -170,33 +179,72 @@ public final class RemoteProviderManager: ObservableObject {
         if isEphemeral {
             ephemeralProviderIds.insert(provider.id)
         } else {
-            saveUserProviderConfiguration()
             // KPI: a user-configured remote provider. Only the closed-enum
             // type is captured. Ephemeral Bonjour-discovered providers are
             // excluded — they aren't a deliberate configuration action.
             FeatureTelemetry.remoteProviderAdded(providerType: provider.providerType.rawValue)
         }
 
-        // Save API key to Keychain if provided
-        if let apiKey = apiKey, !apiKey.isEmpty {
-            RemoteProviderKeychain.saveAPIKey(apiKey, for: provider.id)
-        }
-        if let oauthTokens {
-            RemoteProviderKeychain.saveOAuthTokens(oauthTokens, for: provider.id)
-            RemoteProviderKeychain.deleteAPIKey(for: provider.id)
-        }
-
         // Initialize state
         providerStates[provider.id] = RemoteProviderState(providerId: provider.id)
 
-        // Auto-connect if enabled
-        if provider.enabled {
-            Task {
-                try? await connect(providerId: provider.id)
+        // Save credentials off the main thread — SecItemAdd/SecItemUpdate can
+        // block for seconds under securityd contention. The on-disk provider
+        // record is persisted only after the keychain writes land, so an
+        // interrupted add can never leave an enabled provider on disk without
+        // its credentials, and auto-connect reads the fresh key.
+        let providerId = provider.id
+        let shouldConnect = provider.enabled
+        let persistsToDisk = !isEphemeral
+        Keychain.performInBackground {
+            var credentialsDurable = true
+            if let apiKey = apiKey, !apiKey.isEmpty {
+                credentialsDurable =
+                    RemoteProviderKeychain.saveAPIKey(apiKey, for: providerId) && credentialsDurable
+            }
+            if let oauthTokens {
+                credentialsDurable =
+                    RemoteProviderKeychain.saveOAuthTokens(oauthTokens, for: providerId)
+                    && credentialsDurable
+                RemoteProviderKeychain.deleteAPIKey(for: providerId)
+            }
+            Task { @MainActor in
+                RemoteProviderManager.shared.finishCredentialStaging(
+                    providerId: providerId,
+                    credentialsDurable: credentialsDurable,
+                    persistsToDisk: persistsToDisk,
+                    connect: shouldConnect
+                )
             }
         }
 
         notifyStatusChanged()
+    }
+
+    /// Completion hop for `addProvider`/`updateProvider` credential staging:
+    /// persists the provider record after its secrets are durable, surfaces a
+    /// failed keychain write on the provider state (the in-memory session
+    /// still works; relaunch durability is what failed), and kicks the
+    /// requested connect.
+    private func finishCredentialStaging(
+        providerId: UUID,
+        credentialsDurable: Bool,
+        persistsToDisk: Bool,
+        connect shouldConnect: Bool
+    ) {
+        if !credentialsDurable, !KeychainQueryHelpers.disablesKeychainForProcess {
+            providerStates[providerId]?.lastError =
+                "Could not save credentials to the Keychain — they may not survive relaunch."
+            notifyStatusChanged()
+        }
+        if persistsToDisk {
+            saveUserProviderConfiguration()
+        }
+        if shouldConnect {
+            Task { @MainActor in
+                try? await RemoteProviderManager.shared.connect(providerId: providerId)
+            }
+        }
     }
 
     /// Update an existing provider
@@ -213,25 +261,39 @@ public final class RemoteProviderManager: ObservableObject {
         }
 
         configuration.update(provider)
-        saveUserProviderConfiguration()
 
-        // Update API key if provided (nil means no change, empty string means clear)
-        if let apiKey = apiKey {
-            if apiKey.isEmpty {
-                RemoteProviderKeychain.deleteAPIKey(for: provider.id)
-            } else {
-                RemoteProviderKeychain.saveAPIKey(apiKey, for: provider.id)
+        // Update credentials off the main thread (nil apiKey means no change,
+        // empty string means clear). SecItemUpdate can block for seconds under
+        // securityd contention — a recurring app-hang source on the save
+        // button. The updated on-disk record is persisted only after the
+        // keychain writes land, and reconnect waits for them so connect()
+        // reads the fresh key.
+        let providerId = provider.id
+        let shouldReconnect = wasConnected && provider.enabled
+        Keychain.performInBackground {
+            var credentialsDurable = true
+            if let apiKey = apiKey {
+                if apiKey.isEmpty {
+                    RemoteProviderKeychain.deleteAPIKey(for: providerId)
+                } else {
+                    credentialsDurable =
+                        RemoteProviderKeychain.saveAPIKey(apiKey, for: providerId)
+                        && credentialsDurable
+                }
             }
-        }
-        if let oauthTokens {
-            RemoteProviderKeychain.saveOAuthTokens(oauthTokens, for: provider.id)
-            RemoteProviderKeychain.deleteAPIKey(for: provider.id)
-        }
-
-        // Reconnect if was connected and still enabled
-        if wasConnected && provider.enabled {
-            Task {
-                try? await connect(providerId: provider.id)
+            if let oauthTokens {
+                credentialsDurable =
+                    RemoteProviderKeychain.saveOAuthTokens(oauthTokens, for: providerId)
+                    && credentialsDurable
+                RemoteProviderKeychain.deleteAPIKey(for: providerId)
+            }
+            Task { @MainActor in
+                RemoteProviderManager.shared.finishCredentialStaging(
+                    providerId: providerId,
+                    credentialsDurable: credentialsDurable,
+                    persistsToDisk: true,
+                    connect: shouldReconnect
+                )
             }
         }
 
@@ -306,12 +368,20 @@ public final class RemoteProviderManager: ObservableObject {
             if provider.authType == .openAICodexOAuth {
                 if let tokens = await provider.getOAuthTokensOffMainActor(), tokens.isExpired {
                     let refreshed = try await OpenAICodexOAuthService.refresh(tokens)
-                    await RemoteProviderKeychain.saveOAuthTokensOffMainActor(refreshed, for: provider.id)
+                    if !(await RemoteProviderKeychain.saveOAuthTokensOffMainActor(
+                        refreshed, for: provider.id)),
+                        !KeychainQueryHelpers.disablesKeychainForProcess {
+                        NSLog("RemoteProviderManager: failed to persist refreshed OAuth tokens")
+                    }
                 }
             } else if provider.authType == .xaiOAuth {
                 if let tokens = await provider.getOAuthTokensOffMainActor(), tokens.isExpired {
                     let refreshed = try await XAIOAuthService.refresh(tokens)
-                    await RemoteProviderKeychain.saveOAuthTokensOffMainActor(refreshed, for: provider.id)
+                    if !(await RemoteProviderKeychain.saveOAuthTokensOffMainActor(
+                        refreshed, for: provider.id)),
+                        !KeychainQueryHelpers.disablesKeychainForProcess {
+                        NSLog("RemoteProviderManager: failed to persist refreshed OAuth tokens")
+                    }
                 }
             }
 
@@ -471,12 +541,38 @@ public final class RemoteProviderManager: ObservableObject {
                 let providerId = provider.id
                 let providerName = provider.name
                 group.addTask {
-                    do {
-                        try await self.connect(providerId: providerId)
-                    } catch {
-                        print("[Osaurus] Failed to auto-connect to '\(providerName)': \(error)")
-                    }
+                    await self.connectProviderWithTransientRetry(
+                        providerId: providerId, providerName: providerName)
                 }
+            }
+        }
+    }
+
+    /// Launch connect for a user-configured provider with bounded retry on
+    /// *transient* failures (offline at launch, DNS not up yet, server 5xx),
+    /// mirroring the managed router's behavior. Terminal failures (auth, bad
+    /// config) stop immediately — a retry cannot fix them, and the network /
+    /// wake / activation recovery sweeps handle anything transient that
+    /// outlives the retry budget.
+    private func connectProviderWithTransientRetry(
+        providerId: UUID,
+        providerName: String,
+        maxAttempts: Int = RemoteProviderManager.osaurusRouterConnectMaxAttempts
+    ) async {
+        let attempts = max(1, maxAttempts)
+        for attempt in 1 ... attempts {
+            do {
+                try await connect(providerId: providerId)
+                return
+            } catch {
+                guard Self.isTransientConnectError(error), attempt < attempts else {
+                    print("[Osaurus] Failed to auto-connect to '\(providerName)': \(error)")
+                    return
+                }
+                await routerRetryBackoff(forAttempt: attempt, after: error)
+                // Another path (picker, activation, network recovery) may have
+                // connected while we waited — don't pile on a duplicate.
+                if providerStates[providerId]?.isConnected == true { return }
             }
         }
     }
@@ -657,7 +753,8 @@ public final class RemoteProviderManager: ObservableObject {
             case .server(_, _, let status):
                 return status >= 500
             case .noIdentity, .invalidURL, .unauthorized,
-                .belowMinimumTopUp, .insufficientFunds, .accountFrozen:
+                .belowMinimumTopUp, .insufficientFunds, .accountFrozen,
+                .paidWebDisabled, .idempotencyConflict:
                 return false
             }
         }
@@ -666,7 +763,7 @@ public final class RemoteProviderManager: ObservableObject {
             case .invalidResponse, .rateLimited:
                 return true
             case .invalidURL, .notConnected, .requestFailed, .requestFailedWithDiagnostics,
-                .streamingError, .noModelsAvailable, .unsupportedParameter:
+                .streamingError, .noModelsAvailable, .unsupportedParameter, .mcpEndpointDetected:
                 return false
             }
         }
@@ -712,11 +809,21 @@ public final class RemoteProviderManager: ObservableObject {
         notifyModelsChanged()
     }
 
-    /// Observe identity creation/wipe and app re-activation so the managed
-    /// Osaurus Router (re)connects without waiting for a user-driven refresh.
+    /// Observe identity creation/wipe, app re-activation, and wake-from-sleep
+    /// so providers (re)connect without waiting for a user-driven refresh.
     private func registerIdentityAndActivationObservers() {
         observeOnMain(.osaurusIdentityChanged) { await $0.handleIdentityChanged() }
         observeOnMain(NSApplication.didBecomeActiveNotification) { await $0.handleAppDidBecomeActive() }
+        // Wake is a recovery opportunity: connects that failed as the machine
+        // slept (or right before) are transient by nature. NSWorkspace posts
+        // wake through its own notification center, not `.default`.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.scheduleTransientRecoverySweep()
+            }
+        }
     }
 
     /// Add a main-queue notification observer that hops onto the MainActor and
@@ -752,8 +859,11 @@ public final class RemoteProviderManager: ObservableObject {
     /// connected, so a launch that failed while offline recovers on the next
     /// activation. The `isConnected` short-circuit avoids re-running
     /// `ensureManagedOsaurusRouterProviderIfNeeded` (and its `@Published`
-    /// configuration churn) on every activation.
+    /// configuration churn) on every activation. Activation is also a recovery
+    /// opportunity for user-configured providers whose last failure was
+    /// transient (the sweep is a no-op when nothing failed transiently).
     func handleAppDidBecomeActive() async {
+        await reconnectTransientlyFailedProviders()
         guard identityExists() else { return }
         guard providerStates[Self.osaurusRouterProviderId]?.isConnected != true else { return }
         await connectOsaurusRouterIfPossible()
@@ -784,20 +894,50 @@ public final class RemoteProviderManager: ObservableObject {
         monitor.start(queue: DispatchQueue(label: "ai.osaurus.provider.pathmonitor"))
     }
 
-    private func handleNetworkPathUpdate(satisfied: Bool) {
+    /// Internal (not private) so offline-mode tests can drive connectivity
+    /// edges without a real `NWPath`.
+    func handleNetworkPathUpdate(satisfied: Bool) {
         defer { lastNetworkPathWasSatisfied = satisfied }
-        // Only the recovery edge matters: we must have previously seen the
-        // network down, and now see it up.
-        guard satisfied, lastNetworkPathWasSatisfied == false else { return }
+        if isOffline == satisfied {
+            isOffline = !satisfied
+            // Remote models are gated on `isOffline` (see
+            // `cachedAvailableModels()` / `connectedServices()`); rebuild the
+            // pickers on both edges so cloud entries disappear the moment the
+            // network drops and reappear the moment it returns.
+            notifyModelsChanged()
+        }
+        // Reconnects fire on the recovery edge (down → up) and on the very
+        // first satisfied observation. The first baseline matters at launch:
+        // providers that failed transiently moments before the monitor
+        // produced its baseline would otherwise stay down until the *next*
+        // full outage/recovery cycle. The sweep only touches providers whose
+        // last failure was transient, so a healthy launch is a no-op.
+        guard satisfied, lastNetworkPathWasSatisfied != true else { return }
         // Debounce flapping paths — replace any in-flight sweep.
+        scheduleTransientRecoverySweep()
+    }
+
+    /// Schedule a debounced sweep reconnecting transiently-failed providers.
+    /// Shared by the network-path recovery edge and the wake observer.
+    func scheduleTransientRecoverySweep() {
         networkRecoveryTask?.cancel()
+        let settleDelay = testNetworkRecoverySettleDelayOverride ?? 2.0
         networkRecoveryTask = Task { [weak self] in
             // Give routing/DNS a moment to settle after the path flips; an
             // immediate connect after wake often fails on stale DNS.
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            try? await Task.sleep(nanoseconds: UInt64(settleDelay * 1_000_000_000))
             guard !Task.isCancelled else { return }
             await self?.reconnectTransientlyFailedProviders()
         }
+    }
+
+    /// Test seam: shrink the recovery settle delay so sweep tests don't wait
+    /// on wall-clock time.
+    var testNetworkRecoverySettleDelayOverride: TimeInterval?
+
+    /// Await the in-flight recovery sweep, if any. Test-only.
+    func _testAwaitNetworkRecoverySweep() async {
+        await networkRecoveryTask?.value
     }
 
     /// Reconnect every auto-connect provider whose last failure was transient
@@ -919,8 +1059,11 @@ public final class RemoteProviderManager: ObservableObject {
         return services[providerId]
     }
 
-    /// Get all connected services
+    /// Get all connected services. Empty while offline: a remote request
+    /// cannot succeed without a network path, so chat routing sees no remote
+    /// services instead of dispatching a send that is guaranteed to fail.
     public func connectedServices() -> [RemoteProviderService] {
+        guard !isOffline else { return [] }
         return Array(services.values)
     }
 
@@ -951,8 +1094,13 @@ public final class RemoteProviderManager: ObservableObject {
         public let models: [String]
     }
 
-    /// Get all available models synchronously from cached state
+    /// Get all available models synchronously from cached state. Empty while
+    /// offline so the model picker (via `ModelPickerItemCache`) hides every
+    /// cloud model and chat sessions fall back to Foundation/local; the
+    /// underlying provider states are untouched, so the same models reappear
+    /// on the connectivity-recovery edge.
     public func cachedAvailableModels() -> [CachedProviderModels] {
+        guard !isOffline else { return [] }
         ensureManagedOsaurusRouterProviderIfNeeded()
         var result: [CachedProviderModels] = []
 
@@ -1230,12 +1378,40 @@ public final class RemoteProviderManager: ObservableObject {
                         provider: tempProvider
                     )
                 } catch let error as RemoteProviderServiceError {
+                    if httpResponse.statusCode >= 400,
+                        let refined = await RemoteProviderService.refineMCPServerMisconfiguration(
+                            for: tempProvider,
+                            headers: testHeaders
+                        )
+                    {
+                        throw refined
+                    }
                     throw error.attachingReplayDiagnostics(diagnostics)
                 } catch {
                     throw RemoteProviderServiceError.requestFailedWithDiagnostics(
                         "Invalid /models response: \(ProviderDiagnosticRedactor.safe(error.localizedDescription, maxLength: 240))",
                         diagnostics
                     )
+                }
+                // Fireworks: augment with the serverless catalog so the Test
+                // badge matches what connect will discover. Best-effort — a
+                // catalog failure keeps the plain /models result.
+                if RemoteProviderService.isFireworksProvider(tempProvider) {
+                    do {
+                        let catalog = try await RemoteProviderService.fetchFireworksCatalogModels(
+                            headers: testHeaders,
+                            timeout: 30,
+                            transport: testConnectionTransportOverride
+                        )
+                        let merged = RemoteProviderService.mergeFireworksModelIds(
+                            discovered: models,
+                            catalog: catalog
+                        )
+                        print("[Osaurus] Test Connection: Success - found \(merged.count) models")
+                        return merged
+                    } catch {
+                        print("[Osaurus] Test Connection: Fireworks catalog unavailable, using /models only")
+                    }
                 }
                 print("[Osaurus] Test Connection: Success - found \(models.count) models")
                 return models
@@ -1381,6 +1557,12 @@ public final class RemoteProviderManager: ObservableObject {
         refreshConnectedTask = nil
         osaurusRouterEnableTask?.cancel()
         osaurusRouterEnableTask = nil
+        // Reset connectivity state so an offline-mode test can't leak its
+        // simulated path edges (or a pending recovery sweep) into later tests.
+        networkRecoveryTask?.cancel()
+        networkRecoveryTask = nil
+        lastNetworkPathWasSatisfied = nil
+        isOffline = false
         // Restore the master switch to its default (on) so a test that toggled
         // it off can't bleed into another test's managed-router expectations.
         isOsaurusRouterEnabled = true
@@ -1390,6 +1572,7 @@ public final class RemoteProviderManager: ObservableObject {
         testConnectionTransportOverride = nil
         testIdentityExistsOverride = nil
         testRetrySleepOverride = nil
+        testNetworkRecoverySettleDelayOverride = nil
     }
 }
 

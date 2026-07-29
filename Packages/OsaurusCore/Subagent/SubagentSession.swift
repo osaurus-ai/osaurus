@@ -53,6 +53,59 @@ enum SubagentTelemetry {
     }
 }
 
+/// A subagent run after target resolution and permission, but before admission,
+/// handoff, or model execution. Batched spawn uses this split to validate every
+/// target before the first local model can unload/load, then groups prepared
+/// jobs by canonical model identity.
+struct PreparedSubagentRun: Sendable {
+    let kind: any SubagentKind
+    let tool: String
+    let scope: SubagentScope
+    let resolved: ResolvedModel
+    let handoff: any SubagentHandoff
+
+    var admissionClass: SubagentAdmissionClass {
+        kind.admissionClass(resolved)
+    }
+
+    var admissionModelKey: String? {
+        SubagentSession.canonicalAdmissionModelKey(resolved)
+    }
+
+    var textResidencyPlan: ResidencyPlan? {
+        (kind as? TextSubagentKind)?.preparedResidencyPlan
+    }
+}
+
+enum SubagentPreparationResult: Sendable {
+    case ready(PreparedSubagentRun)
+    /// Already-normalized ToolEnvelope JSON.
+    case failure(String)
+}
+
+/// Presentation/interrupt plumbing for one prepared run. Normal single-worker
+/// calls let the host create and register these values. `spawn_batch` supplies
+/// an unregistered child feed and the batch's shared interrupt token so one
+/// visible parent row owns Stop while sibling runs remain isolated.
+struct SubagentRunPresentation: Sendable {
+    let feed: SubagentFeed
+    let interrupt: InterruptToken
+    let registerWithUI: Bool
+    let finishFeed: Bool
+
+    init(
+        feed: SubagentFeed,
+        interrupt: InterruptToken,
+        registerWithUI: Bool,
+        finishFeed: Bool = true
+    ) {
+        self.feed = feed
+        self.interrupt = interrupt
+        self.registerWithUI = registerWithUI
+        self.finishFeed = finishFeed
+    }
+}
+
 public enum SubagentSession {
     /// Active-kind recursion guard. Set while ANY subagent kind runs so a
     /// nested subagent call refuses (generalizes the per-tool delegation
@@ -70,121 +123,218 @@ public enum SubagentSession {
         tool: String,
         handoff: SubagentHandoff? = nil
     ) async -> String {
-        // 1. One recursion guard for the whole subagent family: a running
-        //    subagent (of any kind) cannot start another.
+        switch await prepare(kind, tool: tool, handoff: handoff) {
+        case .failure(let envelope):
+            return envelope
+        case .ready(let prepared):
+            return await runPrepared(prepared)
+        }
+    }
+
+    /// Resolve and authorize a kind without admitting it or changing model
+    /// residency. This is the reject-before-load boundary used by both the
+    /// compatibility tools and `spawn_batch`.
+    static func prepare(
+        _ kind: any SubagentKind,
+        tool: String,
+        handoff: (any SubagentHandoff)? = nil,
+        scope explicitScope: SubagentScope? = nil
+    ) async -> SubagentPreparationResult {
+        // One recursion guard for the whole subagent family: a running
+        // subagent (of any kind) cannot start another.
         if let active = activeKindId {
-            return ToolEnvelope.failure(
+            return .failure(ToolEnvelope.failure(
                 kind: .rejected,
                 message:
                     "\(tool) cannot be called from inside a running subagent (\(active)). "
                     + "Finish the current subagent and return its result first.",
                 tool: tool,
                 retryable: false
-            )
+            ))
         }
 
-        let scope = SubagentScope.current()
+        let scope = explicitScope ?? SubagentScope.current()
 
-        // 2. Resolve + validate the model BEFORE any residency eviction.
+        // Resolve + validate the model BEFORE any residency eviction.
         let resolved: ResolvedModel
         do {
             resolved = try await kind.resolveModel(scope)
         } catch {
-            return envelope(for: error, tool: tool)
+            return .failure(envelope(for: error, tool: tool))
         }
 
-        // 3. Permission (policy gate / interactive prompt / rich gate).
+        // Permission (policy gate / interactive prompt / rich gate).
         switch await kind.permission(scope, resolved) {
         case .allow:
             break
         case .denied(let reason):
-            return ToolEnvelope.failure(kind: .rejected, message: reason, tool: tool, retryable: false)
+            return .failure(
+                ToolEnvelope.failure(
+                    kind: .rejected,
+                    message: reason,
+                    tool: tool,
+                    retryable: false
+                )
+            )
         case .userDenied(let reason):
-            return ToolEnvelope.failure(
+            return .failure(ToolEnvelope.failure(
                 kind: .userDenied,
                 message: reason,
                 tool: tool,
                 retryable: false
-            )
+            ))
         }
 
-        // 4. Live feed + interrupt registered for the chat row + stop button.
-        let feed = SubagentFeed(
-            toolCallId: scope.toolCallId,
-            kindId: kind.capability.id,
-            title: kind.feedTitle
-        )
-        let interrupt = InterruptToken()
-        SubagentFeedRegistry.shared.register(feed)
-        SubagentInterruptCenter.shared.register(interrupt, for: scope.toolCallId)
-        defer {
-            SubagentInterruptCenter.shared.unregister(scope.toolCallId)
-            SubagentFeedRegistry.shared.unregister(toolCallId: scope.toolCallId)
-        }
-
-        // 5. Process-wide admission: the TaskLocal guard above only covers one
-        //    task tree; a parallel tool batch can reach here CONCURRENTLY.
-        //    Local runs serialize (a queued run waits — visible in the feed);
-        //    remote runs fan out. This is what makes two spawns in one batch
-        //    safe instead of a concurrent-GPU handoff race.
-        let admissionClass = kind.admissionClass(resolved)
-        let admission = await SubagentAdmission.shared.admit(
-            admissionClass,
-            onWait: { [feed] active in
-                feed.emitPhase("waiting for local GPU", detail: active)
-            }
-        )
-        switch admission {
-        case .admitted:
-            break
-        case .timedOut(let active):
-            let message =
-                "\(tool) is waiting on \(active) that did not finish in time. "
-                + "Retry when the running subagent completes."
-            feed.finish(success: false, summary: message)
-            return ToolEnvelope.failure(
-                kind: .unavailable,
-                message: message,
+        return .ready(
+            PreparedSubagentRun(
+                kind: kind,
                 tool: tool,
-                retryable: true
+                scope: scope,
+                resolved: resolved,
+                handoff: handoff ?? kind.makeHandoff()
             )
-        case .cancelled:
-            let message = "Run cancelled while waiting for another subagent to finish."
-            feed.finish(success: false, summary: message)
+        )
+    }
+
+    /// Execute a previously resolved/authorized run. Batch scheduling can
+    /// suppress per-child UI registration, share one interrupt token, skip a
+    /// group-owned admission slot, and replace per-child residency handoff with
+    /// passthrough after the group wrapper has performed it once.
+    static func runPrepared(
+        _ prepared: PreparedSubagentRun,
+        presentation suppliedPresentation: SubagentRunPresentation? = nil,
+        skipAdmission: Bool = false,
+        handoffOverride: (any SubagentHandoff)? = nil
+    ) async -> String {
+        if let active = activeKindId {
             return ToolEnvelope.failure(
-                kind: .executionError,
-                message: message,
-                tool: tool,
+                kind: .rejected,
+                message:
+                    "\(prepared.tool) cannot be called from inside a running subagent (\(active)). "
+                    + "Finish the current subagent and return its result first.",
+                tool: prepared.tool,
                 retryable: false
             )
         }
 
-        let effectiveHandoff = handoff ?? kind.makeHandoff()
+        let presentation =
+            suppliedPresentation
+            ?? SubagentRunPresentation(
+                feed: SubagentFeed(
+                    toolCallId: prepared.scope.toolCallId,
+                    kindId: prepared.kind.capability.id,
+                    title: prepared.kind.feedTitle
+                ),
+                interrupt: InterruptToken(),
+                registerWithUI: true
+            )
+        let feed = presentation.feed
+        let interrupt = presentation.interrupt
+
+        if presentation.registerWithUI {
+            SubagentFeedRegistry.shared.register(feed)
+            SubagentInterruptCenter.shared.register(interrupt, for: prepared.scope.toolCallId)
+        }
+        defer {
+            if presentation.registerWithUI {
+                SubagentInterruptCenter.shared.unregister(prepared.scope.toolCallId)
+                SubagentFeedRegistry.shared.unregister(toolCallId: prepared.scope.toolCallId)
+            }
+        }
+
+        let admissionClass = prepared.admissionClass
+        let admissionModelKey = prepared.admissionModelKey
+        var admissionHeld = false
+        if !skipAdmission {
+            // Process-wide admission: the TaskLocal guard above only covers one
+            // task tree; parallel tool calls can reach here concurrently.
+            let admission = await SubagentAdmission.shared.admit(
+                admissionClass,
+                modelKey: admissionModelKey,
+                onWait: { [feed] active in
+                    feed.emitPhase("waiting for local GPU", detail: active)
+                }
+            )
+            switch admission {
+            case .admitted:
+                admissionHeld = true
+            case .timedOut(let active):
+                let message =
+                    "\(prepared.tool) is waiting on \(active) that did not finish in time. "
+                    + "Retry when the running subagent completes."
+                if presentation.finishFeed {
+                    feed.finish(success: false, summary: message)
+                }
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: message,
+                    tool: prepared.tool,
+                    retryable: true
+                )
+            case .cancelled:
+                let message = "Run cancelled while waiting for another subagent to finish."
+                if presentation.finishFeed {
+                    feed.finish(success: false, summary: message)
+                }
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message: message,
+                    tool: prepared.tool,
+                    retryable: false
+                )
+            }
+        }
+
+        let effectiveHandoff = handoffOverride ?? prepared.handoff
         let started = Date()
 
-        // 6. Run under the recursion guard, wrapped by the optional handoff.
-        //    The admission slot is held for the WHOLE wrapped run (handoff
-        //    included) and released on every exit path below.
+        // Run under the recursion guard, wrapped by the optional handoff. Bind
+        // the prepared child scope explicitly: batch children have distinct
+        // tool-call ids even though one visible parent call owns the feed.
         do {
-            // Post-run cache counters must be captured INSIDE the handoff wrap
-            // (after the kind's run, BEFORE the restore leg): restoring the
-            // orchestrator can evict the subagent model under a single-model
-            // policy, shutting down its engine and losing the counters.
             let cacheCapture = PostRunCacheCapture()
-            let result = try await SubagentSession.$activeKindId.withValue(kind.capability.id) {
-                try await effectiveHandoff.around(
-                    scope: scope,
-                    resolved: resolved,
-                    feed: feed
-                ) {
-                    let r = try await kind.run(scope, resolved, feed: feed, interrupt: interrupt)
-                    if resolved.isLocal {
-                        cacheCapture.value = await ModelRuntime.batchDiagnosticsSnapshot()
+            let result = try await ChatExecutionContext.$currentSessionId.withValue(
+                prepared.scope.sessionId
+            ) {
+                try await ChatExecutionContext.$currentAgentId.withValue(prepared.scope.agentId) {
+                    try await ChatExecutionContext.$currentEnableThinking.withValue(
+                        prepared.scope.enableThinking
+                    ) {
+                        try await ChatExecutionContext.$currentToolCallId.withValue(
+                            prepared.scope.toolCallId
+                        ) {
+                            try await SubagentSession.$activeKindId.withValue(
+                                prepared.kind.capability.id
+                            ) {
+                                try await effectiveHandoff.around(
+                                    scope: prepared.scope,
+                                    resolved: prepared.resolved,
+                                    feed: feed
+                                ) {
+                                    let result = try await prepared.kind.run(
+                                        prepared.scope,
+                                        prepared.resolved,
+                                        feed: feed,
+                                        interrupt: interrupt
+                                    )
+                                    if prepared.resolved.isLocal {
+                                        cacheCapture.value =
+                                            await ModelRuntime.batchDiagnosticsSnapshot()
+                                    }
+                                    return result
+                                }
+                            }
+                        }
                     }
-                    return r
                 }
             }
-            await SubagentAdmission.shared.release(admissionClass)
+            if admissionHeld {
+                await SubagentAdmission.shared.release(
+                    admissionClass,
+                    modelKey: admissionModelKey
+                )
+                admissionHeld = false
+            }
 
             // Residency telemetry: phase durations derived from the feed's own
             // event timeline (the handoff emits its phases there), plus the
@@ -220,21 +370,30 @@ public enum SubagentSession {
                 payload["residency"] = residency
             }
 
-            feed.finish(success: true, summary: result.summary ?? "")
+            if presentation.finishFeed {
+                feed.finish(success: true, summary: result.summary ?? "")
+            }
             SubagentTelemetry.record(
-                kindId: kind.capability.id,
+                kindId: prepared.kind.capability.id,
                 success: true,
                 elapsed: Date().timeIntervalSince(started),
                 usage: payload["usage"] as? [String: Any],
                 phases: phases
             )
-            return ToolEnvelope.success(tool: tool, result: payload)
+            return ToolEnvelope.success(tool: prepared.tool, result: payload)
         } catch {
-            await SubagentAdmission.shared.release(admissionClass)
-            let env = envelope(for: error, tool: tool)
-            feed.finish(success: false, summary: ToolEnvelope.failureMessage(env))
+            if admissionHeld {
+                await SubagentAdmission.shared.release(
+                    admissionClass,
+                    modelKey: admissionModelKey
+                )
+            }
+            let env = envelope(for: error, tool: prepared.tool)
+            if presentation.finishFeed {
+                feed.finish(success: false, summary: ToolEnvelope.failureMessage(env))
+            }
             SubagentTelemetry.record(
-                kindId: kind.capability.id,
+                kindId: prepared.kind.capability.id,
                 success: false,
                 elapsed: Date().timeIntervalSince(started),
                 phases: Self.residencyPhaseTimings(
@@ -282,6 +441,25 @@ public enum SubagentSession {
     static func envelope(for error: Error, tool: String) -> String {
         if let se = error as? SubagentError { return se.envelope(tool: tool) }
         return ToolEnvelope.fromError(error, tool: tool)
+    }
+
+    /// Canonical local identity for the admission gate. This path runs for
+    /// every spawned/tool worker and therefore must remain pure: model
+    /// discovery can synchronously scan every configured model root and would
+    /// starve unrelated actor work (including Stop delivery) when many workers
+    /// start together. A known stable id wins; otherwise repository ids and
+    /// their short bundle names collapse by their final path component.
+    ///
+    /// A display alias that cannot be normalized syntactically stays distinct.
+    /// That is deliberately conservative: unrecognized aliases serialize under
+    /// their own keys, while repository and short ids collapse by the documented
+    /// model-picker identity without performing filesystem discovery.
+    static func canonicalAdmissionModelKey(_ resolved: ResolvedModel) -> String? {
+        guard resolved.isLocal else { return nil }
+        let identity = resolved.id ?? resolved.name
+        let trimmed = identity.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalComponent = trimmed.split(separator: "/", omittingEmptySubsequences: true).last
+        return (finalComponent.map(String.init) ?? trimmed).lowercased()
     }
 }
 

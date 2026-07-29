@@ -38,6 +38,7 @@ struct AgentChannelTransportHealthState: Codable, Equatable, Sendable {
     var consecutiveFailures: Int
     var lastReceivedCount: Int
     var lastStoredCount: Int
+    var dispatchAttemptedCount: Int
     var dispatchSuppressedCount: Int
     var updatedAt: Date
 
@@ -57,6 +58,7 @@ struct AgentChannelTransportHealthState: Codable, Equatable, Sendable {
         consecutiveFailures: Int = 0,
         lastReceivedCount: Int = 0,
         lastStoredCount: Int = 0,
+        dispatchAttemptedCount: Int = 0,
         dispatchSuppressedCount: Int = 0,
         updatedAt: Date = Date()
     ) {
@@ -75,6 +77,7 @@ struct AgentChannelTransportHealthState: Codable, Equatable, Sendable {
         self.consecutiveFailures = max(0, consecutiveFailures)
         self.lastReceivedCount = max(0, lastReceivedCount)
         self.lastStoredCount = max(0, lastStoredCount)
+        self.dispatchAttemptedCount = max(0, dispatchAttemptedCount)
         self.dispatchSuppressedCount = max(0, dispatchSuppressedCount)
         self.updatedAt = updatedAt
     }
@@ -105,6 +108,7 @@ struct AgentChannelTransportHealthState: Codable, Equatable, Sendable {
             "consecutive_failures": consecutiveFailures,
             "last_received_count": lastReceivedCount,
             "last_stored_count": lastStoredCount,
+            "dispatch_attempted_count": dispatchAttemptedCount,
             "dispatch_suppressed_count": dispatchSuppressedCount,
             "notification_identifier": notificationIdentifier,
             "should_notify": shouldNotify,

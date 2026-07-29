@@ -27,10 +27,13 @@ enum GitHubAuth {
     static var token: String? {
         cachedToken.withLock { (state: inout String??) -> String? in
             if case .some(let loaded) = state { return loaded }
-            let raw = Keychain.read(service: keychainService, account: keychainAccount)
-                .flatMap { String(data: $0, encoding: .utf8) }
+            let outcome = Keychain.readItem(service: keychainService, account: keychainAccount)
+            let raw = outcome.data.flatMap { String(data: $0, encoding: .utf8) }
             let value = normalize(raw)
-            state = .some(value)
+            // Only latch definitive outcomes (found / not-found). A locked or
+            // transiently failing keychain must not be cached as "no token"
+            // for the rest of the process lifetime.
+            if outcome.isDefinitive { state = .some(value) }
             return value
         }
     }

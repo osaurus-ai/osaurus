@@ -858,6 +858,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let lastMemorySafetyLoadDecision =
                 await ModelRuntime.shared.lastMemorySafetyLoadDecisionSnapshot()
             let batchDiagnostics = await MLXBatchAdapter.snapshotDiagnostics()
+            let turboQuantTransitions =
+                await MLXBatchAdapter.turboQuantCacheTransitionsSnapshot()
             let lastEffectiveGenerationSettings =
                 await MLXBatchAdapter.lastEffectiveGenerationSettingsSnapshot()
             var aggregate: [String: Int] = [
@@ -918,6 +920,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     mlxPressStatus["cold_fraction"] = NSNull()
                 }
                 row["mlx_press"] = mlxPressStatus
+                if let active = summary.activeCachePolicy {
+                    row["active_cache_policy"] =
+                        [
+                            "max_kv_size": active.maxKVSize as Any? ?? NSNull(),
+                            "long_prompt_multiplier": active.longPromptMultiplier,
+                            "paged_ram_enabled": active.pagedRAMEnabled,
+                            "disk_l2_enabled": active.diskL2Enabled,
+                            "disk_l2_max_gb": active.diskL2MaxGB,
+                        ] as [String: Any]
+                } else {
+                    row["active_cache_policy"] = NSNull()
+                }
                 guard let stats = summary.cacheStats else {
                     row["cache_enabled"] = false
                     return row
@@ -926,34 +940,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 row["cache_enabled"] = true
                 row["is_hybrid"] = stats.isHybrid
                 row["is_paged_incompatible"] = stats.isPagedIncompatible
+                row["requires_paged_boundary_companion"] =
+                    stats.requiresPagedBoundaryCompanion
+                let turboQuantTransition = turboQuantTransitions[summary.name]
+                let effectiveCacheTopology = Self.effectiveCacheTopology(
+                    baseline: summary.cacheTopology,
+                    turboQuantTransition: turboQuantTransition
+                )
                 row["effective_kv_mode"] = ModelRuntime.cacheKVModeTag(
                     for: ServerRuntimeSettingsStore.snapshot().cache,
                     modelName: summary.name,
-                    cacheTopology: summary.cacheTopology
+                    cacheTopology: effectiveCacheTopology
                 )
-                if let topology = summary.cacheTopology {
-                    row["cache_topology"] =
-                        [
-                            "layer_count": topology.layerCount,
-                            "kv_layer_count": topology.kvLayerCount,
-                            "chunked_kv_layer_count": topology.chunkedKVLayerCount,
-                            "quantized_kv_layer_count": topology.quantizedKVLayerCount,
-                            "turbo_quant_kv_layer_count": topology.turboQuantKVLayerCount,
-                            "compilable_kv_layer_count": topology.compilableKVLayerCount,
-                            "compilable_turbo_quant_kv_layer_count": topology.compilableTurboQuantKVLayerCount,
-                            "rotating_kv_layer_count": topology.rotatingKVLayerCount,
-                            "compilable_rotating_kv_layer_count": topology.compilableRotatingKVLayerCount,
-                            "rotating_wrapper_layer_count": topology.rotatingWrapperLayerCount,
-                            "hybrid_pool_layer_count": topology.hybridPoolLayerCount,
-                            "mamba_layer_count": topology.mambaLayerCount,
-                            "compilable_mamba_layer_count": topology.compilableMambaLayerCount,
-                            "arrays_layer_count": topology.arraysLayerCount,
-                            "zaya_cca_layer_count": topology.zayaCCALayerCount,
-                            "cache_list_layer_count": topology.cacheListLayerCount,
-                            "requires_ssm_companion_state": topology.requiresSSMCompanionState,
-                            "requires_disk_backed_restore": topology.requiresDiskBackedCoordinatorRestore,
-                            "tags": topology.topologyTags,
-                        ] as [String: Any]
+                if let topology = effectiveCacheTopology {
+                    row["cache_topology"] = Self.cacheTopologyJSONObject(topology)
+                }
+                if let transition = turboQuantTransition {
+                    row["last_turboquant_cache_transition"] =
+                        Self.turboQuantCacheTransitionJSONObject(transition)
+                } else {
+                    row["last_turboquant_cache_transition"] = NSNull()
                 }
 
                 var paged: [String: Any] = ["enabled": stats.pagedEnabled]
@@ -985,12 +991,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
                 let ssm = stats.ssmStats
                 let companionKinds =
-                    summary.cacheTopology?.topologyTags.filter {
+                    effectiveCacheTopology?.topologyTags.filter {
                         $0.hasPrefix("companion=")
                     } ?? []
                 let hasSSMCompanion = companionKinds.contains("companion=ssm")
                 let hasZayaCCACompanion =
-                    (summary.cacheTopology?.zayaCCALayerCount ?? 0) > 0
+                    (effectiveCacheTopology?.zayaCCALayerCount ?? 0) > 0
                 if hasZayaCCACompanion, let diskStats = stats.diskStats {
                     row["zaya_cca_disk_payload_restore"] =
                         [
@@ -1034,6 +1040,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 baseLoadConfiguration: .osaurusProduction,
                 host: memoryStatus
             )
+            let metadataFallbackTokens = await MainActor.run {
+                ChatConfigurationStore.load().contextLength
+            }
 
             var obj: [String: Any] = [
                 "status": "ok",
@@ -1046,6 +1055,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     memoryStatus: memoryStatus,
                     lastLoadDecision: lastMemorySafetyLoadDecision
                 ),
+                "context_policy": [
+                    "metadata_fallback_tokens":
+                        metadataFallbackTokens as Any? ?? NSNull(),
+                    "conversation_safety_margin":
+                        ContextBudgetManager.safetyMargin,
+                    "saved_kv_retention_override_tokens":
+                        runtimeSettings.cache.defaultMaxKVSize as Any? ?? NSNull(),
+                    "resolved_kv_retention_tokens":
+                        memorySafetyPlan.cache.defaultMaxKVSize as Any? ?? NSNull(),
+                ] as [String: Any],
                 "storage_locations": Self.storageLocationsJSONObject(),
             ]
             if let batchDiagnostics {
@@ -1261,9 +1280,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
-            let next: VMLXServerRuntimeSettings
+            let requested: VMLXServerRuntimeSettings
             do {
-                next = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: parsedBody.data)
+                requested = try JSONDecoder().decode(
+                    VMLXServerRuntimeSettings.self,
+                    from: parsedBody.data
+                )
             } catch {
                 let body = Self.errorBody(
                     .openai(type: "invalid_request_error"),
@@ -1290,6 +1312,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 return
             }
+            let next =
+                ServerRuntimeSettingsStore.canonicalizedContextAndKVPolicy(
+                    requested
+                )
 
             if previous.network != next.network {
                 let body = Self.errorBody(
@@ -1357,6 +1383,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 previous.cache != next.cache
                 || previous.multimodal != next.multimodal
                 || previous.mtp != next.mtp
+                || previous.memorySafety != next.memorySafety
                 // The tied-head codec applies at model construction
                 // (TiedHeadQuantizationPolicy is read while loading the head),
                 // so a change takes effect on the next load — evicting the
@@ -1755,10 +1782,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let manifest = loaded.plugin.manifest
 
-            // Check for static web serving first
+            // Check for static web serving first. Segment-boundary matching
+            // via the shared helper: mount `/ui` must NOT capture `/ui-other`
+            // (a bare `hasPrefix` did, disagreeing with the load-time
+            // web/route overlap validation in PluginManager).
             if let webSpec = loaded.webConfig {
-                let mountPrefix = webSpec.mount.hasPrefix("/") ? webSpec.mount : "/\(webSpec.mount)"
-                if subpath.hasPrefix(mountPrefix) {
+                if PluginManifest.WebSpec.mountCaptures(subpath: subpath, mount: webSpec.mount) {
                     // Tunnel exposure gate: web UIs are loopback-only by
                     // default. Plugins must opt in via `capabilities.web.tunnel_exposed`
                     // for the static UI to be reachable over the tunnel.
@@ -1795,7 +1824,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
                     // Check for dev proxy configuration
                     if let proxyURL = Self.loadDevProxyURL(for: pluginId) {
-                        let relPath = String(subpath.dropFirst(mountPrefix.count))
+                        let relPath = PluginManifest.WebSpec.relativeSubpath(
+                            subpath: subpath,
+                            mount: webSpec.mount
+                        )
                         let targetPath = relPath.isEmpty ? "/" : relPath
                         // Forward the original method/headers/body so HMR,
                         // POST APIs, and any non-GET dev-server traffic
@@ -1824,7 +1856,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         )
                     }
 
-                    let relPath = String(subpath.dropFirst(mountPrefix.count))
+                    let relPath = PluginManifest.WebSpec.relativeSubpath(
+                        subpath: subpath,
+                        mount: webSpec.mount
+                    )
                     let filePath: String
                     if relPath.isEmpty || relPath == "/" {
                         filePath = webSpec.entry
@@ -2892,7 +2927,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private static func enrichWithAgentContext(
         _ request: ChatCompletionRequest,
         agentId: String?,
-        executionMode: ExecutionMode
+        executionMode: ExecutionMode,
+        modelOverride: String? = nil
     ) async -> ChatCompletionRequest {
         guard let agentId, !agentId.isEmpty,
             let agentUUID = UUID(uuidString: agentId)
@@ -2904,15 +2940,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // `effectiveToolsDisabled` does not read it, so it must be folded
         // in here (the app chat path does the same via `chatCfg.disableTools`).
         let globalToolsDisabled = await MainActor.run { ChatConfigurationStore.load().disableTools }
+        await PluginManager.shared.ensurePromptCatalogReady()
         let composed = await SystemPromptComposer.composeChatContext(
             agentId: agentUUID,
             executionMode: executionMode,
+            model: modelOverride,
             query: query,
             messages: enriched.messages,
             toolsDisabled: globalToolsDisabled
         )
         if !composed.prompt.isEmpty {
             SystemPromptComposer.injectSystemContent(composed.prompt, into: &enriched.messages)
+            enriched.cacheStableSystemPrefix = composed.staticPrefix
         }
         // Session-stable memory injection: when the caller supplies a
         // session_id, previously injected prefixes are replayed onto the
@@ -2926,6 +2965,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             if let recorded = SystemPromptComposer.applyFrozenMemoryPrefixes(
                 memorySection: composed.memorySection,
                 frozen: frozen,
+                timeContext: SystemPromptTemplates.timeContext(now: Date(), timeZone: .current),
                 into: &enriched.messages
             ) {
                 await SessionToolStateStore.shared.recordUserPrefix(
@@ -4914,30 +4954,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 isAuthenticatedRemote
                 ? await Self.resolveAgentHostFolder(agentId: agentId)
                 : nil
-            // Snapshot/restore the process-wide folder-tool registration around
-            // the run (mirrors `AgentLoopEvaluator`) so a concurrent in-app
-            // folder session is restored afterward, serialized via
-            // `HostFolderRunGate` so two host-folder runs can't corrupt the
-            // single global registration.
-            let priorFolderContext: FolderContext? = await { () -> FolderContext? in
-                guard let hostFolder else { return nil }
-                await HostFolderRunGate.shared.acquire()
-                return await MainActor.run {
-                    let prior = FolderToolManager.shared.registeredContext
-                    FolderToolManager.shared.registerFolderTools(for: hostFolder.context)
-                    return prior
+            // Folder tools register process-wide once (idempotent) and resolve
+            // the run's folder from the TaskLocal root bound around the loop
+            // below, so concurrent host-folder runs — and concurrent in-app
+            // folder chats — each work against their own root with no
+            // register/restore swap and no serializing gate.
+            if hostFolder != nil {
+                await MainActor.run {
+                    FolderToolManager.shared.ensureFolderToolsRegistered()
                 }
-            }()
+            }
             let releaseHostFolder: @Sendable () async -> Void = {
                 guard let hostFolder else { return }
-                await MainActor.run {
-                    FolderToolManager.shared.unregisterFolderTools()
-                    if let priorFolderContext {
-                        FolderToolManager.shared.registerFolderTools(for: priorFolderContext)
-                    }
-                }
                 hostFolder.url.stopAccessingSecurityScopedResource()
-                await HostFolderRunGate.shared.release()
             }
 
             let executionMode: ExecutionMode = await MainActor.run {
@@ -4967,7 +4996,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let enrichedReq = await Self.enrichWithAgentContext(
                 req,
                 agentId: agentId.uuidString,
-                executionMode: executionMode
+                executionMode: executionMode,
+                modelOverride: model
             )
             var messages = enrichedReq.messages
             let tools = enrichedReq.tools ?? []
@@ -5392,23 +5422,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 )
                             }
                         }
+                        // History + host logs use the recorded (secret-safe)
+                        // argument view; ToolRegistry.execute still saw the
+                        // original via the batch executor above.
                         assistantToolCalls.append(
-                            ToolCall(
+                            SecretArgumentScrubber.recordedToolCall(
                                 id: outcome.callId,
-                                type: "function",
-                                function: ToolCallFunction(
-                                    name: outcome.invocation.toolName,
-                                    arguments: outcome.invocation.jsonArguments
-                                )
+                                invocation: outcome.invocation
                             )
                         )
                         toolResultsByCallId.append((outcome.callId, outcome.result))
-                        // Host-only: full tool detail (args + result). The peer
-                        // still sees only the sanitized SSE trace emitted above.
+                        // Host-only tool detail (args + result). Args are the
+                        // recorded view so sandbox_secret_set values never
+                        // re-enter Insights / agent-run logs. The peer still
+                        // sees only the sanitized SSE trace emitted above.
                         loggedToolCalls.append(
                             ToolCallLog(
                                 name: outcome.invocation.toolName,
-                                arguments: outcome.invocation.jsonArguments,
+                                arguments: SecretArgumentScrubber.recordedArguments(
+                                    toolName: outcome.invocation.toolName,
+                                    argumentsJSON: outcome.invocation.jsonArguments
+                                ),
                                 result: outcome.result,
                                 isError: outcome.wasError
                             )
@@ -5457,19 +5491,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // relaxation (`isDeniedForCurrentSurface`) and the host file
                 // tools see it; `nil` when no folder is mounted, leaving the
                 // external-surface denial fully intact. Child tasks spawned by
-                // the parallel batch executor inherit the task-local.
-                let runResult = try await ChatExecutionContext.$authenticatedHostFolderRoot
+                // the parallel batch executor inherit the task-locals.
+                // `currentFolderRoot` scopes the folder tools + undo +
+                // change checkpoints to THIS run's granted folder.
+                let runResult = try await ChatExecutionContext.$currentFolderRoot
                     .withValue(hostFolder?.url) {
-                        try await AgentToolLoop.run(
-                            policy: AgentLoopPolicy(
-                                maxIterations: maxIterations,
-                                stopOnToolRejection: false,
-                                dedupeNoticeEnabled: false,
-                                maxDataMovementSteps: min(16, maxIterations)
-                            ),
-                            state: taskState,
-                            hooks: hooks
-                        )
+                        try await ChatExecutionContext.$authenticatedHostFolderRoot
+                            .withValue(hostFolder?.url) {
+                                try await AgentToolLoop.run(
+                                    policy: AgentLoopPolicy(
+                                        maxIterations: maxIterations,
+                                        stopOnToolRejection: false,
+                                        dedupeNoticeEnabled: false,
+                                        maxDataMovementSteps: min(16, maxIterations)
+                                    ),
+                                    state: taskState,
+                                    hooks: hooks
+                                )
+                            }
                     }
                 exitState = runResult.exit
                 RemoteAgentRunLog.server(
@@ -5546,6 +5585,25 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     model: model,
                     toolCalls: loggedToolCalls.isEmpty ? nil : loggedToolCalls,
                     errorMessage: AgentToolLoop.emptyToolTaskFallback
+                )
+                return
+            }
+            if exitState == .lengthExhausted {
+                hop {
+                    writerBound.value.writeError(AgentToolLoop.lengthExhaustedFallback, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: loggedResponseText.isEmpty ? nil : loggedResponseText,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: model,
+                    toolCalls: loggedToolCalls.isEmpty ? nil : loggedToolCalls,
+                    errorMessage: AgentToolLoop.lengthExhaustedFallback
                 )
                 return
             }
@@ -8981,6 +9039,54 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return first
     }
 
+    static func cacheTopologyJSONObject(
+        _ topology: ModelCacheTopologySnapshot
+    ) -> [String: Any] {
+        [
+            "layer_count": topology.layerCount,
+            "kv_layer_count": topology.kvLayerCount,
+            "chunked_kv_layer_count": topology.chunkedKVLayerCount,
+            "quantized_kv_layer_count": topology.quantizedKVLayerCount,
+            "turbo_quant_kv_layer_count": topology.turboQuantKVLayerCount,
+            "compilable_kv_layer_count": topology.compilableKVLayerCount,
+            "compilable_turbo_quant_kv_layer_count": topology.compilableTurboQuantKVLayerCount,
+            "rotating_kv_layer_count": topology.rotatingKVLayerCount,
+            "compilable_rotating_kv_layer_count": topology.compilableRotatingKVLayerCount,
+            "rotating_wrapper_layer_count": topology.rotatingWrapperLayerCount,
+            "hybrid_pool_layer_count": topology.hybridPoolLayerCount,
+            "mamba_layer_count": topology.mambaLayerCount,
+            "compilable_mamba_layer_count": topology.compilableMambaLayerCount,
+            "arrays_layer_count": topology.arraysLayerCount,
+            "zaya_cca_layer_count": topology.zayaCCALayerCount,
+            "cache_list_layer_count": topology.cacheListLayerCount,
+            "requires_ssm_companion_state": topology.requiresSSMCompanionState,
+            "requires_disk_backed_restore": topology.requiresDiskBackedCoordinatorRestore,
+            "tags": topology.topologyTags,
+        ] as [String: Any]
+    }
+
+    /// The container snapshot describes the model's baseline cache shape.
+    /// Request-local TurboQuant conversion happens inside BatchEngine, so the
+    /// admin surface must prefer the transition's post-conversion snapshot or
+    /// it reports FP16 KV layers while the live cache is actually quantized.
+    static func effectiveCacheTopology(
+        baseline: ModelCacheTopologySnapshot?,
+        turboQuantTransition: TurboQuantCacheTransitionSnapshot?
+    ) -> ModelCacheTopologySnapshot? {
+        turboQuantTransition?.after ?? baseline
+    }
+
+    static func turboQuantCacheTransitionJSONObject(
+        _ transition: TurboQuantCacheTransitionSnapshot
+    ) -> [String: Any] {
+        [
+            "converted_turbo_quant_kv_layer_count":
+                transition.convertedTurboQuantKVLayerCount,
+            "before": cacheTopologyJSONObject(transition.before),
+            "after": cacheTopologyJSONObject(transition.after),
+        ] as [String: Any]
+    }
+
     /// Shape the `/health` `batch_diagnostics` block from a snapshot.
     /// Pure — extracted from the NIO-embedded endpoint body so the
     /// nil-snapshot and empty-depth-summary shapes are unit-testable.
@@ -9907,9 +10013,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         try await ToolRegistry.shared.execute(name: toolName, argumentsJSON: argsJSON)
                     }
                 }
+                // MCP transport stays HTTP 200; tool-level failure is signaled
+                // via isError when the body is a non-throwing ToolEnvelope.failure
+                // (or legacy error shape). Compute once for response + log.
+                let isError = ToolEnvelope.isError(result)
                 let payload: [String: Any] = [
                     "content": [["type": "text", "text": result]],
-                    "isError": false,
+                    "isError": isError,
                 ]
                 let d =
                     (try? JSONSerialization.data(withJSONObject: payload, options: .osaurusCanonical))
@@ -9931,7 +10041,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     arguments: argsJSON,
                     result: result,
                     durationMs: Date().timeIntervalSince(toolCallStartTime) * 1000,
-                    isError: false
+                    isError: isError
                 )
                 logSelf.logRequest(
                     method: "POST",

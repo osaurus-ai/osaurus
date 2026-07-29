@@ -116,7 +116,6 @@ struct ModelDownloadView: View {
     /// Import-from-Hugging-Face sheet state
     @State private var showImportSheet = false
 
-
     /// Index of the leading Top Picks card the edge arrows scroll to. Desktop
     /// mice can't scroll horizontally, so the carousel is driven by these
     /// buttons; the index is clamped to the model count on every step.
@@ -949,13 +948,10 @@ struct ModelDownloadView: View {
                 loadingState
             } else {
                 VStack(spacing: 0) {
-                    sortFilterBar
-                        .padding(.horizontal, 24)
-                        .padding(.top, 12)
-                        .padding(.bottom, 12)
-
                     ScrollView {
                         VStack(spacing: 12) {
+                            sortFilterBar
+
                             if !modelManager.deprecationNotices.isEmpty {
                                 deprecationBanner
                             }
@@ -980,12 +976,15 @@ struct ModelDownloadView: View {
                     }
                     .mask(
                         VStack(spacing: 0) {
+                            // Kept within the scroll content's 12pt top padding so
+                            // the sort/filter row (now scrolling with the grid) is
+                            // fully opaque at rest and only fades once it scrolls.
                             LinearGradient(
                                 gradient: Gradient(colors: [.clear, .black]),
                                 startPoint: .top,
                                 endPoint: .bottom
                             )
-                            .frame(height: 16)
+                            .frame(height: 12)
                             Color.black
                             LinearGradient(
                                 gradient: Gradient(colors: [.black, .clear]),

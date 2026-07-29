@@ -330,7 +330,8 @@ public enum AppleScriptLoop {
         accessibilityGranted: (@Sendable () -> Bool)? = nil,
         requestAccessibility: (@Sendable () -> Void)? = nil,
         compileCheck: AppleScriptCompileCheck? = nil,
-        samplingTemperature: Double? = nil
+        samplingTemperature: Double? = nil,
+        enableThinking: Bool? = nil
     ) async -> AppleScriptRunResult {
         let runStarted = Date()
         let deadline = runStarted.addingTimeInterval(limits.wallClockSeconds)
@@ -419,7 +420,11 @@ public enum AppleScriptLoop {
         // token count by contract, so counter division would understate).
         var decodeRates: [Double] = []
         var lastOutput: String? = nil
+        // A raw return from a mutating script remains part of the public run
+        // result, but only a read step can verify requested state.
+        var lastReadOutput: String? = nil
         var consecutiveInvalid = 0
+        var consecutiveLiteralFailures = 0
         var consecutiveBlocked = 0
         // Consecutive confirm-gate dry-compile failures. Bounded separately so
         // a model stuck on syntax terminates with the real reason (the compile
@@ -441,6 +446,31 @@ public enum AppleScriptLoop {
         // that follow-up so it never silently mutates or prompts the user.
         var verifyAttempted = false
         var verifying = false
+        // One empty/EOS response immediately after a real execution failure
+        // gets one bounded chance to emit a corrected tool call. The recovery
+        // instruction must preserve the original run mode: a `mac_query`
+        // retry stays strictly read-only, while an automation retry may apply
+        // only the still-missing requested change. A failed automation script
+        // is not evidence that state changed, so it must not enter read-back
+        // verification until a mutation actually succeeds.
+        var executionRecoveryAttempted = false
+        // A reasoning-enabled helper can consume compile-error feedback,
+        // reason about the repair, and end its turn without the required tool
+        // envelope. Nothing ran in that state. Give that exact empty-envelope
+        // case one bounded protocol retry; never execute reasoning text or
+        // retry a real plain-text explanation.
+        var compileEnvelopeRecoveryAttempted = false
+        let requiresBlankTextEditDocument =
+            mode == .automate && blankTextEditDocumentTask(task: task, literals: literals)
+        let blankTextEditDocumentCountBefore: Int?
+        if requiresBlankTextEditDocument {
+            let observation = await runExecutor(textEditDocumentCountScript, .appleScript)
+            blankTextEditDocumentCountBefore = observation.isSuccess
+                ? Int(observation.output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+                : nil
+        } else {
+            blankTextEditDocumentCountBefore = nil
+        }
 
         func record(
             intent: EffectClass,
@@ -488,6 +518,246 @@ public enum AppleScriptLoop {
             )
         }
 
+        // Exact whole-document TextEdit replacement is a deterministic app
+        // operation, not an open-ended synthesis problem. The live AppleScript
+        // 16B rows either invented replacement bytes despite receiving the
+        // authoritative {{content}} placeholder or failed to correct that
+        // omission. Before invoking that model, read the actual front document.
+        // For old/new replacement, require the live text to contain the supplied
+        // old value and compute the complete expected document in Swift. For an
+        // explicit whole-document set, the supplied content is already complete.
+        // Offer one minimal placeholder-expanded whole-document write through the
+        // ordinary user gate, then read OS state back and require an exact match.
+        // A read failure, old-value mismatch, other app, missing literals, or
+        // ambiguous task keeps the existing model-driven path.
+        if mode == .automate,
+            let contract = exactTextEditReplacementContract(task: task, literals: literals)
+        {
+            let beforeObservation = await runExecutor(
+                textEditFrontDocumentReadScript,
+                .appleScript
+            )
+            let expectedText: String?
+            if let before = beforeObservation.output, let oldText = contract.oldText {
+                expectedText = before.contains(oldText)
+                    ? before.replacingOccurrences(of: oldText, with: contract.newText)
+                    : nil
+            } else if contract.oldText == nil {
+                expectedText = contract.newText
+            } else {
+                expectedText = nil
+            }
+            if beforeObservation.isSuccess, let expectedText {
+                let replacementLiterals = AppleScriptLiterals([
+                    "replacementDocument": expectedText
+                ])
+                let proposedScript: String
+                if contract.saveRequested {
+                    proposedScript = """
+                        tell application "TextEdit"
+                            set text of front document to {{replacementDocument}}
+                            save front document
+                        end tell
+                        """
+                } else {
+                    proposedScript =
+                        "tell application \"TextEdit\" to set text of front document to "
+                        + "{{replacementDocument}}"
+                }
+                let expansion = replacementLiterals.expand(proposedScript)
+                guard expansion.undefinedName == nil else {
+                    return terminate(
+                        .failed(reason: "The exact TextEdit replacement literal was unavailable.")
+                    )
+                }
+                let script = expansion.script
+                let effect = AppleScriptEffectClassifier.classify(
+                    proposedScript,
+                    language: .appleScript
+                )
+
+                observeProposal?(
+                    AppleScriptProposalRecord(
+                        step: step,
+                        proposedScript: proposedScript,
+                        expandedScript: script,
+                        effect: effectLabelForRecord(effect)
+                    )
+                )
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .propose,
+                        title: "AppleScript (\(effect.displayLabel))",
+                        detail: scriptPreview(script)
+                    )
+                )
+
+                if let dryCompile,
+                    let compileFailure = await dryCompile(script, .appleScript),
+                    compileFailure.status == .compileError
+                {
+                    let message = compileFailure.errorMessage ?? "syntax error"
+                    record(
+                        intent: effect,
+                        status: "compile_error",
+                        error: message,
+                        errorNumber: compileFailure.errorNumber,
+                        script: script
+                    )
+                    return terminate(
+                        .failed(reason: "The exact TextEdit replacement did not compile: \(message)")
+                    )
+                }
+
+                let gate = gateDecision(
+                    mode: mode,
+                    executionMode: executionMode,
+                    effect: effect,
+                    verifying: false
+                )
+                let approved: Bool
+                switch gate {
+                case .confirm:
+                    AppleScriptTraceLog.recordGate(
+                        mode: mode,
+                        executionMode: executionMode,
+                        effect: effect,
+                        verifying: false,
+                        decision: "confirm_exact_textedit"
+                    )
+                    let preview = ActionPreview(
+                        appName: "TextEdit",
+                        actionLabel: L("Run AppleScript"),
+                        targetLabel: nil,
+                        effect: effect,
+                        note: nil,
+                        scriptBody: script
+                    )
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step,
+                            kind: .confirmRequested,
+                            title: "Confirm: Run AppleScript (\(effect.displayLabel))",
+                            detail: scriptPreview(script)
+                        )
+                    )
+                    approved = await confirm(preview)
+                case .autoRunWithWarning:
+                    AppleScriptTraceLog.recordGate(
+                        mode: mode,
+                        executionMode: executionMode,
+                        effect: effect,
+                        verifying: false,
+                        decision: "auto_warning_exact_textedit"
+                    )
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step,
+                            kind: .error,
+                            title: "Auto-running AppleScript without confirmation",
+                            detail: scriptPreview(script),
+                            success: nil
+                        )
+                    )
+                    approved = true
+                case .autoRunReadOnly, .block:
+                    // An edit in automate mode cannot legitimately resolve to
+                    // either branch. Fail closed rather than bypassing policy.
+                    approved = false
+                }
+
+                guard approved else {
+                    record(intent: effect, status: "declined", script: script)
+                    return terminate(.failed(reason: "The user declined the TextEdit replacement."))
+                }
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .confirmed,
+                        title: "Approved: Run AppleScript"
+                    )
+                )
+                feed.emit(
+                    SubagentActivityEvent(step: step, kind: .act, title: "Running AppleScript")
+                )
+
+                let execution = await runExecutor(script, .appleScript)
+                scriptsExecuted += 1
+                let trimmedOutput = execution.output?.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                )
+                if execution.isSuccess {
+                    succeeded += 1
+                } else {
+                    failed += 1
+                }
+                record(
+                    intent: effect,
+                    status: stepStatus(execution.status),
+                    output: (trimmedOutput?.isEmpty ?? true) ? nil : trimmedOutput,
+                    error: execution.errorMessage,
+                    errorNumber: execution.errorNumber,
+                    script: script
+                )
+                guard execution.isSuccess else {
+                    return terminate(
+                        .failed(
+                            reason: execution.errorMessage
+                                ?? "The exact TextEdit replacement failed to execute."
+                        )
+                    )
+                }
+
+                let afterObservation = await runExecutor(
+                    textEditFrontDocumentReadScript,
+                    .appleScript
+                )
+                let after = afterObservation.isSuccess ? afterObservation.output : nil
+                let matched = after == expectedText
+                steps.append(
+                    AppleScriptStepRecord(
+                        n: steps.count + 1,
+                        intent: "read",
+                        status: matched ? "success" : "verification_mismatch",
+                        output: after,
+                        error: matched
+                            ? nil
+                            : "The live TextEdit front document did not match the requested replacement.",
+                        scriptPreview: scriptPreview(textEditFrontDocumentReadScript)
+                    )
+                )
+                guard matched, let after else {
+                    return terminate(
+                        .failed(
+                            reason:
+                                "The live TextEdit front document did not match the requested replacement."
+                        )
+                    )
+                }
+
+                lastOutput = after
+                lastReadOutput = after
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .verify,
+                        title: "Verified TextEdit replacement",
+                        detail: scriptPreview(after),
+                        success: true
+                    )
+                )
+                let summary = completionSummary(
+                    modelText: nil,
+                    lastOutput: after,
+                    scriptsExecuted: scriptsExecuted,
+                    succeeded: succeeded,
+                    failed: failed
+                )
+                return terminate(.done(summary: summary))
+            }
+        }
+
         feed.emitPhase("generating", detail: modelId)
 
         while true {
@@ -520,7 +790,8 @@ public enum AppleScriptLoop {
                     modelId: modelId,
                     sessionId: sessionId,
                     messages: stepMessages,
-                    samplingTemperature: samplingTemperature
+                    samplingTemperature: samplingTemperature,
+                    enableThinking: enableThinking
                 )
             }
 
@@ -546,8 +817,115 @@ public enum AppleScriptLoop {
             // value, so the parent gets a REAL result instead of "completed".
             guard let call = stepResult.call else {
                 let text = stepResult.text?.trimmingCharacters(in: .whitespacesAndNewlines)
-                let haveValue = !(lastOutput?.isEmpty ?? true)
-                if harness.verifyReadBack, !verifyAttempted, !haveValue, scriptsExecuted > 0,
+                // A few dedicated AppleScript bundles occasionally emit the
+                // complete script as assistant text instead of wrapping it in
+                // `run_applescript`. Treat only structurally script-like text
+                // as a malformed call and ask for the required envelope. A
+                // normal plain-text explanation still ends the run. This is a
+                // protocol repair, not an execution shortcut: the raw text is
+                // never run or counted as successful work.
+                if let text, looksLikeUncalledScript(text) {
+                    consecutiveInvalid += 1
+                    let reason =
+                        "You wrote AppleScript as plain text, so nothing ran. Call `run_applescript` "
+                        + "with that complete script in its `script` argument. Do not print the script."
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step,
+                            kind: .retry,
+                            title: "Script was not called; requesting the tool envelope",
+                            detail: scriptPreview(text)
+                        )
+                    )
+                    steps.append(
+                        AppleScriptStepRecord(
+                            n: steps.count + 1,
+                            intent: "unknown",
+                            status: "invalid",
+                            error: reason,
+                            scriptPreview: scriptPreview(text)
+                        )
+                    )
+                    if consecutiveInvalid >= limits.maxConsecutiveInvalid {
+                        return terminate(
+                            .failed(
+                                reason:
+                                    "The model kept writing AppleScript without calling "
+                                    + "run_applescript."
+                            )
+                        )
+                    }
+                    messages.append(ChatMessage(role: "assistant", content: text))
+                    messages.append(ChatMessage(role: "user", content: reason))
+                    lastToolResult = reason
+                    step += 1
+                    continue
+                }
+                let haveValue = !(lastReadOutput?.isEmpty ?? true)
+                let emptyCompletion = text?.isEmpty ?? true
+                if succeeded == 0, failed == 0, consecutiveCompileFailures > 0,
+                    !compileEnvelopeRecoveryAttempted, emptyCompletion
+                {
+                    compileEnvelopeRecoveryAttempted = true
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step,
+                            kind: .retry,
+                            title: "Compile repair omitted the tool call; requesting the envelope"
+                        )
+                    )
+                    let nudge =
+                        "The prior script still did not compile and nothing ran. Your last response "
+                        + "ended without a run_applescript call. Call run_applescript ONE more time "
+                        + "with a complete corrected script. If you cannot correct it, reply with a "
+                        + "short plain-text explanation instead; do not return reasoning alone."
+                    messages.append(ChatMessage(role: "user", content: nudge))
+                    lastToolResult = nudge
+                    step += 1
+                    continue
+                }
+                if succeeded == 0, failed > 0, !executionRecoveryAttempted, emptyCompletion {
+                    executionRecoveryAttempted = true
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step,
+                            kind: .retry,
+                            title: "Execution failed; requesting one corrected tool call"
+                        )
+                    )
+                    let nudge: String
+                    switch mode {
+                    case .query:
+                        nudge =
+                            "The prior read-only script reported failure and the requested result is "
+                            + "not available. Call run_applescript ONE more time with a corrected "
+                            + "READ-ONLY script that only reads current state and returns the exact "
+                            + "requested value(s). Do not change, type, open, close, or save anything. "
+                            + "If you cannot correct it, reply with a short explanation."
+                    case .automate:
+                        nudge =
+                            "The prior script reported failure and the requested result is not verified. "
+                            + "Do not assume either that it completed or that state is unchanged. Call "
+                            + "run_applescript ONE more time with an idempotent corrected script that "
+                            + "reads current state and applies only the missing requested change. Use every "
+                            + "required {{name}} placeholder instead of typing its name or value. If you "
+                            + "cannot correct it, reply with a short explanation."
+                    }
+                    messages.append(ChatMessage(role: "user", content: nudge))
+                    lastToolResult = nudge
+                    step += 1
+                    continue
+                }
+                if requiresBlankTextEditDocument {
+                    return terminate(
+                        .failed(
+                            reason:
+                                "TextEdit did not reach a verified blank editable document. "
+                                + "The Open window must be closed and a new document must be frontmost."
+                        )
+                    )
+                }
+                if harness.verifyReadBack, !verifyAttempted, !haveValue, succeeded > 0,
                     shouldVerify(mode: mode, task: task)
                 {
                     verifyAttempted = true
@@ -571,11 +949,27 @@ public enum AppleScriptLoop {
                 }
                 let summary = completionSummary(
                     modelText: text,
-                    lastOutput: lastOutput,
+                    lastOutput: shouldVerify(mode: mode, task: task)
+                        ? lastReadOutput : lastOutput,
                     scriptsExecuted: scriptsExecuted,
                     succeeded: succeeded,
                     failed: failed
                 )
+                // A plain-text completion after attempted work does not erase
+                // its real outcome. `steps` also includes malformed tool calls
+                // and compile/placeholder rejections that never reached the
+                // executor, so do not mistake `scriptsExecuted == 0` for a
+                // clean no-tool explanation when such attempts exist.
+                if succeeded == 0, scriptsExecuted > 0 || !steps.isEmpty {
+                    let reason: String
+                    if scriptsExecuted == 0 {
+                        let detail = steps.last?.error ?? "The generated script call was invalid."
+                        reason = "No valid script executed successfully. \(detail)"
+                    } else {
+                        reason = summary
+                    }
+                    return terminate(.failed(reason: reason))
+                }
                 return terminate(.done(summary: summary))
             }
 
@@ -636,12 +1030,178 @@ public enum AppleScriptLoop {
             }
             consecutiveInvalid = 0
             messages.append(assistantMessage)
+            let proposedEffect = AppleScriptEffectClassifier.classify(
+                proposedScript,
+                language: language
+            )
+
+            // Exact user values are deliberately withheld from the helper and
+            // exposed only as placeholders. A script that invents replacement
+            // bytes instead of consuming {{newText}} or the single supplied
+            // {{content}} value would mutate the app with model-invented data.
+            // Reject it before compile, approval, or execution; this is data-
+            // contract validation, not script repair.
+            if !verifying, proposedEffect != .read,
+                let missingName = missingRequiredMutationPlaceholder(
+                    in: proposedScript,
+                    literals: literals
+                )
+            {
+                consecutiveLiteralFailures += 1
+                let reason =
+                    "The script omitted the required {{\(missingName)}} placeholder. Put "
+                    + "{{\(missingName)}} exactly where that provided value belongs; do not type "
+                    + "the placeholder name or reconstruct its value."
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .retry,
+                        title: "Required replacement placeholder missing",
+                        detail: reason
+                    )
+                )
+                steps.append(
+                    AppleScriptStepRecord(
+                        n: steps.count + 1,
+                        intent: "unknown",
+                        status: "invalid",
+                        error: reason,
+                        scriptPreview: scriptPreview(proposedScript)
+                    )
+                )
+                if consecutiveLiteralFailures >= limits.maxConsecutiveInvalid {
+                    return terminate(
+                        .failed(
+                            reason:
+                                "The model kept omitting the required replacement placeholder "
+                                + "{{\(missingName)}}."
+                        )
+                    )
+                }
+                messages.append(
+                    ChatMessage(
+                        role: "tool",
+                        content: reason,
+                        tool_calls: nil,
+                        tool_call_id: call.id
+                    )
+                )
+                lastToolResult = reason
+                step += 1
+                continue
+            }
+
+            // TextEdit persistence is opt-in. `save`, Command-S, Save-menu
+            // automation, closing-with-save, and clearing the document's dirty
+            // flag all persist or falsely mark the document as persisted. A
+            // helper may not add any of those when the user's task did not ask
+            // to save. Reject the proposal before it reaches the approval UI so
+            // a correct edit cannot be followed by an invented save workflow.
+            if !verifying, proposedEffect != .read,
+                let persistenceOperation = unrequestedTextEditPersistenceOperation(
+                    in: proposedScript,
+                    task: task,
+                    language: language
+                )
+            {
+                consecutiveInvalid += 1
+                let reason =
+                    "The script added an unrequested TextEdit persistence operation "
+                    + "(\(persistenceOperation)). Remove it and apply only the requested edit; "
+                    + "do not save or clear the document's changed state."
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .retry,
+                        title: "Unrequested TextEdit save rejected",
+                        detail: reason
+                    )
+                )
+                steps.append(
+                    AppleScriptStepRecord(
+                        n: steps.count + 1,
+                        intent: "unknown",
+                        status: "invalid",
+                        error: reason,
+                        scriptPreview: scriptPreview(proposedScript)
+                    )
+                )
+                if consecutiveInvalid >= limits.maxConsecutiveInvalid {
+                    return terminate(
+                        .failed(reason: "The model kept adding an unrequested TextEdit save operation.")
+                    )
+                }
+                messages.append(
+                    ChatMessage(
+                        role: "tool",
+                        content: reason,
+                        tool_calls: nil,
+                        tool_call_id: call.id
+                    )
+                )
+                lastToolResult = reason
+                step += 1
+                continue
+            }
+
+            // A request for a BLANK TextEdit document authorizes creating the
+            // document, not inventing its contents. Reject model-authored
+            // example/placeholder text before it reaches the confirmation UI.
+            // This is the same user-data boundary as the literal placeholder
+            // contract above, scoped only to the confirmed blank-document task.
+            if !verifying, proposedEffect != .read,
+                let contentOperation = unrequestedBlankTextEditContentOperation(
+                    in: proposedScript,
+                    task: task,
+                    language: language,
+                    literals: literals
+                )
+            {
+                consecutiveInvalid += 1
+                let reason =
+                    "The task requested a blank TextEdit document, but the script added "
+                    + "unrequested content (\(contentOperation)). Create the document without "
+                    + "typing, setting, or inventing any text."
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .retry,
+                        title: "Unrequested TextEdit content rejected",
+                        detail: reason
+                    )
+                )
+                steps.append(
+                    AppleScriptStepRecord(
+                        n: steps.count + 1,
+                        intent: "unknown",
+                        status: "invalid",
+                        error: reason,
+                        scriptPreview: scriptPreview(proposedScript)
+                    )
+                )
+                if consecutiveInvalid >= limits.maxConsecutiveInvalid {
+                    return terminate(
+                        .failed(reason: "The model kept adding text to a requested blank document.")
+                    )
+                }
+                messages.append(
+                    ChatMessage(
+                        role: "tool",
+                        content: reason,
+                        tool_calls: nil,
+                        tool_call_id: call.id
+                    )
+                )
+                lastToolResult = reason
+                step += 1
+                continue
+            }
 
             // Classify the proposed script's effect (read / edit / consequential).
             // Escalate-biased + surfaced to the user, never used to fake safety.
             // A JXA script floors at `.edit` (its mutations are statically
             // opaque to the AppleScript verb vocabulary).
-            let effect = AppleScriptEffectClassifier.classify(proposedScript, language: language)
+            let effect = proposedEffect
 
             // Expand any {{name}} placeholders into exact, correctly-escaped
             // AppleScript string literals BEFORE preview / gate / execution, so
@@ -650,7 +1210,7 @@ public enum AppleScriptLoop {
             // so user content can't trip the escalate-biased classifier.
             let expansion = literals.expand(proposedScript)
             if let undefinedName = expansion.undefinedName {
-                consecutiveInvalid += 1
+                consecutiveLiteralFailures += 1
                 let reason = undefinedPlaceholderReason(undefinedName, literals: literals)
                 feed.emit(
                     SubagentActivityEvent(
@@ -660,7 +1220,7 @@ public enum AppleScriptLoop {
                         detail: reason
                     )
                 )
-                if consecutiveInvalid >= limits.maxConsecutiveInvalid {
+                if consecutiveLiteralFailures >= limits.maxConsecutiveInvalid {
                     return terminate(
                         .failed(
                             reason:
@@ -688,6 +1248,7 @@ public enum AppleScriptLoop {
                 lastToolResult = reason
                 continue
             }
+            consecutiveLiteralFailures = 0
             // Downstream preview / gate / execution all operate on the EXPANDED
             // script (the user sees and approves the real content that runs).
             let script = expansion.script
@@ -715,6 +1276,59 @@ public enum AppleScriptLoop {
                     detail: scriptPreview(script)
                 )
             )
+
+            // Compile every proposal before ANY gate or execution path. The
+            // effect classifier is intentionally structural and can classify a
+            // malformed script as read-only when its attempted mutation uses
+            // invented syntax. Restricting preflight to `.confirm` therefore
+            // let those scripts auto-run, compile-fail in the executor, and
+            // consume the full step cap. Universal preflight keeps malformed
+            // reads and writes out of both the executor and confirmation UI and
+            // applies the same bounded correction budget to each.
+            if let dryCompile,
+                let compileFailure = await dryCompile(script, language),
+                compileFailure.status == .compileError
+            {
+                consecutiveCompileFailures += 1
+                let message = compileFailure.errorMessage ?? "syntax error"
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .retry,
+                        title: "Script did not compile; asking for a correction",
+                        detail: message
+                    )
+                )
+                record(
+                    intent: effect,
+                    status: "compile_error",
+                    error: message,
+                    errorNumber: compileFailure.errorNumber,
+                    script: script
+                )
+                if consecutiveCompileFailures >= limits.maxConsecutiveInvalid {
+                    return terminate(
+                        .failed(
+                            reason: "The model could not produce a script that compiles: \(message)"
+                        )
+                    )
+                }
+                let toolResult =
+                    "The script was NOT run — it does not compile: \(message). Fix the "
+                    + "\(language.displayLabel) syntax and call run_applescript again."
+                messages.append(
+                    ChatMessage(
+                        role: "tool",
+                        content: toolResult,
+                        tool_calls: nil,
+                        tool_call_id: call.id
+                    )
+                )
+                lastToolResult = toolResult
+                step += 1
+                continue
+            }
+            consecutiveCompileFailures = 0
 
             // Accessibility preflight: System Events UI scripting cannot run
             // without the user's Accessibility grant. Catch it BEFORE the gate
@@ -770,12 +1384,27 @@ public enum AppleScriptLoop {
             //  • query / verification → run reads automatically, BLOCK writes.
             //  • automate → the user's confirm-each / auto-run-with-warning policy.
             let approved: Bool
-            switch gateDecision(
+            let gate = gateDecision(
                 mode: mode,
                 executionMode: executionMode,
                 effect: effect,
                 verifying: verifying
-            ) {
+            )
+            let gateLabel: String
+            switch gate {
+            case .autoRunReadOnly: gateLabel = "auto_read"
+            case .autoRunWithWarning: gateLabel = "auto_warning"
+            case .confirm: gateLabel = "confirm"
+            case .block: gateLabel = "block"
+            }
+            AppleScriptTraceLog.recordGate(
+                mode: mode,
+                executionMode: executionMode,
+                effect: effect,
+                verifying: verifying,
+                decision: gateLabel
+            )
+            switch gate {
             case .block(let reason):
                 consecutiveBlocked += 1
                 feed.emit(
@@ -804,56 +1433,6 @@ public enum AppleScriptLoop {
                 step += 1
                 continue
             case .confirm:
-                // Compile-before-confirm dry run: never ask the user to
-                // approve a script that cannot compile. On a syntax error,
-                // feed the REAL compile error back for correction (the same
-                // feedback executing it would have produced) — the user only
-                // ever sees scripts that can actually run.
-                if let dryCompile,
-                    let compileFailure = await dryCompile(script, language),
-                    compileFailure.status == .compileError
-                {
-                    consecutiveCompileFailures += 1
-                    let message = compileFailure.errorMessage ?? "syntax error"
-                    feed.emit(
-                        SubagentActivityEvent(
-                            step: step,
-                            kind: .retry,
-                            title: "Script did not compile; asking for a correction",
-                            detail: message
-                        )
-                    )
-                    record(
-                        intent: effect,
-                        status: "compile_error",
-                        error: message,
-                        errorNumber: compileFailure.errorNumber,
-                        script: script
-                    )
-                    if consecutiveCompileFailures >= limits.maxConsecutiveInvalid {
-                        return terminate(
-                            .failed(
-                                reason:
-                                    "The model could not produce a script that compiles: \(message)"
-                            )
-                        )
-                    }
-                    let toolResult =
-                        "The script was NOT run — it does not compile: \(message). Fix the "
-                        + "\(language.displayLabel) syntax and call run_applescript again."
-                    messages.append(
-                        ChatMessage(
-                            role: "tool",
-                            content: toolResult,
-                            tool_calls: nil,
-                            tool_call_id: call.id
-                        )
-                    )
-                    lastToolResult = toolResult
-                    step += 1
-                    continue
-                }
-                consecutiveCompileFailures = 0
                 // Surface the target app so the confirm card names it AND the
                 // shared prompt queue can offer "don't ask again in {app} this
                 // run" (it scopes that blanket approval on `appName`).
@@ -926,6 +1505,30 @@ public enum AppleScriptLoop {
                     title: "Running \(language.displayLabel)"
                 )
             )
+            // The live TextEdit replacement regression exposed a gap in the
+            // generic model-authored verification turn: the approved write
+            // succeeded, then the dedicated AppleScript model emitted several
+            // malformed read-back scripts and the parent retried an already-
+            // completed edit. For the narrow exact-replacement contract we
+            // already possess both authoritative values and a script targeting
+            // TextEdit, observe the real front-document text before the write.
+            // A matching post-read below is direct OS evidence, not a synthetic
+            // success or prompt coercion. Every other task keeps the existing
+            // model-driven verification path.
+            let exactTextEditReplacement = exactTextEditReplacementContract(
+                task: task,
+                literals: literals,
+                proposedScript: proposedScript,
+                language: language,
+                effect: effect
+            )
+            let textEditBefore: String?
+            if exactTextEditReplacement != nil {
+                let observation = await runExecutor(textEditFrontDocumentReadScript, .appleScript)
+                textEditBefore = observation.isSuccess ? observation.output : nil
+            } else {
+                textEditBefore = nil
+            }
             let execution = await runExecutor(script, language)
             scriptsExecuted += 1
             consecutiveBlocked = 0
@@ -946,7 +1549,27 @@ public enum AppleScriptLoop {
             let trimmedOutput = execution.output?.trimmingCharacters(in: .whitespacesAndNewlines)
             if execution.isSuccess {
                 succeeded += 1
-                if let trimmedOutput, !trimmedOutput.isEmpty { lastOutput = trimmedOutput }
+                // Only a read result is evidence for a requested value or
+                // post-action state. A mutating script can `return` any string
+                // without having applied it (the JANG_6M TextEdit reproduction
+                // returned the requested text from a local variable while the
+                // document remained unchanged). Keep that output in the step
+                // transcript, but require a later read for verification.
+                if let trimmedOutput, !trimmedOutput.isEmpty {
+                    lastOutput = trimmedOutput
+                    if effect == .read { lastReadOutput = trimmedOutput }
+                }
+                // A task that names a readable postcondition (replace/change/
+                // exact content, a requested value, etc.) must not execute a
+                // second mutation before that state is read back. The small
+                // AppleScript models can otherwise interpret a successful OS
+                // execution as permission to repeat or embellish the same
+                // edit. Enter the verification gate immediately: subsequent
+                // reads are allowed, while another write is rejected before
+                // approval/execution.
+                if effect != .read, shouldVerify(mode: mode, task: task) {
+                    verifying = true
+                }
             } else {
                 failed += 1
             }
@@ -958,6 +1581,208 @@ public enum AppleScriptLoop {
                 errorNumber: execution.errorNumber,
                 script: script
             )
+
+            if execution.isSuccess,
+                let contract = exactTextEditReplacement,
+                let before = textEditBefore,
+                let oldText = contract.oldText
+            {
+                let observation = await runExecutor(textEditFrontDocumentReadScript, .appleScript)
+                let after = observation.isSuccess ? observation.output : nil
+                let expected = before.replacingOccurrences(
+                    of: oldText,
+                    with: contract.newText
+                )
+                let matched = after == expected
+                    && (before.contains(oldText) || expected.contains(contract.newText))
+                steps.append(
+                    AppleScriptStepRecord(
+                        n: steps.count + 1,
+                        intent: "read",
+                        status: matched ? "success" : "verification_mismatch",
+                        output: after,
+                        error: matched
+                            ? nil
+                            : "The live TextEdit front document did not match the requested replacement.",
+                        scriptPreview: scriptPreview(textEditFrontDocumentReadScript)
+                    )
+                )
+                if matched, let after {
+                    lastOutput = after
+                    lastReadOutput = after
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step,
+                            kind: .verify,
+                            title: "Verified TextEdit replacement",
+                            detail: scriptPreview(after),
+                            success: true
+                        )
+                    )
+                    let summary = completionSummary(
+                        modelText: nil,
+                        lastOutput: after,
+                        scriptsExecuted: scriptsExecuted,
+                        succeeded: succeeded,
+                        failed: failed
+                    )
+                    return terminate(.done(summary: summary))
+                }
+            }
+
+            // `NSAppleScript` success only proves that the script returned; it
+            // does not prove TextEdit left its startup Open window. The live
+            // regression returned success for `make new document` while the
+            // Open panel remained frontmost. For the narrow blank-document
+            // contract, require BOTH a document-count increase and live AX
+            // evidence of an editable front window with the Open panel gone.
+            if execution.isSuccess, requiresBlankTextEditDocument {
+                let uiObservation = await runExecutor(
+                    textEditBlankDocumentUIStateScript,
+                    .appleScript
+                )
+                let countObservation = await runExecutor(
+                    textEditDocumentCountScript,
+                    .appleScript
+                )
+                let uiState = uiObservation.output?.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                )
+                let afterCount = Int(
+                    countObservation.output?.trimmingCharacters(
+                        in: .whitespacesAndNewlines
+                    ) ?? ""
+                )
+                let matched =
+                    uiObservation.isSuccess
+                    && countObservation.isSuccess
+                    && uiState == "editable"
+                    && blankTextEditDocumentCountBefore != nil
+                    && afterCount != nil
+                    && afterCount! > blankTextEditDocumentCountBefore!
+                let mismatch =
+                    "TextEdit postcondition was not met "
+                    + "(ui=\(uiState ?? "unavailable"), "
+                    + "documents=\(afterCount.map(String.init) ?? "unavailable"), "
+                    + "before=\(blankTextEditDocumentCountBefore.map(String.init) ?? "unavailable"))."
+                steps.append(
+                    AppleScriptStepRecord(
+                        n: steps.count + 1,
+                        intent: "read",
+                        status: matched ? "success" : "verification_mismatch",
+                        output: uiState,
+                        error: matched ? nil : mismatch,
+                        scriptPreview: scriptPreview(textEditBlankDocumentUIStateScript)
+                    )
+                )
+                if matched {
+                    lastOutput = "blank editable document"
+                    lastReadOutput = "blank editable document"
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step,
+                            kind: .verify,
+                            title: "Verified blank TextEdit document",
+                            detail: "Open window closed; editable document is frontmost.",
+                            success: true
+                        )
+                    )
+                    return terminate(
+                        .done(summary: "Created a blank editable document in TextEdit.")
+                    )
+                }
+
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .retry,
+                        title: "TextEdit is not ready for editing",
+                        detail: mismatch,
+                        success: false
+                    )
+                )
+                let postconditionResult =
+                    toolResult + "\n" + mismatch
+                    + " Do not type any text. If the standard Open window is still frontmost, "
+                    + "click its New Document button first; otherwise create one new document. "
+                    + "Call run_applescript with only the missing state transition."
+                messages.append(
+                    ChatMessage(
+                        role: "tool",
+                        content: postconditionResult,
+                        tool_calls: nil,
+                        tool_call_id: call.id
+                    )
+                )
+                lastToolResult = postconditionResult
+                step += 1
+                continue
+            }
+
+            // Do not ask the helper for a free-form terminal turn between an
+            // already-successful mutation and the required OS read-back. Gemma
+            // 4 AppleScript bundles can answer that `tool_choice:auto` turn
+            // with reasoning only even when `enable_thinking=false`; nothing
+            // is gained from that turn, and it delays completion before the
+            // loop inevitably asks for verification. Advance the real state
+            // machine directly to exactly one read-only verification request.
+            // The verifier is still model-authored, effect-classified, compiled,
+            // and gated; only its redundant predecessor is removed.
+            if execution.isSuccess, harness.verifyReadBack, !verifyAttempted,
+                effect != .read, shouldVerify(mode: mode, task: task)
+            {
+                verifyAttempted = true
+                verifying = true
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .retry,
+                        title: "Verifying: reading the result back"
+                    )
+                )
+                let nudge =
+                    "The requested change ran successfully. Run ONE READ-ONLY AppleScript that "
+                    + "gets and `return`s the specific resulting value(s) the task asked for. "
+                    + "Reply with a single run_applescript call. Do not change, type, open, close, "
+                    + "or save anything during verification."
+                messages.append(
+                    ChatMessage(
+                        role: "tool",
+                        content: toolResult,
+                        tool_calls: nil,
+                        tool_call_id: call.id
+                    )
+                )
+                messages.append(ChatMessage(role: "user", content: nudge))
+                lastToolResult = nudge
+                step += 1
+                continue
+            }
+
+            // A successful action-only automation is complete even when the
+            // script naturally returns no value (for example `activate`). Asking
+            // the small dedicated model for another turn after that point lets
+            // it repeat or expand the already-successful mutation until the user
+            // declines or the step cap fires. Data-bearing automation tasks keep
+            // the existing follow-up and read-back path. A returned value
+            // completes a read query, but is not by itself proof that a
+            // mutating automation changed state.
+            let hasOutput = !(trimmedOutput?.isEmpty ?? true)
+            let queryWithValue = mode == .query && hasOutput
+            let verifiedValue = verifying && effect == .read && hasOutput
+            let actionOnlyAutomation =
+                mode == .automate && !shouldVerify(mode: mode, task: task)
+            if execution.isSuccess, queryWithValue || verifiedValue || actionOnlyAutomation {
+                let summary = completionSummary(
+                    modelText: nil,
+                    lastOutput: queryWithValue || verifiedValue ? trimmedOutput : nil,
+                    scriptsExecuted: scriptsExecuted,
+                    succeeded: succeeded,
+                    failed: failed
+                )
+                return terminate(.done(summary: summary))
+            }
+
             messages.append(
                 ChatMessage(role: "tool", content: toolResult, tool_calls: nil, tool_call_id: call.id)
             )
@@ -1096,8 +1921,122 @@ public enum AppleScriptLoop {
             "state", "current", "name", "title", "url", "value", "count", "how many",
             "tell me", "show me", "check", "contents", "selected", "version", "summary",
             "is ", "are ", "does ",
+            // Exact/verbatim mutations need a post-action read. Do not
+            // classify them as fire-and-forget only because they are phrased
+            // as commands rather than questions.
+            "exactly", "contain", "insert ", "write ", "type ",
+            "replace", "change the text", "edit the text", "remove the text",
         ]
         return dataIntent.contains { t.contains($0) }
+    }
+
+    private struct ExactTextEditReplacementContract {
+        let oldText: String?
+        let newText: String
+        let saveRequested: Bool
+    }
+
+    private static let textEditFrontDocumentReadScript =
+        #"tell application "TextEdit" to get text of front document"#
+    private static let textEditDocumentCountScript =
+        #"tell application "TextEdit" to count documents"#
+    private static let textEditBlankDocumentUIStateScript = """
+        tell application "System Events"
+            tell process "TextEdit"
+                if exists window "Open" then return "open_panel"
+                if (count of windows) is 0 then return "no_window"
+                if exists text area 1 of scroll area 1 of window 1 then return "editable"
+                return "no_editable_document"
+            end tell
+        end tell
+        """
+
+    static func blankTextEditDocumentTask(
+        task: String,
+        literals: AppleScriptLiterals
+    ) -> Bool {
+        guard literals.isEmpty else { return false }
+        let normalized = task.lowercased()
+        guard normalized.contains("textedit") else { return false }
+        let creationIntent =
+            normalized.range(
+                of: #"\b(?:create|make|open)\s+(?:a\s+)?(?:new|blank)\s+(?:plain\s+text\s+)?document\b"#,
+                options: .regularExpression
+            ) != nil
+        guard creationIntent else { return false }
+        let contentIntent: [String] = [
+            "contain", " with ", "that says", "and type", "and write", "and enter",
+            "and put", "insert ", "add the text", "content:",
+        ]
+        return !contentIntent.contains { normalized.contains($0) }
+    }
+
+    private static func exactTextEditReplacementContract(
+        task: String,
+        literals: AppleScriptLiterals
+    ) -> ExactTextEditReplacementContract? {
+        let normalizedTask = task.lowercased()
+        guard normalizedTask.contains("textedit") else { return nil }
+        let saveRequested = explicitlyRequestsSave(normalizedTask)
+
+        if let oldText = literals.value(for: "oldText"),
+            let newText = literals.value(for: "newText"),
+            normalizedTask.contains("replace")
+                || normalizedTask.range(
+                    of: #"\bchange(?:\s+only)?\s+the\s+text\b"#,
+                    options: .regularExpression
+                ) != nil
+                || normalizedTask.contains("edit the text")
+        {
+            return ExactTextEditReplacementContract(
+                oldText: oldText,
+                newText: newText,
+                saveRequested: saveRequested
+            )
+        }
+
+        let wholeDocumentIntent =
+            normalizedTask.contains("entire contents")
+            || normalizedTask.contains("entire content")
+            || normalizedTask.contains("entire text")
+            || normalizedTask.contains("whole document")
+        guard wholeDocumentIntent, let content = literals.value(for: "content") else { return nil }
+        return ExactTextEditReplacementContract(
+            oldText: nil,
+            newText: content,
+            saveRequested: saveRequested
+        )
+    }
+
+    /// Saving is opt-in. A task may contain the word "save" in an explicit
+    /// prohibition, so a bare substring check would recreate the reported
+    /// unrequested-save regression. Only a positive save request enables the
+    /// deterministic replacement path's `save front document` statement.
+    private static func explicitlyRequestsSave(_ normalizedTask: String) -> Bool {
+        guard normalizedTask.range(of: #"\bsav(?:e|ing)\b"#, options: .regularExpression) != nil
+        else { return false }
+        let negativeSave =
+            #"\b(?:do\s+not|don't|dont|never)\s+save\b|\bwithout\s+saving\b|\b(?:leave|keep)\b.{0,24}\bunsaved\b"#
+        return normalizedTask.range(of: negativeSave, options: .regularExpression) == nil
+    }
+
+    /// Recognize only the confirmed TextEdit exact-replacement contract. The
+    /// task must name TextEdit and replacement intent, the parent must have
+    /// supplied both authoritative literals, and the generated mutation must
+    /// itself target TextEdit. This deliberately does not become a global
+    /// postcondition guess for other apps or ambiguous automation tasks.
+    private static func exactTextEditReplacementContract(
+        task: String,
+        literals: AppleScriptLiterals,
+        proposedScript: String,
+        language: AppleScriptLanguage,
+        effect: EffectClass
+    ) -> ExactTextEditReplacementContract? {
+        guard language == .appleScript, effect != .read,
+            targetAppName(proposedScript)?.caseInsensitiveCompare("TextEdit") == .orderedSame,
+            let contract = exactTextEditReplacementContract(task: task, literals: literals)
+        else { return nil }
+        return contract
     }
 
     /// Build the completion summary: prefer the model's own plain-text reply;
@@ -1245,6 +2184,118 @@ public enum AppleScriptLoop {
         return squeezed.count > 200 ? String(squeezed.prefix(200)) + "…" : squeezed
     }
 
+    /// Detect the confirmed protocol failure where a helper prints executable
+    /// AppleScript instead of calling `run_applescript`. Keep this deliberately
+    /// structural and multi-line so normal summaries that mention AppleScript
+    /// or quote a short command are not converted into tool attempts.
+    static func looksLikeUncalledScript(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.contains("\n") else { return false }
+        let lower = trimmed.lowercased()
+        let hasTellBlock =
+            (lower.contains("tell application \"") || lower.contains("tell process \""))
+            && lower.contains("end tell")
+        let hasHandler = lower.contains("\non ") && lower.contains("\nend ")
+        let fencedScript =
+            lower.hasPrefix("```applescript") || lower.hasPrefix("```osascript")
+        return hasTellBlock || hasHandler || fencedScript
+    }
+
+    /// Exact replacement runs cannot safely reconstruct the requested new
+    /// bytes: the helper sees only the placeholder name and length. Require
+    /// the authoritative new-value token while allowing the old-value token to
+    /// be omitted for the valid whole-document direct-set idiom.
+    static func missingRequiredMutationPlaceholder(
+        in script: String,
+        literals: AppleScriptLiterals
+    ) -> String? {
+        // Preserve the more precise unknown-placeholder diagnostic. The main
+        // loop validates undefined tokens immediately after this contract;
+        // once the helper corrects that name, this required-value check runs.
+        if literals.expand(script).undefinedName != nil { return nil }
+        if literals.value(for: "newText") != nil {
+            return script.contains("{{newText}}") ? nil : "newText"
+        }
+        guard literals.names == ["content"] else { return nil }
+        return script.contains("{{content}}") ? nil : "content"
+    }
+
+    /// Preserve the original narrow helper name for callers/tests that reason
+    /// specifically about the two-value replacement contract.
+    static func missingRequiredReplacementPlaceholder(
+        in script: String,
+        literals: AppleScriptLiterals
+    ) -> String? {
+        guard literals.value(for: "newText") != nil else { return nil }
+        return missingRequiredMutationPlaceholder(in: script, literals: literals)
+    }
+
+    /// Return the persistence primitive a TextEdit mutation added even though
+    /// the user did not opt in to saving. This is deliberately scoped to
+    /// AppleScript tasks naming TextEdit; it does not infer save policy for
+    /// other apps or JXA.
+    static func unrequestedTextEditPersistenceOperation(
+        in script: String,
+        task: String,
+        language: AppleScriptLanguage
+    ) -> String? {
+        guard language == .appleScript else { return nil }
+        let normalizedTask = task.lowercased()
+        guard normalizedTask.contains("textedit"), !explicitlyRequestsSave(normalizedTask)
+        else { return nil }
+
+        let checks: [(pattern: String, label: String)] = [
+            (#"(?i)\bsave\s+(?:(?:front|current)\s+)?document\b"#, "save command"),
+            (#"(?i)\bkeystroke\s+[\"“]s[\"”]\s+using\s+\{[^}]*command\s+down"#, "Command-S"),
+            (#"(?i)\bclick\s+(?:menu\s+item|button)\s+[\"“]save[\"”]"#, "Save UI action"),
+            (#"(?im)^\s*close\b[^\n]*\bsaving\s+(?:yes|true)\b"#, "close-with-save"),
+            (
+                #"(?im)^\s*set\s+[^\n]*\b(?:changed|modified)\b[^\n]*\bto\s+false\b"#,
+                "dirty-state reset"
+            ),
+        ]
+        for check in checks
+        where script.range(of: check.pattern, options: .regularExpression) != nil {
+            return check.label
+        }
+        return nil
+    }
+
+    /// Return the unauthorized content primitive a model added to a request
+    /// that only asked for a blank TextEdit document. Navigation keystrokes
+    /// such as Command-N remain allowed; literal typing and document-text
+    /// assignments do not.
+    static func unrequestedBlankTextEditContentOperation(
+        in script: String,
+        task: String,
+        language: AppleScriptLanguage,
+        literals: AppleScriptLiterals
+    ) -> String? {
+        guard language == .appleScript,
+            blankTextEditDocumentTask(task: task, literals: literals)
+        else { return nil }
+
+        let checks: [(pattern: String, label: String)] = [
+            (
+                #"(?i)\bset\s+(?:the\s+)?(?:text|content|contents|body|thetext|value)\s+of\b[^\n]*\bto\b"#,
+                "document text assignment"
+            ),
+            (
+                #"(?is)\bmake\s+new\s+document\s+with\s+properties\s+\{[^}]*(?:text|content|contents|body|thetext|value)\s*:"#,
+                "document content property"
+            ),
+            (
+                #"(?i)\bkeystroke\s+[\"“](?!n[\"”]\s+using\s+(?:\{[^}]*\bcommand\s+down\b[^}]*\}|\bcommand\s+down\b))[^\"”]+[\"”]"#,
+                "typed text"
+            ),
+        ]
+        for check in checks
+        where script.range(of: check.pattern, options: .regularExpression) != nil {
+            return check.label
+        }
+        return nil
+    }
+
     // MARK: - Literal placeholders
 
     /// The system-prompt section announcing the verbatim content this run was
@@ -1345,7 +2396,8 @@ public enum AppleScriptLoop {
         modelId: String,
         sessionId: String,
         messages: [ChatMessage],
-        samplingTemperature: Double? = nil
+        samplingTemperature: Double? = nil,
+        enableThinking: Bool?
     ) async throws -> ModelStepResult {
         var req = ChatCompletionRequest(
             model: modelId,
@@ -1367,6 +2419,7 @@ public enum AppleScriptLoop {
         // the report) — never a hidden synthetic default.
         req.samplingParametersAreImplicit = samplingTemperature == nil
         req.isAgentRequest = true
+        req.enable_thinking = enableThinking
         let generateStarted = Date()
         let response = try await engine.completeChat(request: req)
         AppleScriptTraceLog.record(
@@ -1471,6 +2524,11 @@ public enum AppleScriptLoop {
                 "- After you change something, run ONE more read-only script that gets and `return`s "
                 + "the resulting state, so the result can be verified (e.g. after setting the volume, "
                 + "return the new volume).\n"
+                + "- When the task says `the file` or `the document`, use the named Frontmost app in "
+                + "Current desktop and its open document. If neither the task nor Current desktop "
+                + "identifies an app or exact path, do not open a chooser, create an output file, or "
+                + "save anything; reply with one short clarification and no tool call. Editing an "
+                + "open document never implies Save, Save As, export, or creating another file.\n"
                 + "- When you address an app object by name (a note, file, mailbox, playlist), it may "
                 + "not exist yet or be named slightly differently; prefer a script that finds or "
                 + "creates it (e.g. `if not (exists note \"X\") then make new note`) instead of "
@@ -1540,7 +2598,10 @@ public enum AppleScriptLoop {
                 "You are Osaurus's AppleScript agent: accomplish the Mac task by writing and running "
                 + "one complete AppleScript at a time."
             modeRule =
-                "- Address objects that may be missing with find-or-create (`if not (exists note \"X\") "
+                "- Resolve `the file`/`the document` only from the named Frontmost app in Current "
+                + "desktop; if no app/path is identified, ask briefly without a tool call. Never "
+                + "invent a chooser, output file, Save, or Save As for an existing-document edit. "
+                + "Address other objects that may be missing with find-or-create (`if not (exists note \"X\") "
                 + "then make new note`), not by assuming. After a change, run one read-only script that "
                 + "`return`s the resulting state. Avoid destructive/irreversible actions unless "
                 + "explicitly asked. If an app has no usable dictionary, fall back to System Events UI "

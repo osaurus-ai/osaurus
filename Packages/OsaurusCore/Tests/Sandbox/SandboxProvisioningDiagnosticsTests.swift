@@ -22,7 +22,8 @@
                     minimumColdProvisionFreeBytes: 0,
                     operatingSystemMajorVersion: 26,
                     isAppleSilicon: true,
-                    environment: [:]
+                    environment: [:],
+                    backend: .virtualMachine
                 )
 
                 #expect(report.rootSource == .testOverride)
@@ -56,7 +57,8 @@
                     minimumColdProvisionFreeBytes: 0,
                     operatingSystemMajorVersion: 26,
                     isAppleSilicon: true,
-                    environment: [:]
+                    environment: [:],
+                    backend: .virtualMachine
                 )
 
                 #expect(report.overallReadiness == .blocked)
@@ -86,7 +88,8 @@
                     minimumColdProvisionFreeBytes: 0,
                     operatingSystemMajorVersion: 26,
                     isAppleSilicon: true,
-                    environment: [:]
+                    environment: [:],
+                    backend: .virtualMachine
                 )
 
                 #expect(report.overallReadiness == .ready)
@@ -112,7 +115,8 @@
                     minimumColdProvisionFreeBytes: 0,
                     operatingSystemMajorVersion: 26,
                     isAppleSilicon: true,
-                    environment: [:]
+                    environment: [:],
+                    backend: .virtualMachine
                 )
 
                 #expect(report.overallReadiness == .ready)
@@ -138,7 +142,8 @@
                     minimumColdProvisionFreeBytes: 0,
                     operatingSystemMajorVersion: 26,
                     isAppleSilicon: true,
-                    environment: [:]
+                    environment: [:],
+                    backend: .virtualMachine
                 )
 
                 let json = try report.jsonString()
@@ -151,6 +156,39 @@
                 #expect(text.contains("Sandbox Provisioning Diagnostics"))
                 #expect(text.contains("setup_incomplete"))
                 #expect(text.contains("repair:"))
+            }
+        }
+
+        @Test
+        func seatbeltBackendSkipsVMOnlyChecks() async throws {
+            try await Self.withTemporaryRoot { _ in
+                try Self.createBaseRoot(setupComplete: true)
+                try OsaurusPaths.ensureExists(OsaurusPaths.container())
+                try OsaurusPaths.ensureExists(OsaurusPaths.containerWorkspace())
+                try OsaurusPaths.ensureExists(OsaurusPaths.containerAgentsDir())
+                try OsaurusPaths.ensureExists(OsaurusPaths.containerSharedDir())
+
+                let report = SandboxProvisioningDiagnostics.makeReport(
+                    generatedAt: Self.fixedDate,
+                    minimumColdProvisionFreeBytes: 0,
+                    operatingSystemMajorVersion: 15,
+                    isAppleSilicon: false,
+                    environment: [:],
+                    backend: .seatbelt
+                )
+
+                #expect(report.overallReadiness == .ready)
+                #expect(!report.findings.contains { $0.code == .sandboxUnavailable })
+                #expect(!report.findings.contains { $0.code == .unsupportedArchitecture })
+                let vmOnly: Set<SandboxProvisioningLocationID> = [
+                    .containerKernelDirectory,
+                    .containerKernelFile,
+                    .containerInitFSFile,
+                    .containerStateDirectory,
+                    .containerRootFSFile,
+                    .bridgeSocket,
+                ]
+                #expect(!report.locations.contains { vmOnly.contains($0.id) })
             }
         }
 

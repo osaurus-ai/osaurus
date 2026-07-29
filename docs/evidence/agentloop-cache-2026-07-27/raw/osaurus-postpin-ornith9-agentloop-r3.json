@@ -1,0 +1,203 @@
+{
+  "cases" : [
+    {
+      "context" : {
+        "cumulativeInputTokens" : 6456,
+        "firstStepInputTokens" : 3149,
+        "history" : {
+          "assistantTokens" : 14,
+          "toolResultCount" : 1,
+          "toolResultTokens" : 124,
+          "userTokens" : 77
+        },
+        "modelSteps" : 2,
+        "peakStepInputTokens" : 3307,
+        "sections" : [
+          {
+            "cacheability" : "static",
+            "id" : "platform",
+            "label" : "Platform",
+            "tokens" : 16
+          },
+          {
+            "cacheability" : "static",
+            "id" : "persona",
+            "label" : "Persona",
+            "tokens" : 51
+          },
+          {
+            "cacheability" : "static",
+            "id" : "modelFamilyGuidance",
+            "label" : "Model Family Guidance",
+            "tokens" : 112
+          },
+          {
+            "cacheability" : "static",
+            "id" : "grounding",
+            "label" : "Grounding",
+            "tokens" : 146
+          },
+          {
+            "cacheability" : "static",
+            "id" : "codeStyle",
+            "label" : "Code Style",
+            "tokens" : 71
+          },
+          {
+            "cacheability" : "static",
+            "id" : "riskAware",
+            "label" : "Risk-Aware Actions",
+            "tokens" : 90
+          },
+          {
+            "cacheability" : "static",
+            "id" : "agentLoopGuidance",
+            "label" : "Agent Loop",
+            "tokens" : 228
+          },
+          {
+            "cacheability" : "static",
+            "id" : "folderContext",
+            "label" : "Working Directory",
+            "tokens" : 396
+          }
+        ],
+        "staticPrefixHash" : "d4f58f40940eed8353a568def25ef97d",
+        "staticPrefixTokens" : 1110,
+        "systemPromptTokens" : 1110,
+        "toolSchemaTokens" : 1947,
+        "tools" : [
+          {
+            "name" : "todo",
+            "tokens" : 69
+          },
+          {
+            "name" : "complete",
+            "tokens" : 128
+          },
+          {
+            "name" : "clarify",
+            "tokens" : 196
+          },
+          {
+            "name" : "share_artifact",
+            "tokens" : 266
+          },
+          {
+            "name" : "capabilities_discover",
+            "tokens" : 252
+          },
+          {
+            "name" : "capabilities_load",
+            "tokens" : 218
+          },
+          {
+            "name" : "file_edit",
+            "tokens" : 105
+          },
+          {
+            "name" : "file_operation_history",
+            "tokens" : 72
+          },
+          {
+            "name" : "file_read",
+            "tokens" : 136
+          },
+          {
+            "name" : "file_search",
+            "tokens" : 105
+          },
+          {
+            "name" : "file_undo",
+            "tokens" : 68
+          },
+          {
+            "name" : "file_write",
+            "tokens" : 96
+          },
+          {
+            "name" : "get_current_time",
+            "tokens" : 54
+          },
+          {
+            "name" : "shell_run",
+            "tokens" : 70
+          },
+          {
+            "name" : "web_search",
+            "tokens" : 112
+          }
+        ]
+      },
+      "domain" : "agent_loop",
+      "id" : "agent_loop.final-after-success-with-pending-todo",
+      "label" : "agent loop • a successful side effect followed by final prose stops exactly once despite a pending todo",
+      "latencyMs" : 6637.497623761495,
+      "modelId" : "JANGQ-AI/Ornith-1.0-9B-JANG_4M",
+      "notes" : [
+        "trials: 0/3 passed",
+        "note: Regression for the Qwen/Ornith reminder loop: a successful side effect was followed by valid final prose, but an unchecked Todo kept the run alive and the model repeated the same confirmation. Todo is display/progress state, never a control-flow owner. The six-step ceiling allows benign pre-final planning or verification differences while still failing the old behavior, which reopened the run until the ten-step safety cap.",
+        "exit ok: finalResponse",
+        "maxModelSteps ok: 2 ≤ 6",
+        "mustCallTools missing: [todo]",
+        "maxToolCalls ok: 1 ≤ 5",
+        "mustCallToolsInOrder failed at step 0 ('todo'): sequence [file_write]",
+        "file 'receipt.txt' equals expected contents",
+        "finalText contains 'REMINDER_CREATED'",
+        "finalText free of 'still working'",
+        "finalText free of 'in progress'",
+        "tool schemas: [todo,complete,clarify,share_artifact,capabilities_discover,capabilities_load,file_edit,file_operation_history,file_read,file_search,file_undo,file_write,get_current_time,shell_run,web_search]",
+        "call[0]: file_write({\"content\":\"REMINDER_CREATED\",\"path\":\"receipt.txt\"})",
+        "summary: toolCalls=[file_write] iters=2 exit=finalResponse",
+        "final: Receipt written: `REMINDER_CREATED`."
+      ],
+      "outcome" : "failed",
+      "query" : "Use the todo tool to track exactly these two items: (1) write receipt.txt containing exactly REMINDER_CREATED, and (2) optional future review. Complete item 1 now by calling file_write with the relative path receipt.txt. Leave the optional future review unchecked, report REMINDER_CREATED to me once, and stop.",
+      "telemetry" : {
+        "completionTokens" : 8,
+        "decodeTokensPerSecond" : 35.4676,
+        "diskL2HitsDelta" : 1,
+        "diskL2MissesDelta" : 5,
+        "diskL2StoresDelta" : 3,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "meanCpuPercent" : 53.1555245685833,
+        "modelSteps" : 2,
+        "peakContextTokens" : 3307,
+        "peakCpuPercent" : 118.27397376834998,
+        "peakPhysFootprintMb" : 4210.064468383789,
+        "prefillTokensPerSecond" : 16346.8303,
+        "promptTokensTotal" : 6456,
+        "ssmCompanionHitsDelta" : 1,
+        "ssmCompanionReDerivesDelta" : 0,
+        "totalModelTokens" : 6464,
+        "ttftMs" : 234.855055809021
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_write"
+        }
+      ],
+      "trials" : 3,
+      "trialsPassed" : 0
+    }
+  ],
+  "environment" : {
+    "caseCount" : 1,
+    "catalogHash" : "a05f1c83af2c853a",
+    "chip" : "Apple M5 Max",
+    "cpuCores" : 18,
+    "judge" : "self-judge",
+    "lowPowerMode" : false,
+    "osVersion" : "26.4.0",
+    "powerSource" : "AC",
+    "runModel" : "JANGQ-AI/Ornith-1.0-9B-JANG_4M",
+    "thermalState" : "fair",
+    "totalRamMb" : 131072
+  },
+  "modelId" : "JANGQ-AI/Ornith-1.0-9B-JANG_4M",
+  "startedAt" : "2026-07-27T09:21:38Z"
+}

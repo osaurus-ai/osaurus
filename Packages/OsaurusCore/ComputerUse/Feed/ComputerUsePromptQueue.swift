@@ -80,9 +80,22 @@ public final class ComputerUsePromptQueue: ObservableObject {
             let ceiling = autoApprove[toolCallId]?[AutonomyPolicy.normalize(app)],
             preview.effect <= ceiling
         {
+            ComputerUseTraceLog.recordConfirmationQueue(
+                toolCallId: toolCallId,
+                requestId: UUID(),
+                event: "auto_approved",
+                preview: preview,
+                approved: true
+            )
             return true
         }
         let request = ConfirmRequest(toolCallId: toolCallId, preview: preview)
+        ComputerUseTraceLog.recordConfirmationQueue(
+            toolCallId: toolCallId,
+            requestId: request.id,
+            event: "enqueued",
+            preview: preview
+        )
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
                 if Task.isCancelled {
@@ -101,6 +114,15 @@ public final class ComputerUsePromptQueue: ObservableObject {
 
     /// Resolve a specific pending request (user tapped approve/deny).
     public func resolve(id: UUID, approved: Bool) {
+        if let request = pending.first(where: { $0.id == id }) {
+            ComputerUseTraceLog.recordConfirmationQueue(
+                toolCallId: request.toolCallId,
+                requestId: request.id,
+                event: "resolved",
+                preview: request.preview,
+                approved: approved
+            )
+        }
         pending.removeAll { $0.id == id }
         guard let continuation = continuations.removeValue(forKey: id) else { return }
         continuation.resume(returning: approved)
@@ -111,6 +133,13 @@ public final class ComputerUsePromptQueue: ObservableObject {
     /// preview has no app (nothing safe to scope the blanket approval to).
     public func resolveApprovingRest(id: UUID) {
         guard let request = pending.first(where: { $0.id == id }) else { return }
+        ComputerUseTraceLog.recordConfirmationQueue(
+            toolCallId: request.toolCallId,
+            requestId: request.id,
+            event: "approve_remaining",
+            preview: request.preview,
+            approved: true
+        )
         if let app = request.preview.appName, !app.isEmpty {
             let key = AutonomyPolicy.normalize(app)
             var perApp = autoApprove[request.toolCallId] ?? [:]

@@ -59,6 +59,46 @@ struct ResolveExecutionModeTests {
             #expect(mode.allowsHostReadTools)
             #expect(mode.hostReadContext?.rootPath == folder.rootPath)
             #expect(mode.folderContext == nil)
+            // Default is read-only: no write grant unless opted in.
+            #expect(!mode.allowsHostWriteTools)
+        }
+    }
+
+    @Test
+    func writeGrant_flowsIntoCombinedModeOnlyWithAFolder() async {
+        await SandboxTestLock.shared.run {
+            registerSandboxExec()
+            defer { ToolRegistry.shared.unregisterAllSandboxTools() }
+
+            // Folder + grant → writable combined mode.
+            let writable = ToolRegistry.shared.resolveExecutionMode(
+                folderContext: sampleFolderContext(),
+                autonomousEnabled: true,
+                allowHostFolderWrites: true
+            )
+            #expect(writable.usesSandboxTools)
+            #expect(writable.allowsHostReadTools)
+            #expect(writable.allowsHostWriteTools)
+
+            // Grant without a folder is inert (nothing to write).
+            let noFolder = ToolRegistry.shared.resolveExecutionMode(
+                folderContext: nil,
+                autonomousEnabled: true,
+                allowHostFolderWrites: true
+            )
+            #expect(noFolder.usesSandboxTools)
+            #expect(!noFolder.allowsHostWriteTools)
+
+            // Grant in plain folder mode (autonomous off) resolves to
+            // `.hostFolder`, which is natively writable — the combined
+            // write grant never applies there.
+            let plainFolder = ToolRegistry.shared.resolveExecutionMode(
+                folderContext: sampleFolderContext(),
+                autonomousEnabled: false,
+                allowHostFolderWrites: true
+            )
+            #expect(plainFolder.usesHostFolderTools)
+            #expect(!plainFolder.allowsHostWriteTools)
         }
     }
 

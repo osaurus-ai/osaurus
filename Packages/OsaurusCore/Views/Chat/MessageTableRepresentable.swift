@@ -32,7 +32,18 @@ enum MessageSection: Hashable {
 /// NSScrollView subclass that centers message content at up to `maxContentWidth`
 /// while keeping the scrollbar pinned to the view's right edge.
 final class CenteredMessageScrollView: NSScrollView {
-    var maxContentWidth: CGFloat = 1100
+    /// Shared cap so overlays that should visually align with the thread
+    /// (e.g. the floating Todo block) can match the table's content width.
+    static let defaultMaxContentWidth: CGFloat = 1100
+    var maxContentWidth: CGFloat = CenteredMessageScrollView.defaultMaxContentWidth
+
+    /// Content width the last `sizeLastColumnToFit()` ran at. `tile()` fires
+    /// on every scroll/layout pass, and `sizeLastColumnToFit()` makes
+    /// NSTableView re-derive its frame via `_totalHeightOfTableView` — a
+    /// `heightOfRow` delegate walk over every row. On long conversations
+    /// that walk per tile pass adds up to visible main-thread hangs, so the
+    /// column fit only reruns when the effective width actually changes.
+    private var lastFittedContentWidth: CGFloat = -1
 
     override func tile() {
         let hInset = max(0, (bounds.width - maxContentWidth) / 2)
@@ -52,7 +63,11 @@ final class CenteredMessageScrollView: NSScrollView {
             f.origin.x = bounds.width - f.width
             vs.frame = f
         }
-        (documentView as? NSTableView)?.sizeLastColumnToFit()
+        let contentWidth = contentSize.width
+        if contentWidth != lastFittedContentWidth {
+            lastFittedContentWidth = contentWidth
+            (documentView as? NSTableView)?.sizeLastColumnToFit()
+        }
     }
 }
 
@@ -208,8 +223,18 @@ struct MessageTableRepresentable: NSViewRepresentable {
             }
         }
 
-        // ensure the table column fills the (now-inset) clip view width
-        coordinator.tableView?.sizeLastColumnToFit()
+        // Ensure the table column fills the (now-inset) clip view width.
+        // Only when the clip width actually changed: `sizeLastColumnToFit`
+        // walks the table's layout direction machinery and runs on every
+        // updateNSView otherwise (per streaming token), which has shown up
+        // in app-hang reports.
+        if let tableView = coordinator.tableView {
+            let clipWidth = scrollView.contentView.bounds.width
+            if coordinator.lastFitColumnClipWidth != clipWidth {
+                coordinator.lastFitColumnClipWidth = clipWidth
+                tableView.sizeLastColumnToFit()
+            }
+        }
     }
 
     /// Break the hover closures (which capture the coordinator) and stop any
@@ -375,6 +400,9 @@ extension MessageTableRepresentable {
         /// Width last provided by SwiftUI (effectiveContentWidth, already clamped to maxContentWidth).
         /// Used by the frame-change debounce to avoid reading the clip view before tile() has run.
         var lastSwiftUIWidth: CGFloat = 100
+        /// Clip-view width the table column was last fitted to; gates
+        /// `sizeLastColumnToFit` in `updateNSView` to real width changes.
+        var lastFitColumnClipWidth: CGFloat = -1
 
         // MARK: Block State
 
@@ -607,14 +635,11 @@ extension MessageTableRepresentable {
             sessionStore.toggle(id)
             expandedIds = sessionStore.expandedIds
 
-            // find row: block id (thinking, etc.) or tool call id inside a toolCallGroup block
+            // find row: block id (thinking, etc.), tool call id inside a
+            // toolCallGroup block, or either nested in an activity rollup
             let row = blockIds.firstIndex(where: { bid in
                 guard let b = blockLookup[bid] else { return false }
-                if b.id == id { return true }
-                if case .toolCallGroup(let calls) = b.kind {
-                    return calls.contains { $0.call.id == id }
-                }
-                return false
+                return b.rendersToggleId(id)
             })
 
             if let row {
@@ -721,6 +746,9 @@ extension MessageTableRepresentable {
             // fonts. capture the previous theme so we can force a reconfigure
             // (and height-cache flush) like the width change path does
             let previousThemeConfig = ctx.theme.customThemeConfig
+            // The global font zoom lives on the theme instance, not in the
+            // config, so compare it separately or zoom-only changes are missed.
+            let previousFontScale = (ctx.theme as? CustomizableTheme)?.fontScale
 
             // if width changed, invalidate the entire height cache
             if widthChanged { heightCache.removeAll() }
@@ -728,7 +756,9 @@ extension MessageTableRepresentable {
             ctx = context
             self.groupHeaderMap = groupHeaderMap
 
-            let themeChanged = previousThemeConfig != context.theme.customThemeConfig
+            let themeChanged =
+                previousThemeConfig != context.theme.customThemeConfig
+                || previousFontScale != (context.theme as? CustomizableTheme)?.fontScale
             if themeChanged { heightCache.removeAll() }
 
             // Editing state lives in the context, not in the blocks themselves.
@@ -1605,6 +1635,12 @@ extension MessageTableRepresentable {
                 if case .paragraph(_, _, true, _) = $0.kind { return true }
                 if case .thinking(_, _, true, _) = $0.kind { return true }
                 if case .typingIndicator = $0.kind { return true }
+                if case let .activityGroup(children) = $0.kind {
+                    return children.contains {
+                        if case .thinking(_, _, true, _) = $0.kind { return true }
+                        return false
+                    }
+                }
                 return false
             })?.id
         }

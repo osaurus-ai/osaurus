@@ -1,0 +1,155 @@
+omputer Use regressions after 0.22.7 improvements
+HarrisMagnum4
+OP
+ — Yesterday at 12:12 PM
+First of all, thanks for the rapid pace of development. I’ve been testing Osaurus extensively on an M1 MacBook Air (16 GB RAM), and 0.22.7 is a noticeable improvement.
+
+Improvements
+
+Computer Use now reliably opens applications (e.g. TextEdit) and correctly reports success instead of immediately failing. This is a significant improvement over previous releases.
+General responsiveness also feels better.
+
+Remaining issues
+
+Computer Use retries successful edits
+
+Prompt:
+
+Change the text in the file from “Hello from OracHQ” to “Hello again”.
+
+Expected:
+The text is replaced once and the task completes.
+
+Actual:
+The agent successfully types “Hello again” but appears not to recognise that it has succeeded. It retries the action multiple times, resulting in:
+
+Hello againHello againHello againHello again
+
+before eventually reporting Failed: Computer use.
+
+It looks like the success verification is failing and causing repeated execution of an already-completed action.
+
+⸻
+
+Unnecessary save attempt
+
+Another test:
+
+Prompt:
+
+Change the text in the file from “Hello World” to “Hello from OracHQ”
+
+The edit was performed correctly.
+
+However, after completing the requested edit, the agent automatically attempted to Save the document, even though I hadn’t requested that. The save workflow then failed, causing the overall task to be marked as failed.
+
+It would be better if the task terminated successfully immediately after completing the requested edit unless saving was explicitly requested.
+
+⸻
+
+Overall, I think 0.22.7 is a big step forward. The remaining issues now seem to be around task completion and success detection rather than basic Computer Use functionality.
+
+Thanks again for all the work!
+dealignai — Yesterday at 2:01 PM
+What model are you testing?
+If this is the smaller applescript jang6m I really can't stress enough; this is a sub 1b parameter active model and you really can't be expecting too much from this one
+HarrisMagnum4
+OP
+ — Yesterday at 3:26 PM
+I’m pretty confident it was the AppleScript 16B model. That’s my current default, and we switched back to it specifically to test the 0.22.7 update. I can’t be 100% certain because I deleted the previous test chat, but I’m fairly confident it wasn’t the 8B model.
+
+The behaviour was actually much improved:
+
+It opened TextEdit correctly.
+It edited the document correctly.
+The issue was that after successfully completing the edit, it either retried the edit (resulting in duplicate text) or unnecessarily entered the Save workflow, eventually reporting failure.
+
+If it helps, I’m happy to rerun the exact same test on both the 8B and 16B models and compare the results.
+dealignai — Yesterday at 5:22 PM
+do you mind giving me exact step by step way to reproduce with it?
+dealignai — Yesterday at 6:36 PM
+i think this is an issue with the recent changes regarding whether reasonino is default on or not for a model
+i made them to be naturally used without reasoning
+been trying to reproduce according to what you said, will push a fix out
+HarrisMagnum4
+OP
+ — 2:00 AM
+Sure.
+
+Environment
+
+Osaurus 0.22.7
+AppleScript 16B
+Default Computer Use settings
+Confirm each script enabled
+
+Steps
+
+Open TextEdit manually.
+Create a new blank document.
+Type Hello World.
+Return to Osaurus.
+Prompt:  Change the text in the file from "Hello World" to "Hello from OracHQ". Expected
+
+The text should be replaced once and the task should finish successfully.
+
+Actual
+
+The edit succeeds.
+The agent sometimes attempts to Save even though saving wasn’t requested, causing the task to fail.
+
+or
+
+The agent repeatedly performs the edit, resulting in duplicated text (e.g. Hello againHello againHello again) before reporting failure. Hope that helps. Thanks :osaurus_grow:
+HarrisMagnum4
+OP
+ — 7:34 AM
+Current observations with AppleScript 16B on 0.22.8:
+
+Opening TextEdit alone often succeeds.
+Editing existing text sometimes succeeds.
+Creating a brand-new document is inconsistent.
+Some runs stall until the step limit is reached.
+Some runs generate actions for the wrong UI state (e.g. filename text while targeting the document).
+A simple prompt like “Open TextEdit and create a new plain text document” can hang until manually stopped.
+HarrisMagnum4
+OP
+ — 7:42 AM
+Another observation on 0.22.8 (AppleScript 16B):
+
+I instructed Osaurus only to open TextEdit. The task eventually failed, but TextEdit contained the text:
+
+Hello, this is a test.
+
+I never requested this text. It appears to be inserting placeholder/example text rather than the user’s requested content.
+HarrisMagnum4
+OP
+ — 7:52 AM
+Two further atomic tests on 0.22.8 / AppleScript 16B:
+
+Prompt: open textedit
+Result: Stopped: Repeated the same action (Click mark 88) 4 times without progress.
+
+Prompt: Create New Document in TextEdit
+Result: The model could not produce a valid action: Missing required property: verb.
+
+These were separate, very simple prompts. This suggests both repeated-action detection and malformed action generation are still occurring independently of longer workflows.
+tpae — 10:08 AM
+Thank you for sharing your findings. From my experience with AppleScript, it is flaky by nature and doesn’t always work reliably, even if code was written to be correct and executed properly
+It is interesting though to see what the model is trying to do. Have you tried giving it some more context?
+HarrisMagnum4
+OP
+ — 4:10 PM
+Thanks for the explanation—that makes sense, and I appreciate AppleScript itself can be unreliable.
+
+I have been trying to keep the tests as atomic as possible to separate AppleScript limitations from planner/model behaviour.
+
+The interesting cases for me weren’t so much AppleScript failing to click a button, but things like:
+
+generating placeholder text that I never requested (“Hello, this is a test”),
+producing an invalid action (missing verb),
+confusing the document with the Save dialog,
+or repeatedly clicking the same UI element without making progress.
+
+I’ll keep testing with very small, reproducible prompts and post anything that seems deterministic. Overall though, 0.22.7/0.22.8 are definitely a step forward compared to what I was seeing a few days ago. :osaurus_read:
+And yes. I tried both very explicit prompts (“Open TextEdit, create a new plain text document…”) and very small atomic prompts (“Open TextEdit”, “Create New Document in TextEdit”). The atomic prompts were intended to isolate where things start to go wrong. :osaurus_grow:

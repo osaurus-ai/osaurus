@@ -3,6 +3,7 @@
 //  OsaurusRepository
 //
 //  Regression coverage for the `current` symlink lifecycle:
+//    - atomic publication and rollback when the pointer swap fails
 //    - replacing dangling symlinks (the v1→v2 plugin upgrade bug)
 //    - the launch-time self-heal pass
 //
@@ -13,6 +14,10 @@ import XCTest
 @testable import OsaurusRepository
 
 final class PluginInstallManagerTests: XCTestCase {
+    private enum PublicationFailure: Error {
+        case injected
+    }
+
     private var tempRoot: URL!
     private var previousOverride: URL?
 
@@ -76,6 +81,25 @@ final class PluginInstallManagerTests: XCTestCase {
 
     private func sv(_ s: String) -> SemanticVersion { SemanticVersion.parse(s)! }
 
+    private func stagedCurrentEntries(pluginId: String) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(
+            atPath: PluginInstallManager.toolsPluginDirectory(pluginId: pluginId).path
+        ).filter { $0.hasPrefix(".current.") && $0.hasSuffix(".tmp") }
+    }
+
+    private func assertLayoutInvalid(
+        _ error: Error,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard let installError = error as? PluginInstallError else {
+            return XCTFail("Expected PluginInstallError, got \(error)", file: file, line: line)
+        }
+        guard case .layoutInvalid = installError else {
+            return XCTFail("Expected layoutInvalid, got \(installError)", file: file, line: line)
+        }
+    }
+
     // MARK: - updateCurrentSymlink
 
     /// Reproduces the v1→v2 upgrade bug: `current` points at a deleted version dir
@@ -121,6 +145,7 @@ final class PluginInstallManagerTests: XCTestCase {
             fm.fileExists(atPath: v1Dir.path),
             "Old version directory must not be touched by symlink update"
         )
+        XCTAssertEqual(try stagedCurrentEntries(pluginId: pluginId), [])
     }
 
     func test_updateCurrentSymlink_createsWhenAbsent() throws {
@@ -148,6 +173,117 @@ final class PluginInstallManagerTests: XCTestCase {
         try PluginInstallManager.updateCurrentSymlink(pluginId: pluginId, version: sv("1.0.0"))
 
         XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: link.path), "1.0.0")
+    }
+
+    func test_updateCurrentSymlink_replacesRegularFileAtomically() throws {
+        let fm = FileManager.default
+        let pluginId = "osaurus.time"
+        _ = pluginDir(pluginId)
+        let link = PluginInstallManager.currentSymlinkURL(pluginId: pluginId)
+        try Data("stale".utf8).write(to: link)
+
+        try PluginInstallManager.updateCurrentSymlink(pluginId: pluginId, version: sv("1.0.0"))
+
+        XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: link.path), "1.0.0")
+        XCTAssertEqual(try stagedCurrentEntries(pluginId: pluginId), [])
+    }
+
+    func test_replaceCurrentSymlink_failedCommitPreservesLivePointer() throws {
+        let fm = FileManager.default
+        let pluginId = "osaurus.rollback"
+        let oldVersion = try makeVersionDir(pluginId: pluginId, version: "1.0.0")
+        _ = try makeVersionDir(pluginId: pluginId, version: "2.0.0")
+        let link = PluginInstallManager.currentSymlinkURL(pluginId: pluginId)
+        try fm.createSymbolicLink(atPath: link.path, withDestinationPath: "1.0.0")
+        var commitAttempted = false
+
+        XCTAssertThrowsError(
+            try PluginInstallManager.replaceCurrentSymlink(
+                pluginId: pluginId,
+                version: sv("2.0.0")
+            ) { stagedPath, currentPath in
+                commitAttempted = true
+                XCTAssertEqual(
+                    try fm.destinationOfSymbolicLink(atPath: stagedPath),
+                    "2.0.0"
+                )
+                XCTAssertEqual(currentPath, link.path)
+                throw PublicationFailure.injected
+            }
+        ) { error in
+            self.assertLayoutInvalid(error)
+        }
+
+        XCTAssertTrue(commitAttempted)
+        XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: link.path), "1.0.0")
+        XCTAssertTrue(fm.fileExists(atPath: oldVersion.path))
+        XCTAssertEqual(try stagedCurrentEntries(pluginId: pluginId), [])
+    }
+
+    func test_replaceCurrentSymlink_failedFirstCommitLeavesPointerAbsent() throws {
+        let fm = FileManager.default
+        let pluginId = "osaurus.first-publication"
+        _ = pluginDir(pluginId)
+        let link = PluginInstallManager.currentSymlinkURL(pluginId: pluginId)
+
+        XCTAssertThrowsError(
+            try PluginInstallManager.replaceCurrentSymlink(
+                pluginId: pluginId,
+                version: sv("1.0.0")
+            ) { _, _ in
+                throw PublicationFailure.injected
+            }
+        ) { error in
+            self.assertLayoutInvalid(error)
+        }
+
+        XCTAssertNil(try? fm.destinationOfSymbolicLink(atPath: link.path))
+        XCTAssertEqual(try stagedCurrentEntries(pluginId: pluginId), [])
+    }
+
+    func test_replaceCurrentSymlink_failedCommitPreservesDanglingPointer() throws {
+        let fm = FileManager.default
+        let pluginId = "osaurus.dangling-rollback"
+        _ = pluginDir(pluginId)
+        let link = PluginInstallManager.currentSymlinkURL(pluginId: pluginId)
+        try fm.createSymbolicLink(atPath: link.path, withDestinationPath: "1.0.0")
+        XCTAssertFalse(fm.fileExists(atPath: link.path))
+
+        XCTAssertThrowsError(
+            try PluginInstallManager.replaceCurrentSymlink(
+                pluginId: pluginId,
+                version: sv("2.0.0")
+            ) { _, _ in
+                throw PublicationFailure.injected
+            }
+        ) { error in
+            self.assertLayoutInvalid(error)
+        }
+
+        XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: link.path), "1.0.0")
+        XCTAssertEqual(try stagedCurrentEntries(pluginId: pluginId), [])
+    }
+
+    func test_updateCurrentSymlink_refusesToReplaceDirectory() throws {
+        let fm = FileManager.default
+        let pluginId = "osaurus.invalid-current"
+        let link = PluginInstallManager.currentSymlinkURL(pluginId: pluginId)
+        try fm.createDirectory(at: link, withIntermediateDirectories: true)
+        let marker = link.appendingPathComponent("keep.txt", isDirectory: false)
+        try Data("keep".utf8).write(to: marker)
+
+        XCTAssertThrowsError(
+            try PluginInstallManager.updateCurrentSymlink(
+                pluginId: pluginId,
+                version: sv("2.0.0")
+            )
+        ) { error in
+            self.assertLayoutInvalid(error)
+        }
+
+        XCTAssertTrue(fm.fileExists(atPath: marker.path))
+        XCTAssertNil(try? fm.destinationOfSymbolicLink(atPath: link.path))
+        XCTAssertEqual(try stagedCurrentEntries(pluginId: pluginId), [])
     }
 
     // MARK: - repairDanglingCurrentSymlinks

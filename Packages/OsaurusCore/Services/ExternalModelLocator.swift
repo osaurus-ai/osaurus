@@ -134,6 +134,18 @@ enum ExternalModelLocator {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var registry: [String: Discovered]?
     nonisolated(unsafe) private static var lastReport: ScanReport?
+    /// Bumped on every `registry` mutation so read-side memo caches (e.g.
+    /// `ModelManager`'s name-match memo) can invalidate without observing
+    /// notifications.
+    nonisolated(unsafe) private static var registryGen: UInt64 = 0
+
+    /// Monotonic version of the registry contents. Two equal values guarantee
+    /// `models()` would return the same set.
+    static func registryGeneration() -> UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return registryGen
+    }
 
     /// Test hook: override the scan roots so unit tests don't depend on a
     /// developer's real `~/.cache/huggingface`. When set, only these roots
@@ -163,21 +175,56 @@ enum ExternalModelLocator {
         return url
     }
 
+    /// Memoized result of `models()` for the registry generation it was built
+    /// from. `models()` is on the 2s RAM-feasibility tick's call path (via
+    /// `ModelManager.localModelsSnapshotNonBlocking`), and rebuilding it reads
+    /// each bundle's `config.json` for `model_type` and re-parses every
+    /// friendly name — repeated main-thread work that shows up in app-hang
+    /// reports under memory pressure.
+    nonisolated(unsafe) private static var modelsMemo: [MLXModel]?
+    nonisolated(unsafe) private static var modelsMemoGen: UInt64 = .max
+
     /// Catalog entries for every registered external model.
     static func models() -> [MLXModel] {
         lock.lock()
+        // Load first: the lazy first-load inside `loadedLocked()` bumps
+        // `registryGen`, so the gen must be captured after it.
         let entries = Array(loadedLocked().values)
+        let gen = registryGen
+        if modelsMemoGen == gen, let memo = modelsMemo {
+            lock.unlock()
+            return memo
+        }
         lock.unlock()
-        return entries.map { entry in
-            MLXModel(
+        let built = entries.map { entry in
+            let bundleDirectory = URL(fileURLWithPath: entry.bundlePath, isDirectory: true)
+            return MLXModel(
                 id: entry.id,
                 name: ModelMetadataParser.friendlyName(from: entry.id),
                 description: "Found in \(entry.source).",
                 downloadURL: "https://huggingface.co/\(entry.id)",
-                bundleDirectory: URL(fileURLWithPath: entry.bundlePath, isDirectory: true),
+                // The persisted external registry intentionally stores only
+                // identity/path/provenance. Rehydrate architecture from the
+                // authoritative bundle here; otherwise an external model is
+                // local and loadable but loses `model_type` in the picker.
+                // Chat-family routing and structural agent contracts would
+                // then silently differ from the same bundle installed under
+                // Osaurus's managed model directory.
+                modelType: VLMDetection.readModelType(at: bundleDirectory),
+                bundleDirectory: bundleDirectory,
                 externalSource: entry.source
             )
         }
+        lock.lock()
+        // Store only if the registry didn't move while we were building
+        // (the build reads disk outside the lock); a stale build is simply
+        // not cached and the next caller rebuilds against the newer gen.
+        if registryGen == gen {
+            modelsMemo = built
+            modelsMemoGen = gen
+        }
+        lock.unlock()
+        return built
     }
 
     /// Most recent external-model scan report, including skipped candidates.
@@ -199,6 +246,7 @@ enum ExternalModelLocator {
         var map = loadedLocked()
         let removed = map.removeValue(forKey: id.lowercased()) != nil
         registry = map
+        if removed { registryGen &+= 1 }
         lock.unlock()
         if removed {
             persist(map)
@@ -250,7 +298,10 @@ enum ExternalModelLocator {
             map.removeValue(forKey: key)
             removed = true
         }
-        if removed { registry = map }
+        if removed {
+            registry = map
+            registryGen &+= 1
+        }
         lock.unlock()
 
         if removed {
@@ -276,6 +327,7 @@ enum ExternalModelLocator {
         lock.lock()
         let changed = registry == nil || registry! != discovered
         registry = discovered
+        if changed { registryGen &+= 1 }
         lastReport = report
         lock.unlock()
 
@@ -801,6 +853,7 @@ enum ExternalModelLocator {
         if let registry { return registry }
         let loaded = loadFromDisk()
         registry = loaded
+        registryGen &+= 1
         return loaded
     }
 
@@ -833,6 +886,7 @@ enum ExternalModelLocator {
         lock.lock()
         registry = nil
         lastReport = nil
+        registryGen &+= 1
         lock.unlock()
     }
 }

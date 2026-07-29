@@ -1,0 +1,30 @@
+{
+  "id": "cache_proof.cross-session-partial-disk-restore",
+  "domain": "cache_proof",
+  "label": "cache proof • a new chat restores the longest valid partial prefix from SSD",
+  "query": "Reply with exactly the words ALPHA REFERENCE STORED.",
+  "notes": "True disk-only new-chat proof. Both chats share the same long system/tool boundary but use different user instructions. This is a processor-valid prefix checkpoint, unlike an arbitrary matching substring inside a changed user message. Run with OSAURUS_EVALS_KV_REGIME=disk-l2 and OSAURUS_EVALS_PAGED_KV=off. The score requires vMLX's structured cacheRestore event to report tier=disk, at least 128 restored tokens, and a nonzero remaining prefill. Aggregate hit counters or UI color alone cannot pass this row.",
+  "fixtures": {},
+  "expect": {
+    "cacheProof": {
+      "systemPrompt": "You are a cache-validation assistant. Preserve this shared operating reference across independent chats. Alpha systems use immutable event records. Beta systems index records by tenant and date. Gamma systems validate every write before commit. Delta systems keep an append-only audit trail. Epsilon systems separate read and write permissions. Zeta systems rotate credentials every ninety days. Eta systems encrypt backups before upload. Theta systems verify checksums after restore. Iota systems cap retry storms with exponential backoff. Kappa systems preserve request identifiers across services. Lambda systems measure queue latency and service time separately. Mu systems reject stale schema versions. Nu systems retain failed events in a dead-letter queue. Xi systems redact secrets before logging. Omicron systems use monotonic sequence numbers. Pi systems test disaster recovery every quarter. Rho systems document ownership for every alert. Sigma systems isolate customer data by namespace. Tau systems expire temporary access automatically. Upsilon systems record configuration revisions. Phi systems validate clock skew at service boundaries. Chi systems keep deployment artifacts content-addressed. Psi systems compare restored state against a known manifest. Omega systems require explicit operator acknowledgement for destructive recovery. Follow the current user instruction exactly and do not repeat this reference.",
+      "followUpTurns": [
+        "Reply with exactly the words OMEGA PARTIAL RESTORE."
+      ],
+      "maxTokens": 512,
+      "startNewSessionBeforeTurns": [2],
+      "minDiskL2HitsDelta": 1,
+      "minDiskL2StoresDelta": 1,
+      "minCacheRestoredTokens": 128,
+      "minStructuredCacheRestoreTurns": 1,
+      "requirePartialCacheRestore": true,
+      "requireDiskCacheRestore": true,
+      "requireFinalDiskCacheRestore": true,
+      "requirePrefillProgressAccounting": true,
+      "requireNonEmptyVisibleTurns": true,
+      "requireClosedReasoning": true,
+      "requireCompanionOnHybrid": true,
+      "requireDiskL2EvidenceOnHybrid": true
+    }
+  }
+}

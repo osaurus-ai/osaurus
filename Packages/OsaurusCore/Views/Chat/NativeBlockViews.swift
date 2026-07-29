@@ -285,9 +285,11 @@ final class NativeTypingIndicatorView: NSView {
     private func updatePrefillBadge(_ progress: PrefillProgressState?) {
         guard let progress, progress.totalUnitCount > 0 else {
             prefillBadge.isHidden = true
+            prefillTitleLabel.stringValue = L("Prefill")
             prefillCountLabel.stringValue = ""
             return
         }
+        prefillTitleLabel.stringValue = progress.stage.localizedDisplayTitle
         prefillCountLabel.stringValue = "\(progress.completedUnitCount)/\(progress.totalUnitCount)"
         prefillBadge.isHidden = false
         // The counter lives inside the RAM stack, so make sure that stack is

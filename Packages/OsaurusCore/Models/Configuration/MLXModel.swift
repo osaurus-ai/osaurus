@@ -147,6 +147,7 @@ struct MLXModel: Identifiable, Codable {
             // Precision / quantization tokens.
             if t.range(of: #"^mxfp\d+$"#, options: .regularExpression) != nil { return true }
             if t.range(of: #"^\d+-?bit$"#, options: .regularExpression) != nil { return true }
+            if t == "ternary" || t == "jang" { return true }
             if t == "fp16" || t == "bf16" || t == "fp32" { return true }
             if t.range(of: #"^jangtq\d*$"#, options: .regularExpression) != nil { return true }
             if t.range(of: #"^jang_?\d+[a-z]?$"#, options: .regularExpression) != nil { return true }
@@ -518,9 +519,10 @@ struct MLXModel: Identifiable, Codable {
         // and under-estimated every MXFP8 model at ~half its real footprint.
         if quant.contains("mxfp8") || quant.contains("fp8") { return 1.0 }
         if quant.contains("mxfp4") { return 0.5 }
+        if quant == "ternary" { return 0.25 }
 
         let bitWidths: [(String, Double)] = [
-            ("2-bit", 0.25), ("3-bit", 0.375), ("4-bit", 0.5),
+            ("1-bit", 0.125), ("2-bit", 0.25), ("3-bit", 0.375), ("4-bit", 0.5),
             ("5-bit", 0.625), ("6-bit", 0.75), ("8-bit", 1.0),
         ]
         for (label, bytes) in bitWidths {
@@ -593,18 +595,20 @@ struct MLXModel: Identifiable, Codable {
         return .tooLarge
     }
 
-    /// Compact "MMM yyyy" form of `releasedAt`, e.g. "Apr 2026". Locale
-    /// is pinned to `en_US_POSIX` so the format stays stable; the
-    /// localized prefix ("Released …") lives at the call site.
+    /// Compact month-and-year form of `releasedAt`, e.g. "Apr 2026" in English
+    /// and "2026年4月" in Chinese. The localized prefix ("Released …") lives at
+    /// the call site, so this half has to follow the same locale or the two
+    /// halves disagree.
     var formattedReleaseMonth: String? {
         guard let date = releasedAt else { return nil }
         return MLXModel.releaseMonthFormatter.string(from: date)
     }
 
+    /// Localized template so month name, order and separators follow the locale.
+    /// Mirrors `NativeMessageCellView.timestampFormatter`.
     private static let releaseMonthFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "MMM yyyy"
+        f.setLocalizedDateFormatFromTemplate("MMMyyyy")
         return f
     }()
 }

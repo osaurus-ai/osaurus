@@ -86,13 +86,24 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             let connection = try resolveConnection(connectionId)
             switch connection.kind {
             case .discord:
-                var payload = await discordService.diagnostics().dictionary
+                let diagnostics = await discordService.diagnostics()
+                var payload = diagnostics.dictionary
                 payload["connection_id"] = connection.id
                 payload["kind"] = connection.kind.rawValue
                 payload["standard_actions"] = connection.supportedActions.map(\.rawValue)
                 payload["action_policies"] = actionPolicies(for: connection).map(\.dictionary)
                 payload["relay_receive_policy"] = relayReceivePolicy(for: connection).dictionary
                 payload["message_store"] = discordService.messageStoreDiagnostics()
+                payload["transport_health"] = await AgentChannelTransportHealthCenter.shared
+                    .allStates(connectionId: connection.id)
+                    .map(\.dictionary)
+                // A token alone is not receive capability: polling only runs
+                // once readable channels and authorized senders exist too.
+                payload["receive_transport"] = [
+                    "status": diagnostics.receiveReady ? "configured" : "not_configured",
+                    "transport_id": DiscordPollingTransportRuntime.transportId,
+                    "summary": "Discord receive polling starts when a bot token, readable channels, and authorized sender IDs are configured.",
+                ]
                 return payload
             case .slack:
                 var payload = await slackService.diagnostics().dictionary
@@ -199,7 +210,9 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 [
                     "id": row["id"] ?? "",
                     "name": row["name"] ?? "",
-                    "kind": "room",
+                    // Slack's real conversation type (channel / private_channel /
+                    // im / mpim) so pickers and rows can label DMs as DMs.
+                    "kind": row["type"] ?? "room",
                     "space_id": spaceId,
                     "connection_id": connection.id,
                     "read_allowed": row["read_allowed"] ?? false,
@@ -212,7 +225,9 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 [
                     "id": row["id"] ?? "",
                     "name": row["name"] ?? "",
-                    "kind": row["kind"] ?? "chat",
+                    // Telegram's chat type (private / group / supergroup /
+                    // channel) when known, else the generic kind.
+                    "kind": row["type"] ?? row["kind"] ?? "chat",
                     "space_id": spaceId,
                     "connection_id": connection.id,
                     "read_allowed": row["read_allowed"] ?? false,
@@ -252,7 +267,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
     }
 
     func readThread(connectionId: String?, threadId: String, limit: Int?) async throws -> [String: Any] {
-        let connection = try requireAction(.readMessages, connectionId: connectionId)
+        let connection = try requireAction(.readThread, connectionId: connectionId)
         switch connection.kind {
         case .discord:
             var payload = try await discordService.readThread(threadId: threadId, limit: limit)
@@ -442,6 +457,182 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         }
     }
 
+    func editMessage(
+        connectionId: String?,
+        roomId: String,
+        messageId: String,
+        content: String,
+        confirmSend: Bool
+    ) async throws -> [String: Any] {
+        let connection = try requireAction(.editMessage, connectionId: connectionId)
+        try requireGlobalWritesEnabled()
+        var payload: [String: Any]
+        switch connection.kind {
+        case .discord:
+            payload = try await discordService.editMessage(
+                channelId: roomId,
+                messageId: messageId,
+                content: content,
+                confirmSend: confirmSend
+            )
+        case .slack:
+            payload = try await slackService.editMessage(
+                channelId: roomId,
+                messageId: messageId,
+                content: content,
+                confirmSend: confirmSend
+            )
+        case .telegram:
+            payload = try await telegramService.editMessage(
+                chatId: roomId,
+                messageId: messageId,
+                content: content,
+                confirmSend: confirmSend
+            )
+        case .customHTTP:
+            payload = try await customJSONRunner.editMessage(
+                connection: connection,
+                roomId: roomId,
+                messageId: messageId,
+                content: content,
+                confirmSend: confirmSend
+            )
+        }
+        payload["connection_id"] = connection.id
+        payload["room_id"] = roomId
+        payload["standard_kind"] = "message_edited"
+        return payload
+    }
+
+    func deleteMessage(
+        connectionId: String?,
+        roomId: String,
+        messageId: String,
+        confirmSend: Bool
+    ) async throws -> [String: Any] {
+        let connection = try requireAction(.deleteMessage, connectionId: connectionId)
+        try requireGlobalWritesEnabled()
+        var payload: [String: Any]
+        switch connection.kind {
+        case .discord:
+            payload = try await discordService.deleteMessage(
+                channelId: roomId,
+                messageId: messageId,
+                confirmSend: confirmSend
+            )
+        case .slack:
+            payload = try await slackService.deleteMessage(
+                channelId: roomId,
+                messageId: messageId,
+                confirmSend: confirmSend
+            )
+        case .telegram:
+            payload = try await telegramService.deleteMessage(
+                chatId: roomId,
+                messageId: messageId,
+                confirmSend: confirmSend
+            )
+        case .customHTTP:
+            payload = try await customJSONRunner.deleteMessage(
+                connection: connection,
+                roomId: roomId,
+                messageId: messageId,
+                confirmSend: confirmSend
+            )
+        }
+        payload["connection_id"] = connection.id
+        payload["room_id"] = roomId
+        payload["standard_kind"] = "message_deleted"
+        return payload
+    }
+
+    func setReaction(
+        connectionId: String?,
+        roomId: String,
+        messageId: String,
+        reaction: String,
+        adding: Bool,
+        confirmSend: Bool
+    ) async throws -> [String: Any] {
+        let action: AgentChannelAction = adding ? .addReaction : .removeReaction
+        let connection = try requireAction(action, connectionId: connectionId)
+        try requireGlobalWritesEnabled()
+        var payload: [String: Any]
+        switch connection.kind {
+        case .discord:
+            payload = try await discordService.setReaction(
+                channelId: roomId,
+                messageId: messageId,
+                reaction: reaction,
+                adding: adding,
+                confirmSend: confirmSend
+            )
+        case .slack:
+            payload = try await slackService.setReaction(
+                channelId: roomId,
+                messageId: messageId,
+                reaction: reaction,
+                adding: adding,
+                confirmSend: confirmSend
+            )
+        case .telegram:
+            payload = try await telegramService.setReaction(
+                chatId: roomId,
+                messageId: messageId,
+                reaction: reaction,
+                adding: adding,
+                confirmSend: confirmSend
+            )
+        case .customHTTP:
+            payload = try await customJSONRunner.setReaction(
+                connection: connection,
+                roomId: roomId,
+                messageId: messageId,
+                reaction: reaction,
+                adding: adding,
+                confirmSend: confirmSend
+            )
+        }
+        payload["connection_id"] = connection.id
+        payload["room_id"] = roomId
+        payload["standard_kind"] = adding ? "reaction_added" : "reaction_removed"
+        return payload
+    }
+
+    func sendTyping(
+        connectionId: String?,
+        roomId: String,
+        confirmSend: Bool
+    ) async throws -> [String: Any] {
+        let connection = try requireAction(.sendTyping, connectionId: connectionId)
+        try requireGlobalWritesEnabled()
+        var payload: [String: Any]
+        switch connection.kind {
+        case .discord:
+            payload = try await discordService.sendTyping(
+                channelId: roomId,
+                confirmSend: confirmSend
+            )
+        case .telegram:
+            payload = try await telegramService.sendTyping(
+                chatId: roomId,
+                confirmSend: confirmSend
+            )
+        case .customHTTP:
+            payload = try await customJSONRunner.sendTyping(
+                connection: connection,
+                roomId: roomId,
+                confirmSend: confirmSend
+            )
+        case .slack:
+            throw AgentChannelConnectionServiceError.unsupportedKind(connection.kind)
+        }
+        payload["connection_id"] = connection.id
+        payload["room_id"] = roomId
+        payload["standard_kind"] = "typing_sent"
+        return payload
+    }
+
     func authorizeInboundMessage(
         _ request: AgentChannelInboundMessageAuthorizationRequest,
         messageStore: AgentChannelMessageStore? = nil
@@ -563,6 +754,13 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         )
     }
 
+    /// Resolved read-only view of a connection id (native projection or
+    /// custom JSON row). Used by the proactive publish path to re-validate
+    /// a binding's destination without duplicating the projection logic.
+    func resolvedConnectionView(id: String) throws -> AgentChannelConnection {
+        try resolveConnection(id)
+    }
+
     private func requireAction(
         _ action: AgentChannelAction,
         connectionId: String?
@@ -617,10 +815,16 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 .listSpaces,
                 .listRooms,
                 .readMessages,
+                .readThread,
                 .searchMessages,
                 .draftMessage,
                 .sendMessage,
                 .replyThread,
+                .editMessage,
+                .deleteMessage,
+                .addReaction,
+                .removeReaction,
+                .sendTyping,
             ],
             spaceAllowlist: config.configuredGuildIds,
             readRoomAllowlist: config.readableChannelIds,
@@ -632,12 +836,25 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                     name: "bot_token",
                     keychainId: DiscordCredentialStore.botTokenKey
                 )
-            ]
+            ],
+            inboundAuthorization: AgentChannelInboundAuthorizationPolicy(
+                senderAllowlist: config.senderAllowlist,
+                roomAllowlist: config.readableChannelIds,
+                allowUnscopedSpaces: false,
+                allowBotMessages: false,
+                allowSelfMessages: false,
+                requireProviderEventId: true,
+                auditDecisionReason: "discord_receive_authorization"
+            )
         )
     }
 
     private func slackConnection() -> AgentChannelConnection {
         let config = slackService.configuration()
+        let workspaceTeamIds = config.workspaceAccounts.map(\.teamId)
+        let workspaceReadRooms = config.workspaceAccounts.flatMap(\.readableChannelIds)
+        let workspaceWriteRooms = config.workspaceAccounts.flatMap(\.writableChannelIds)
+        let workspaceSenders = config.workspaceAccounts.flatMap(\.senderAllowlist)
         return AgentChannelConnection(
             id: Self.slackConnectionId,
             name: "Slack",
@@ -648,14 +865,19 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 .listSpaces,
                 .listRooms,
                 .readMessages,
+                .readThread,
                 .searchMessages,
                 .draftMessage,
                 .sendMessage,
                 .replyThread,
+                .editMessage,
+                .deleteMessage,
+                .addReaction,
+                .removeReaction,
             ],
-            spaceAllowlist: config.configuredTeamIds,
-            readRoomAllowlist: config.readableChannelIds,
-            writeRoomAllowlist: config.writableChannelIds,
+            spaceAllowlist: config.configuredTeamIds + workspaceTeamIds,
+            readRoomAllowlist: config.readableChannelIds + workspaceReadRooms,
+            writeRoomAllowlist: config.writableChannelIds + workspaceWriteRooms,
             writeEnabled: config.writeEnabled,
             defaultReadLimit: config.defaultReadLimit,
             secrets: [
@@ -673,8 +895,8 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 ),
             ],
             inboundAuthorization: AgentChannelInboundAuthorizationPolicy(
-                senderAllowlist: config.senderAllowlist,
-                roomAllowlist: config.readableChannelIds,
+                senderAllowlist: config.senderAllowlist + workspaceSenders,
+                roomAllowlist: config.readableChannelIds + workspaceReadRooms,
                 allowUnscopedSpaces: config.configuredTeamIds.isEmpty,
                 allowBotMessages: false,
                 allowSelfMessages: false,
@@ -724,6 +946,11 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 .searchMessages,
                 .draftMessage,
                 .sendMessage,
+                .editMessage,
+                .deleteMessage,
+                .addReaction,
+                .removeReaction,
+                .sendTyping,
             ],
             spaceAllowlist: ["telegram"],
             readRoomAllowlist: config.readableChatIds,
@@ -831,12 +1058,13 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                     return (.unavailable, "No spaces are allowlisted for this connection.")
                 }
                 return (.available, nil)
-            case .readMessages, .searchMessages:
+            case .readMessages, .readThread, .searchMessages:
                 guard !connection.readRoomAllowlist.isEmpty else {
                     return (.unavailable, "No rooms are allowlisted for read access.")
                 }
                 return (.available, nil)
-            case .draftMessage, .sendMessage, .replyThread:
+            case .draftMessage, .sendMessage, .replyThread, .editMessage, .deleteMessage,
+                .addReaction, .removeReaction, .sendTyping:
                 guard connection.writeEnabled else {
                     return (.unavailable, "Write access is disabled for this connection.")
                 }
@@ -857,12 +1085,13 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                     return (.unavailable, "No spaces are allowlisted for this connection.")
                 }
                 return (.available, nil)
-            case .readMessages, .searchMessages:
+            case .readMessages, .readThread, .searchMessages:
                 guard !connection.readRoomAllowlist.isEmpty else {
                     return (.unavailable, "No rooms are allowlisted for read access.")
                 }
                 return (.available, nil)
-            case .draftMessage, .sendMessage, .replyThread:
+            case .draftMessage, .sendMessage, .replyThread, .editMessage, .deleteMessage,
+                .addReaction, .removeReaction, .sendTyping:
                 guard connection.writeEnabled else {
                     return (.unavailable, "Write access is disabled for this connection.")
                 }
@@ -886,6 +1115,27 @@ final class AgentChannelConnectionService: @unchecked Sendable {
                 inboundAuthorization: connection.inboundAuthorization
             )
         }
+        let dispatch: AgentChannelInboundDispatchConfiguration?
+        switch connection.kind {
+        case .slack:
+            dispatch = slackService.configuration().inboundDispatch
+        case .telegram:
+            dispatch = telegramService.configuration().inboundDispatch
+        case .discord:
+            dispatch = discordService.configuration().inboundDispatch
+        case .customHTTP:
+            dispatch = nil
+        }
+        if let dispatch, dispatch.isConfigured {
+            return AgentChannelRelayReceivePolicy(
+                status: .available,
+                reason: dispatch.autoReplyEnabled
+                    ? "Verified inbound messages dispatch to the selected agent and replies use existing write allowlists."
+                    : "Verified inbound messages dispatch to the selected agent; automatic provider replies are disabled.",
+                providerEventIdRequired: connection.inboundAuthorization.requireProviderEventId,
+                inboundAuthorization: connection.inboundAuthorization
+            )
+        }
         return AgentChannelRelayReceivePolicy(
             status: .unsupported,
             reason: "No live receive relay is registered for this connection.",
@@ -896,10 +1146,12 @@ final class AgentChannelConnectionService: @unchecked Sendable {
 
     private func dedupeKey(for action: AgentChannelAction) -> String? {
         switch action {
-        case .readMessages, .searchMessages:
+        case .readMessages, .readThread, .searchMessages:
             return "connection_id + room_id + provider_message_id"
-        case .sendMessage, .replyThread:
+        case .sendMessage, .replyThread, .editMessage, .deleteMessage, .addReaction, .removeReaction:
             return "provider_send_id + confirm_send_true"
+        case .sendTyping:
+            return "connection_id + room_id + short_time_window"
         case .diagnostics, .listSpaces, .listRooms, .draftMessage:
             return nil
         }

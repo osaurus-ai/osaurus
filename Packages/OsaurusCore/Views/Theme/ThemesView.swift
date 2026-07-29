@@ -579,7 +579,9 @@ struct ThemesView: View {
     }
 
     private var resultsSubtitle: String {
-        L("\(visibleThemes.count) of \(installedThemes.count) themes")
+        installedThemes.count == 1
+            ? L("\(visibleThemes.count) of 1 theme")
+            : L("\(visibleThemes.count) of \(installedThemes.count) themes")
     }
 
     // MARK: - Loading & Error States

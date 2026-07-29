@@ -21,7 +21,7 @@ struct SubagentConfigurationStoreTests {
         #expect(SubagentConfigurationStore.snapshot() == .default)
     }
 
-    @Test("save writes immediately and invalidated snapshot reloads")
+    @Test("save persists and invalidated snapshot reloads")
     func saveWritesAndReloads() async throws {
         let lease = await acquireSubagentStoreSandbox("agent-delegation-store")
         defer { lease.release() }
@@ -45,6 +45,7 @@ struct SubagentConfigurationStoreTests {
         )
 
         SubagentConfigurationStore.save(config)
+        SubagentConfigurationStore.flushPendingWrites()
 
         let file = sandbox.appendingPathComponent("agent-delegation.json")
         #expect(FileManager.default.fileExists(atPath: file.path))
@@ -103,11 +104,13 @@ struct SubagentConfigurationStoreTests {
         SubagentConfigurationStore.save(
             SubagentConfiguration(defaultImageGenerationModelId: "first")
         )
+        SubagentConfigurationStore.flushPendingWrites()
 
         SubagentConfigurationStore.setOverrideDirectory(second)
         SubagentConfigurationStore.save(
             SubagentConfiguration(defaultImageGenerationModelId: "second")
         )
+        SubagentConfigurationStore.flushPendingWrites()
 
         let firstData = try Data(contentsOf: first.appendingPathComponent("agent-delegation.json"))
         let secondData = try Data(contentsOf: second.appendingPathComponent("agent-delegation.json"))

@@ -21,6 +21,9 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
     let agentId: String
     let agentName: String
 
+    /// Registration runs plugin setup scripts inside the agent home.
+    var mutatesSandboxWorkspace: Bool { true }
+
     var parameters: JSONValue? {
         .object([
             "type": .string("object"),
@@ -221,7 +224,14 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
 
         var text: [String: String] = [:]
         var binary: [String] = []
-        let basePath = directory.standardizedFileURL.path
+        // Resolve symlinks on BOTH sides of the relative-path computation.
+        // The enumerator resolves symlinks in the URLs it yields, so when
+        // `directory` itself is reached through a symlink (e.g. the evals
+        // harness symlinks `container/` from its isolated root into the real
+        // container dir) an unresolved base no longer prefixes the resolved
+        // children — `dropFirst` then produced empty/garbage keys and
+        // registration failed with "Invalid file paths: Empty path".
+        let basePath = directory.resolvingSymlinksInPath().path
 
         for case let fileURL as URL in enumerator {
             guard
@@ -229,9 +239,9 @@ struct SandboxPluginRegisterTool: OsaurusTool, @unchecked Sendable {
                 values.isRegularFile == true
             else { continue }
 
-            let relativePath = String(
-                fileURL.standardizedFileURL.path.dropFirst(basePath.count + 1)
-            )
+            let resolvedPath = fileURL.resolvingSymlinksInPath().path
+            guard resolvedPath.hasPrefix(basePath + "/") else { continue }
+            let relativePath = String(resolvedPath.dropFirst(basePath.count + 1))
             if relativePath == "plugin.json" { continue }
 
             if let content = try? String(contentsOf: fileURL, encoding: .utf8) {

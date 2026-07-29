@@ -33,6 +33,108 @@ struct ChatConfigurationWarmModelsOnLoadTests {
     }
 }
 
+@Suite("ChatWarmupController prompt-shape rewarm")
+@MainActor
+struct ChatWarmupControllerPromptShapeTests {
+
+    @Test("settings prompt change survives send cancellation and warms the newest payload")
+    func settingsPromptChangeWarmsNewestPayload() async throws {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [ChatMessage(role: "system", content: "settings revision A")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|settings-a"
+        )
+
+        let controller = ChatWarmupController()
+        controller.scheduleWarmup(session: session, debounce: .zero)
+        for _ in 0 ..< 100 {
+            if controller.state == .warm { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        await controller.awaitInFlightWarmup()
+        #expect(engine.requestCount == 1)
+
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [ChatMessage(role: "system", content: "settings revision B")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|settings-b"
+        )
+        controller.handleContextShapeChange(session: session)
+
+        // `ChatSession.send` cancels ordinary scheduled warm-up work before
+        // its handshake. The settings rewarm is required work and must
+        // survive that exact operation.
+        controller.cancelScheduledWarmup()
+        await controller.awaitRequiredContextWarmup()
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.requestCount == 2)
+        let request = try #require(engine.lastRequest)
+        #expect(request.messages.first?.content == "settings revision B")
+        #expect(controller.state == .warm)
+        #expect(!controller.needsPreSendHandshake)
+    }
+
+    @Test("chat prompt-shape signal inventory includes app configuration changes")
+    func appConfigurationChangeIsPromptShapeSignal() {
+        #expect(
+            ChatSession.promptShapeNotificationNames.contains(
+                .appConfigurationChanged
+            )
+        )
+    }
+}
+
+@Suite("ChatSession immediate prompt-shape reconciliation", .serialized)
+@MainActor
+struct ChatSessionImmediatePromptShapeTests {
+
+    @Test("first preview primes a baseline without creating a required rewarm")
+    func firstPreviewIsInitializationNotRevision() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            session.agentId = Agent.defaultId
+
+            #expect(!session.reconcilePromptShapeBeforeSendForTests())
+            #expect(!session.warmupController.needsPreSendHandshake)
+        }
+    }
+
+    @Test("Settings Save then immediate Send sees the newest rendered prompt before debounce")
+    func immediateSendReconcilesCurrentPrompt() async throws {
+        try await ChatHistoryTestStorage.run {
+            var configuration = DefaultAgentConfigurationStore.load()
+            configuration.systemPrompt = "settings revision A"
+            DefaultAgentConfigurationStore.save(configuration)
+
+            let session = ChatSession()
+            session.agentId = Agent.defaultId
+
+            // Seed the same cached preview that made the live chip green.
+            _ = session.resyncBudgetEstimateForTests()
+
+            configuration.systemPrompt = "settings revision B"
+            DefaultAgentConfigurationStore.save(configuration)
+
+            // Do not flush the main queue or wait for the 80 ms Combine
+            // debounce. Production `send()` calls this exact reconciliation
+            // before checking whether it needs a warm-up handshake.
+            #expect(session.reconcilePromptShapeBeforeSendForTests())
+
+            // The delayed notification will see identical bytes and remain a
+            // no-op rather than scheduling duplicate required warm-up work.
+            #expect(!session.reconcilePromptShapeBeforeSendForTests())
+        }
+    }
+}
+
 @Suite("ChatWarmupController immediate model switch")
 @MainActor
 struct ChatWarmupControllerModelSwitchTests {
@@ -275,12 +377,237 @@ struct ChatWarmupControllerRequestTests {
         #expect(engine.lastRequest?.modelOptions?["disableThinking"] == .bool(true))
         #expect(engine.lastRequest?.suppressProgressUI == true)
         #expect(engine.lastRequest?.warmupPrefill == true)
+        #expect(engine.lastRequest?.backgroundModelLoad == true)
+    }
+}
+
+@Suite("ChatWarmupController completed-run policy")
+@MainActor
+struct ChatWarmupControllerCompletedRunTests {
+
+    @Test("stopped run does not launch a hidden transcript warm-up")
+    func stoppedRunDoesNotWarm() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [
+                ChatMessage(role: "system", content: "sys"),
+                ChatMessage(
+                    role: "user",
+                    content: String(repeating: "cancelled prompt ", count: 2_000)
+                ),
+            ],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|cancelled-run"
+        )
+
+        let controller = ChatWarmupController()
+        controller.handleRunCompleted(
+            session: session,
+            wasCancelled: true,
+            hadError: false
+        )
+
+        try? await Task.sleep(for: .milliseconds(650))
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.requestCount == 0)
+        #expect(controller.state == .cold)
+    }
+
+    @Test("errored run does not launch a hidden transcript warm-up")
+    func erroredRunDoesNotWarm() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [
+                ChatMessage(role: "system", content: "sys"),
+                ChatMessage(role: "user", content: "needs a tool"),
+                ChatMessage(
+                    role: "assistant",
+                    content: "",
+                    tool_calls: [
+                        ToolCall(
+                            id: "call_failed",
+                            type: "function",
+                            function: ToolCallFunction(
+                                name: "unstable_tool",
+                                arguments: #"{"bad":true}"#
+                            )
+                        )
+                    ],
+                    tool_call_id: nil
+                ),
+                ChatMessage(
+                    role: "tool",
+                    content: ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "bad input",
+                        tool: "unstable_tool"
+                    ),
+                    tool_calls: nil,
+                    tool_call_id: "call_failed"
+                ),
+            ],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|errored-tool-run"
+        )
+
+        let controller = ChatWarmupController()
+        controller.handleRunCompleted(
+            session: session,
+            wasCancelled: false,
+            hadError: true
+        )
+
+        try? await Task.sleep(for: .milliseconds(650))
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.requestCount == 0)
+        #expect(controller.state == .cold)
+    }
+
+    @Test("successful tool run does not launch a hidden transcript warm-up")
+    func successfulToolRunDoesNotWarmCompletedTranscript() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [
+                ChatMessage(role: "system", content: "sys"),
+                ChatMessage(role: "user", content: "read a file"),
+                ChatMessage(
+                    role: "assistant",
+                    content: "",
+                    tool_calls: [
+                        ToolCall(
+                            id: "call_ok",
+                            type: "function",
+                            function: ToolCallFunction(
+                                name: "read_file",
+                                arguments: #"{"path":"README.md"}"#
+                            )
+                        )
+                    ],
+                    tool_call_id: nil
+                ),
+                ChatMessage(
+                    role: "tool",
+                    content: ToolEnvelope.success(tool: "read_file", text: "ok"),
+                    tool_calls: nil,
+                    tool_call_id: "call_ok"
+                ),
+                ChatMessage(role: "assistant", content: "Done."),
+            ],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|successful-tool-run"
+        )
+
+        let controller = ChatWarmupController()
+        controller.handleRunCompleted(
+            session: session,
+            wasCancelled: false,
+            hadError: false,
+            hadToolActivity: true
+        )
+
+        try? await Task.sleep(for: .milliseconds(650))
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.requestCount == 0)
+        #expect(controller.state == .cold)
+    }
+
+    @Test("successful run still refreshes the completed transcript checkpoint")
+    func successfulRunStillWarms() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|successful-run"
+        )
+
+        let controller = ChatWarmupController()
+        controller.handleRunCompleted(
+            session: session,
+            wasCancelled: false,
+            hadError: false
+        )
+
+        for _ in 0 ..< 100 {
+            if controller.state == .warm { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.requestCount == 1)
+        #expect(controller.state == .warm)
     }
 }
 
 @Suite("ChatWarmupController runtime residency")
 @MainActor
 struct ChatWarmupControllerRuntimeResidencyTests {
+
+    @Test("reset cancels a warm-up suspended in resident-model preflight")
+    func resetCancelsSuspendedResidentPreflight() async throws {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|resident-preflight"
+        )
+
+        let gate = FirstResidentPreflightGate()
+        let controller = ChatWarmupController()
+        controller.projectedLoadFeasibility = { _ in nil }
+        controller.hasResidentModelOther = { _ in
+            await gate.check()
+        }
+
+        controller.scheduleWarmup(session: session, debounce: .zero)
+        for _ in 0 ..< 100 {
+            if await gate.firstCallStarted { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(await gate.firstCallStarted)
+        let staleScheduledTask = try #require(controller.scheduledWarmupTaskForTests)
+
+        controller.reset()
+        controller.scheduleWarmup(session: session, debounce: .zero)
+
+        for _ in 0 ..< 100 {
+            if engine.requestCount == 1, controller.state == .warm { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(engine.requestCount == 1)
+        #expect(controller.state == .warm)
+
+        // The cancelled first preflight ignores cooperative cancellation.
+        // Releasing it must not let the outgoing chat create a second,
+        // untracked warm-up after reset.
+        await gate.releaseFirst()
+        await staleScheduledTask.value
+
+        #expect(engine.requestCount == 1)
+        #expect(controller.state == .warm)
+    }
 
     @Test("external eviction clears the warm claim and cached fingerprint")
     func externalEvictionClearsWarmClaimAndFingerprint() async {
@@ -452,6 +779,26 @@ private final class WarmupRecordingEngine: ChatEngineProtocol, @unchecked Sendab
             choices: [],
             usage: Usage(prompt_tokens: 0, completion_tokens: 0, total_tokens: 0)
         )
+    }
+}
+
+private actor FirstResidentPreflightGate {
+    private var continuation: CheckedContinuation<Bool, Never>?
+    private(set) var firstCallStarted = false
+    private var callCount = 0
+
+    func check() async -> Bool {
+        callCount += 1
+        guard callCount == 1 else { return false }
+        firstCallStarted = true
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func releaseFirst() {
+        continuation?.resume(returning: false)
+        continuation = nil
     }
 }
 

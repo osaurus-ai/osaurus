@@ -260,8 +260,12 @@ public enum MCPOAuthService {
             serverMetadataCachedAt: Date(),
             loopbackPort: provider.oauth?.loopbackPort
         )
-        if persist {
-            MCPProviderKeychain.saveOAuthTokens(tokens, for: provider.id)
+        if persist, !MCPProviderKeychain.saveOAuthTokens(tokens, for: provider.id),
+            !KeychainQueryHelpers.disablesKeychainForProcess {
+            // The in-memory tokens still serve this session; what failed is
+            // relaunch durability. Surface it instead of silently signing the
+            // user out on next launch.
+            NSLog("MCPOAuthService: failed to persist OAuth tokens to Keychain after sign-in")
         }
         return MCPOAuthSignInResult(config: config, tokens: tokens)
     }
@@ -331,8 +335,11 @@ public enum MCPOAuthService {
             expiresAt: raw.expiresAt,
             scope: raw.scope ?? tokens.scope
         )
-        if persist {
-            MCPProviderKeychain.saveOAuthTokens(refreshed, for: provider.id)
+        if persist, !MCPProviderKeychain.saveOAuthTokens(refreshed, for: provider.id),
+            !KeychainQueryHelpers.disablesKeychainForProcess {
+            // The refreshed tokens still serve this request; what failed is
+            // relaunch durability (and rotated refresh tokens may be lost).
+            NSLog("MCPOAuthService: failed to persist refreshed OAuth tokens to Keychain")
         }
         return refreshed
     }

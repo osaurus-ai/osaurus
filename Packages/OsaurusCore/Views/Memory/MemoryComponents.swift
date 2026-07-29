@@ -55,7 +55,11 @@ struct PinnedFactsPanel: View {
             )
 
             HStack {
-                Text("\(filteredFacts.count) of \(facts.count) facts", bundle: .module)
+                Text(
+                    facts.count == 1
+                        ? L("\(filteredFacts.count) of 1 fact")
+                        : L("\(filteredFacts.count) of \(facts.count) facts")
+                )
                     .font(.system(size: 10))
                     .foregroundColor(theme.tertiaryText)
                 Spacer()
@@ -227,9 +231,11 @@ struct EpisodeRow: View {
     let episode: Episode
 
     var body: some View {
+        let tokenLabel =
+            episode.tokenCount == 1 ? L("1 token") : L("\(episode.tokenCount) tokens")
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Text("\(episode.tokenCount) tokens", bundle: .module)
+                Text(tokenLabel)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
 
@@ -258,7 +264,7 @@ struct EpisodeRow: View {
         .padding(.vertical, 6)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "Episode: \(episode.summary). \(episode.tokenCount) tokens, \(episode.conversationAt)"
+            "Episode: \(episode.summary). \(tokenLabel), \(episode.conversationAt)"
         )
     }
 }

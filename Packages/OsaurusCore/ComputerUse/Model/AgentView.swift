@@ -25,6 +25,13 @@ public struct AgentViewItem: Sendable, Equatable {
     public let mark: Int
     /// Harness-internal live driver id (`s7-12`). Not shown to the model.
     public let elementId: String
+    /// Harness-internal window identity used to keep duplicate controls from
+    /// different app windows separate across verify captures.
+    public let windowId: Int?
+    /// Human-readable window context rendered only when the app exposes more
+    /// than one window in the current view.
+    public let windowTitle: String?
+    public let windowFocused: Bool
     public let role: String
     public let label: String?
     public let value: String?
@@ -35,6 +42,9 @@ public struct AgentViewItem: Sendable, Equatable {
     public init(
         mark: Int,
         elementId: String,
+        windowId: Int? = nil,
+        windowTitle: String? = nil,
+        windowFocused: Bool = false,
         role: String,
         label: String?,
         value: String?,
@@ -43,6 +53,9 @@ public struct AgentViewItem: Sendable, Equatable {
     ) {
         self.mark = mark
         self.elementId = elementId
+        self.windowId = windowId
+        self.windowTitle = windowTitle
+        self.windowFocused = windowFocused
         self.role = role
         self.label = label
         self.value = value
@@ -102,7 +115,10 @@ public struct AgentView: Sendable, Equatable {
         var previousValues: [String: [String?]] = [:]
         if let previous {
             for item in previous.items {
-                previousValues[matchKey(role: item.role, label: item.label), default: []].append(
+                previousValues[
+                    matchKey(windowId: item.windowId, role: item.role, label: item.label),
+                    default: []
+                ].append(
                     item.value
                 )
             }
@@ -111,9 +127,11 @@ public struct AgentView: Sendable, Equatable {
         var items: [AgentViewItem] = []
         items.reserveCapacity(snapshot.elements.count)
         var consumed: [String: Int] = [:]  // how many of each key we've matched
+        let windowsById = Dictionary(uniqueKeysWithValues: snapshot.windows.map { ($0.id, $0) })
 
         for (index, element) in snapshot.elements.enumerated() {
-            let key = matchKey(role: element.role, label: element.label)
+            let key = matchKey(windowId: element.windowId, role: element.role, label: element.label)
+            let window = element.windowId.flatMap { windowsById[$0] }
             let visibleValue = visibleValue(for: element)
             let changed: Bool
             if previous == nil {
@@ -136,6 +154,9 @@ public struct AgentView: Sendable, Equatable {
                 AgentViewItem(
                     mark: index + 1,
                     elementId: element.id,
+                    windowId: element.windowId,
+                    windowTitle: window?.title,
+                    windowFocused: window?.focused ?? false,
                     role: element.role,
                     label: element.label,
                     value: visibleValue,
@@ -150,11 +171,17 @@ public struct AgentView: Sendable, Equatable {
         if let previous {
             var currentCounts: [String: Int] = [:]
             for element in snapshot.elements {
-                currentCounts[matchKey(role: element.role, label: element.label), default: 0] += 1
+                currentCounts[
+                    matchKey(windowId: element.windowId, role: element.role, label: element.label),
+                    default: 0
+                ] += 1
             }
             var prevCounts: [String: Int] = [:]
             for item in previous.items {
-                prevCounts[matchKey(role: item.role, label: item.label), default: 0] += 1
+                prevCounts[
+                    matchKey(windowId: item.windowId, role: item.role, label: item.label),
+                    default: 0
+                ] += 1
             }
             for (key, prevCount) in prevCounts {
                 let nowCount = currentCounts[key, default: 0]
@@ -173,8 +200,8 @@ public struct AgentView: Sendable, Equatable {
         )
     }
 
-    private static func matchKey(role: String, label: String?) -> String {
-        role.lowercased() + "|" + (label?.lowercased() ?? "")
+    private static func matchKey(windowId: Int?, role: String, label: String?) -> String {
+        String(windowId ?? -1) + "|" + role.lowercased() + "|" + (label?.lowercased() ?? "")
     }
 
     private static func normalize(_ value: String?) -> String {
@@ -202,9 +229,17 @@ public struct AgentView: Sendable, Equatable {
         }
 
         let shown = items.prefix(maxItems)
+        let hasMultipleWindows = Set(items.compactMap(\.windowId)).count > 1
         for item in shown {
             var line = item.changed ? "* [" : "  ["
             line += "\(item.mark)] \(item.role)"
+            if hasMultipleWindows {
+                if let title = item.windowTitle, !title.isEmpty {
+                    line += " [window \"\(title)\"\(item.windowFocused ? ", focused" : "")]"
+                } else if let windowId = item.windowId {
+                    line += " [window \(windowId)\(item.windowFocused ? ", focused" : "")]"
+                }
+            }
             if let label = item.label, !label.isEmpty { line += " \"\(label)\"" }
             if let value = item.value, !value.isEmpty {
                 let clipped = value.count > 60 ? String(value.prefix(60)) + "…" : value

@@ -79,39 +79,39 @@ struct SubagentCapabilityRegistryTests {
                 snapshot: snapshot(agentId: Agent.defaultId),
                 config: config,
                 hasReadyImageModel: true
-            ) == ["spawn_agent", "spawn_model", "image"]
+            ) == ["spawn_agent", "spawn_model", "spawn_batch", "image"]
         )
 
         // Custom agent: each spawn tool needs its own toggle AND a non-empty pool
         // of its own kind; image needs its own toggle. Here spawn on with an AGENT
-        // target only → just spawn_agent.
+        // target only → spawn_agent plus the batch surface for that pool.
         #expect(
             SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: custom,
                 snapshot: snapshot(agentId: custom, spawn: true, image: false, targets: ["X"]),
                 config: config,
                 hasReadyImageModel: true
-            ) == ["spawn_agent"]
+            ) == ["spawn_agent", "spawn_batch"]
         )
 
-        // Custom agent with a MODEL pool only → just spawn_model.
+        // Custom agent with a MODEL pool only → spawn_model plus batch.
         #expect(
             SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: custom,
                 snapshot: snapshot(agentId: custom, spawn: true, models: ["m"]),
                 config: config,
                 hasReadyImageModel: true
-            ) == ["spawn_model"]
+            ) == ["spawn_model", "spawn_batch"]
         )
 
-        // Custom agent with both pools → both spawn tools.
+        // Custom agent with both pools → both compatibility tools plus batch.
         #expect(
             SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: custom,
                 snapshot: snapshot(agentId: custom, spawn: true, targets: ["X"], models: ["m"]),
                 config: config,
                 hasReadyImageModel: true
-            ) == ["spawn_agent", "spawn_model"]
+            ) == ["spawn_agent", "spawn_model", "spawn_batch"]
         )
 
         // Custom agent with spawn on but BOTH pools empty → spawn hidden.
@@ -153,7 +153,7 @@ struct SubagentCapabilityRegistryTests {
                 snapshot: snapshot(agentId: Agent.defaultId),
                 config: config,
                 hasReadyImageModel: false
-            ) == ["spawn_agent", "spawn_model"]
+            ) == ["spawn_agent", "spawn_model", "spawn_batch"]
         )
         // A custom agent with its image toggle on but no installed model → no
         // `image` either.
@@ -266,8 +266,12 @@ struct SubagentCapabilityRegistryTests {
         // Image generation + editing now share the single `image` tool.
         #expect(SubagentCapabilityRegistry.image.primaryToolName == "image")
         #expect(SubagentCapabilityRegistry.image.guidance != nil)
-        // The spawn family lists both sibling tools; `spawn_agent` is primary.
-        #expect(SubagentCapabilityRegistry.spawn.toolNames == ["spawn_agent", "spawn_model"])
+        // The spawn family lists both compatibility tools plus bounded batch;
+        // `spawn_agent` remains primary.
+        #expect(
+            SubagentCapabilityRegistry.spawn.toolNames
+                == ["spawn_agent", "spawn_model", "spawn_batch"]
+        )
         #expect(SubagentCapabilityRegistry.spawn.primaryToolName == "spawn_agent")
         // Spawn has no inline capability guidance — its prompt block is rendered
         // by a dedicated dynamic `.static` section in the composer instead.
@@ -277,7 +281,7 @@ struct SubagentCapabilityRegistryTests {
     @Test("the registry represents every shipped kind")
     func allRepresentsEveryKind() {
         let ids = Set(SubagentCapabilityRegistry.all.map(\.id))
-        #expect(ids == ["computer_use", "spawn", "image", "applescript"])
+        #expect(ids == ["computer_use", "browser_use", "spawn", "image", "applescript"])
     }
 
     @Test("the modelSource axis records how each kind resolves its model")
@@ -322,15 +326,17 @@ struct SubagentCapabilityRegistryTests {
         }
     }
 
-    @Test("per-agent toggle flags are computer_use, spawn, image, applescript (each independent)")
+    @Test(
+        "per-agent toggle flags are computer_use, browser_use, spawn, image, applescript (each independent)"
+    )
     func perAgentToggleFlagsAreDistinct() {
-        // One card per *flag*: computer_use, spawn, image, and applescript are
-        // each their own per-agent toggle (image split out of the old shared
-        // spawn flag; applescript is its own kind), so the Subagents tab renders
-        // exactly four cards in registry order.
+        // One card per *flag*: computer_use, browser_use, spawn, image, and
+        // applescript are each their own per-agent toggle (image split out of
+        // the old shared spawn flag; applescript is its own kind), so the
+        // Subagents tab renders exactly five cards in registry order.
         #expect(
             SubagentCapabilityRegistry.perAgentToggleFlags
-                == [.computerUse, .spawn, .image, .appleScript]
+                == [.computerUse, .browserUse, .spawn, .image, .appleScript]
         )
     }
 
@@ -421,6 +427,55 @@ struct SubagentCapabilityRegistryTests {
                 isDefault: false,
                 config: config,
                 settings: nil
+            ) == nil
+        )
+    }
+
+    @Test("effectiveAppleScriptModel: automatic custom agents inherit the global default")
+    func effectiveAppleScriptModelResolves() {
+        let config = SubagentConfiguration(
+            defaultAppleScriptModelId: "global-applescript"
+        )
+        var custom = AgentSettings.defaultDisabled
+        custom.appleScriptModelId = "agent-applescript"
+
+        #expect(
+            SubagentToolVisibility.effectiveAppleScriptModel(
+                isDefault: true,
+                config: config,
+                settings: custom
+            ) == "global-applescript"
+        )
+        #expect(
+            SubagentToolVisibility.effectiveAppleScriptModel(
+                isDefault: false,
+                config: config,
+                settings: custom
+            ) == "agent-applescript"
+        )
+
+        custom.appleScriptModelId = nil
+        #expect(
+            SubagentToolVisibility.effectiveAppleScriptModel(
+                isDefault: false,
+                config: config,
+                settings: custom
+            ) == "global-applescript"
+        )
+        #expect(
+            SubagentToolVisibility.effectiveAppleScriptModel(
+                isDefault: false,
+                config: config,
+                settings: nil
+            ) == "global-applescript"
+        )
+
+        let emptyGlobal = SubagentConfiguration(defaultAppleScriptModelId: "  ")
+        #expect(
+            SubagentToolVisibility.effectiveAppleScriptModel(
+                isDefault: false,
+                config: emptyGlobal,
+                settings: AgentSettings.defaultDisabled
             ) == nil
         )
     }

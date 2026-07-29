@@ -60,8 +60,7 @@ struct EvalBootstrapPlanTests {
                 makeCase(
                     id: "capability_search.skill-direct-name",
                     domain: "capability_search",
-                    expectedSkills: true,
-                    enableSkills: ["Research Analyst"]
+                    expectedSkills: true
                 )
             ]
         )
@@ -229,8 +228,7 @@ struct EvalBootstrapPlanTests {
         expectedTools: Bool = false,
         expectedMethods: Bool = false,
         expectedSkills: Bool = false,
-        seedMethods: [EvalCase.SeedMethod]? = nil,
-        enableSkills: [String]? = nil
+        seedMethods: [EvalCase.SeedMethod]? = nil
     ) -> EvalCase {
         let anyOf = EvalCase.CapabilitySearchExpectations.AnyOfMatcher(
             anyOf: [],
@@ -251,8 +249,7 @@ struct EvalBootstrapPlanTests {
             query: "query",
             fixtures: .init(
                 requirePlugins: requirePlugins,
-                seedMethods: seedMethods,
-                enableSkills: enableSkills
+                seedMethods: seedMethods
             ),
             expect: .init(capabilitySearch: capabilitySearch)
         )

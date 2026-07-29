@@ -277,7 +277,7 @@ struct DiagnosticWarningsTests {
                 stderr: "cat: /Users/me/Desktop/todo.md: No such file or directory"
             )
             #expect(hint?.contains("file_read") == true)
-            #expect(hint?.contains("macOS host path") == true)
+            #expect(hint?.contains("host path outside the sandbox") == true)
         }
     }
 

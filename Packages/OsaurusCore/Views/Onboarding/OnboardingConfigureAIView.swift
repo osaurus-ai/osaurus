@@ -226,12 +226,10 @@ final class ConfigureAIState: ObservableObject {
     ///   1. If a curated top pick is already on disk, keep it. The user
     ///      downloaded (and presumably ran) it before, so the compat
     ///      heuristic shouldn't lock them out.
-    ///   2. Otherwise defer to `recommendedLocalPick`: the largest dense
-    ///      Gemma 4 QAT model that *comfortably* fits, with the E-series
-    ///      8-bit retention builds as the gated small-tier fallback. We no
-    ///      longer auto-default into the `.tight` band or onto the largest
-    ///      MoE/flagship — that pushed users onto models they couldn't really
-    ///      run (the 26B-A4B 36%-bounce case).
+    ///   2. Otherwise defer to `recommendedLocalPick`: the largest proven
+    ///      base model that *comfortably* fits, using resident footprint to
+    ///      choose between equal-size variants. We never auto-default into
+    ///      the `.tight` band.
     ///
     /// `.unknown` (no param info / monitor not yet populated) fails open via
     /// the final `candidates.first` fallback so onboarding never dead-ends.
@@ -258,15 +256,17 @@ final class ConfigureAIState: ObservableObject {
     /// top-pick `candidates` and the machine RAM, returns the model onboarding
     /// should pre-select (or `nil` when there are no candidates).
     ///
-    /// Rule: auto-default to the **largest** curated Top Pick that
-    /// **comfortably** fits (`.compatible`, so never into the `.tight` band).
+    /// Rule: auto-default to the curated Top Pick with the **largest base
+    /// parameter count** that **comfortably** fits (`.compatible`, so never
+    /// into the `.tight` band). For variants of the same base model, prefer
+    /// the larger resident footprint as the higher-quality precision.
     /// Every curated Top Pick is a GUI-verified-good model — coherent output
     /// with clean tool-calling and reasoning and no control-marker leakage
-    /// (verified live in the dev app across the Ornith / Qwen 3.6 / Qwen
-    /// AgentWorld / Nemotron families) — so "largest that comfortably fits"
-    /// lands each RAM tier on the strongest proven model for that Mac. When
-    /// nothing is comfortable (very low RAM), fall back to the smallest
-    /// candidate overall so onboarding never dead-ends.
+    /// (verified live in the dev app across the curated families). Ranking by
+    /// base parameters rather than quantized bytes matters for Bonsai: its 27B
+    /// 1-bit build is smaller on disk than a 9B MXFP8 model without becoming a
+    /// 4B-class model. When nothing is comfortable (very low RAM), fall back
+    /// to the smallest candidate overall so onboarding never dead-ends.
     ///
     /// This replaced the earlier Gemma-4-QAT auto-default spine: the Gemma 4
     /// `qat-MXFP4` builds are no longer curated Top Picks, so they are neither
@@ -280,8 +280,15 @@ final class ConfigureAIState: ObservableObject {
             $0.compatibility(totalMemoryGB: totalMemoryGB) == .compatible
         }
 
-        func largest(_ pool: [MLXModel]) -> MLXModel? {
-            pool.max(by: { ($0.estimatedMemoryGB ?? 0) < ($1.estimatedMemoryGB ?? 0) })
+        func strongest(_ pool: [MLXModel]) -> MLXModel? {
+            pool.max { lhs, rhs in
+                let lhsParameters = lhs.parameterCountBillions ?? 0
+                let rhsParameters = rhs.parameterCountBillions ?? 0
+                if lhsParameters != rhsParameters {
+                    return lhsParameters < rhsParameters
+                }
+                return (lhs.estimatedMemoryGB ?? 0) < (rhs.estimatedMemoryGB ?? 0)
+            }
         }
         func smallest(_ pool: [MLXModel]) -> MLXModel? {
             pool.min(by: {
@@ -290,7 +297,7 @@ final class ConfigureAIState: ObservableObject {
             })
         }
 
-        return largest(comfortable) ?? smallest(candidates)
+        return strongest(comfortable) ?? smallest(candidates)
     }
 
     /// Collapses same-family quant variants — rows whose titles collapse to
@@ -305,7 +312,7 @@ final class ConfigureAIState: ObservableObject {
     ///      user into re-downloading a near-duplicate of bits already on
     ///      disk. Largest wins if several are on disk.
     ///   3. The variant `recommendedLocalPick` chose — the tuned auto-default
-    ///      (QAT spine) must survive dedupe, or the "Picked for your Mac"
+    ///      must survive dedupe, or the "Picked for your Mac"
     ///      badge would point at a hidden row.
     ///   4. Quality first, comfort permitting: the largest (highest-
     ///      precision) build inside the best compatibility band a variant

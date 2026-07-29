@@ -86,6 +86,93 @@ public struct OsaurusIdentity: Sendable {
         MasterKey.existsCached()
     }
 
+    // MARK: - Restore
+
+    /// Outcome of `restore(words:)` for the UI: the restored master address
+    /// plus a summary of the derived-state reconciliation.
+    public struct RestoreResult: Sendable {
+        public let osaurusId: OsaurusID
+        public let rederivedAgentCount: Int
+        public let revokedAccessKeyCount: Int
+        /// Human-readable, per-item reconciliation failures ("name: reason").
+        /// The master itself installed successfully even when non-empty.
+        public let failures: [String]
+    }
+
+    /// Restore an identity from its 24-word BIP39 recovery phrase.
+    ///
+    /// Decodes and checksum-validates the phrase, installs the decoded
+    /// 32-byte master into iCloud Keychain (replacing any existing master),
+    /// re-stores the phrase, and reconciles persisted derivatives:
+    ///
+    /// - When the phrase is the *previous* master (drift recovery), every
+    ///   stored agent address matches again and reconciliation is a no-op.
+    /// - When the phrase is a *different* identity (fresh restore over an
+    ///   auto-generated key, explicit replace), mismatched agents are
+    ///   re-minted at fresh indices off the restored master and access keys
+    ///   signed by the old master are revoked — the same actions as the
+    ///   drift banner's Repair.
+    ///
+    /// Posts `.osaurusIdentityChanged` so identity-gated services (the
+    /// managed Osaurus Router, model picker) reconnect under the restored
+    /// identity without a manual refresh.
+    @MainActor
+    public static func restore(words: [String]) throws -> RestoreResult {
+        var seed = try MasterKeyMnemonic.key(fromMnemonic: words)
+        defer { seed.zeroOut() }
+
+        let osaurusId = try MasterKey.install(seed: seed, allowReplace: true)
+        // Keep the stored phrase in sync with the newly-installed master so
+        // "View recovery phrase" reads the store instead of lazily
+        // re-deriving from the seed.
+        try? MasterMnemonicStore.store(words)
+
+        APIKeyManager.shared.reload()
+        let drift = IdentityHealthCheck.diagnose(
+            masterKey: seed,
+            agents: AgentManager.shared.agents,
+            accessKeys: APIKeyManager.shared.listKeys()
+        )
+
+        var failures: [String] = []
+        var rederivedAgentCount = 0
+        for agent in drift.mismatchedAgents {
+            do {
+                // Forget the stale derivation, then re-assign at a fresh
+                // index off the restored master.
+                var cleared = agent
+                cleared.agentIndex = nil
+                cleared.agentAddress = nil
+                AgentManager.shared.update(cleared)
+                if let refreshed = AgentManager.shared.agent(for: agent.id) {
+                    try AgentManager.shared.assignAddress(to: refreshed)
+                    rederivedAgentCount += 1
+                }
+            } catch {
+                failures.append("\(agent.name): \(error.localizedDescription)")
+            }
+        }
+
+        var revokedAccessKeyCount = 0
+        for key in drift.staleAccessKeys where !key.revoked {
+            do {
+                try AccessKeyLifecycleService.shared.revokeAndRemove(id: key.id)
+                revokedAccessKeyCount += 1
+            } catch {
+                failures.append("\(key.label): \(error.localizedDescription)")
+            }
+        }
+
+        NotificationCenter.default.post(name: .osaurusIdentityChanged, object: nil)
+
+        return RestoreResult(
+            osaurusId: osaurusId,
+            rederivedAgentCount: rederivedAgentCount,
+            revokedAccessKeyCount: revokedAccessKeyCount,
+            failures: failures
+        )
+    }
+
     // MARK: - Wipe
 
     /// Full identity wipe used by the "Reset Identity" flow. Deletes the master

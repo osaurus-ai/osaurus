@@ -173,15 +173,19 @@ struct GitHubImportSheet: View {
         case .urlInput: return L("Paste a repository URL to get started")
         case .loading: return L("Fetching repository information")
         case .skillSelection(let result):
-            return L("\(result.skills.count) skills available")
+            return result.skills.count == 1
+                ? L("1 skill available")
+                : L("\(result.skills.count) skills available")
         case .pluginSelection(let result):
-            return L("\(result.plugins.count) plugins available")
+            return result.plugins.count == 1
+                ? L("1 plugin available")
+                : L("\(result.plugins.count) plugins available")
         case .importing: return L("Installing selected plugins")
         case .installComplete(let report):
             let totals =
                 report.totalImportedSkills + report.totalImportedAgents
                 + report.totalImportedCommands + report.totalImportedMCPProviders
-            return L("\(totals) items installed")
+            return totals == 1 ? L("1 item installed") : L("\(totals) items installed")
         case .error(let error): return error.localizedDescription
         }
     }
@@ -897,14 +901,12 @@ struct GitHubImportSheet: View {
         cancel()
     }
 
-    /// Deep-link from the install summary to the Remote MCP providers tab.
+    /// Deep-link from the install summary to the Tools Connections tab.
     /// Used by the OAuth + placeholder-token install notices so the user
     /// doesn't have to hunt through the sidebar for where Sign In lives.
     private func openMCPProvider(id: UUID?) {
         ManagementStateManager.shared.selectedTab = .tools
-        // ToolsTab is internal to OsaurusCore; we know the Remote sub-tab is
-        // raw value "Remote" from `ToolsTab.remote = "Remote"`.
-        ManagementStateManager.shared.pendingToolsSubTab = "Remote"
+        ManagementStateManager.shared.pendingToolsSubTab = ToolsTab.connections.rawValue
         ManagementStateManager.shared.pendingMCPProviderEditId = id
         cancel()
     }

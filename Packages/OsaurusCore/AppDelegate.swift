@@ -191,6 +191,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // (and so an in-app token authenticates the very first request).
         GitHubAuth.preloadInBackground()
 
+        // Warm the memoized default-models-directory resolution off the main
+        // thread. Its first access enumerates candidate folders (and can stall
+        // on iCloud-synced ~/Documents); paying that on a utility queue here
+        // means the first main-thread caller hits the cache.
+        DispatchQueue.global(qos: .utility).async {
+            _ = DirectoryPickerService.defaultModelsDirectory()
+        }
+
         // Same for the Hugging Face token: the Models → Catalog card reads its
         // presence synchronously at view-init (on the main thread), so warm the
         // cache here rather than racing that read from `ModelDownloadService`.
@@ -357,15 +365,48 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         }
 
         Task { @MainActor in
+            // Await the identity-existence seed before the first
+            // `RemoteProviderManager.shared` touch below: its cold init
+            // runs the managed-router gate, and racing the fire-and-forget
+            // warm above means that gate can still pay a synchronous
+            // keychain probe on the main thread (a reported launch hang).
+            // Its own guard (rather than folding into the block below) keeps
+            // the exact provider-connect gate the keychain-disabled source
+            // policy asserts on.
             if !keychainDisabledTestMode {
-                await MCPProviderManager.shared.connectEnabledProviders()
-                await RemoteProviderManager.shared.connectEnabledProviders()
+                await MasterKey.seedExistsCacheOffMainActor()
+            }
+            if !keychainDisabledTestMode {
+                // MCP and remote-provider startup connects run concurrently:
+                // one slow or unreachable MCP server must not delay every
+                // model provider (each connect has its own timeout and
+                // bounded transient retry inside its manager).
+                async let mcpConnects: Void = MCPProviderManager.shared.connectEnabledProviders()
+                async let remoteConnects: Void =
+                    RemoteProviderManager.shared.connectEnabledProviders()
+                _ = await (mcpConnects, remoteConnects)
                 // Touch the search-provider manager so its one-time migration
                 // of osaurus.search plugin keys runs at launch, not lazily on
                 // the first web_search call / Settings visit.
                 _ = SearchProviderManager.shared
+                // Same for the superseded osaurus.browser plugin: copy each
+                // agent's exact WebKit profile UUID into the native session
+                // catalog so existing sign-ins carry over to Browser Use.
+                BrowserPluginMigration.migrateIfNeeded()
             }
             await ModelPickerItemCache.shared.prewarmModelCache()
+        }
+
+        // Pre-warm the open-panel machinery. The first NSOpenPanel init in a
+        // process loads the remote file-picker (ViewBridge) service, which can
+        // take seconds cold — reported as a hang when it happens on the user's
+        // click (folder selection, file attach). Creating one throwaway panel
+        // now moves that one-time cost to launch idle time, a few seconds in,
+        // when the user isn't mid-interaction. Must run on the main thread —
+        // NSOpenPanel is main-thread-only, so the cost can't be moved off it,
+        // only moved earlier.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            _ = NSOpenPanel()
         }
 
         // VecturaKit inits run sequentially. Memory DB opens first because
@@ -468,6 +509,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     await MemoryConsolidator.shared.start()
                 }
             }
+        }
+
+        // Incremental knowledge index pass so collection folder changes
+        // made while the app was closed are picked up, then live folder
+        // watching for changes made while it runs. Waits for the embedder
+        // init to avoid competing with it; hash-incremental, so an
+        // unchanged corpus costs one folder scan per collection.
+        Task { @MainActor in
+            await embeddingInitTask.value
+            KnowledgeManager.shared.scheduleIndexAll()
+            KnowledgeFolderWatcher.shared.start()
         }
 
         // Setup global hotkey for Chat overlay (configured)
@@ -662,6 +714,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         if !keychainDisabledTestMode {
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(5))
+                // Sparkle's first XPC/installer-status setup runs on the main
+                // thread and has hung for seconds on memory-starved machines.
+                // Wait out resource pressure before arming the check cycle.
+                while Self.isUnderResourcePressure {
+                    try? await Task.sleep(for: .seconds(30))
+                }
                 self?.updater.checkForUpdatesInBackground()
             }
         }
@@ -1171,6 +1229,27 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             replyToTerminationOnce()
         }
 
+        // Last-resort exit backstop, OFF the main thread. Every other safety
+        // net here (the 22s watchdog above, the teardown chain, the bounded
+        // flushes in `applicationWillTerminate`) runs on the main actor — so a
+        // single synchronous call that wedges the main thread disables all of
+        // them at once and the app hangs forever (0.22.11 factory-reset
+        // report: journey stuck on "Quitting Osaurus" with MainThreadWatchdog
+        // logging a blocked main thread for minutes). Once this method runs,
+        // the quit is committed (`isTerminating` is never reset and the reply
+        // is always `true`), and the normal path already ends in
+        // `Darwin._exit(0)` — so hard-exiting from a GCD timer changes nothing
+        // except guaranteeing the process actually dies. 45s comfortably
+        // exceeds the 22s reply watchdog plus every bounded flush in
+        // `applicationWillTerminate` (~10s), so it can only fire when the
+        // main thread is truly stuck; a normal quit exits long before.
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 45) {
+            log.error(
+                "Exit backstop fired 45s after termination began — main thread presumed stuck; forcing exit"
+            )
+            Darwin._exit(0)
+        }
+
         Task { @MainActor in
             // ── Phase 0: freeze everything that can dispatch new work ──
             // All cheap + synchronous (cancel timers / tasks, stop FSEvents,
@@ -1184,6 +1263,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             SystemMonitorService.shared.stopMonitoring()
             ScheduleManager.shared.stop()
             WatcherManager.shared.stop()
+            KnowledgeFolderWatcher.shared.stop()
             await runWithDeadline(seconds: 2) {
                 await AgentChannelTransportSupervisor.shared.stop()
             }
@@ -1306,7 +1386,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         PluginRepositoryService.shared.stopBackgroundRefresh()
         ToastWindowController.shared.teardown()
         NotchWindowController.shared.teardown()
+        // Detach live browser WebViews and close their windows so WebKit's
+        // networking XPC processes wind down before `_exit` (stored profiles
+        // and the session catalog survive for the next run).
+        BrowserSessionManager.shared.shutdownAll()
         SharedConfigurationService.shared.remove()
+        SharedConfigurationService.shared.flushPendingWork()
         // `applicationWillTerminate` is sync and the process exits as
         // soon as it returns. Bridge to the actor synchronously so
         // any debounced greeting-pool entries land on disk — without
@@ -1321,6 +1406,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
         // Same for the Computer Use autonomy policy (its own coalescing writer).
         ComputerUsePolicyStore.flushPendingWrites()
+
+        // Same for the sandbox and agent-delegation stores.
+        SandboxConfigurationStore.flushPendingWrites()
+        SubagentConfigurationStore.flushPendingWrites()
+
+        // Provider/tool configuration files (remote.json, mcp.json, …) persist
+        // through ConfigDiskWriter's background queue, and credentials persist
+        // through the Keychain serial write queue. Drain both, bounded, so a
+        // provider added or edited right before quit survives relaunch —
+        // otherwise `_exit` below drops the pending write and the provider
+        // comes back disabled or credential-less.
+        ConfigDiskWriter.flushPendingWrites()
+        Keychain.flushPendingWrites()
 
         // Aptabase batches analytics in an in-memory queue and normally drains
         // it from its own `willTerminate` observer — but that flush is async and
@@ -1506,7 +1604,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // Keep plugin and repository work off the initial bind path;
             // crashes here are handled by the plugin loading marker.
             Task { @MainActor in
-                await PluginManager.shared.loadAll()
+                await PluginManager.shared.ensurePromptCatalogReady()
             }
             PluginRepositoryService.shared.startBackgroundRefresh()
         }
@@ -1681,11 +1779,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // ensure popover window can join all spaces and appear over full screen apps
         if let popoverWindow = popover.contentViewController?.view.window {
             popoverWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            // Key the popover's own window instead of activating the app:
-            // `NSApp.activate` while another app owns a full-screen space
-            // deactivates that app, the auto-revealed menu bar retracts, and
-            // the transient popover closes with it.
-            popoverWindow.makeKey()
+            if #available(macOS 26.0, *) {
+                // Key the popover's own window instead of activating the app:
+                // `NSApp.activate` while another app owns a full-screen space
+                // deactivates that app, the auto-revealed menu bar retracts, and
+                // the transient popover closes with it.
+                popoverWindow.makeKey()
+            }
         }
 
         // Close the popover when the user clicks in another app or on the
@@ -1696,6 +1796,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         ) { [weak self] _ in
             self?.popover?.performClose(nil)
+        }
+
+        if #available(macOS 26.0, *) {
+            // Tahoe: keying the popover window above is enough, and activating
+            // here would close the popover over full-screen apps (see comment
+            // above).
+        } else {
+            // Sequoia and earlier: restore the pre-full-screen-fix activation.
+            // Without it the app is never active, later cooperative
+            // `NSApp.activate()` calls are no-ops under Sequoia's stricter
+            // rules, and windows opened from the popover (settings, chat)
+            // never come to the front.
+            NSApp.activate(ignoringOtherApps: true)
         }
     }
 
@@ -2289,7 +2402,29 @@ extension AppDelegate {
                 if hasDeeplink {
                     // Deeplink targets are baked into the view at creation, so the
                     // hosting controller has to be rebuilt to deliver them.
-                    existingWindow.contentViewController = NSHostingController(rootView: root)
+                    //
+                    // End any attached sheets FIRST: swapping the hosting
+                    // controller tears down the old SwiftUI graph, but a
+                    // SwiftUI `.sheet`'s presentation window stays attached to
+                    // this NSWindow and keeps observing parent frame changes.
+                    // The swap itself resizes the window (the new hosting
+                    // view's constraint pass updates the content-size extrema),
+                    // and the orphaned sheet's size callback then re-enters the
+                    // torn-down graph and traps inside SwiftUI
+                    // (Sentry APPLE-MACOS-EF).
+                    while let sheet = existingWindow.attachedSheet {
+                        existingWindow.endSheet(sheet)
+                    }
+                    let replacement = NSHostingController(rootView: root)
+                    // Match `WindowManager.createWindow`: AppKit owns this
+                    // window's size (defaultSize + frame autosave). Leaving the
+                    // default sizingOptions on lets the swapped-in hosting view
+                    // push its measured size back onto the window every layout
+                    // pass — the frame change seen in the EF crash stack.
+                    if #available(macOS 13.0, *) {
+                        replacement.sizingOptions = []
+                    }
+                    existingWindow.contentViewController = replacement
                 } else if let initialTab {
                     // No deeplink: drive navigation through the shared state the
                     // existing view already observes. Recreating the hosting

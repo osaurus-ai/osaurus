@@ -30,7 +30,7 @@
 //   13. capabilityNudge           static, gated on capabilities_discover
 //   14. enabledManifest           static, frozen (all enabled tools +
 //                                  plugin skills + standalone skills)
-//   15. skillsGovern              static (paired with enabledManifest)
+//   15. skillsGovern              static (verbose governed manifests only)
 //   16. pluginCreator             static (session-constant gate)
 //   17. agentDBSchema             dynamic, live schema snapshot
 //   18. sandboxState              dynamic, installed packages + secrets
@@ -312,8 +312,8 @@ struct PromptSectionOrderingTests {
                 gitStatus: nil,
                 isGitRepo: false
             )
-            FolderToolManager.shared.registerFolderTools(for: folderCtx)
-            defer { FolderToolManager.shared.unregisterFolderTools() }
+            FolderToolManager.shared.ensureFolderToolsRegistered()
+            defer { FolderToolManager.shared._unregisterAllForTesting() }
 
             let ctx = await SystemPromptComposer.composeChatContext(
                 agentId: agent.id,
@@ -512,6 +512,7 @@ struct PromptSectionOrderingTests {
                 model: "gpt-5",
                 query: "now refactor the networking layer",
                 frozenAlwaysLoadedNames: turn1.alwaysLoadedNames,
+                frozenToolSpecs: turn1.initialToolSpecs,
                 frozenManifest: turn1.enabledManifest
             )
             #expect(steady.prompt == turn1.prompt)
@@ -529,6 +530,7 @@ struct PromptSectionOrderingTests {
                 query: "and render a chart of the results",
                 additionalToolNames: ["render_chart"],
                 frozenAlwaysLoadedNames: turn1.alwaysLoadedNames,
+                frozenToolSpecs: turn1.initialToolSpecs,
                 frozenManifest: turn1.enabledManifest
             )
             #expect(afterLoad.prompt == turn1.prompt)
@@ -612,6 +614,7 @@ struct PromptSectionOrderingTests {
                 model: "gpt-5",
                 query: "now add a route",
                 frozenAlwaysLoadedNames: turn1.alwaysLoadedNames,
+                frozenToolSpecs: turn1.initialToolSpecs,
                 frozenManifest: turn1.enabledManifest,
                 frozenSoul: turn1.soul
             )

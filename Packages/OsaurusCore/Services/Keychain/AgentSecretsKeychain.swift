@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import Security
 
 /// Keychain wrapper for agent-scoped secret storage.
 /// Account format: `"{agentId}.{key}"` — no plugin scoping.
@@ -269,11 +270,15 @@ public enum AgentSecretsKeychain {
         // the UI when reached from `secretIDs` during chat-preview composition
         // on the main thread. Account names change only through this type's own
         // writes, so memoize the enumeration and invalidate it on every
-        // mutation.
-        let accounts = Keychain.allAccounts(service: service)
-        accountsCacheLock.lock()
-        cachedAccounts = accounts
-        accountsCacheLock.unlock()
+        // mutation. Only a definitive enumeration is cached: a locked or
+        // transiently failing keychain must not latch an empty account list.
+        let outcome = Keychain.fetchAllItems(service: service, returnData: false)
+        let accounts = outcome.items.compactMap { $0[kSecAttrAccount as String] as? String }
+        if outcome.isDefinitive {
+            accountsCacheLock.lock()
+            cachedAccounts = accounts
+            accountsCacheLock.unlock()
+        }
         return accounts
     }
 }

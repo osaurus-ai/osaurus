@@ -628,6 +628,15 @@ public final class SandboxPluginManager: ObservableObject {
         agentId: String?
     ) async throws {
         guard let deps = plugin.dependencies, !deps.isEmpty else { return }
+        // Seatbelt backend: there is no Alpine guest and no `apk` — fail
+        // with a clear message instead of a "command not found" from the
+        // host shell.
+        guard SandboxBackend.current == .virtualMachine else {
+            throw SandboxPluginError.dependencyInstallFailed(
+                "System `dependencies` require the Linux VM sandbox (macOS 26+). "
+                    + "On this macOS sandbox, leave `dependencies` empty and install "
+                    + "Python/Node packages via `setup` (pip/npm) instead.")
+        }
         if let agentId, agentsWithSeededDeps.contains(agentId) {
             return
         }

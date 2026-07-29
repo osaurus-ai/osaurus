@@ -33,6 +33,12 @@ public enum ToolResultClass: Equatable, Sendable {
     case partialListing
     /// File content (`kind: "file"`).
     case fileContent
+    /// File content whose RENDERED output was cut by the character cap
+    /// and which carries an exact continuation range (`next_start_line`
+    /// / `next_end_line`). Distinct from `.fileContent` so the harness
+    /// can stage a continuation notice instead of letting the model
+    /// review a truncated file as if it were complete (issue #2098).
+    case partialFileContent(path: String, nextStartLine: Int, nextEndLine: Int)
     /// A referenced path does not exist (`kind: "not_found"`).
     case notFound
     /// Any other failure envelope.
@@ -136,12 +142,26 @@ public final class AgentTaskState {
         "file_read", "file_search", "file_edit", "capabilities_load",
     ]
 
+    /// Read-like tools that can explicitly classify a failure as
+    /// non-retryable for the exact same arguments. `search_and_extract` uses
+    /// this for challenge/blocked/empty pages: immediately repeating the same
+    /// URL batch cannot produce page evidence and previously shifted a search
+    /// loop into an extraction loop.
+    private static let deterministicAsIsFailureTools: Set<String> = [
+        "search_and_extract",
+    ]
+
     /// Error kinds eligible for held-error replay. Both depend only on the
     /// arguments + current file state, never on transient conditions.
     private static let deterministicErrorKinds: Set<String> = [
         ToolEnvelope.Kind.invalidArgs.rawValue,
         ToolEnvelope.Kind.notFound.rawValue,
     ]
+
+    /// One execution plus one same-signature retry for a transient extraction
+    /// failure. The third request is replayed as an explicit retry-exhausted
+    /// failure instead of reaching the network again.
+    private static let maxTransientAsIsRetries = 1
 
     /// The listing nudge is REACTIVE, not proactive: it fires only once the
     /// model has produced this many listings without an intervening read —
@@ -171,7 +191,7 @@ public final class AgentTaskState {
     /// configuration deliberately do not reset the search budget: the live
     /// Bonsai loop used those as a detour and resumed rephrased discovery.
     private static let webDiscoveryProgressTools: Set<String> = [
-        "search_and_extract", "render_chart", "browser_do", "http_request",
+        "search_and_extract", "render_chart", "browser_use", "http_request",
         "file_read", "sandbox_read_file", "shell_run", "sandbox_exec",
     ]
 
@@ -213,6 +233,9 @@ public final class AgentTaskState {
     private var heldErrors: [CallSignature: HeldError] = [:]
     /// How many times each held error has been replayed (drives escalation).
     private var heldErrorReplays: [CallSignature: Int] = [:]
+    /// Number of retryable failures executed for a selected read-like tool.
+    /// This is per exact canonical argument signature and per user message.
+    private var transientFailureExecutions: [CallSignature: Int] = [:]
     /// Notice produced by the most recent `heldResult` hit when it replayed
     /// a held ERROR (nil for fresh-read replays — the driver's standard
     /// dedupe notice covers those). The driver stages this verbatim.
@@ -251,6 +274,7 @@ public final class AgentTaskState {
         freshReads.removeAll(keepingCapacity: true)
         heldErrors.removeAll(keepingCapacity: true)
         heldErrorReplays.removeAll(keepingCapacity: true)
+        transientFailureExecutions.removeAll(keepingCapacity: true)
         lastReplayNotice = nil
         consecutiveListingsWithoutRead = 0
         nonReadCallCounts.removeAll(keepingCapacity: true)
@@ -276,10 +300,11 @@ public final class AgentTaskState {
     ///   1. Fresh reads — a still-fresh read (same tool + canonical args,
     ///      not invalidated by an intervening write to its path).
     ///   2. Held deterministic errors — an `invalid_args`/`not_found` error
-    ///      from a deterministic folder tool, with no intervening write/exec
-    ///      that could change the outcome. Replaying it (with an escalating
-    ///      notice via `lastReplayNotice`) converts an observed N-execution
-    ///      failure spiral into one execution + cached replays.
+    ///      from a deterministic folder tool, or an explicitly non-retryable
+    ///      exact-arguments failure from a read-like tool such as
+    ///      `search_and_extract`. Replaying it (with an escalating notice via
+    ///      `lastReplayNotice`) converts an observed N-execution failure
+    ///      spiral into one execution + cached replays.
     /// Returns nil for novel calls or invalidated entries. The replay is
     /// verbatim — never a collapsed/summarized form — so it is neutral.
     public func heldResult(name: String, argsJSON: String) -> String? {
@@ -288,7 +313,10 @@ public final class AgentTaskState {
         if Self.readLikeTools.contains(name), let fresh = freshReads[sig] {
             return fresh.envelope
         }
-        if Self.deterministicErrorTools.contains(name), let held = heldErrors[sig] {
+        if Self.deterministicErrorTools.contains(name)
+            || Self.deterministicAsIsFailureTools.contains(name),
+            let held = heldErrors[sig]
+        {
             let replays = (heldErrorReplays[sig] ?? 0) + 1
             heldErrorReplays[sig] = replays
             let failures = replays + 1  // original execution + replays
@@ -350,6 +378,7 @@ public final class AgentTaskState {
             freshReads.removeAll(keepingCapacity: true)
             heldErrors.removeAll(keepingCapacity: true)
             heldErrorReplays.removeAll(keepingCapacity: true)
+            transientFailureExecutions.removeAll(keepingCapacity: true)
         }
 
         // A write/edit invalidates any fresh read of the same path so the
@@ -374,23 +403,47 @@ public final class AgentTaskState {
         }
 
         // Capture (or clear) a held deterministic error for this signature.
-        // Only `invalid_args`/`not_found` from the deterministic folder tools
-        // qualify: given an unchanged filesystem, re-executing the identical
-        // call must return the identical error, so replaying is honest.
-        if Self.deterministicErrorTools.contains(name) {
-            if ToolEnvelope.isError(result),
-                let kind = Self.errorKind(result),
-                Self.deterministicErrorKinds.contains(kind)
-            {
+        // Folder/capability tools qualify by deterministic error kind;
+        // selected read-like tools may also qualify by an explicit
+        // `retryable:false` contract. Transient extraction failures therefore
+        // execute again, while an unchanged challenge-page request is replayed
+        // rather than sent to the network indefinitely.
+        if Self.deterministicErrorTools.contains(name)
+            || Self.deterministicAsIsFailureTools.contains(name)
+        {
+            let holdsByKind = Self.errorKind(result).map(Self.deterministicErrorKinds.contains)
+                ?? false
+            let holdsAsIs = Self.deterministicAsIsFailureTools.contains(name)
+                && Self.errorRetryable(result) == false
+            if ToolEnvelope.isError(result), holdsByKind || holdsAsIs {
                 heldErrors[sig] = HeldError(
                     canonicalPath: pathArgument(argsJSON).map(Self.canonicalPath),
                     envelope: result
                 )
+                transientFailureExecutions[sig] = nil
+            } else if ToolEnvelope.isError(result),
+                Self.deterministicAsIsFailureTools.contains(name),
+                Self.errorRetryable(result) == true
+            {
+                let executions = (transientFailureExecutions[sig] ?? 0) + 1
+                transientFailureExecutions[sig] = executions
+                if executions > Self.maxTransientAsIsRetries,
+                    let exhausted = Self.retryExhaustedEnvelope(result, tool: name)
+                {
+                    heldErrors[sig] = HeldError(
+                        canonicalPath: pathArgument(argsJSON).map(Self.canonicalPath),
+                        envelope: exhausted
+                    )
+                } else {
+                    heldErrors[sig] = nil
+                    heldErrorReplays[sig] = nil
+                }
             } else {
                 // A success (or non-deterministic error) supersedes any held
                 // error for this exact call.
                 heldErrors[sig] = nil
                 heldErrorReplays[sig] = nil
+                transientFailureExecutions[sig] = nil
             }
         }
 
@@ -448,11 +501,14 @@ public final class AgentTaskState {
         case .emptyListing, .populatedListing, .partialListing:
             consecutiveListingsWithoutRead += 1
             lastListing = parseListing(result)
-        case .fileContent:
+        case .fileContent, .partialFileContent:
+            // A partial read is still a successful descent into a file —
+            // progress for the wandering counter; its continuation steer is
+            // handled by `nextStepBias`, not here.
             consecutiveListingsWithoutRead = 0
         case .notFound, .error, .nativeImageGeneration, .other:
             break
-        }  // nativeImageGeneration carries associated values; matched without binding
+        }  // associated-value cases matched without binding
 
         // Mark a successful read-like result as fresh (with its exact
         // envelope) so a re-issue replays it until a write invalidates it.
@@ -554,6 +610,12 @@ public final class AgentTaskState {
                 + "without `source_paths` again (that produces a brand-new unrelated image, not an "
                 + "edit of this one). Only if no such follow-up was requested should you give a brief "
                 + "final confirmation. Do not narrate the edit as the final answer instead of calling the tool."
+        case .partialFileContent(let path, let nextStart, let nextEnd):
+            // Reactive by nature — the read is observed incomplete. Without
+            // this steer, models treated the truncated render as the whole
+            // file and reviewed 426 of 499 lines as complete (issue #2098).
+            return
+                "The `file_read` of `\(path)` was truncated by the output cap — you have only seen part of the requested range. Before drawing conclusions about the whole file, call `file_read` again with {\"path\": \"\(path)\", \"start_line\": \(nextStart), \"end_line\": \(nextEnd)} to read the rest."
         case .fileContent, .error, .other:
             return nil
         }
@@ -583,6 +645,24 @@ public final class AgentTaskState {
             if payload["truncated"] as? Bool == true { return .partialListing }
             return .populatedListing
         case "file":
+            // A rendered-cap truncation with an exact continuation range is
+            // its own state: the tool read the whole file but the model only
+            // saw a prefix, and `next_start_line`/`next_end_line` say exactly
+            // how to resume. Raw byte-capped reads (`raw_bytes_truncated`)
+            // deliberately carry no continuation fields — a line-ranged
+            // re-read cannot reach bytes that were never loaded — so they
+            // stay plain `.fileContent` and keep the tool's own split-the-
+            // file guidance.
+            if payload["truncated"] as? Bool == true,
+                let nextStart = payload["next_start_line"] as? Int,
+                let nextEnd = payload["next_end_line"] as? Int
+            {
+                return .partialFileContent(
+                    path: payload["path"] as? String ?? "",
+                    nextStartLine: nextStart,
+                    nextEndLine: nextEnd
+                )
+            }
             return .fileContent
         case "native_image_generation_job":
             let paths = nativeImagePaths(from: payload)
@@ -619,6 +699,36 @@ public final class AgentTaskState {
             let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         return dict["kind"] as? String
+    }
+
+    /// Pull the canonical retryability bit from an error envelope.
+    private static func errorRetryable(_ envelope: String) -> Bool? {
+        guard let data = envelope.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return dict["retryable"] as? Bool
+    }
+
+    /// Convert a second identical transient extraction failure into the
+    /// stable result replayed on subsequent requests. Preserve every original
+    /// diagnostic field while making the exhausted retry contract explicit.
+    private static func retryExhaustedEnvelope(_ envelope: String, tool: String) -> String? {
+        guard let data = envelope.data(using: .utf8),
+            var dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        dict["retryable"] = false
+        dict["retry_exhausted"] = true
+        dict["message"] =
+            "The identical \(tool) retrieval failed on its initial attempt and one retry. "
+            + "Do not execute the same arguments again; change the source or report the blocker."
+        dict["next_action"] = [
+            "instruction":
+                "Choose a materially different retrievable source or report the blocker. Do not claim the failed page was inspected."
+        ]
+        return try? String(
+            data: JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]),
+            encoding: .utf8
+        )
     }
 
     // MARK: - Path canonicalization (shared)

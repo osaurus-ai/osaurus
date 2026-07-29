@@ -36,11 +36,17 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// Seconds from request start to first visible token, for latency
     /// reporting. Nil when unknown.
     public var timeToFirstToken: TimeInterval?
+    /// Authoritative runtime finish reason (`stop`, `length`, etc.). Nil for
+    /// legacy turns and providers that do not report one.
+    public var terminalStopReason: String?
     /// OpenAI Responses reasoning item captured for an assistant turn (opaque
     /// `id` + encrypted blob). Re-emitted for chain continuity. Nil for every
     /// non-Responses turn.
     public var reasoningItemId: String?
     public var reasoningEncrypted: String?
+    /// An abandoned reasoning/protocol attempt can remain visible in the
+    /// transcript without being replayed to the model. False for legacy turns.
+    public var modelContextExcluded: Bool
     /// Osaurus Router billing snapshot (cost, token counts, status) for this
     /// assistant turn. Metadata only - no prompt/response text. Nil for local
     /// models and non-router providers.
@@ -68,8 +74,10 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         completedAt: Date? = nil,
         generationTokenCount: Int? = nil,
         timeToFirstToken: TimeInterval? = nil,
+        terminalStopReason: String? = nil,
         reasoningItemId: String? = nil,
         reasoningEncrypted: String? = nil,
+        modelContextExcluded: Bool = false,
         routerBilling: RouterBillingSummary? = nil,
         injectedContextPrefix: String? = nil
     ) {
@@ -88,8 +96,10 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         self.completedAt = completedAt
         self.generationTokenCount = generationTokenCount
         self.timeToFirstToken = timeToFirstToken
+        self.terminalStopReason = terminalStopReason
         self.reasoningItemId = reasoningItemId
         self.reasoningEncrypted = reasoningEncrypted
+        self.modelContextExcluded = modelContextExcluded
         self.routerBilling = routerBilling
         self.injectedContextPrefix = injectedContextPrefix
     }
@@ -111,8 +121,11 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
         generationTokenCount = try container.decodeIfPresent(Int.self, forKey: .generationTokenCount)
         timeToFirstToken = try container.decodeIfPresent(TimeInterval.self, forKey: .timeToFirstToken)
+        terminalStopReason = try container.decodeIfPresent(String.self, forKey: .terminalStopReason)
         reasoningItemId = try container.decodeIfPresent(String.self, forKey: .reasoningItemId)
         reasoningEncrypted = try container.decodeIfPresent(String.self, forKey: .reasoningEncrypted)
+        modelContextExcluded =
+            try container.decodeIfPresent(Bool.self, forKey: .modelContextExcluded) ?? false
         routerBilling = try container.decodeIfPresent(RouterBillingSummary.self, forKey: .routerBilling)
         injectedContextPrefix = try container.decodeIfPresent(String.self, forKey: .injectedContextPrefix)
 
@@ -146,8 +159,12 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(completedAt, forKey: .completedAt)
         try container.encodeIfPresent(generationTokenCount, forKey: .generationTokenCount)
         try container.encodeIfPresent(timeToFirstToken, forKey: .timeToFirstToken)
+        try container.encodeIfPresent(terminalStopReason, forKey: .terminalStopReason)
         try container.encodeIfPresent(reasoningItemId, forKey: .reasoningItemId)
         try container.encodeIfPresent(reasoningEncrypted, forKey: .reasoningEncrypted)
+        if modelContextExcluded {
+            try container.encode(true, forKey: .modelContextExcluded)
+        }
         try container.encodeIfPresent(routerBilling, forKey: .routerBilling)
         try container.encodeIfPresent(injectedContextPrefix, forKey: .injectedContextPrefix)
     }
@@ -158,8 +175,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         case attachedImages  // legacy key for reading old sessions
         case toolCalls, toolCallId, toolResults, toolCallDurations, thinking
         case thinkingDuration
-        case createdAt, completedAt, generationTokenCount, timeToFirstToken
+        case createdAt, completedAt, generationTokenCount, timeToFirstToken, terminalStopReason
         case reasoningItemId, reasoningEncrypted
+        case modelContextExcluded
         case routerBilling
         case injectedContextPrefix
     }
@@ -186,8 +204,10 @@ extension ChatTurnData {
         self.completedAt = turn.completedAt
         self.generationTokenCount = turn.generationTokenCount
         self.timeToFirstToken = turn.timeToFirstToken
+        self.terminalStopReason = turn.terminalStopReason
         self.reasoningItemId = turn.reasoningItemId
         self.reasoningEncrypted = turn.reasoningEncrypted
+        self.modelContextExcluded = turn.modelContextExcluded
         self.routerBilling = turn.routerBilling
         self.injectedContextPrefix = turn.injectedContextPrefix
     }
@@ -213,8 +233,10 @@ extension ChatTurn {
         self.completedAt = data.completedAt
         self.generationTokenCount = data.generationTokenCount
         self.timeToFirstToken = data.timeToFirstToken
+        self.terminalStopReason = data.terminalStopReason
         self.reasoningItemId = data.reasoningItemId
         self.reasoningEncrypted = data.reasoningEncrypted
+        self.modelContextExcluded = data.modelContextExcluded
         self.routerBilling = data.routerBilling
         self.injectedContextPrefix = data.injectedContextPrefix
     }

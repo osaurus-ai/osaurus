@@ -97,7 +97,7 @@ private extension SandboxPluginEditorView {
     var editorHeader: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(isNew ? L("Create Plugin") : L("Edit Plugin"))
+                Text(isNew ? L("Create Custom Tool") : L("Edit Custom Tool"))
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(theme.primaryText)
                 Spacer()
@@ -112,7 +112,7 @@ private extension SandboxPluginEditorView {
                 }
                 .buttonStyle(PlainButtonStyle())
             }
-            editorTextField(L("Plugin Name"), text: $plugin.name, fontSize: 14, weight: .medium, radius: 8)
+            editorTextField(L("Name"), text: $plugin.name, fontSize: 14, weight: .medium, radius: 8)
             editorTextField(L("Short description"), text: $plugin.description, fontSize: 13, radius: 6)
         }
         .padding(16)
@@ -142,7 +142,7 @@ private extension SandboxPluginEditorView {
                         if showSaveConfirmation { Image(systemName: "checkmark") }
                         Text(
                             LocalizedStringKey(
-                                showSaveConfirmation ? "Saved!" : (isNew ? "Create Plugin" : "Save Changes")
+                                showSaveConfirmation ? "Saved!" : (isNew ? "Create" : "Save Changes")
                             ),
                             bundle: .module
                         )

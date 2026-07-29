@@ -230,6 +230,22 @@ struct MLXBatchAdapterTests {
         #expect(!effective.compiledBatchDecode)
     }
 
+    @Test func lastEffectiveGenerationTelemetry_excludesChatPrefillWarmups() {
+        let visibleRequest = GenerationParameters(
+            temperature: nil,
+            maxTokens: 256,
+            maxTokensExplicit: false
+        )
+        let prefillWarmup = GenerationParameters(
+            temperature: 0,
+            maxTokens: 1,
+            warmupPrefill: true
+        )
+
+        #expect(MLXBatchAdapter.shouldRecordAsLastEffectiveGeneration(visibleRequest))
+        #expect(!MLXBatchAdapter.shouldRecordAsLastEffectiveGeneration(prefillWarmup))
+    }
+
     @Test func effectiveGenerationSettings_preservesNemotronUltraBundleDefaultsWithoutInventingTopK() {
         let generation = GenerationParameters(
             temperature: nil,
@@ -1169,6 +1185,71 @@ struct MLXBatchAdapterTests {
                 maxBatchSize: 1
             )
         )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "OsaurusAI/Bonsai-27b-1bit-JANG",
+                maxBatchSize: 1
+            ),
+            "Bonsai is a qwen3_5 dense-VL hybrid (48 linear_attention MambaCache layers) under a bundle id with no qwen substring — the compiled-trace opt-out must apply"
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "OsaurusAI/Bonsai-27b-Ternary-JANG",
+                maxBatchSize: 1
+            )
+        )
+    }
+
+    @Test func compiledBatchDecodeIsTopologyDrivenWhenCacheShapeIsKnown() {
+        // Architecture beats the name matcher: a hybrid cache shape (SSM /
+        // Arrays companion or composite CacheList layers) denies the compiled
+        // trace even for a bundle id the matcher has never heard of — vmlx's
+        // CacheFamily for those slots is not compile-eligible, so requesting
+        // it only buys a per-iterator eval(cache) + failed promotion.
+        let hybridShape = ModelCacheTopologySnapshot(
+            layerCount: 64,
+            kvLayerCount: 16,
+            mambaLayerCount: 48
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "some-org/unrecognized-hybrid-bundle",
+                maxBatchSize: 1,
+                cacheTopology: hybridShape
+            )
+        )
+        let cacheListShape = ModelCacheTopologySnapshot(
+            layerCount: 32,
+            cacheListLayerCount: 32
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "some-org/composite-cache-bundle",
+                maxBatchSize: 1,
+                cacheTopology: cacheListShape
+            )
+        )
+        // A plain full-attention shape keeps the name-based rules in force:
+        // eligible for a dense model, still denied for a known-unsafe family.
+        let denseShape = ModelCacheTopologySnapshot(
+            layerCount: 28,
+            kvLayerCount: 28
+        )
+        #expect(
+            MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "mlx-community/Llama-3.2-3B-Instruct-4bit",
+                maxBatchSize: 1,
+                cacheTopology: denseShape
+            )
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "JANGQ-AI/Hy3-preview-JANGTQ",
+                maxBatchSize: 1,
+                cacheTopology: denseShape
+            ),
+            "a dense topology must not clear a family that is denied for non-topology reasons (Hy3 diverges on the compiled trace)"
+        )
     }
 
     @Test func registry_shutdownNonexistentIsNoop() async {
@@ -1199,7 +1280,7 @@ struct MLXBatchAdapterTests {
         }
 
         let gate = MLXBatchAdapter.SoloGenerationGate()
-        let first = await gate.acquire(modelName: "minimax-m2.7-jangtq")
+        let first = try #require(await gate.acquire(modelName: "minimax-m2.7-jangtq"))
         let secondAcquired = Flag()
         let second = Task {
             let lease = await gate.acquire(modelName: "minimax-m2.7-jangtq")
@@ -1214,7 +1295,7 @@ struct MLXBatchAdapterTests {
         )
 
         await first.release()
-        let secondLease = await second.value
+        let secondLease = try #require(await second.value)
         #expect(secondAcquired.get())
         await secondLease.release()
     }
@@ -1238,7 +1319,7 @@ struct MLXBatchAdapterTests {
         }
 
         let gate = MLXBatchAdapter.SoloGenerationGate()
-        let first = await gate.acquire(modelName: "minimax-m2.7-jangtq")
+        let first = try #require(await gate.acquire(modelName: "minimax-m2.7-jangtq"))
         let secondAcquired = Flag()
         let second = Task {
             let lease = await gate.acquire(modelName: "qwen3.5-30b-a3b-jangtq")
@@ -1253,9 +1334,28 @@ struct MLXBatchAdapterTests {
         )
 
         await first.release()
-        let secondLease = await second.value
+        let secondLease = try #require(await second.value)
         #expect(secondAcquired.get())
         await secondLease.release()
+    }
+
+    @Test func soloGenerationGate_removesCancelledWaiterWithoutTakingLease() async throws {
+        let gate = MLXBatchAdapter.SoloGenerationGate()
+        let first = try #require(await gate.acquire(modelName: "bonsai"))
+
+        let cancelled = Task {
+            await gate.acquire(modelName: "ornith")
+        }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        cancelled.cancel()
+        #expect(await cancelled.value == nil)
+
+        let next = Task {
+            await gate.acquire(modelName: "gemma-4")
+        }
+        await first.release()
+        let nextLease = try #require(await next.value)
+        await nextLease.release()
     }
 
     @Test func additionalContext_mapsDisableThinkingToEnableThinkingKwarg() {
@@ -2377,6 +2477,39 @@ struct MLXBatchAdapterTests {
         #expect(
             MLXBatchAdapter.warmupSendInvariantBoundary(probeA: [], probeB: []) == nil
         )
+    }
+
+    @Test func warmupStableBoundaries_requireBothProbesAndFitInsideInvariantPrefix() {
+        #expect(
+            MLXBatchAdapter.agreedWarmupStableBoundaries(
+                probeA: [20, 80, 120, 160],
+                probeB: [20, 120, 160, 200],
+                invariantPrefixCount: 160
+            ) == [20, 120]
+        )
+        #expect(
+            MLXBatchAdapter.agreedWarmupStableBoundaries(
+                probeA: [120],
+                probeB: [],
+                invariantPrefixCount: 160
+            ).isEmpty
+        )
+        #expect(
+            MLXBatchAdapter.agreedWarmupStableBoundaries(
+                probeA: [1],
+                probeB: [1],
+                invariantPrefixCount: 1
+            ).isEmpty
+        )
+    }
+
+    @Test func warmupStableBoundaries_areAlsoPersistedAsOrdinaryBoundaries() {
+        let boundaries = MLXBatchAdapter.warmupCacheBoundaryLists(
+            stableBoundaries: [120, 20, 120, 0, -1]
+        )
+
+        #expect(boundaries.all == [20, 120])
+        #expect(boundaries.stable == [20, 120])
     }
 
     /// Simulates the Ornith / qwen3_5 failure: the native template REQUIRES

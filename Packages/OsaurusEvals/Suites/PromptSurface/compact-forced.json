@@ -1,0 +1,19 @@
+{
+  "id": "prompt_surface.compact-forced",
+  "domain": "prompt_surface",
+  "label": "prompt_surface • forceCompactPrompt overrides the resolver consistently and deterministically",
+  "query": "",
+  "notes": "The compact/full axis: forcing compact must flip the resolved selection through the single ContextSizeResolver chokepoint (so toolset, manifest, and templates stay mutually consistent) and still compose byte-deterministically.",
+  "fixtures": {},
+  "expect": {
+    "promptSurface": {
+      "profile": {
+        "name": "force-compact",
+        "forceCompactPrompt": true
+      },
+      "expectCompactPrompt": true,
+      "expectDeterministic": true,
+      "mustIncludeSections": ["platform", "persona"]
+    }
+  }
+}

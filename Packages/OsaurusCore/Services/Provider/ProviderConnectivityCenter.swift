@@ -218,10 +218,15 @@ public struct ProviderConnectivitySnapshot: Sendable {
     }
 
     public var pasteboardText: String {
+        let modelLabel = modelCount == 1 ? L("1 model") : L("\(modelCount) models")
+        let providerLabel =
+            manualModelProviderCount == 1
+            ? L("1 manual-model provider")
+            : L("\(manualModelProviderCount) manual-model providers")
         var lines = [
             L("Provider connectivity diagnostics"),
             L(
-                "\(connectedCount)/\(totalCount) connected, \(attentionCount) attention, \(modelCount) models, \(manualModelProviderCount) manual-model provider(s)"
+                "\(connectedCount)/\(totalCount) connected, \(attentionCount) attention, \(modelLabel), \(providerLabel)"
             ),
             L("Global proxy: \(proxy.summaryText)"),
         ]

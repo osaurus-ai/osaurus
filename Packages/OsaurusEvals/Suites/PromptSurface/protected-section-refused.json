@@ -1,0 +1,17 @@
+{
+  "id": "prompt_surface.protected-section-refused",
+  "domain": "prompt_surface",
+  "label": "prompt_surface • validator refuses dropping the grounding section",
+  "query": "",
+  "notes": "Negative contract: grounding is a quality non-negotiable, so a profile that lists it must be REFUSED at validation time (never silently ignored).",
+  "fixtures": {},
+  "expect": {
+    "promptSurface": {
+      "profile": {
+        "name": "drop-grounding",
+        "dropSections": ["grounding"]
+      },
+      "expectInvalidProfile": true
+    }
+  }
+}

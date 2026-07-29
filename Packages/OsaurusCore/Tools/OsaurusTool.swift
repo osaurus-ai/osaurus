@@ -36,12 +36,44 @@ protocol OsaurusTool: Sendable {
     /// + their own optional inactivity timeout as the safety net.
     /// Default `false`: every other tool keeps the 120s safety net.
     var bypassRegistryTimeout: Bool { get }
+
+    /// When `true`, executing this tool can create/edit/delete files in
+    /// the agent's sandbox workspace (agent home / `/workspace/shared`).
+    /// The registry wraps such calls in a `SandboxWorkspaceChangeTracker`
+    /// checkpoint so the chat's "Changes" list stays complete. Default
+    /// `false`.
+    var mutatesSandboxWorkspace: Bool { get }
+
+    /// When `true`, executing this tool can create/edit/delete files in the
+    /// user-selected host folder (the "Folder" chip). The registry wraps such
+    /// calls in a host-folder checkpoint so those mutations land in the same
+    /// "Changes" list. Mutually exclusive with `mutatesSandboxWorkspace`.
+    /// Default `false`.
+    var mutatesHostFolder: Bool { get }
+
+    /// Optional, tool-owned repair for a narrowly documented model-output
+    /// shape before the shared schema validator runs. The default is identity;
+    /// tools must not use this to weaken their schema generally.
+    func normalizeArgumentsBeforeValidation(_ argumentsJSON: String) -> String
 }
 
 extension OsaurusTool {
     /// Default: every tool gets the registry's wall-clock safety net.
     /// Streaming tools (`sandbox_exec`, `shell_run`) override to `true`.
     var bypassRegistryTimeout: Bool { false }
+
+    /// Default: tools do not mutate the sandbox workspace. Sandbox
+    /// write/exec/install/plugin tools override to `true`.
+    var mutatesSandboxWorkspace: Bool { false }
+
+    /// Default: tools do not mutate the selected host folder. Folder
+    /// write/edit/shell/undo tools override to `true`.
+    var mutatesHostFolder: Bool { false }
+
+    /// Default: preserve the model/client payload byte-for-byte.
+    func normalizeArgumentsBeforeValidation(_ argumentsJSON: String) -> String {
+        argumentsJSON
+    }
 
     /// Build OpenAI-compatible Tool specification
     func asOpenAITool() -> Tool {
@@ -334,7 +366,7 @@ public enum ArgumentCoercion {
     public static func bool(_ value: Any?) -> Bool? {
         if let b = value as? Bool { return b }
         if let s = value as? String {
-            switch s.lowercased() {
+            switch s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
             case "true", "1", "yes": return true
             case "false", "0", "no": return false
             default: return nil

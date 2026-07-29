@@ -125,6 +125,20 @@ final class ChatWindowState: ObservableObject {
     /// content renders its own themed header row instead.
     @Published var isFullScreen: Bool = false
 
+    // MARK: - Sandbox Changes State
+
+    /// Drives the session-scoped "Changes" sheet (sandbox file changes +
+    /// undo). Presented from `ChatView`, toggled by the toolbar button.
+    @Published var isChangesSheetPresented: Bool = false
+
+    /// Number of outstanding sandbox workspace changes tracked for the
+    /// current chat session. Zero hides the toolbar entrypoint.
+    @Published private(set) var sandboxChangesCount: Int = 0
+
+    /// True while a background job spawned by the current session may still
+    /// be mutating the workspace (undo is disabled meanwhile).
+    @Published private(set) var sandboxChangesHaveActiveJob: Bool = false
+
     // MARK: - Theme State
 
     @Published private(set) var theme: ThemeProtocol
@@ -175,11 +189,22 @@ final class ChatWindowState: ObservableObject {
             self?.refreshSessionsDebounced()
         }
 
+        // One-time legacy migration: pre-per-chat-isolation builds persisted a
+        // single process-wide folder bookmark. The first eligible chat opened
+        // after the update adopts it as ITS folder (then the global key is
+        // deleted); it is never used as a default for any other chat. The
+        // Default agent is folder-less by policy, and a session that already
+        // carries its own bookmark must not be overridden.
+        if agentId != Agent.defaultId, sessionData?.folderBookmark == nil {
+            self.session.folderState.adoptLegacyGlobalBookmarkIfNeeded()
+        }
+
         setupNotificationObservers()
         observeBonjourBrowser()
         observeAgentManager()
         observeSessionsManager()
         refreshPairedRelayAgents()
+        refreshSandboxChanges()
     }
 
     /// Wrap an existing `ExecutionContext`, reusing its sessions without duplication.
@@ -210,6 +235,7 @@ final class ChatWindowState: ObservableObject {
         observeAgentManager()
         observeSessionsManager()
         refreshPairedRelayAgents()
+        refreshSandboxChanges()
     }
 
     deinit {
@@ -249,6 +275,7 @@ final class ChatWindowState: ObservableObject {
             session.reset(for: newAgentId)
         }
         refreshSessions()
+        refreshSandboxChanges()
     }
 
     func startNewChat() {
@@ -261,6 +288,7 @@ final class ChatWindowState: ObservableObject {
             session.reset(for: agentId)
         }
         refreshSessions()
+        refreshSandboxChanges()
         // KPI: user started a new chat conversation. Count only.
         FeatureTelemetry.chatSessionStarted()
     }
@@ -301,6 +329,34 @@ final class ChatWindowState: ObservableObject {
             session.load(from: resolvedData)
         }
         refreshSessions()
+        refreshSandboxChanges()
+    }
+
+    // MARK: - Sandbox Changes
+
+    /// Re-query the tracker for the current session's outstanding sandbox
+    /// change count + active-job flag. Cheap (actor cache hit) and safe to
+    /// call on every chat switch / tracker notification.
+    func refreshSandboxChanges() {
+        // Remote-agent chats never mutate the local sandbox; a new chat has
+        // no session id until the first send.
+        guard selectedDiscoveredAgentProviderId == nil,
+            let sessionId = session.sessionId?.uuidString
+        else {
+            sandboxChangesCount = 0
+            sandboxChangesHaveActiveJob = false
+            return
+        }
+        Task { [weak self] in
+            let count = await SandboxWorkspaceChangeTracker.shared.changeCount(for: sessionId)
+            let hasJob = await SandboxWorkspaceChangeTracker.shared.hasActiveBackgroundJobs(
+                sessionId: sessionId)
+            await MainActor.run {
+                guard let self, self.session.sessionId?.uuidString == sessionId else { return }
+                self.sandboxChangesCount = count
+                self.sandboxChangesHaveActiveJob = hasJob
+            }
+        }
     }
 
     // MARK: - Detach / Attach
@@ -411,8 +467,12 @@ final class ChatWindowState: ObservableObject {
         let newTheme = Self.loadTheme(for: agentId)
         let oldConfig = theme.customThemeConfig
         let newConfig = newTheme.customThemeConfig
-        // Skip only if the full config is identical (not just the ID)
-        guard oldConfig != newConfig else { return }
+        // Skip only if the full config is identical (not just the ID) and the
+        // global font zoom is unchanged — the zoom lives on the theme instance,
+        // not in the config, so it must be compared separately.
+        let oldScale = (theme as? CustomizableTheme)?.fontScale
+        let newScale = (newTheme as? CustomizableTheme)?.fontScale
+        guard oldConfig != newConfig || oldScale != newScale else { return }
         let shouldRedecodeBackgroundImage = Self.needsBackgroundImageRedecode(
             oldConfig: oldConfig,
             newConfig: newConfig
@@ -433,7 +493,13 @@ final class ChatWindowState: ObservableObject {
         cachedSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: agentId)
         cachedActiveAgent = agents.first { $0.id == agentId } ?? .default
         cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
-        session.invalidateTokenCache()
+        // `.appConfigurationChanged` also feeds ChatSession's prompt-shape
+        // detector. Keep its old preview bytes until that detector compares
+        // them with the newly persisted Default-agent configuration. Clearing
+        // the preview here allowed the intervening SwiftUI redraw to cache
+        // the new bytes first, hiding the change and leaving a stale green
+        // warm-prefix claim for the next send.
+        session.invalidateTokenCache(preservingPromptShapeBaseline: true)
     }
 
     func refreshAll() async {
@@ -512,7 +578,20 @@ final class ChatWindowState: ObservableObject {
         sessionsCancellable = ChatSessionsManager.shared.$sessions
             .dropFirst()
             .sink { [weak self] _ in
-                self?.refreshSessions()
+                // `@Published` emits in willSet (see the warning on
+                // `applyAgentsUpdate`): during this callback the manager's
+                // storage still holds the OLD array, and `refreshSessions()`
+                // re-reads that storage. Refreshing synchronously here
+                // captured mid-mutation state — after `upsertInMemory`'s
+                // remove+insert pair, the LAST emission observed the list
+                // with the session removed but not yet re-inserted, so the
+                // sidebar latched onto a snapshot missing a live chat until
+                // some later refresh happened to run (never, for the quiet
+                // auto-title rename). Hop one main-actor turn so the read
+                // sees the post-mutation array.
+                Task { @MainActor [weak self] in
+                    self?.refreshSessions()
+                }
             }
     }
 
@@ -555,7 +634,11 @@ final class ChatWindowState: ObservableObject {
         if !newActive.isBuiltIn {
             cachedSystemPrompt = newActive.systemPrompt
         }
-        session.invalidateTokenCache()
+        // The matching `.agentUpdated` / prompt-shape signal must compare the
+        // old preview against this newly published agent. Preserve that
+        // baseline across the immediate window-state refresh; otherwise a
+        // view redraw can consume the new shape before the detector runs.
+        session.invalidateTokenCache(preservingPromptShapeBaseline: true)
 
         if newActive.themeId != oldActive.themeId {
             refreshTheme()
@@ -659,6 +742,24 @@ final class ChatWindowState: ObservableObject {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in Task { @MainActor in self?.refreshAgents() } }
+        )
+        // Sandbox change tracking: refresh the toolbar count when the
+        // tracker records/undoes changes for the session this window shows.
+        notificationObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: .sandboxWorkspaceChangesDidChange,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                let changed = notification.userInfo?["sessionId"] as? String
+                Task { @MainActor in
+                    guard let self else { return }
+                    guard let current = self.session.sessionId?.uuidString,
+                        changed == nil || changed == current
+                    else { return }
+                    self.refreshSandboxChanges()
+                }
+            }
         )
         // Note: .chatOverlayActivated intentionally not observed here
         // State is loaded in init(), refreshAll() would cause excessive re-renders

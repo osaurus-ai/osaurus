@@ -502,24 +502,64 @@ struct ContextBudgetPreviewTests {
         }
     }
 
+    /// Local discovery first publishes a cheap id-only row, then enriches the
+    /// same id from config.json. The metadata-only picker update must evict the
+    /// cached generic preview so the next budget/warm-up/send all use the
+    /// authoritative architecture guidance. Before this regression fix the
+    /// picker showed the refreshed item while the preview and green warm claim
+    /// remained tied to the old generic prompt.
+    @Test("same-id model_type enrichment invalidates the cached family preview")
+    func sameIdModelTypeEnrichment_invalidatesFamilyPreview() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            var chatConfig = ChatConfigurationStore.load()
+            chatConfig.warmModelsOnLoad = false
+            ChatConfigurationStore.save(chatConfig)
+
+            let modelId = "local/renamed-backbone"
+            let session = ChatSession()
+            session.agentId = agentId
+            session.pickerItems = [
+                ModelPickerItem(
+                    id: modelId,
+                    displayName: "Renamed Backbone",
+                    source: .local
+                )
+            ]
+            session.selectedModel = modelId
+
+            @MainActor func familyTokens() -> Int {
+                session.estimatedContextBreakdown.context
+                    .first { $0.id == "modelFamilyGuidance" }?.tokens ?? 0
+            }
+
+            let genericTokens = familyTokens()
+            #expect(genericTokens > 0)
+
+            session.applyPickerItems([
+                ModelPickerItem(
+                    id: modelId,
+                    displayName: "Renamed Backbone",
+                    source: .local,
+                    modelType: "qwen3_5"
+                )
+            ])
+
+            #expect(session.selectedPickerItem?.modelType == "qwen3_5")
+            #expect(familyTokens() != genericTokens)
+        }
+    }
+
     // MARK: - Skills are load-on-demand only
 
     /// Regression for the 55k-token Skills bloat: skills MUST be
     /// discovered via `capabilities_discover` and pulled in via
     /// `capabilities_load`, never auto-injected into the system prompt
     /// at compose time. Both compose paths must omit the `skills`
-    /// section regardless of the agent's enabled-skills allowlist.
-    @Test("compose: no `skills` section, even when the agent has skills enabled")
+    /// section even though every installed skill is universally
+    /// available to the agent.
+    @Test("compose: no `skills` section, even though all installed skills are available")
     func bagOfSkills_neverInjected() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
-            // Simulate the "all skills enabled" allowlist that the
-            // capability seeder used to write — exactly the state that
-            // produced the 55k Skills row in the original screenshot.
-            AgentManager.shared.updateEnabledSkillNames(
-                SkillManager.shared.skills.map(\.name),
-                for: agentId
-            )
-
             let preview = SystemPromptComposer.composePreviewContext(
                 agentId: agentId,
                 executionMode: .none
@@ -688,6 +728,198 @@ struct ContextBudgetPreviewTests {
             #expect(preview.contextDisable == real.contextDisable)
         }
     }
+
+    // MARK: - Ability draft preview (Abilities → Overview)
+
+    /// A `Draft` mirroring the flags `withAgent` persists (tools on,
+    /// memory on, everything else off — `AgentSettings.defaultDisabled`).
+    private func persistedMatchingDraft(
+        toolsEnabled: Bool = true,
+        memoryEnabled: Bool = true,
+        dbEnabled: Bool = false,
+        model: String? = nil
+    ) -> AgentAbilityContextPreview.Draft {
+        AgentAbilityContextPreview.Draft(
+            toolsEnabled: toolsEnabled,
+            memoryEnabled: memoryEnabled,
+            dbEnabled: dbEnabled,
+            renderChartEnabled: false,
+            speakEnabled: false,
+            searchMemoryEnabled: false,
+            webSearchEnabled: true,
+            selfSchedulingEnabled: false,
+            knowledgeEnabled: false,
+            knowledgeCuratorEnabled: false,
+            codeExecutionEnabled: false,
+            model: model
+        )
+    }
+
+    /// The core honesty guarantee of the Abilities hero: a draft that
+    /// mirrors the PERSISTED flags must price the exact same sections and
+    /// tool tokens as the capture-based preview compose the chat popover
+    /// uses. If the draft-snapshot path drifted, the editor would show a
+    /// different number than the next real send.
+    @Test("ability draft matching persisted state == capture-based preview")
+    func abilityDraft_matchingPersisted_isIdenticalToCapturePreview() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let captureBased = SystemPromptComposer.composePreviewContext(
+                agentId: agentId,
+                executionMode: .none
+            )
+            let preview = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft()
+            )
+            let captureBreakdown = ContextBreakdown.from(context: captureBased)
+            #expect(preview.breakdown.allEntries.map(\.id) == captureBreakdown.allEntries.map(\.id))
+            #expect(preview.staticTokens == captureBreakdown.total)
+        }
+    }
+
+    /// Toggling an ability in the DRAFT (before any save) must move the
+    /// estimate: enabling the Agent DB adds its onboarding prompt section,
+    /// so the priced startup context strictly grows.
+    @Test("ability draft: enabling Database grows the startup estimate")
+    func abilityDraft_dbToggle_changesEstimate() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let dbOff = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(dbEnabled: false)
+            )
+            let dbOn = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(dbEnabled: true)
+            )
+            #expect(dbOn.staticTokens > dbOff.staticTokens)
+        }
+    }
+
+    /// Tools-off in the draft collapses the estimate to the base prompt:
+    /// no tool schema tokens, platform + persona only — matching the
+    /// tools-off behavior of the real compose path.
+    @Test("ability draft: tools off collapses to base prompt")
+    func abilityDraft_toolsOff_collapsesToBase() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let toolsOn = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(toolsEnabled: true, memoryEnabled: false)
+            )
+            let toolsOff = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(toolsEnabled: false, memoryEnabled: false)
+            )
+            #expect(toolsOff.staticTokens < toolsOn.staticTokens)
+            #expect(toolsOff.breakdown.allEntries.map(\.id) == ["platform", "persona"])
+        }
+    }
+
+    /// Memory is a per-turn injection, not a static prompt section, so it
+    /// must surface as a RANGE: upper bound = the configured memory budget,
+    /// and off → a single-value estimate. `withAgent` saves the default
+    /// config with memory enabled, so the budget is the validated default.
+    @Test("ability draft: memory widens the estimate into a budget-capped range")
+    func abilityDraft_memoryProducesRange() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let expectedBudget = MemoryConfigurationStore.load().validated().memoryBudgetTokens
+
+            let memoryOn = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(memoryEnabled: true)
+            )
+            #expect(memoryOn.isRange)
+            #expect(memoryOn.memoryUpperTokens == expectedBudget)
+            #expect(memoryOn.highTokens == memoryOn.staticTokens + expectedBudget)
+
+            let memoryOff = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(memoryEnabled: false)
+            )
+            #expect(memoryOff.isRange == false)
+            #expect(memoryOff.memoryUpperTokens == 0)
+            #expect(memoryOff.lowTokens == memoryOff.highTokens)
+        }
+    }
+
+    /// Tiny-window models (Foundation) auto-disable tools + memory. The
+    /// ability preview must report the disable info AND zero out the
+    /// memory upper bound — claiming a memory range the composer will
+    /// never inject would be a lie.
+    @Test("ability draft: tiny model reports auto-disable and drops the memory range")
+    func abilityDraft_tinyModel_disablesMemoryRange() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let preview = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: persistedMatchingDraft(memoryEnabled: true, model: "foundation")
+            )
+            guard let info = preview.disable else {
+                Issue.record("disable info missing for foundation model")
+                return
+            }
+            #expect(info.sizeClass == .tiny)
+            #expect(info.disabledMemory)
+            #expect(preview.memoryUpperTokens == 0)
+            #expect(preview.isRange == false)
+            // Foundation's window is resolvable, so the ratio is computable.
+            #expect(preview.contextWindow != nil)
+        }
+    }
+}
+
+// MARK: - Ability preview math
+
+/// Pure unit tests for `AgentAbilityContextPreview`'s derived values —
+/// the range/ratio/format logic the Abilities hero renders. No composer
+/// or agent state involved.
+@MainActor
+struct AgentAbilityContextPreviewMathTests {
+
+    private func preview(
+        staticTokens: Int,
+        memoryUpper: Int = 0,
+        window: Int? = nil
+    ) -> AgentAbilityContextPreview {
+        AgentAbilityContextPreview(
+            breakdown: ContextBreakdown.from(manifest: PromptManifest(sections: [])),
+            staticTokens: staticTokens,
+            memoryUpperTokens: memoryUpper,
+            contextWindow: window,
+            disable: nil
+        )
+    }
+
+    @Test func rangeBoundsFollowMemoryUpper() {
+        let fixed = preview(staticTokens: 2000)
+        #expect(fixed.lowTokens == 2000)
+        #expect(fixed.highTokens == 2000)
+        #expect(fixed.isRange == false)
+
+        let ranged = preview(staticTokens: 2000, memoryUpper: 800)
+        #expect(ranged.lowTokens == 2000)
+        #expect(ranged.highTokens == 2800)
+        #expect(ranged.isRange)
+    }
+
+    @Test func windowFractionUsesWorstCaseAndClamps() {
+        #expect(preview(staticTokens: 1000, window: nil).windowFraction == nil)
+        #expect(preview(staticTokens: 1000, window: 0).windowFraction == nil)
+
+        let quarter = preview(staticTokens: 500, memoryUpper: 500, window: 4000)
+        #expect(quarter.windowFraction == 0.25)
+
+        // Worst case above the window clamps to 1 rather than overflowing
+        // the hero's usage bar.
+        let over = preview(staticTokens: 5000, memoryUpper: 1000, window: 4000)
+        #expect(over.windowFraction == 1.0)
+    }
+
+    @Test func tokenFormattingIsCompact() {
+        #expect(AgentAbilityContextPreview.format(tokens: 0) == "0")
+        #expect(AgentAbilityContextPreview.format(tokens: 999) == "999")
+        #expect(AgentAbilityContextPreview.format(tokens: 1000) == "1.0K")
+        #expect(AgentAbilityContextPreview.format(tokens: 3260) == "3.3K")
+        #expect(AgentAbilityContextPreview.format(tokens: 262_144) == "262K")
+    }
 }
 
 // MARK: - Bar Segment Widths
@@ -819,6 +1051,73 @@ struct ContextBudgetSegmentWidthsTests {
             fillsTrack: true
         )
         #expect(zeroTotal == [0, 0, 0])
+    }
+}
+
+// MARK: - Window Utilization
+
+@Suite
+struct ContextBudgetUtilizationTests {
+
+    @Test("known model window reports usage and remaining headroom")
+    func knownWindow_reportsUsageAndHeadroom() {
+        let usage = computeContextBudgetUtilization(
+            usedTokens: 9_000,
+            maxTokens: 36_000
+        )
+
+        #expect(usage.usedTokens == 9_000)
+        #expect(usage.maxTokens == 36_000)
+        #expect(usage.fraction == 0.25)
+        #expect(usage.percent == 25)
+        #expect(usage.remainingTokens == 27_000)
+    }
+
+    @Test("chat denominator uses the same 85 percent budget as compaction")
+    func usableBudget_matchesRuntimeCompactionBudget() {
+        let modelMaximum = 262_144
+        let usable =
+            ContextBudgetManager(
+                contextLength: modelMaximum
+            ).effectiveBudget
+        let usage = computeContextBudgetUtilization(
+            usedTokens: 111_411,
+            maxTokens: usable
+        )
+
+        #expect(usable == 222_822)
+        #expect(usage.maxTokens == 222_822)
+        #expect(usage.fraction == 0.5)
+        #expect(usage.remainingTokens == 111_411)
+    }
+
+    @Test("usage above the model window clamps visual metrics")
+    func overflow_clampsVisualMetrics() {
+        let usage = computeContextBudgetUtilization(
+            usedTokens: 5_000,
+            maxTokens: 4_000
+        )
+
+        #expect(usage.usedTokens == 5_000)
+        #expect(usage.fraction == 1)
+        #expect(usage.percent == 100)
+        #expect(usage.remainingTokens == 0)
+    }
+
+    @Test("unknown or invalid model windows stay absent")
+    func unknownWindow_omitsCapacityMetrics() {
+        for maxTokens in [nil, 0, -1] as [Int?] {
+            let usage = computeContextBudgetUtilization(
+                usedTokens: -10,
+                maxTokens: maxTokens
+            )
+
+            #expect(usage.usedTokens == 0)
+            #expect(usage.maxTokens == nil)
+            #expect(usage.fraction == nil)
+            #expect(usage.percent == nil)
+            #expect(usage.remainingTokens == nil)
+        }
     }
 }
 

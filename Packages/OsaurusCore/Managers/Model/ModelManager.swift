@@ -271,9 +271,10 @@ final class ModelManager: NSObject, ObservableObject {
     func loadAvailableModels() {
         // Seed sizes synchronously from the on-disk cache so the first
         // paint shows last-known-accurate download sizes even offline.
-        // Sizes are no longer hand-coded; they're fetched + cached by the
-        // OsaurusAI org refresh / on-demand estimate and persisted in
-        // `ModelSizeCache`.
+        // Sizes normally come from the OsaurusAI org refresh / on-demand
+        // estimate and persist in `ModelSizeCache`. A model whose mixed
+        // precision cannot be inferred from its id may carry a bootstrap size;
+        // a cached Hub measurement still replaces it here.
         let curated = Self.curatedSuggestedModels.map { model in
             model.withDownloadSize(ModelSizeCache.bytes(forId: model.id))
         }
@@ -661,6 +662,7 @@ extension ModelManager {
         id: String,
         description: String,
         isTopSuggestion: Bool = false,
+        bootstrapDownloadSizeBytes: Int64? = nil,
         modelType: String? = nil,
         releasedAt: Date? = nil,
         useCase: ModelUseCase? = nil
@@ -671,7 +673,7 @@ extension ModelManager {
             description: description,
             downloadURL: "https://huggingface.co/\(id)",
             isTopSuggestion: isTopSuggestion,
-            downloadSizeBytes: nil,
+            downloadSizeBytes: bootstrapDownloadSizeBytes,
             modelType: modelType,
             releasedAt: releasedAt,
             useCase: useCase
@@ -698,7 +700,9 @@ extension ModelManager {
         // Onboarding recommendation spine (2026-07-08, GUI-verified in the
         // dev-built app — every model below loads, calls tools, reasons with
         // thinking on, and leaks no markup into visible content):
-        //   • Larger RAM  → Ornith 1.0 MXFP8 (9B / 35B, below).
+        //   • Mainstream RAM → Bonsai 27B, selecting its 1-bit or ternary
+        //                      variant from the machine's model-memory budget.
+        //   • Larger RAM     → Ornith 1.0 MXFP8 (9B / 35B, below).
         //   • Smaller RAM → official OsaurusAI Gemma 4 at the highest non-QAT,
         //                    non-MXFP4 precision that exists: `12B-it-MXFP8`
         //                    (the only MXFP8 Gemma the org ships) and the
@@ -871,12 +875,18 @@ extension ModelManager {
         // prism-ml's Bonsai checkpoints. Text matrices use affine JANG
         // (schema-2 discrete storage — not JANGTQ/MXTQ or a codebook
         // sidecar); vision components stay 4-bit affine. Same `qwen3_5`
-        // runtime class as Qwen 3.6 / Ornith dense builds.
+        // runtime class as Qwen 3.6 / Ornith dense builds. Both variants are
+        // Top Picks so the normalized Bonsai family can select the best build
+        // for this Mac. Their mixed text/vision precision cannot be estimated
+        // accurately from `27B × bit-width`, so the current Hub sizes bootstrap
+        // first-launch hardware selection until `ModelSizeCache` refreshes.
 
         curated(
             id: "OsaurusAI/Bonsai-27b-Ternary-JANG",
             description:
                 "Bonsai 27B dense vision model on a Qwen 3.5 backbone. Ternary (2-bit slot) affine JANG text weights — ~8 GB on disk.",
+            isTopSuggestion: true,
+            bootstrapDownloadSizeBytes: 8_040_700_199,
             modelType: "qwen3_5",
             releasedAt: date("2026-07-14"),
             useCase: .vision
@@ -886,6 +896,8 @@ extension ModelManager {
             id: "OsaurusAI/Bonsai-27b-1bit-JANG",
             description:
                 "Bonsai 27B dense vision model on a Qwen 3.5 backbone. 1-bit affine JANG text weights — smallest of the family at ~4.7 GB.",
+            isTopSuggestion: true,
+            bootstrapDownloadSizeBytes: 4_679_030_015,
             modelType: "qwen3_5",
             releasedAt: date("2026-07-14"),
             useCase: .vision
@@ -1349,8 +1361,45 @@ extension ModelManager {
     /// must use this: with a cold cache `discoverLocalModels()` parks on the
     /// scan condition (up to ~10s) and beachballs the main thread.
     nonisolated static func findInstalledMLXModelFromCache(named name: String) -> MLXModel? {
-        matchInstalledMLXModel(named: name, in: localModelsSnapshotNonBlocking())
+        let key = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !key.isEmpty else { return nil }
+
+        // This runs from view bodies on every 2s memory tick (RAM-feasibility
+        // refresh). Rebuilding the merged model list and re-splitting every id
+        // per call is wasted main-thread work — and under memory pressure it
+        // shows up in hang reports. Memoize per name, invalidated when either
+        // the local scan cache or the external registry changes.
+        localModelsCacheCondition.lock()
+        let localGen = localModelsCacheGen
+        localModelsCacheCondition.unlock()
+        let externalGen = ExternalModelLocator.registryGeneration()
+
+        matchMemoLock.lock()
+        if matchMemoLocalGen == localGen, matchMemoExternalGen == externalGen,
+            let hit = matchMemo[key]
+        {
+            matchMemoLock.unlock()
+            return hit
+        }
+        matchMemoLock.unlock()
+
+        let result = matchInstalledMLXModel(named: name, in: localModelsSnapshotNonBlocking())
+
+        matchMemoLock.lock()
+        if matchMemoLocalGen != localGen || matchMemoExternalGen != externalGen {
+            matchMemo.removeAll(keepingCapacity: true)
+            matchMemoLocalGen = localGen
+            matchMemoExternalGen = externalGen
+        }
+        matchMemo[key] = result
+        matchMemoLock.unlock()
+        return result
     }
+
+    private static nonisolated let matchMemoLock = NSLock()
+    private static nonisolated(unsafe) var matchMemo: [String: MLXModel?] = [:]
+    private static nonisolated(unsafe) var matchMemoLocalGen: UInt64 = .max
+    private static nonisolated(unsafe) var matchMemoExternalGen: UInt64 = .max
 
     private nonisolated static func matchInstalledMLXModel(
         named name: String,
@@ -1379,6 +1428,19 @@ extension ModelManager {
     /// externally-discovered and symlinked bundles keep their real path.
     nonisolated static func findInstalledModel(named name: String) -> (name: String, id: String)? {
         guard let match = findInstalledMLXModel(named: name) else { return nil }
+        let repo =
+            match.id.split(separator: "/").last.map(String.init)?.lowercased()
+            ?? name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return (repo, match.id)
+    }
+
+    /// Cache-only variant of `findInstalledModel(named:)` for main-thread /
+    /// view-body callers: never waits on the disk scan (returns nil misses
+    /// until it lands).
+    nonisolated static func findInstalledModelFromCache(named name: String) -> (
+        name: String, id: String
+    )? {
+        guard let match = findInstalledMLXModelFromCache(named: name) else { return nil }
         let repo =
             match.id.split(separator: "/").last.map(String.init)?.lowercased()
             ?? name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -1739,6 +1801,10 @@ extension ModelManager {
     // MARK: - Local Models Cache (in-memory, cleared on app restart)
     private static nonisolated let localModelsCacheCondition = NSCondition()
     private static nonisolated(unsafe) var cachedLocalModels: [MLXModel]?
+    /// Bumped whenever `cachedLocalModels` changes (invalidate or scan
+    /// landing). Combined with `ExternalModelLocator.registryGeneration()`
+    /// this versions the full merged model list for read-side memo caches.
+    private static nonisolated(unsafe) var localModelsCacheGen: UInt64 = 0
     private static nonisolated(unsafe) var localModelsScanInFlight = false
     private static nonisolated let localModelsScanWaitLimit: TimeInterval = 10
     private static nonisolated(unsafe) var lastLocalModelsScanDiagnostic: [String: Any]?
@@ -1749,6 +1815,7 @@ extension ModelManager {
         localModelsCacheCondition.lock()
         cachedLocalModels = nil
         localModelsScanInFlight = false
+        localModelsCacheGen &+= 1
         localModelsCacheCondition.broadcast()
         localModelsCacheCondition.unlock()
         LocalReasoningCapability.invalidate()
@@ -1827,6 +1894,15 @@ extension ModelManager {
         }
     }
 
+    /// True once the background disk scan has populated the local-models
+    /// cache. Lets memoizing callers distinguish "model not installed" from
+    /// "scan hasn't landed yet" when using the non-blocking lookups.
+    nonisolated static var isLocalModelsCacheWarm: Bool {
+        localModelsCacheCondition.lock()
+        defer { localModelsCacheCondition.unlock() }
+        return cachedLocalModels != nil
+    }
+
     /// Local models from the warm cache, never waiting on a scan. On a cold
     /// cache this kicks off the background scan and returns the (possibly
     /// empty) current state immediately — callers re-render once the scan
@@ -1852,8 +1928,19 @@ extension ModelManager {
             localModelsCacheCondition.lock()
             cachedLocalModels = scanned
             localModelsScanInFlight = false
+            localModelsCacheGen &+= 1
             localModelsCacheCondition.broadcast()
             localModelsCacheCondition.unlock()
+
+            // Warm the per-model capability caches while still on the scan
+            // queue. Both are lazily computed from on-disk config files, and a
+            // cold lookup otherwise happens on the main thread the first time
+            // a model is clicked or rendered (chat-template read, config.json
+            // vision probe) — an observed hang under disk pressure.
+            for model in scanned {
+                _ = LocalReasoningCapability.capability(forModelId: model.id)
+                _ = VLMDetection.isVLM(modelId: model.id)
+            }
         }
     }
 

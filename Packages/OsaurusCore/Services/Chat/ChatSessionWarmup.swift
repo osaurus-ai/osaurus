@@ -21,6 +21,12 @@ extension ChatSession: ChatWarmupSessionContext {
         let effectiveAgentId = agentId ?? Agent.defaultId
         let executionMode = await prepareChatExecutionMode(agentId: effectiveAgentId)
 
+        // The plugin catalog is part of the static system/tool prefix. Wait
+        // for its one-time launch snapshot before warming, otherwise the same
+        // installed plugins can render a different prefix across process
+        // restarts and bypass an otherwise valid disk-L2 cache entry.
+        await PluginManager.shared.ensurePromptCatalogReady()
+
         let liveToolMode = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId)
         let liveFingerprint = SessionToolState.fingerprint(
             executionMode: executionMode,
@@ -48,11 +54,13 @@ extension ChatSession: ChatWarmupSessionContext {
             agentId: effectiveAgentId,
             executionMode: executionMode,
             model: model,
+            modelType: selectedPickerItem?.modelType,
             query: "",
             messages: priorUserMessages,
             toolsDisabled: chatCfg.disableTools,
             additionalToolNames: cachedSession?.loadedToolNames ?? [],
             frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
+            frozenToolSpecs: cachedSession?.initialToolSpecs,
             frozenManifest: cachedSession?.frozenManifest,
             frozenSoul: cachedSession?.frozenSoul,
             trace: nil
@@ -83,7 +91,20 @@ extension ChatSession: ChatWarmupSessionContext {
             .sorted()
             .joined(separator: ",")
 
-        let fingerprint = "\(model)|\(context.cacheHint)|\(optionsFingerprint)|\(historyFingerprint)"
+        // Hash of the FULL rendered system prompt (static + dynamic sections
+        // + plugin instructions), not just `cacheHint`. `cacheHint` covers
+        // only the static prefix and tool schemas, so an edit that rewrites a
+        // dynamic section — a channel-destination mode change, an agent DB
+        // schema change, a sandbox-state flip — left the old fingerprint
+        // intact and the controller kept claiming a warm prefix for bytes
+        // the next send would no longer compose. The send then diverged
+        // inside the system message and cold-re-prefilled the entire
+        // conversation. Folding the rendered bytes in makes such edits
+        // re-warm with the current prompt instead.
+        let promptFingerprint = PromptSurfaceEvaluator.fnv1a(sys)
+
+        let fingerprint =
+            "\(model)|\(context.cacheHint)|\(promptFingerprint)|\(optionsFingerprint)|\(historyFingerprint)"
 
         return ChatWarmupPayload(
             model: model,
@@ -109,26 +130,15 @@ extension ChatSession: ChatWarmupSessionContext {
         return msgs
     }
 
-    private func warmupTurnToMessage(_ turn: ChatTurn, isLastTurn: Bool) -> ChatMessage? {
+    func warmupTurnToMessage(_ turn: ChatTurn, isLastTurn: Bool) -> ChatMessage? {
         switch turn.role {
         case .assistant:
-            if isLastTurn && turn.contentIsBlank && turn.thinkingIsBlank && turn.toolCalls == nil {
-                return nil
-            }
-            if turn.contentIsBlank && turn.thinkingIsBlank && (turn.toolCalls == nil || turn.toolCalls!.isEmpty) {
-                return nil
-            }
-            let content: String? = turn.contentIsBlank ? nil : turn.content
-            let reasoning: String? = turn.thinkingIsBlank ? nil : turn.thinking
-            return ChatMessage(
-                role: "assistant",
-                content: content,
-                tool_calls: turn.toolCalls,
-                tool_call_id: nil,
-                reasoning_content: reasoning,
-                reasoning_item_id: turn.reasoningItemId,
-                reasoning_encrypted: turn.reasoningEncrypted
-            )
+            // Warm-up and the real request must serialize one identical
+            // transcript. In particular, a reasoning-only attempt abandoned
+            // by the bounded retry remains visible in the UI but carries
+            // `modelContextExcluded`; warming it would prefill poisoned
+            // history that the next real send correctly omits.
+            return Self.modelVisibleAssistantMessage(turn, isLastTurn: isLastTurn)
         case .tool:
             return ChatMessage(
                 role: "tool",
@@ -194,12 +204,22 @@ extension ChatSession: ChatWarmupSessionContext {
         warmupController.scheduleWarmup(session: self)
     }
 
-    func handleWarmupAfterRunCompleted() {
-        warmupController.scheduleWarmup(session: self)
+    func handleWarmupAfterRunCompleted(wasCancelled: Bool, hadError: Bool) {
+        let hadToolActivity = turns.contains { turn in
+            turn.role == .tool
+                || !(turn.toolCalls?.isEmpty ?? true)
+                || !turn.toolResults.isEmpty
+                || turn.hasRemoteToolActivity
+        }
+        warmupController.handleRunCompleted(
+            session: self,
+            wasCancelled: wasCancelled,
+            hadError: hadError,
+            hadToolActivity: hadToolActivity
+        )
     }
 
     func invalidateWarmupAfterContextShapeChange() {
-        warmupController.invalidateWarmState()
-        warmupController.scheduleWarmup(session: self)
+        warmupController.handleContextShapeChange(session: self)
     }
 }

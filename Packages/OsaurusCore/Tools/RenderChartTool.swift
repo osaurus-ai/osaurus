@@ -92,6 +92,12 @@ struct RenderChartTool: OsaurusTool {
                         + "Use an array; a string-encoded array is accepted for local-model compatibility."
                 ),
             ]),
+            "yColumn": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Compatibility alias for one `series` column. Prefer `series`; accepted to recover local-model argument drift."
+                ),
+            ]),
             "xPath": .object([
                 "type": .string("string"),
                 "description": .string(
@@ -128,7 +134,8 @@ struct RenderChartTool: OsaurusTool {
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        guard case .value(let parsedArgs) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let args = Self.recoverNestedChartArguments(parsedArgs)
 
         let chartType: String
         if args["chartType"] == nil {
@@ -196,11 +203,15 @@ struct RenderChartTool: OsaurusTool {
             )
         }
 
-        let format =
+        let declaredFormat =
             (args["format"] as? String)?.lowercased()
             ?? (args["dataFormat"] as? String)?.lowercased()
             ?? referencedEntry?.format
             ?? "csv"
+        let format = Self.reconciledDelimitedFormat(
+            suppliedRaw,
+            declaredFormat: declaredFormat
+        )
         let raw = Self.unwrapQuotedDelimitedPayload(suppliedRaw, format: format)
         let title = args["title"] as? String
         let tipSuffix = args["tooltipSuffix"] as? String
@@ -237,6 +248,7 @@ struct RenderChartTool: OsaurusTool {
         }
 
         let xColumn = args["xColumn"] as? String
+        let requestedSeries = args["series"] ?? args["yColumn"]
 
         var headers: [String]
         var rows: [[String]]
@@ -274,7 +286,7 @@ struct RenderChartTool: OsaurusTool {
         // values) before inferring series, so the first point is not lost.
         // Explicit series/xColumn requests continue through the stricter
         // requested-column recovery below.
-        if args["series"] == nil,
+        if requestedSeries == nil,
             xColumn == nil,
             format != "json",
             let recovered = recoverOmittedSeriesHeaderlessDelimited(
@@ -292,13 +304,13 @@ struct RenderChartTool: OsaurusTool {
         // numeric. Never replace an explicit list: misspelled or otherwise
         // invalid user/model-selected columns still fail below.
         let seriesCols: [String]
-        if args["series"] == nil {
+        if requestedSeries == nil {
             seriesCols = Self.inferredSeriesColumns(
                 headers: headers,
                 rows: rows,
                 excluding: xColumn
             )
-        } else if let requested = Self.parseRequestedSeries(args["series"]), !requested.isEmpty {
+        } else if let requested = Self.parseRequestedSeries(requestedSeries), !requested.isEmpty {
             seriesCols = requested
         } else {
             seriesCols = []
@@ -750,23 +762,114 @@ struct RenderChartTool: OsaurusTool {
         }
     }
 
+    /// Some local models serialize a complete render_chart argument object
+    /// into the `data` string instead of placing those fields at the tool-call
+    /// root. Recover exactly one such layer only when it contains an inner
+    /// data payload plus a chart-control key and no unknown fields. Explicit
+    /// root fields continue to win, so this cannot override a valid call.
+    private static func recoverNestedChartArguments(_ args: [String: Any]) -> [String: Any] {
+        guard let wrapped = args["data"] as? String,
+            let encoded = wrapped.data(using: .utf8),
+            let nested = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any],
+            nested["data"] is String
+        else { return args }
+
+        let allowedKeys: Set<String> = [
+            "data", "dataRef", "format", "dataFormat", "chartType", "xColumn", "series",
+            "yColumn", "xPath", "seriesPaths", "title", "tooltipSuffix",
+        ]
+        guard Set(nested.keys).isSubset(of: allowedKeys),
+            nested.keys.contains(where: { $0 != "data" && $0 != "title" })
+        else { return args }
+
+        var recovered = nested
+        for (key, value) in args where key != "data" {
+            recovered[key] = value
+        }
+        return recovered
+    }
+
     /// Some local models wrap an entire CSV/TSV payload in one extra pair of
     /// quotes. JSON decoding has already handled escaping by this point, so
     /// remove only that dataset-wide wrapper when the first record still has
     /// multiple delimited columns. Ordinary quoted fields remain untouched.
     private static func unwrapQuotedDelimitedPayload(_ raw: String, format: String) -> String {
-        guard format == "csv" || format == "tsv",
+        guard format == "csv" || format == "tsv" else { return raw }
+        let separator = format == "tsv" ? "\t" : ","
+
+        // A second observed Bonsai drift quotes only the complete header row,
+        // turning `month,sales` into one CSV field while the body still has two
+        // columns. Remove that wrapper only when every non-empty body row has
+        // the same multi-column shape as the unquoted header.
+        var lines = raw.components(separatedBy: .newlines)
+        if let first = lines.first,
+            first.first == "\"",
+            first.last == "\"",
+            first.count >= 2
+        {
+            let candidate = String(first.dropFirst().dropLast())
+            let columnCount = candidate.components(separatedBy: separator).count
+            let body = lines.dropFirst().filter { !$0.isEmpty }
+            if columnCount > 1,
+                !body.isEmpty,
+                body.allSatisfy({ $0.components(separatedBy: separator).count == columnCount })
+            {
+                lines[0] = candidate
+                return lines.joined(separator: "\n")
+            }
+        }
+
+        guard
             raw.first == "\"",
             raw.last == "\"",
             raw.contains("\n"),
             raw.count >= 2
         else { return raw }
         let candidate = String(raw.dropFirst().dropLast())
-        let separator = format == "tsv" ? "\t" : ","
         guard candidate.components(separatedBy: .newlines).first?.contains(separator) == true else {
             return raw
         }
         return candidate
+    }
+
+    /// Reconcile an explicit CSV/TSV label with the payload's unambiguous
+    /// delimiter shape. Local models can preserve every byte of an attached
+    /// table while changing commas to tabs without changing `format` from
+    /// `csv` (or vice versa). Treat that as transport metadata drift only
+    /// when the declared delimiter produces one column and the alternate
+    /// delimiter produces a stable multi-column table across every sampled
+    /// row. Ambiguous, mixed, JSON, and ordinary one-column data remain on
+    /// the declared path and keep the strict column validation below.
+    private static func reconciledDelimitedFormat(
+        _ raw: String,
+        declaredFormat: String
+    ) -> String {
+        guard declaredFormat == "csv" || declaredFormat == "tsv" else {
+            return declaredFormat
+        }
+
+        let declaredSeparator = declaredFormat == "csv" ? "," : "\t"
+        let alternateSeparator = declaredFormat == "csv" ? "\t" : ","
+        let lines = raw.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .prefix(16)
+        guard !lines.isEmpty else { return declaredFormat }
+
+        let declaredCounts = lines.map {
+            $0.components(separatedBy: declaredSeparator).count
+        }
+        guard declaredCounts.allSatisfy({ $0 == 1 }) else { return declaredFormat }
+
+        let alternateCounts = lines.map {
+            $0.components(separatedBy: alternateSeparator).count
+        }
+        guard let columnCount = alternateCounts.first,
+            columnCount > 1,
+            alternateCounts.allSatisfy({ $0 == columnCount })
+        else { return declaredFormat }
+
+        return declaredFormat == "csv" ? "tsv" : "csv"
     }
 
     private static func chartSpec(from result: String) -> ChartSpec? {

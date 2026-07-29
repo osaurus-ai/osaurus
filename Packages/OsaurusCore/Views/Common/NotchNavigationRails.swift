@@ -35,6 +35,8 @@ struct NotchAgentTabRail: View {
     private func tabChip(_ group: NotchAgentGroup) -> some View {
         let isSelected = group.agentId == selectedAgentId
         let agent = agentResolver(group.agentId)
+        let sessionCount = group.tasks.count
+        let sessionLabel = sessionCount == 1 ? L("1 session") : L("\(sessionCount) sessions")
         return HStack(spacing: 8) {
             avatarBuilder(agent, 24)
 
@@ -100,7 +102,7 @@ struct NotchAgentTabRail: View {
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .onTapGesture { onSelect(group) }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text("\(agent.name), \(group.tasks.count) session(s)"))
+        .accessibilityLabel(Text("\(agent.name), \(sessionLabel)"))
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 }

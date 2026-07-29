@@ -3,9 +3,9 @@
 //  OsaurusCore
 //
 //  Driver for the `cache_proof` eval domain: telemetry becomes scored.
-//  Runs a prefix-sharing multi-turn conversation (one session id, history
-//  echoed like the chat surface) through the real ChatEngine streaming
-//  path and snapshots `ModelRuntime.batchDiagnosticsSnapshot()` before
+//  Runs prefix-sharing turns through the real ChatEngine streaming path,
+//  optionally crossing fresh chat/session boundaries, and snapshots
+//  `ModelRuntime.batchDiagnosticsSnapshot()` before
 //  and after, so the harness can assert the KV-prefix / SSM-companion /
 //  disk-L2 deltas that are telemetry-only everywhere else.
 //
@@ -16,6 +16,84 @@
 //
 
 import Foundation
+
+/// One typed prefill-progress frame observed on the production streaming path.
+///
+/// The stage is stored as its wire value so this public proof artifact does
+/// not expose the app-internal UI enum. Keeping every frame lets the eval
+/// distinguish a real monotonic restore → prefill → complete lifecycle from a
+/// single aggregate cache-hit counter.
+public struct CacheProofProgressEvent: Sendable, Codable, Equatable {
+    public let stage: String
+    public let completedUnitCount: Int
+    public let totalUnitCount: Int
+    public let detail: String?
+
+    public init(
+        stage: String,
+        completedUnitCount: Int,
+        totalUnitCount: Int,
+        detail: String?
+    ) {
+        self.stage = stage
+        self.completedUnitCount = completedUnitCount
+        self.totalUnitCount = totalUnitCount
+        self.detail = detail
+    }
+}
+
+/// Structured per-turn proof emitted by the real local streaming path.
+///
+/// `cacheRestoredTokens` and `remainingPrefillTokens` come from vMLX's
+/// `.prefillProgress(stage: .cacheRestore, ...)` event. They are intentionally
+/// not inferred from aggregate counters or parsed from debug logs.
+public struct CacheProofTurnMetrics: Sendable, Codable {
+    public let turnNumber: Int
+    public let sessionNumber: Int
+    public let ttftMs: Double?
+    public let prefillTokensPerSecond: Double?
+    public let promptTokenCount: Int?
+    public let cacheRestoredTokens: Int?
+    public let remainingPrefillTokens: Int?
+    public let cacheRestoreDetail: String?
+    public let stopReason: String?
+    public let unclosedReasoning: Bool
+    public let visibleCharacterCount: Int
+    public let reasoningCharacterCount: Int
+    /// Every typed progress frame in stream order. Optional so transcripts
+    /// recorded before this field was introduced remain decodable.
+    public let prefillProgressEvents: [CacheProofProgressEvent]?
+
+    public init(
+        turnNumber: Int,
+        sessionNumber: Int,
+        ttftMs: Double?,
+        prefillTokensPerSecond: Double?,
+        promptTokenCount: Int?,
+        cacheRestoredTokens: Int?,
+        remainingPrefillTokens: Int?,
+        cacheRestoreDetail: String?,
+        stopReason: String?,
+        unclosedReasoning: Bool,
+        visibleCharacterCount: Int,
+        reasoningCharacterCount: Int,
+        prefillProgressEvents: [CacheProofProgressEvent]? = nil
+    ) {
+        self.turnNumber = turnNumber
+        self.sessionNumber = sessionNumber
+        self.ttftMs = ttftMs
+        self.prefillTokensPerSecond = prefillTokensPerSecond
+        self.promptTokenCount = promptTokenCount
+        self.cacheRestoredTokens = cacheRestoredTokens
+        self.remainingPrefillTokens = remainingPrefillTokens
+        self.cacheRestoreDetail = cacheRestoreDetail
+        self.stopReason = stopReason
+        self.unclosedReasoning = unclosedReasoning
+        self.visibleCharacterCount = visibleCharacterCount
+        self.reasoningCharacterCount = reasoningCharacterCount
+        self.prefillProgressEvents = prefillProgressEvents
+    }
+}
 
 /// The scoreable counter deltas of one cache-proof run, plus the topology
 /// facts the harness needs to apply the right rule set.
@@ -45,6 +123,15 @@ public struct CacheProofTranscript: Sendable, Codable {
     /// Token-weighted decode speed across turns, when reported — keeps
     /// every generation row carrying token/s per the runtime proof rules.
     public let decodeTokensPerSecond: Double?
+    /// Physical footprint (MB) sampled after EACH completed turn, in turn
+    /// order. The multi-turn growth signal: a bounded companion/KV plan
+    /// shows a plateau here; monotonic growth back toward the model's
+    /// on-disk size is the Bonsai-class failure this exists to catch.
+    /// Empty when the probe failed (treat as "not measured").
+    public let footprintAfterTurnMb: [Double]
+    /// Per-turn cache/prefill/terminal metrics from the same stream that
+    /// produced `visibleTurns`.
+    public let turnMetrics: [CacheProofTurnMetrics]?
 
     public init(
         visibleTurns: [String],
@@ -59,7 +146,9 @@ public struct CacheProofTranscript: Sendable, Codable {
         diskL2MissesDelta: Int = 0,
         diskL2StoresDelta: Int = 0,
         hybridTopology: Bool = false,
-        decodeTokensPerSecond: Double? = nil
+        decodeTokensPerSecond: Double? = nil,
+        footprintAfterTurnMb: [Double] = [],
+        turnMetrics: [CacheProofTurnMetrics] = []
     ) {
         self.visibleTurns = visibleTurns
         self.error = error
@@ -74,6 +163,8 @@ public struct CacheProofTranscript: Sendable, Codable {
         self.diskL2StoresDelta = diskL2StoresDelta
         self.hybridTopology = hybridTopology
         self.decodeTokensPerSecond = decodeTokensPerSecond
+        self.footprintAfterTurnMb = footprintAfterTurnMb
+        self.turnMetrics = turnMetrics
     }
 }
 
@@ -82,35 +173,71 @@ public struct CacheProofTranscript: Sendable, Codable {
 @MainActor
 public enum CacheProofEvaluator {
 
-    /// Run `queries` as consecutive user turns of ONE conversation and
-    /// return the diagnostics deltas across the whole exchange. Turn 2+
-    /// shares turn 1's prefix (same session, history echoed), which is
-    /// exactly the shape the prefix cache must hit on.
+    /// Run `queries` as consecutive user turns and return the diagnostics
+    /// deltas across the whole exchange. By default turn 2+ shares turn 1's
+    /// prefix in one conversation. `startNewSessionBeforeTurns` clears
+    /// history and rotates the session id before the listed one-based turns,
+    /// proving disk-backed reuse across fresh chats.
+    ///
+    /// `thinkingPerTurn`, when provided, sets the request's documented
+    /// `enable_thinking` switch per turn (index-aligned with the turn
+    /// order; missing indices leave the model default in force). This is
+    /// the hybrid-SSM boundary stressor: toggling Thinking mid-conversation
+    /// invalidates/re-derives companion states, the exact path the bounded
+    /// companion LRU (`ssmCompanionEntryLimit`) must keep from re-growing
+    /// to the model's full on-disk size.
     public static func run(
         queries: [String],
         model: String? = nil,
-        maxTokens: Int = 128
+        maxTokens: Int = 128,
+        thinkingPerTurn: [Bool]? = nil,
+        systemPrompt: String? = nil,
+        systemPromptsPerSession: [String]? = nil,
+        startNewSessionBeforeTurns: [Int] = []
     ) async -> CacheProofTranscript {
         let resolvedModel =
             model
             ?? ChatConfigurationStore.load().coreModelIdentifier
             ?? "foundation"
         let engine = ChatEngine()
-        let sessionId = UUID().uuidString
+        var sessionId = UUID().uuidString
+        var sessionNumber = 1
+        let sessionBoundaryTurns = Set(startNewSessionBeforeTurns)
 
         let before = await ModelRuntime.batchDiagnosticsSnapshot()
 
-        var history: [ChatMessage] = []
+        func freshHistory(for sessionNumber: Int) -> [ChatMessage] {
+            let sessionPrompt: String?
+            if let systemPromptsPerSession,
+                systemPromptsPerSession.indices.contains(sessionNumber - 1)
+            {
+                sessionPrompt = systemPromptsPerSession[sessionNumber - 1]
+            } else {
+                sessionPrompt = systemPrompt
+            }
+            guard let sessionPrompt, !sessionPrompt.isEmpty else { return [] }
+            return [ChatMessage(role: "system", content: sessionPrompt)]
+        }
+
+        var history = freshHistory(for: sessionNumber)
         var visibleTurns: [String] = []
         var runError: String?
         var lastDecodeTps: Double?
+        var footprintAfterTurnMb: [Double] = []
+        var turnMetrics: [CacheProofTurnMetrics] = []
 
-        for query in queries {
+        for (turnIndex, query) in queries.enumerated() {
+            let turnNumber = turnIndex + 1
+            if turnNumber > 1, sessionBoundaryTurns.contains(turnNumber) {
+                sessionId = UUID().uuidString
+                sessionNumber += 1
+                history = freshHistory(for: sessionNumber)
+            }
             history.append(ChatMessage(role: "user", content: query))
-            let request = ChatCompletionRequest(
+            var request = ChatCompletionRequest(
                 model: resolvedModel,
                 messages: history,
-                temperature: 0.0,
+                temperature: nil,
                 max_tokens: maxTokens,
                 stream: true,
                 top_p: nil,
@@ -122,20 +249,69 @@ public enum CacheProofEvaluator {
                 tool_choice: nil,
                 session_id: sessionId
             )
+            if let thinkingPerTurn, turnIndex < thinkingPerTurn.count {
+                request.enable_thinking = thinkingPerTurn[turnIndex]
+            }
             var visible = ""
             var reasoning = ""
+            let turnStartedAt = CFAbsoluteTimeGetCurrent()
+            var firstModelOutputAt: CFAbsoluteTime?
+            var promptTokenCount: Int?
+            var cacheRestoredTokens: Int?
+            var cacheRestoreDetail: String?
+            var prefillTokensPerSecond: Double?
+            var stopReason: String?
+            var unclosedReasoning = false
+            var prefillProgressEvents: [CacheProofProgressEvent] = []
             do {
                 let stream = try await engine.streamChat(request: request)
                 for try await delta in stream {
+                    if let progress = StreamingPrefillProgressHint.decode(delta) {
+                        prefillProgressEvents.append(
+                            CacheProofProgressEvent(
+                                stage: progress.stage.rawValue,
+                                completedUnitCount: progress.completedUnitCount,
+                                totalUnitCount: progress.totalUnitCount,
+                                detail: progress.detail
+                            )
+                        )
+                        if progress.totalUnitCount > 0 {
+                            promptTokenCount = max(
+                                promptTokenCount ?? 0,
+                                progress.totalUnitCount
+                            )
+                        }
+                        if progress.stage == .cacheRestore,
+                            progress.completedUnitCount > 0
+                        {
+                            cacheRestoredTokens = max(
+                                cacheRestoredTokens ?? 0,
+                                progress.completedUnitCount
+                            )
+                            cacheRestoreDetail = progress.detail
+                        }
+                        continue
+                    }
                     if let fragment = StreamingReasoningHint.decode(delta) {
+                        if firstModelOutputAt == nil {
+                            firstModelOutputAt = CFAbsoluteTimeGetCurrent()
+                        }
                         reasoning += fragment
                         continue
                     }
                     if let stats = StreamingStatsHint.decode(delta) {
                         if stats.tokensPerSecond > 0 { lastDecodeTps = stats.tokensPerSecond }
+                        if let prefill = stats.prefillTokensPerSecond, prefill > 0 {
+                            prefillTokensPerSecond = prefill
+                        }
+                        stopReason = stats.stopReason
+                        unclosedReasoning = stats.unclosedReasoning
                         continue
                     }
                     if StreamingToolHint.isSentinel(delta) { continue }
+                    if !delta.isEmpty, firstModelOutputAt == nil {
+                        firstModelOutputAt = CFAbsoluteTimeGetCurrent()
+                    }
                     visible += delta
                 }
             } catch {
@@ -143,6 +319,34 @@ public enum CacheProofEvaluator {
                 break
             }
             visibleTurns.append(visible)
+            let remainingPrefillTokens: Int?
+            if let promptTokenCount, let cacheRestoredTokens {
+                remainingPrefillTokens = max(0, promptTokenCount - cacheRestoredTokens)
+            } else {
+                remainingPrefillTokens = nil
+            }
+            turnMetrics.append(
+                CacheProofTurnMetrics(
+                    turnNumber: turnNumber,
+                    sessionNumber: sessionNumber,
+                    ttftMs: firstModelOutputAt.map {
+                        max(0, ($0 - turnStartedAt) * 1000)
+                    },
+                    prefillTokensPerSecond: prefillTokensPerSecond,
+                    promptTokenCount: promptTokenCount,
+                    cacheRestoredTokens: cacheRestoredTokens,
+                    remainingPrefillTokens: remainingPrefillTokens,
+                    cacheRestoreDetail: cacheRestoreDetail,
+                    stopReason: stopReason,
+                    unclosedReasoning: unclosedReasoning,
+                    visibleCharacterCount: visible.count,
+                    reasoningCharacterCount: reasoning.count,
+                    prefillProgressEvents: prefillProgressEvents
+                )
+            )
+            if let footprint = ProcessMemoryProbe.currentPhysFootprintMB() {
+                footprintAfterTurnMb.append(footprint)
+            }
             history.append(
                 ChatMessage(
                     role: "assistant",
@@ -182,7 +386,9 @@ public enum CacheProofEvaluator {
             diskL2MissesDelta: delta(\.diskL2Misses),
             diskL2StoresDelta: delta(\.diskL2Stores),
             hybridTopology: after.hybridModelCount > 0,
-            decodeTokensPerSecond: lastDecodeTps
+            decodeTokensPerSecond: lastDecodeTps,
+            footprintAfterTurnMb: footprintAfterTurnMb,
+            turnMetrics: turnMetrics
         )
     }
 }

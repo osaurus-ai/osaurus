@@ -177,6 +177,16 @@ final class PluginRepositoryService: ObservableObject {
 
     /// Uninstall a plugin by ID
     func uninstall(pluginId: String) async throws {
+        // The browser plugin's Keychain secrets include the WebKit profile
+        // UUID (`profile_id`) that the native migration copies into the
+        // session catalog. Launch already ran the migration, but the secret
+        // sweep below destroys the only other copy — run it again here so
+        // the profile is guaranteed to be in the catalog first (idempotent;
+        // no-ops once the migration marker is set).
+        if pluginId == BrowserPluginMigration.pluginId {
+            BrowserPluginMigration.migrateIfNeeded()
+        }
+
         let pluginDir = PluginInstallManager.toolsPluginDirectory(pluginId: pluginId)
         // Recursive directory deletion is synchronous file I/O that can block for
         // seconds on a large plugin or a busy filesystem. Run it off the main

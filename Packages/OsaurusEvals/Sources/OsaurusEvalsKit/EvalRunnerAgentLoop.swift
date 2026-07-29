@@ -306,8 +306,10 @@ extension EvalRunner {
             agentId: evalAgentId,
             maxIterations: exp.maxIterations ?? 10,
             contextWindowOverride: exp.contextWindowOverride,
+            enableThinking: exp.enableThinking,
             stopOnToolRejection: exp.stopOnToolRejection ?? false,
             sandbox: sandboxMode,
+            hostFolderWritesEnabled: sandboxFixture?.allowHostFolderWrites == true,
             cancelAfterToolCalls: exp.cancelAfterToolCalls
         )
 
@@ -355,7 +357,8 @@ extension EvalRunner {
                     modelId: modelId,
                     latencyMs: latency,
                     toolUsage: toolUsageStats(transcript),
-                    telemetry: telemetry(from: transcript)
+                    telemetry: telemetry(from: transcript),
+                    context: transcript.contextAttribution
                 ),
                 query: testCase.query
             )
@@ -509,7 +512,8 @@ extension EvalRunner {
                 judgeLatencyMs: judgeElapsed,
                 toolUsage: toolUsageStats(transcript),
                 telemetry: telemetry(from: transcript),
-                judge: judgeAudit
+                judge: judgeAudit,
+                context: transcript.contextAttribution
             ),
             query: testCase.query
         )
@@ -585,7 +589,7 @@ extension EvalRunner {
     /// The schedule preset is `reactive` — no quiet hours and a
     /// 5-minute min interval — so self-scheduling cases aren't
     /// quiet-hours-clamped depending on when the eval runs.
-    private static func installEvalAgent(
+    static func installEvalAgent(
         _ caps: EvalCase.AgentCapabilitiesFixture?,
         autonomousExec: AutonomousExecConfig? = nil
     ) -> UUID {
@@ -675,6 +679,7 @@ extension EvalRunner {
             maxCommandsPerTurn: fixture.maxCommandsPerTurn ?? 10,
             pluginCreate: fixture.pluginCreate ?? true,
             allowHostSecretReads: fixture.allowHostSecretReads ?? false,
+            allowHostFolderWrites: fixture.allowHostFolderWrites ?? false,
             sandboxNetworkEnabled: fixture.networkEnabled ?? true,
             backgroundProcessEnabled: fixture.backgroundProcessEnabled ?? false
         )
@@ -855,6 +860,14 @@ extension EvalRunner {
             pass: "exit ok: \(transcript.exit)",
             fail: "exit '\(transcript.exit)' not in allowed \(allowedExits)"
         )
+        if let ceiling = exp.maxModelSteps {
+            let actual = transcript.modelSteps ?? transcript.iterations
+            score.check(
+                actual <= ceiling,
+                pass: "maxModelSteps ok: \(actual) ≤ \(ceiling)",
+                fail: "model kept running for \(actual) steps after a \(ceiling)-step ceiling"
+            )
+        }
 
         let calledSet = Set(transcript.toolCalls.map(\.name))
         if let must = exp.mustCallTools {
@@ -955,6 +968,44 @@ extension EvalRunner {
                 fail: "no todo call with a checked box before complete/run end"
             )
         }
+        if exp.todoCompletedBeforeFinal == true {
+            let todo = lastTodoBeforeTerminal(in: transcript.toolCalls)
+            let total = todo?.totalCount ?? 0
+            let done = todo?.doneCount ?? 0
+            let complete = total > 0 && done == total
+            score.check(
+                complete,
+                pass: "final Todo complete: \(done)/\(total) checked",
+                fail: todo == nil
+                    ? "no parseable successful Todo call before complete/run end"
+                    : "final Todo incomplete: \(done)/\(total) checked"
+            )
+        }
+    }
+
+    /// Return the last successful, parseable Todo snapshot before the first
+    /// explicit `complete` call (or before run end for ordinary final text).
+    ///
+    /// This is intentionally a scorer helper, not production-loop policy:
+    /// pending Todo remains advisory and can never reopen an already-final
+    /// model response.
+    static func lastTodoBeforeTerminal(
+        in calls: [AgentLoopTranscript.ToolInvocation]
+    ) -> AgentTodo? {
+        let terminalIndex =
+            calls.firstIndex(where: { $0.name == "complete" })
+            ?? calls.endIndex
+        for call in calls[..<terminalIndex].reversed()
+        where call.name == "todo" && !call.wasError {
+            guard let data = call.arguments.data(using: .utf8),
+                let object = try? JSONSerialization.jsonObject(with: data),
+                let arguments = object as? [String: Any],
+                let markdown = arguments["markdown"] as? String
+            else { continue }
+            let todo = AgentTodo.parse(markdown)
+            if todo.totalCount > 0 { return todo }
+        }
+        return nil
     }
 
     /// Ordered-subsequence assertion: `ordered` must appear in the

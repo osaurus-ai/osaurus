@@ -17,6 +17,11 @@ public enum SandboxBridgeMigrationFlag {
     /// installed inside the running guest, and a container restart is
     /// required for sandboxed plugins to authenticate.
     public static var needsRestart: Bool {
+        // The vsock bridge (and its shim/token migration) only exists on
+        // the VM backend; Seatbelt provisioning also never stamps
+        // `lastProvisionedAppVersion`, so without this guard the banner
+        // would show permanently there.
+        guard SandboxBackend.current == .virtualMachine else { return false }
         let cfg = SandboxConfigurationStore.load()
         guard cfg.setupComplete else { return false }
         guard let lastVersion = cfg.lastProvisionedAppVersion else {

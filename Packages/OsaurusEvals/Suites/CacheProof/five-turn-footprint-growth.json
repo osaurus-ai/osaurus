@@ -1,0 +1,22 @@
+{
+  "id": "cache_proof.five-turn-footprint-growth",
+  "domain": "cache_proof",
+  "label": "cache proof • five-turn conversation must not grow the physical footprint monotonically",
+  "query": "Let's plan a small vegetable garden. What are three beginner-friendly crops?",
+  "notes": "The multi-turn memory-growth gate: across five ordinary chat turns the process physical footprint (sampled after each turn) may not grow more than the ceiling. This is the scoreable form of the AGENTS.md 'no monotonic footprint growth' rule, and specifically the Bonsai/Qwen 3.5 regression the bounded companion LRU (ssmCompanionEntryLimit) exists to prevent — hybrid boundary states retaining hundreds of MiB per turn until ordinary chat re-grows to the model's on-disk size. The 1024 MB ceiling allows KV/prefix caches to warm up on turn 2-3 but fails a per-turn companion leak long before it reaches model scale. Off-CI (needs a local model).",
+  "fixtures": {},
+  "expect": {
+    "cacheProof": {
+      "followUpTurns": [
+        "How much space does each of those need?",
+        "Which of them can share a bed without competing?",
+        "Sketch a simple 4-week planting schedule for them.",
+        "Now condense that whole plan into three bullet points."
+      ],
+      "maxTokens": 192,
+      "maxFootprintGrowthMb": 1024,
+      "gatePeakFootprintToResolvedBudget": true,
+      "requireCompanionOnHybrid": false
+    }
+  }
+}

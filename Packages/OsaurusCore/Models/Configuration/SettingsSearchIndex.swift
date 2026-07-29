@@ -145,6 +145,13 @@ public enum SettingsSearchIndex {
             keywords: ["persona", "instructions", "system prompt"]
         ),
         .init(
+            id: "settings.chat.autoGenerateTitles",
+            tab: .chat,
+            section: "Chat",
+            title: "Automatically Name Chats",
+            keywords: ["title", "auto title", "rename", "chat name", "summary"]
+        ),
+        .init(
             id: "settings.chat.temperature",
             tab: .chat,
             section: "Generation",
@@ -155,15 +162,22 @@ public enum SettingsSearchIndex {
             id: "settings.chat.maxTokens",
             tab: .chat,
             section: "Generation",
-            title: "Max Tokens",
-            keywords: ["response length", "output tokens"]
+            title: "Default Agent Max Output Tokens",
+            keywords: [
+                "response length", "output tokens", "generation config",
+                "max new tokens", "not context", "not kv",
+            ]
         ),
         .init(
             id: "settings.chat.contextLength",
-            tab: .chat,
-            section: "Generation",
-            title: "Context Length",
-            keywords: ["context window", "context"]
+            tab: .server,
+            section: "Cache",
+            title: "Context & KV Policy",
+            keywords: [
+                "context window", "context", "model maximum",
+                "metadata fallback", "kv retention", "cache window",
+            ],
+            subTab: "cache"
         ),
         .init(
             id: "settings.chat.topP",
@@ -450,6 +464,20 @@ public enum SettingsSearchIndex {
             title: "Computer Use",
             keywords: ["screen control", "cursor", "automation", "accessibility", "per-app"]
         ),
+        .init(
+            id: "browser.enable",
+            tab: .browser,
+            title: "Browser Use",
+            keywords: [
+                "browser", "web", "browse", "session", "sign in", "login", "cookies", "webkit",
+            ]
+        ),
+        .init(
+            id: "browser.sessions",
+            tab: .browser,
+            title: "Browser Sessions",
+            keywords: ["sessions", "profiles", "signed in", "reset browser", "browsing data"]
+        ),
 
         // MARK: Channels / Integrations
         .init(
@@ -464,9 +492,12 @@ public enum SettingsSearchIndex {
         .init(
             id: "agentChannels.globalWrites",
             tab: .agentChannels,
-            section: "Global Channel Safety",
-            title: "Global Channel Writes",
-            keywords: ["kill switch", "disable writes", "remote writes", "channel writes"]
+            section: "Sending",
+            title: "Allow Agents to Send Messages",
+            keywords: [
+                "kill switch", "disable writes", "remote writes", "channel writes",
+                "sending", "read-only", "pause sending",
+            ]
         ),
         .init(
             id: "agentChannels.discord",
@@ -502,6 +533,27 @@ public enum SettingsSearchIndex {
             section: "Custom JSON Connections",
             title: "Custom HTTP Connections",
             keywords: ["custom json channels", "webhook", "agent-channels.json", "secret references"]
+        ),
+        .init(
+            id: "agentChannels.destinations",
+            tab: .agentChannels,
+            section: "Messages Agents Can Start",
+            title: "Messages Agents Can Start",
+            keywords: [
+                "proactive", "publish", "destination", "binding", "outbound",
+                "autonomous", "draft", "confirm", "agent destinations",
+                "new messages", "agent posting", "post", "room", "auto-send",
+            ]
+        ),
+        .init(
+            id: "agentChannels.outbox",
+            tab: .agentChannels,
+            section: "Outbox",
+            title: "Channel Outbox",
+            keywords: [
+                "outbox", "pending approval", "approve message", "queued messages",
+                "outbound activity", "drafts",
+            ]
         ),
 
         // MARK: Image Generation tab (subTab values are ImageGenerationTab raw values)
@@ -638,6 +690,31 @@ public enum SettingsSearchIndex {
             subTab: "settings"
         ),
 
+        // MARK: Agents
+        // Landing anchors live on the Agents screen (`AgentsView`): the header
+        // glows for the overview entry; the agent grid glows for the database
+        // entry, where each custom agent card exposes an Open Database
+        // shortcut into that agent's Database workspace.
+        .init(
+            id: "agents.overview",
+            tab: .agents,
+            title: "Agents",
+            keywords: [
+                "agent", "assistant", "persona", "custom agent", "create agent",
+                "system prompt", "agent settings",
+            ]
+        ),
+        .init(
+            id: "agents.database",
+            tab: .agents,
+            section: "Knowledge",
+            title: "Agent Database",
+            keywords: [
+                "database", "tables", "rows", "saved views", "sql", "sqlite",
+                "agent data", "structured data", "encrypted database", "db",
+            ]
+        ),
+
         // MARK: Search
         .init(
             id: "search.providers",
@@ -646,6 +723,25 @@ public enum SettingsSearchIndex {
             keywords: [
                 "web search", "search engine", "tavily", "exa", "brave", "serper", "parallel",
                 "google", "kagi", "duckduckgo", "bing", "api key", "internet",
+            ]
+        ),
+        .init(
+            id: "search.premium",
+            tab: .search,
+            title: "Premium Search",
+            keywords: [
+                "premium search", "hosted search", "osaurus search", "router search",
+                "paid search", "web search credits",
+            ]
+        ),
+        .init(
+            id: "credits.webSearch",
+            tab: .credits,
+            section: "Web search",
+            title: "Search Credits",
+            keywords: [
+                "web search", "premium search", "free searches", "search credits",
+                "auto pay", "search billing", "page extract", "grant",
             ]
         ),
         .init(

@@ -31,6 +31,24 @@ struct ChatResidencyHandoffRestoreTests {
         #expect(restored.isEmpty)
     }
 
+    @Test("typed handoff failures preserve actionable localized descriptions")
+    func handoffFailuresPreserveLocalizedDescriptions() {
+        let insufficient = ChatResidencyHandoff.HandoffError.insufficientMemory(
+            neededGB: 59.3,
+            availableGB: 54.1
+        )
+        #expect(
+            insufficient.localizedDescription
+                == "RAM-safety preflight refused the job: the spawn model needs ~59.3 GB but only ~54.1 GB would be available after freeing the chat model. Use a smaller spawn model, free memory, or disable the RAM-safety preflight in Agent Delegation settings."
+        )
+
+        let busy = ChatResidencyHandoff.HandoffError.chatBusy
+        #expect(
+            busy.localizedDescription
+                == "local chat generation did not become idle before the subagent memory handoff"
+        )
+    }
+
     @Test("restore throws restoreFailed when a model can't be made resident")
     func restoreThrowsRestoreFailedOnPersistentMiss() async {
         let lease = ChatResidencyLease(unloadedModelNames: [Self.unresolvable])
@@ -70,6 +88,32 @@ struct ChatResidencyHandoffRestoreTests {
         let lease = ChatResidencyLease(unloadedModelNames: [Self.unresolvable])
         let restored = await ChatResidencyHandoff.restoreBestEffort(lease)
         #expect(restored.isEmpty)
+    }
+
+    @Test("restore delegates load arbitration atomically to ModelRuntime")
+    func restoreUsesAtomicHandoffIntent() throws {
+        let here = URL(fileURLWithPath: #filePath)
+        let packageRoot = here
+            .deletingLastPathComponent()  // AgentDelegation/
+            .deletingLastPathComponent()  // Tests/
+            .deletingLastPathComponent()  // OsaurusCore/
+        let source = try String(
+            contentsOf: packageRoot.appendingPathComponent(
+                "Services/AgentDelegation/ChatResidencyHandoff.swift"
+            ),
+            encoding: .utf8
+        )
+        let start = try #require(source.range(of: "private static func reloadAndVerify("))
+        let end = try #require(
+            source.range(of: "\n    }\n}", range: start.upperBound ..< source.endIndex)
+        )
+        let body = String(source[start.lowerBound ..< end.upperBound])
+
+        #expect(body.contains("intent: .handoffRestore"))
+        #expect(
+            !body.contains("await ModelRuntime.shared.hasLoadInFlight"),
+            "restore may not use the diagnostics-only check-then-preload race"
+        )
     }
 }
 

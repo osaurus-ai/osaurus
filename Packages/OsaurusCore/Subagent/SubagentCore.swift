@@ -31,11 +31,20 @@ public struct SubagentScope: Sendable, Equatable {
     public let toolCallId: String
     /// The agent whose model/settings scope the run.
     public let agentId: UUID
+    /// Explicit parent-turn Thinking choice. Nil preserves the nested model's
+    /// own bundle default; true/false must survive every reconstructed step.
+    public let enableThinking: Bool?
 
-    public init(sessionId: String, toolCallId: String, agentId: UUID) {
+    public init(
+        sessionId: String,
+        toolCallId: String,
+        agentId: UUID,
+        enableThinking: Bool? = nil
+    ) {
         self.sessionId = sessionId
         self.toolCallId = toolCallId
         self.agentId = agentId
+        self.enableThinking = enableThinking
     }
 
     /// Resolve from the active chat execution context. Outside chat we fall
@@ -46,7 +55,8 @@ public struct SubagentScope: Sendable, Equatable {
         SubagentScope(
             sessionId: ChatExecutionContext.currentSessionId ?? UUID().uuidString,
             toolCallId: ChatExecutionContext.currentToolCallId ?? UUID().uuidString,
-            agentId: ChatExecutionContext.currentAgentId ?? Agent.defaultId
+            agentId: ChatExecutionContext.currentAgentId ?? Agent.defaultId,
+            enableThinking: ChatExecutionContext.currentEnableThinking
         )
     }
 }

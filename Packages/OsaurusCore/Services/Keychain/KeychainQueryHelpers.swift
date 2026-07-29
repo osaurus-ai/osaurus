@@ -26,6 +26,9 @@ enum KeychainQueryHelpers {
         return env["XCTestConfigurationFilePath"] != nil
             || env["XCTestBundlePath"] != nil
             || ProcessInfo.processInfo.processName == "xctest"
+            // `swift test` (SwiftPM + swift-testing) runs suites inside this
+            // helper without any of the XCTest markers above.
+            || ProcessInfo.processInfo.processName == "swiftpm-testing-helper"
             || Bundle.main.bundlePath.hasSuffix(".xctest")
     }
 

@@ -235,7 +235,9 @@ struct ClaudePluginDetailView: View {
                     if plugin.totalCount > 0 {
                         heroStatBadge(
                             icon: "shippingbox.fill",
-                            text: "\(plugin.totalCount) artifacts",
+                            text: plugin.totalCount == 1
+                                ? L("1 artifact")
+                                : L("\(plugin.totalCount) artifacts"),
                             color: theme.accentColor
                         )
                     }
@@ -300,9 +302,11 @@ struct ClaudePluginDetailView: View {
                 Text("Configuration available", bundle: .module)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(theme.primaryText)
+                let fieldCount = snapshot?.userConfigSpec.count ?? 0
                 Text(
-                    "This plugin declared options you can configure (\(snapshot?.userConfigSpec.count ?? 0) field(s)).",
-                    bundle: .module
+                    fieldCount == 1
+                        ? L("This plugin declared an option you can configure (1 field).")
+                        : L("This plugin declared options you can configure (\(fieldCount) fields).")
                 )
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
@@ -598,15 +602,7 @@ struct ClaudePluginDetailView: View {
             title: skill.name,
             subtitle: skill.description.isEmpty ? (skill.category ?? "Skill") : skill.description,
             subtitleMonospaced: false,
-            trailing: {
-                if !skill.enabled {
-                    StatusCapsuleBadge(
-                        icon: "pause.circle.fill",
-                        text: "Disabled",
-                        color: theme.warningColor
-                    )
-                }
-            },
+            trailing: { EmptyView() },
             preview: { SkillPreviewView(theme: theme, skill: skill) }
         )
     }
@@ -1139,19 +1135,6 @@ private struct SkillPreviewView: View {
             subtitle: skill.description.isEmpty ? nil : skill.description,
             pills: {
                 HStack(spacing: 6) {
-                    if !skill.enabled {
-                        StatusCapsuleBadge(
-                            icon: "pause.circle.fill",
-                            text: "Disabled",
-                            color: theme.warningColor
-                        )
-                    } else {
-                        StatusCapsuleBadge(
-                            icon: "checkmark.circle.fill",
-                            text: "Enabled",
-                            color: theme.successColor
-                        )
-                    }
                     if let category = skill.category, !category.isEmpty {
                         StatusCapsuleBadge(
                             icon: "tag",

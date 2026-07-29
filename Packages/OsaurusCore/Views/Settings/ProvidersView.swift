@@ -14,6 +14,9 @@ struct ProvidersView: View {
     @ObservedObject private var managementState = ManagementStateManager.shared
     @State private var showAddSheet = false
     @State private var editingProvider: MCPProvider?
+    /// Prefill for the add sheet when opened via a `pendingMCPProviderDraft`
+    /// hand-off; cleared on dismiss so a manual "Add" starts blank.
+    @State private var addSheetPrefill: MCPProviderDraft?
     @State private var hasAppeared = false
     @State private var providerFilter: MCPServerHubFilter = .all
     @State private var credentialPresence: [UUID: MCPProviderCredentialPresence] = [:]
@@ -105,9 +108,13 @@ struct ProvidersView: View {
             refreshCredentialPresence()
             refreshHealthSnapshots()
             applyPendingEditRequest()
+            applyPendingDraftRequest()
         }
         .onChange(of: managementState.pendingMCPProviderEditId) { _, _ in
             applyPendingEditRequest()
+        }
+        .onChange(of: managementState.pendingMCPProviderDraft) { _, _ in
+            applyPendingDraftRequest()
         }
         .onReceive(
             NotificationCenter.default.publisher(
@@ -116,8 +123,8 @@ struct ProvidersView: View {
         ) { _ in
             refreshHealthSnapshots()
         }
-        .sheet(isPresented: $showAddSheet) {
-            ProviderEditSheet(provider: nil) { provider, token in
+        .sheet(isPresented: $showAddSheet, onDismiss: { addSheetPrefill = nil }) {
+            ProviderEditSheet(provider: nil, prefill: addSheetPrefill) { provider, token in
                 manager.addProvider(provider, token: token)
                 refreshCredentialPresence()
             }
@@ -140,6 +147,16 @@ struct ProvidersView: View {
             editingProvider = provider
         }
         managementState.pendingMCPProviderEditId = nil
+    }
+
+    /// Honour a one-shot `pendingMCPProviderDraft` hand-off (the API provider
+    /// form detected an MCP server URL): open the add sheet straight in the
+    /// custom editor with the URL and token carried over.
+    private func applyPendingDraftRequest() {
+        guard let draft = managementState.pendingMCPProviderDraft else { return }
+        addSheetPrefill = draft
+        showAddSheet = true
+        managementState.pendingMCPProviderDraft = nil
     }
 
     private var hubSnapshot: MCPServerHubSnapshot {
@@ -170,14 +187,23 @@ struct ProvidersView: View {
 
     private func refreshCredentialPresence() {
         let providers = manager.configuration.providers
+        let previous = credentialPresence
         Task {
             var next: [UUID: MCPProviderCredentialPresence] = [:]
             for provider in providers {
                 let providerID = provider.id
+                let previousPresence = previous[providerID]
+                // Typed availability: a transiently unavailable keychain
+                // (locked, interaction required) keeps the previous known
+                // presence instead of flashing a false "missing token" warning.
                 let presence = await Task.detached(priority: .utility) {
                     MCPProviderCredentialPresence(
-                        bearerTokenPresent: MCPProviderKeychain.hasToken(for: providerID),
-                        oauthTokensPresent: MCPProviderKeychain.hasOAuthTokens(for: providerID)
+                        bearerTokenPresent: MCPProviderKeychain.tokenAvailability(for: providerID)
+                            .presenceForUI(previous: previousPresence?.bearerTokenPresent),
+                        oauthTokensPresent: MCPProviderKeychain.oauthTokensAvailability(
+                            for: providerID
+                        )
+                        .presenceForUI(previous: previousPresence?.oauthTokensPresent)
                     )
                 }.value
                 next[providerID] = presence
@@ -289,14 +315,14 @@ struct ProvidersView: View {
 
     private var headerSection: some View {
         SectionHeader(
-            title: "MCP Providers",
-            description: "Connect to remote MCP servers to access additional tools"
+            title: "Connections",
+            description: "Connect services that give your agents more tools, using MCP (Model Context Protocol)"
         ) {
             Button(action: { showAddSheet = true }) {
                 HStack(spacing: 6) {
                     Image(systemName: "plus")
                         .font(.system(size: 12, weight: .semibold))
-                    Text("Add Provider", bundle: .module)
+                    Text("Add Connection", bundle: .module)
                         .font(.system(size: 13, weight: .semibold))
                 }
                 .foregroundColor(.white)
@@ -322,11 +348,11 @@ struct ProvidersView: View {
                     .foregroundColor(theme.accentColor)
             }
 
-            Text("No MCP providers yet", bundle: .module)
+            Text("No connections yet", bundle: .module)
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
-            Text("Connect to a remote MCP server to give Osaurus more tools.", bundle: .module)
+            Text("Connect a service to give your agents more tools.", bundle: .module)
                 .font(.system(size: 14))
                 .foregroundColor(theme.secondaryText)
                 .multilineTextAlignment(.center)
@@ -372,7 +398,7 @@ private struct MCPServerHubPanel: View {
                         .background(Circle().fill(statusColor.opacity(0.12)))
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("MCP Server Hub", bundle: .module)
+                        Text("Connection Health", bundle: .module)
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(theme.primaryText)
                             .lineLimit(1)
@@ -386,29 +412,55 @@ private struct MCPServerHubPanel: View {
 
                 Spacer()
 
-                hubIconButton(
-                    systemName: "antenna.radiowaves.left.and.right",
-                    isBusy: isProbing,
-                    isDisabled: isProbing || snapshot.enabledCount == 0,
-                    help: "Probe enabled",
-                    action: onProbeAll
-                )
+                if isProbing || isReconnecting {
+                    ProgressView()
+                        .scaleEffect(0.55)
+                        .frame(width: 28, height: 28)
+                }
 
-                hubIconButton(
-                    systemName: "arrow.clockwise",
-                    isBusy: isReconnecting,
-                    isDisabled: isReconnecting || snapshot.enabledCount == 0,
-                    help: "Reconnect enabled",
-                    action: onReconnectAll
-                )
+                // Diagnostics live behind a single secondary-actions menu so
+                // the default view stays approachable; the operations remain
+                // one click away for troubleshooting.
+                Menu {
+                    Button(action: onReconnectAll) {
+                        Label {
+                            Text("Reconnect All", bundle: .module)
+                        } icon: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                    .disabled(isReconnecting || snapshot.enabledCount == 0)
 
-                hubIconButton(
-                    systemName: "doc.on.doc",
-                    isBusy: false,
-                    isDisabled: snapshot.totalCount == 0,
-                    help: "Copy diagnostics",
-                    action: onCopyReport
-                )
+                    Button(action: onProbeAll) {
+                        Label {
+                            Text("Test Connections", bundle: .module)
+                        } icon: {
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                        }
+                    }
+                    .disabled(isProbing || snapshot.enabledCount == 0)
+
+                    Divider()
+
+                    Button(action: onCopyReport) {
+                        Label {
+                            Text("Copy Diagnostics", bundle: .module)
+                        } icon: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                    }
+                    .disabled(snapshot.totalCount == 0)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(theme.tertiaryBackground))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help(Text("Connection maintenance and diagnostics", bundle: .module))
+                .accessibilityLabel(Text("Connection maintenance and diagnostics", bundle: .module))
             }
 
             LazyVGrid(
@@ -449,31 +501,6 @@ private struct MCPServerHubPanel: View {
         )
     }
 
-    private func hubIconButton(
-        systemName: String,
-        isBusy: Bool,
-        isDisabled: Bool,
-        help: LocalizedStringKey,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            if isBusy {
-                ProgressView()
-                    .scaleEffect(0.55)
-                    .frame(width: 28, height: 28)
-            } else {
-                Image(systemName: systemName)
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 28, height: 28)
-            }
-        }
-        .buttonStyle(PlainButtonStyle())
-        .foregroundColor(theme.secondaryText)
-        .background(Circle().fill(theme.tertiaryBackground))
-        .disabled(isDisabled)
-        .localizedHelp(help)
-    }
-
     private var statusColor: Color {
         switch snapshot.highestSeverity {
         case .ok:
@@ -501,8 +528,9 @@ private struct MCPServerHubPanel: View {
     }
 
     private var summaryText: String {
-        L(
-            "\(snapshot.connectedCount)/\(snapshot.totalCount) connected - \(snapshot.attentionCount) attention - \(snapshot.toolCount) tools"
+        let toolLabel = snapshot.toolCount == 1 ? L("1 tool") : L("\(snapshot.toolCount) tools")
+        return L(
+            "\(snapshot.connectedCount)/\(snapshot.totalCount) connected - \(snapshot.attentionCount) attention - \(toolLabel)"
         )
     }
 }
@@ -648,7 +676,7 @@ private struct ProviderCard: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "wrench.and.screwdriver")
                                     .font(.system(size: 10))
-                                Text("\(toolCount) tools", bundle: .module)
+                                Text(toolCount == 1 ? L("1 tool") : L("\(toolCount) tools"))
                                     .font(.system(size: 11, weight: .medium))
                             }
                             .foregroundColor(theme.secondaryText)
@@ -1207,6 +1235,10 @@ private struct ProviderEditSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let provider: MCPProvider?
+    /// Add-mode prefill from a hand-off (e.g. the API provider form detected
+    /// an MCP server URL). Skips the catalog and lands on the custom editor
+    /// with URL/token filled in. Ignored in edit mode.
+    var prefill: MCPProviderDraft? = nil
     let onSave: (MCPProvider, String?) -> Void
 
     /// Stable identity for "draft" providers (sheet not yet saved). Reused so OAuth
@@ -1346,7 +1378,7 @@ private struct ProviderEditSheet: View {
         if isEditing {
             return (
                 "pencil.circle.fill",
-                Text("Edit MCP Provider", bundle: .module),
+                Text("Edit Connection", bundle: .module),
                 Text("Modify your MCP server connection", bundle: .module)
             )
         }
@@ -1354,7 +1386,7 @@ private struct ProviderEditSheet: View {
         case .chooseProvider:
             return (
                 "square.grid.2x2.fill",
-                Text("Add MCP Provider", bundle: .module),
+                Text("Add Connection", bundle: .module),
                 Text("Choose a service to connect", bundle: .module)
             )
         case .configureKnown(let template):
@@ -1491,13 +1523,13 @@ private struct ProviderEditSheet: View {
         cancelButton
         if case .configureKnown(let template) = phase {
             primarySaveButton(
-                label: Text("Add Provider", bundle: .module),
+                label: Text("Add Connection", bundle: .module),
                 enabled: canSaveKnown(template)
             )
         }
         if case .configureCustom = phase {
             primarySaveButton(
-                label: Text(isEditing ? "Save" : "Add Provider", bundle: .module),
+                label: Text(isEditing ? "Save" : "Add Connection", bundle: .module),
                 enabled: canSave
             )
         }
@@ -1547,7 +1579,11 @@ private struct ProviderEditSheet: View {
                 if let result = testResult {
                     switch result {
                     case .success(let probe):
-                        Text("Connected! (\(probe.toolCount) tools)", bundle: .module)
+                        Text(
+                            probe.toolCount == 1
+                                ? L("Connected! (1 tool)")
+                                : L("Connected! (\(probe.toolCount) tools)")
+                        )
                             .font(.system(size: 12, weight: .medium))
                     case .failure(let probe):
                         Text("Failed - \(probe.reasonCode.rawValue)", bundle: .module)
@@ -2438,23 +2474,47 @@ private struct ProviderEditSheet: View {
     private var executionHostExplainer: some View {
         switch executionHost {
         case .sandbox:
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "shippingbox.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.accentColor)
-                Text(
-                    "Runs in an isolated Linux VM with no access to host files or credentials. Outbound network is on by default and can be turned off per agent in the agent's Sandbox settings.",
-                    bundle: .module
+            // Seatbelt backend: sandboxed stdio doesn't exist (no VM
+            // interactive exec bridge), so a provider left on Sandbox
+            // will fail to start. Warn at selection time — the same
+            // guidance the connect-time error gives.
+            if SandboxBackend.current == .seatbelt {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.orange)
+                    Text(
+                        "Sandboxed MCP servers require macOS 26 or later and will fail to start on this Mac. Choose Host to run this provider — note it will then run without sandbox protection.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.orange.opacity(0.10))
                 )
-                .font(.system(size: 11))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
+            } else {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "shippingbox.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(themeManager.currentTheme.accentColor)
+                    Text(
+                        "Runs in an isolated Linux VM with no access to host files or credentials. Outbound network is on by default and can be turned off per agent in the agent's Sandbox settings.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(themeManager.currentTheme.accentColor.opacity(0.08))
+                )
             }
-            .padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(themeManager.currentTheme.accentColor.opacity(0.08))
-            )
 
         case .host:
             HStack(alignment: .top, spacing: 8) {
@@ -2837,6 +2897,16 @@ private struct ProviderEditSheet: View {
 
     private func loadProvider() {
         guard let provider = provider else {
+            if let prefill {
+                // Hand-off from the API provider form: skip the catalog and
+                // land on the custom editor with the detected MCP endpoint.
+                phase = .configureCustom
+                name = prefill.name
+                url = prefill.url
+                token = prefill.bearerToken ?? ""
+                authType = .bearerToken
+                return
+            }
             // Add-mode: stay on the catalog grid. The draftId is preserved so
             // anything OAuth-saved mid-flow ends up on this id and persists
             // through save().
@@ -3075,16 +3145,22 @@ private struct ProviderEditSheet: View {
         // sensitive fields alone after the first save.
         for entry in envEntries
         where entry.isSecret && !entry.key.isEmpty && !entry.value.isEmpty {
-            _ = MCPProviderKeychain.saveEnvSecret(
+            if !MCPProviderKeychain.saveEnvSecret(
                 entry.value,
                 key: entry.key,
                 for: updatedProvider.id
-            )
+            ) {
+                NSLog("ProvidersView: failed to save secret env value to Keychain")
+            }
         }
 
         // Save secret header values to Keychain
         for header in customHeaders where header.isSecret && !header.key.isEmpty && !header.value.isEmpty {
-            MCPProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: updatedProvider.id)
+            if !MCPProviderKeychain.saveHeaderSecret(
+                header.value, key: header.key, for: updatedProvider.id
+            ) {
+                NSLog("ProvidersView: failed to save secret header to Keychain")
+            }
         }
 
         // Pass token (empty string means no change, nil means keep existing).
@@ -3501,6 +3577,11 @@ private struct MCPPrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .semibold))
+            // Never wrap the label: in a crowded footer the flexible spacer
+            // should compress, not the button text (keeps the CTA the same
+            // height as its neighbors).
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .foregroundColor(.white)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -3518,6 +3599,8 @@ private struct MCPSecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .medium))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .foregroundColor(themeManager.currentTheme.primaryText)
             .padding(.horizontal, 14)
             .padding(.vertical, 10)

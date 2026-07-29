@@ -184,6 +184,13 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Populated only on the Responses path; nil everywhere else.
     var reasoningItemId: String? = nil
     var reasoningEncrypted: String? = nil
+    /// Keeps an abandoned protocol attempt visible in the transcript while
+    /// preventing it from re-entering model history. This is set only when an
+    /// agent/tool generation ends with incomplete reasoning and the loop
+    /// retries from the exact pre-attempt history in a fresh assistant turn.
+    /// Persisting the marker prevents a later user turn or session reload from
+    /// replaying the abandoned reasoning beside the successful retry.
+    var modelContextExcluded: Bool = false
     /// For role==.tool messages, associates this result with the originating call id
     var toolCallId: String? = nil
     /// Frozen memory / screen-context block this USER turn was originally
@@ -291,6 +298,12 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// The chat UI uses this to surface a fallback banner suggesting the
     /// user toggle "Disable Thinking" for the next turn.
     var unclosedReasoning: Bool = false
+    /// Authoritative terminal reason supplied by the runtime (`stop`,
+    /// `length`, and provider equivalents). Unlike a token-count equality
+    /// guess, this distinguishes a natural ending from output-cap exhaustion.
+    /// The agent loop uses it to avoid treating a reasoning-only `length`
+    /// completion as a successful final response.
+    var terminalStopReason: String?
 
     /// Osaurus Router billing snapshot captured from the in-stream summary
     /// frame (cost, token counts, status). Persisted so a reloaded chat still
@@ -506,6 +519,7 @@ extension ChatTurn {
         let toolResults: [String: String]?
         let toolCallId: String?
         var injectedContextPrefix: String? = nil
+        var modelContextExcluded: Bool? = nil
     }
 
     /// Converts this turn to a persistable representation
@@ -518,7 +532,8 @@ extension ChatTurn {
             toolCalls: toolCalls,
             toolResults: toolResults.isEmpty ? nil : toolResults,
             toolCallId: toolCallId,
-            injectedContextPrefix: injectedContextPrefix
+            injectedContextPrefix: injectedContextPrefix,
+            modelContextExcluded: modelContextExcluded ? true : nil
         )
     }
 
@@ -540,6 +555,7 @@ extension ChatTurn {
         }
         turn.toolCallId = p.toolCallId
         turn.injectedContextPrefix = p.injectedContextPrefix
+        turn.modelContextExcluded = p.modelContextExcluded ?? false
 
         return turn
     }

@@ -64,6 +64,27 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
     /// crowdsourced leaderboard. nil for pre-schema contributions (the compat
     /// CLI falls back to the git author who added the file).
     public let contributor: String?
+    /// Simulated target RAM (MB) self-declared via `OSAURUS_EVALS_SIM_RAM_GB`
+    /// — the eval-only constrained-hardware profile (e.g. a 16 GiB Mac
+    /// enforced on a larger host by scaling the memory-safety load fraction
+    /// through the production resolver; see `EvalBootstrap`). ALWAYS carried
+    /// alongside the real `totalRamMb`, never instead of it: a simulated run
+    /// proves the policy budget and footprint ceiling, not real paging,
+    /// thermals, or memory-pressure behavior on the target machine. nil for
+    /// unsimulated runs and pre-schema reports.
+    public let simulatedRamMb: Int?
+    /// Active `ExperimentProfile.name` when the run composed under an
+    /// eval-scoped prompt/tool experiment. nil for production-composition
+    /// runs. A report carrying this is NEVER silently comparable with a
+    /// baseline — the matrix flags mixed-profile columns.
+    public let experimentProfile: String?
+    /// `ExperimentProfile.profileHash` — the identity of exactly which
+    /// overrides were active (name collisions can't fake comparability).
+    public let experimentProfileHash: String?
+    /// The profile's resolved feature vector (`axis=value` strings,
+    /// sorted) — the report-embedded record of what composition this run
+    /// measured, decodable without the profile file.
+    public let experimentFeatures: [String]?
 
     public init(
         chip: String? = nil,
@@ -80,7 +101,11 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
         thermalState: String? = nil,
         lowPowerMode: Bool? = nil,
         powerSource: String? = nil,
-        contributor: String? = nil
+        contributor: String? = nil,
+        simulatedRamMb: Int? = nil,
+        experimentProfile: String? = nil,
+        experimentProfileHash: String? = nil,
+        experimentFeatures: [String]? = nil
     ) {
         self.chip = chip
         self.totalRamMb = totalRamMb
@@ -97,6 +122,38 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
         self.lowPowerMode = lowPowerMode
         self.powerSource = powerSource
         self.contributor = contributor
+        self.simulatedRamMb = simulatedRamMb
+        self.experimentProfile = experimentProfile
+        self.experimentProfileHash = experimentProfileHash
+        self.experimentFeatures = experimentFeatures
+    }
+
+    /// Copy with an experiment profile stamped in — the CLI applies this
+    /// after `current(...)` capture when a profile is active, so the
+    /// provenance block always records what composition the run measured.
+    public func withExperiment(_ profile: ExperimentProfile) -> RunEnvironment {
+        RunEnvironment(
+            chip: chip,
+            totalRamMb: totalRamMb,
+            cpuCores: cpuCores,
+            osVersion: osVersion,
+            osaurusVersion: osaurusVersion,
+            commit: commit,
+            runModel: runModel,
+            judge: judge,
+            kvRegime: kvRegime,
+            catalogHash: catalogHash,
+            caseCount: caseCount,
+            thermalState: thermalState,
+            lowPowerMode: lowPowerMode,
+            powerSource: powerSource,
+            contributor: contributor,
+            simulatedRamMb: simulatedRamMb,
+            experimentProfile: profile.name,
+            experimentProfileHash: profile.profileHash,
+            experimentFeatures: profile.resolvedFeatureVector.isEmpty
+                ? nil : profile.resolvedFeatureVector
+        )
     }
 
     /// Capture the live environment for a run over `caseIDs` against
@@ -125,8 +182,19 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
             thermalState: thermalStateLabel(ProcessInfo.processInfo.thermalState),
             lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled,
             powerSource: providingPowerSource(),
-            contributor: nonEmpty(environment["OSAURUS_EVALS_CONTRIBUTOR"])
+            contributor: nonEmpty(environment["OSAURUS_EVALS_CONTRIBUTOR"]),
+            simulatedRamMb: simulatedRamMb(environment: environment)
         )
+    }
+
+    /// Parse `OSAURUS_EVALS_SIM_RAM_GB` into MB. Fractional GB values are
+    /// accepted (16.5 → 16896 MB); non-positive or unparseable values read
+    /// as "not simulated" so a typo can't fabricate a target profile.
+    static func simulatedRamMb(environment: [String: String]) -> Int? {
+        guard let raw = nonEmpty(environment["OSAURUS_EVALS_SIM_RAM_GB"]),
+            let gb = Double(raw), gb > 0
+        else { return nil }
+        return Int(gb * 1024)
     }
 
     /// Human label for `ProcessInfo.ThermalState` (stable strings — these
@@ -173,12 +241,27 @@ public struct RunEnvironment: Codable, Sendable, Equatable {
         var parts: [String] = []
         if let chip { parts.append(chip) }
         if let totalRamMb { parts.append("\(totalRamMb / 1024)GB") }
+        // A simulated profile is never presented as the machine's RAM: it is
+        // labelled SIMULATED right next to the real total so a reader can
+        // never mistake a policy-budget run for real 16 GB hardware proof.
+        if let simulatedRamMb {
+            parts.append("sim-ram=\(simulatedRamMb / 1024)GB(SIMULATED)")
+        }
         if let osVersion { parts.append("macOS \(osVersion)") }
         if let osaurusVersion { parts.append("osaurus \(osaurusVersion)") }
         if let commit { parts.append("@\(commit)") }
         if let kvRegime { parts.append("kv=\(kvRegime)") }
         if let judge { parts.append("judge=\(judge)") }
         if let catalogHash { parts.append("catalog=\(catalogHash)") }
+        // A profile run is never presented as a production result: name +
+        // hash sit right in the one-line summary so a snapshot reader can't
+        // mistake an ablation column for the shipped composition.
+        if let experimentProfile {
+            parts.append(
+                "profile=\(experimentProfile)"
+                    + (experimentProfileHash.map { "@\($0)" } ?? "")
+            )
+        }
         if let contributor { parts.append("by \(contributor)") }
         // Perf-comparability caveats: only shown when they'd actually skew
         // numbers (nominal/AC is the assumed baseline, so it stays quiet).

@@ -117,18 +117,29 @@ enum WebSearchResultFormatter {
         return out
     }
 
+    /// Stamp the source classification (premium / custom / free) and hosted
+    /// fallback state onto a success payload so the tool-call UI and logs can
+    /// distinguish who served the results. Billing detail stays out of the
+    /// model-facing payload — the Credits UI reads it from the account service.
+    static func applySourceMetadata(_ payload: inout [String: Any], run: HostedFirstSearchResult) {
+        payload["search_source"] = run.source.rawValue
+        if let reason = run.hostedFallbackReason {
+            payload["premium_fallback"] = reason
+        }
+    }
+
     /// Actionable hint for a NO_RESULTS failure — differs depending on
     /// whether any API provider is configured, since "add a provider" is
     /// useless advice when the user already has one and it just failed.
     static func noResultsHint(hasConfiguredAPIProvider: Bool) -> String {
         if hasConfiguredAPIProvider {
             return
-                "Tried the configured providers and free fallbacks. Try a broader query, "
+                "Tried the configured providers and built-in fallbacks. Try a broader query, "
                 + "or check in Settings → Search that the API keys are still valid."
         }
         return
             "Try a broader query or drop site:/filetype:/time_range. For better results, "
-            + "add a free search provider in Settings → Search."
+            + "add a search provider in Settings → Search."
     }
 
     static func noResultsFailure(
@@ -261,7 +272,12 @@ final class WebSearchTool: OsaurusTool, @unchecked Sendable {
             region: region
         )
 
-        let outcome = await SearchProviderManager.shared.runSearch(request)
+        // One stable idempotency key per logical tool call: hosted retries of
+        // this call can never double-charge or double-consume a free slot.
+        let idempotencyKey = UUID().uuidString
+        let run = await SearchProviderManager.shared.runHostedFirstSearch(
+            request, idempotencyKey: idempotencyKey)
+        let outcome = run.outcome
         if outcome.hits.isEmpty {
             let hasAPIProvider = await SearchProviderManager.shared.hasConfiguredAPIProvider
             return WebSearchResultFormatter.noResultsFailure(
@@ -272,9 +288,11 @@ final class WebSearchTool: OsaurusTool, @unchecked Sendable {
                 hasConfiguredAPIProvider: hasAPIProvider
             )
         }
+        var payload = WebSearchResultFormatter.resultsPayload(request: request, outcome: outcome)
+        WebSearchResultFormatter.applySourceMetadata(&payload, run: run)
         return ToolEnvelope.success(
             tool: name,
-            result: WebSearchResultFormatter.resultsPayload(request: request, outcome: outcome),
+            result: payload,
             warnings: warnings.isEmpty ? nil : warnings
         )
     }
@@ -377,22 +395,43 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
         }()
 
         if !directURLs.isEmpty {
+            // Hosted extraction first when premium search is on. Raw
+            // CSV/TSV/JSON endpoints stay local: the structured-data pipeline
+            // (data_refs, render_chart handoff) needs the untouched payload,
+            // which hosted extraction does not preserve.
+            var hostedTexts: [String: (title: String?, text: String)] = [:]
+            if !directURLs.contains(where: Self.looksLikeStructuredData) {
+                let idempotencyKey = UUID().uuidString
+                if let hosted = await SearchProviderManager.shared.hostedExtract(
+                    urls: directURLs, idempotencyKey: idempotencyKey)
+                {
+                    // Only pages that actually returned content were billed;
+                    // failed URLs fall back to local Readability per URL.
+                    for page in hosted.pages where page.succeeded {
+                        if let text = page.text, !text.isEmpty {
+                            hostedTexts[page.url.lowercased()] = (page.title, text)
+                        }
+                    }
+                }
+            }
             let hits = directURLs.map {
                 SearchHit(title: $0, url: $0, snippet: "", engine: "direct_url")
             }
             let results = await enrichedResults(
                 hits: hits,
                 extractCount: directURLs.count,
-                timeout: timeout
+                timeout: timeout,
+                hostedTexts: hostedTexts
             )
-            return ToolEnvelope.success(
-                tool: name,
-                result: [
-                    "mode": "direct_url",
-                    "provider": "direct_url",
-                    "results": results,
-                ]
-            )
+            var payload: [String: Any] = [
+                "mode": "direct_url",
+                "provider": "direct_url",
+                "results": results,
+            ]
+            if !hostedTexts.isEmpty {
+                payload["extract_source"] = "premium"
+            }
+            return Self.extractionEnvelope(payload: payload)
         }
 
         var warnings: [String] = []
@@ -408,7 +447,16 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
             timeRange: timeRange
         )
 
-        let outcome = await SearchProviderManager.shared.runSearch(request)
+        // Query mode rides a single billed hosted request: search plus text
+        // extraction in one call (spec section 3), falling back to the local
+        // cascade + Readability when the hosted attempt cannot serve it.
+        let idempotencyKey = UUID().uuidString
+        let run = await SearchProviderManager.shared.runHostedFirstSearch(
+            request,
+            idempotencyKey: idempotencyKey,
+            extractTextMaxCharacters: SearchReadability.maxMarkdownCharacters
+        )
+        let outcome = run.outcome
         if outcome.hits.isEmpty {
             let hasAPIProvider = await SearchProviderManager.shared.hasConfiguredAPIProvider
             return WebSearchResultFormatter.noResultsFailure(
@@ -426,25 +474,119 @@ final class SearchAndExtractTool: OsaurusTool, @unchecked Sendable {
         payload["results"] = await enrichedResults(
             hits: outcome.hits,
             extractCount: extractCount,
-            timeout: timeout
+            timeout: timeout,
+            hostedTexts: run.hostedTextByURL.mapValues { (title: String?.none, text: $0) }
         )
+        WebSearchResultFormatter.applySourceMetadata(&payload, run: run)
 
-        return ToolEnvelope.success(
-            tool: name,
-            result: payload,
+        return Self.extractionEnvelope(
+            payload: payload,
             warnings: warnings.isEmpty ? nil : warnings
         )
+    }
+
+    /// Turn per-result extraction statuses into an honest tool-level result.
+    ///
+    /// `search_and_extract` promises retrieved page content, not another list
+    /// of discovery URLs.  A request where every attempted extraction was a
+    /// challenge/timeout/empty page therefore did not succeed.  Returning an
+    /// `ok:true` envelope for that case used to reset the agent loop's
+    /// discovery budget and let Gemma/Qwen families search, load capabilities,
+    /// and reason indefinitely from snippets while believing retrieval had
+    /// progressed.
+    ///
+    /// Partial success remains a success: the model gets every result plus
+    /// explicit counts and can use whichever sources were actually retrieved.
+    /// Total failure preserves the complete search/extraction payload as
+    /// metadata. Challenge/content-policy failures are non-retryable as-is;
+    /// transport failures remain retryable so a transient outage is not
+    /// mislabeled as a permanent source contract.
+    static func extractionEnvelope(
+        payload rawPayload: [String: Any],
+        warnings: [String]? = nil
+    ) -> String {
+        var payload = rawPayload
+        let results = payload["results"] as? [[String: Any]] ?? []
+        let attempted = results.filter { $0["extract_status"] != nil }
+        let extractedCount = results.filter { ($0["extracted"] as? Bool) == true }.count
+        let failedCount = attempted.filter { ($0["extracted"] as? Bool) != true }.count
+
+        payload["extraction_attempted_count"] = attempted.count
+        payload["extracted_count"] = extractedCount
+        payload["extraction_failed_count"] = failedCount
+
+        guard extractedCount > 0 else {
+            let statuses = attempted.compactMap { $0["extract_status"] as? String }
+            let transientStatuses: Set<String> = [
+                SearchExtractionStatus.fetchFailed.rawValue,
+                SearchExtractionStatus.timeout.rawValue,
+            ]
+            let hasTransientFailure = statuses.contains { transientStatuses.contains($0) }
+            let allTimedOut = !statuses.isEmpty
+                && statuses.allSatisfy { $0 == SearchExtractionStatus.timeout.rawValue }
+            let retryable = hasTransientFailure || attempted.isEmpty
+
+            var metadata = payload
+            metadata["next_action"] = [
+                "instruction": retryable
+                    ? "A transient retrieval failure occurred. Retry once or choose a materially different retrievable source; if retrieval still fails, report the blocker. Do not claim these pages were inspected."
+                    : "Choose a materially different retrievable source or report that page retrieval is blocked. Do not claim these pages were inspected.",
+            ]
+            if let warnings, !warnings.isEmpty { metadata["warnings"] = warnings }
+
+            return ToolEnvelope.failure(
+                kind: allTimedOut ? .timeout : .executionError,
+                message:
+                    "No page content was retrieved from any attempted source. The returned URLs/snippets are discovery results, not inspected page evidence. Change the source or retrieval method, or report that retrieval is blocked; do not claim these pages were read.",
+                tool: "search_and_extract",
+                retryable: retryable,
+                metadata: metadata
+            )
+        }
+
+        return ToolEnvelope.success(
+            tool: "search_and_extract",
+            result: payload,
+            warnings: warnings
+        )
+    }
+
+    /// Raw structured-data endpoints (CSV/TSV/JSON) must be extracted locally
+    /// so the data_ref/render_chart pipeline gets the untouched payload.
+    static func looksLikeStructuredData(_ url: String) -> Bool {
+        guard let parsed = URL(string: url) else { return false }
+        return ["csv", "tsv", "json"].contains(parsed.pathExtension.lowercased())
     }
 
     private func enrichedResults(
         hits: [SearchHit],
         extractCount: Int,
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        hostedTexts: [String: (title: String?, text: String)] = [:]
     ) async -> [[String: Any]] {
         var enriched: [[String: Any]] = []
         for (index, hit) in hits.enumerated() {
             var entry = hit.toDict(rank: index + 1)
             let shouldExtract = index < extractCount && !hit.url.isEmpty && !Task.isCancelled
+            // Hosted-extracted pages skip the local fetch entirely; structured
+            // endpoints never use hosted text (see `looksLikeStructuredData`).
+            if shouldExtract,
+                !Self.looksLikeStructuredData(hit.url),
+                let hosted = hostedTexts[hit.url.lowercased()],
+                !hosted.text.isEmpty
+            {
+                if let title = hosted.title, !title.isEmpty { entry["title"] = title }
+                let (text, truncated) = SearchDiagnostics.truncate(
+                    hosted.text, maxCharacters: SearchReadability.maxMarkdownCharacters)
+                entry["extract_status"] = SearchExtractionStatus.ok.rawValue
+                entry["extracted"] = true
+                entry["extract_source"] = "premium"
+                entry["markdown"] = text
+                entry["truncated"] = truncated
+                entry["word_count"] = text.split(whereSeparator: \.isWhitespace).count
+                enriched.append(entry)
+                continue
+            }
             if shouldExtract {
                 let extraction = await SearchReadability.extract(url: hit.url, timeout: timeout)
                 if let title = extraction.title, !title.isEmpty { entry["title"] = title }

@@ -1,0 +1,17 @@
+{
+  "id": "micro_perf.cancel-mid-generation",
+  "domain": "micro_perf",
+  "label": "micro perf • cancel mid-decode: prompt termination, no zombie, clean recovery",
+  "query": "List the numbers from one to five hundred as digits separated by spaces. Output only the digits.",
+  "notes": "The mid-generation Stop-button row: the model is warmed first, a long decode is dispatched, and the cancel fires 500 ms after the FIRST streamed delta — squarely mid-decode. Pass requires the stream to terminate within the cancel-latency ceiling AND a full recovery generation to succeed afterwards. A cancel that wedges (stream keeps decoding past the ceiling) or poisons the next request fails the row; footprint before/after-cancel/after-recovery is recorded for leak triage. Off-CI (needs a local model).",
+  "fixtures": {},
+  "expect": {
+    "microPerf": {
+      "reps": 2,
+      "maxTokens": 128,
+      "lifecycle": "midgen_cancel",
+      "cancelAfterMs": 500,
+      "maxCancelLatencyMs": 10000
+    }
+  }
+}

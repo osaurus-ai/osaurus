@@ -41,6 +41,29 @@ Despite running in isolation, agents inside the VM retain full access to Osaurus
 - **macOS 26+** (Tahoe) — required for Apple's Containerization framework
 - **Apple Silicon** (M1 or newer)
 
+On earlier macOS versions the sandbox automatically falls back to a native macOS Seatbelt backend — see [Seatbelt Fallback](#seatbelt-fallback-macos-15-and-earlier).
+
+---
+
+## Seatbelt Fallback (macOS 15 and earlier)
+
+On Macs that can't run the Containerization VM, Osaurus still offers sandboxed execution using the system's Seatbelt facility (`sandbox-exec`). Commands run as regular host processes confined by a deny-by-default sandbox profile: they can read the system but can only write inside the sandbox workspace (`~/.osaurus/container/workspace/`, seen by agents as `/workspace`) and a scratch temp directory. The backend is chosen once at launch — macOS 26+ always uses the VM, older systems always use Seatbelt.
+
+Everything in this guide applies to both backends unless noted. The differences:
+
+| | Linux VM (macOS 26+) | Seatbelt (earlier) |
+|---|---|---|
+| Environment | Alpine Linux, full userland | macOS, BSD userland |
+| Package managers | `pip`, `npm`, `apk` | `pip`, `npm` (no `apk`) |
+| Tool recipe `dependencies` | Supported | Not supported — install via `setup` with pip/npm |
+| Network policy | Off, on, or per-domain allowlist | All-or-nothing. A configured domain allowlist can't be enforced and fails closed to no network |
+| Isolation boundary | Hardware VM, separate filesystem | Process-level write confinement. Reads of the host are not blocked |
+| Per-agent environments | Separate Linux users, optional per-agent rootfs | Shared workspace tree with per-agent home directories |
+| Sandboxed MCP servers | Supported | Not supported — set the provider's Run in to Host |
+| Provisioning | Kernel + rootfs download (~1 min) | Instant, no download |
+
+Two behavioral notes for Seatbelt: denied file lookups surface as "No such file or directory" rather than "Operation not permitted" (deliberate macOS anti-probing behavior), and `~` inside sandboxed commands resolves to the agent's workspace home, not your macOS home.
+
 ---
 
 ## Getting Started
@@ -496,7 +519,7 @@ The prompt path keeps secret values out of the conversation history and LLM cont
 Storing a secret is only half the problem — the other half is keeping its **value** out of the model context and the persisted transcript afterwards:
 
 - **Output scrubbing.** Agent secrets are injected into the exec environment, so `echo $KEY` would otherwise land the value in the model's context. `SecretScrubber` rewrites every known secret value in `sandbox_exec` stdout/stderr, background-job log tails, and sandbox-plugin tool output to `[REDACTED:<ENV_KEY>]` before the result is enveloped. Longer values scrub first (substring-safe); values under 6 characters are exempt to avoid false positives on ordinary output.
-- **Argument scrubbing.** When the agent uses the direct `value` path of `sandbox_secret_set`, the *recorded* copy of the tool-call arguments is rewritten (`value` → `[REDACTED]`) before it is persisted into chat history; execution still sees the original. The prompt path never carries the value through the model at all and remains the recommended flow — the tool description steers models toward it.
+- **Argument scrubbing.** When the agent uses the direct `value` path of `sandbox_secret_set`, the *recorded* copy of the tool-call arguments is rewritten (`value` → `[REDACTED]`) before it re-enters chat history, HTTP agent-run history, plugin complete/complete_stream history, or plugin streamed tool-call argument material; execution still sees the original. Malformed secret-set arguments fail closed rather than echoing the raw input. The prompt path never carries the value through the model at all and remains the recommended flow — the tool description steers models toward it.
 
 ---
 

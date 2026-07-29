@@ -156,7 +156,26 @@ public enum ModelMediaCapabilities {
     /// loaded so the drag-drop UI knows whether to advertise audio /
     /// video accept slots. After load, `from(directory:modelId:)`
     /// can refine via the bundle's `config_omni.json` sidecar.
+    /// Detection is a pure function of the id but runs a dozen substring
+    /// scans and regex matches, and callers hit it from main-thread paths
+    /// (composer capabilities, warmup payload builds) on every evaluation —
+    /// so identical ids are memoized.
+    private static let fromMemoLock = NSLock()
+    private nonisolated(unsafe) static var fromMemo: [String: Capabilities] = [:]
+
     public static func from(modelId: String) -> Capabilities {
+        fromMemoLock.lock()
+        let cached = fromMemo[modelId]
+        fromMemoLock.unlock()
+        if let cached { return cached }
+        let result = fromImpl(modelId: modelId)
+        fromMemoLock.lock()
+        fromMemo[modelId] = result
+        fromMemoLock.unlock()
+        return result
+    }
+
+    private static func fromImpl(modelId: String) -> Capabilities {
         let lower = modelId.lowercased()
 
         // Nemotron-3-Nano-Omni / Nemotron-Omni-Nano — only family with

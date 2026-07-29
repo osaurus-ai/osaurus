@@ -99,8 +99,15 @@ actor AgentChannelTransportSupervisor {
     private let telegramConfiguration: @Sendable () -> TelegramConnectionConfiguration
     private let telegramHasBotToken: @Sendable () -> Bool
     private let telegramRuntime: any AgentChannelReceiveTransportRuntime
+    private let discordConfiguration: @Sendable () -> DiscordConnectionConfiguration
+    private let discordHasBotToken: @Sendable () -> Bool
+    private let discordRuntime: any AgentChannelReceiveTransportRuntime
+    private let discordPresenceRuntime: any DiscordGatewayPresenceMaintaining
+    private var additionalSlackRuntimes: [String: SlackSocketModeTransportRuntime] = [:]
     private var slackStarted = false
     private var telegramStarted = false
+    private var discordStarted = false
+    private var discordPresenceStarted = false
 
     init(
         slackConfiguration: @escaping @Sendable () -> SlackConnectionConfiguration = {
@@ -119,7 +126,15 @@ actor AgentChannelTransportSupervisor {
         telegramHasBotToken: @escaping @Sendable () -> Bool = {
             TelegramConnectionService.shared.hasBotToken()
         },
-        telegramRuntime: any AgentChannelReceiveTransportRuntime = TelegramLongPollTransportRuntime()
+        telegramRuntime: any AgentChannelReceiveTransportRuntime = TelegramLongPollTransportRuntime(),
+        discordConfiguration: @escaping @Sendable () -> DiscordConnectionConfiguration = {
+            DiscordConnectionService.shared.configuration()
+        },
+        discordHasBotToken: @escaping @Sendable () -> Bool = {
+            DiscordConnectionService.shared.hasBotToken()
+        },
+        discordRuntime: any AgentChannelReceiveTransportRuntime = DiscordPollingTransportRuntime(),
+        discordPresenceRuntime: any DiscordGatewayPresenceMaintaining = DiscordGatewayPresenceRuntime()
     ) {
         self.slackConfiguration = slackConfiguration
         self.slackHasBotToken = slackHasBotToken
@@ -128,11 +143,16 @@ actor AgentChannelTransportSupervisor {
         self.telegramConfiguration = telegramConfiguration
         self.telegramHasBotToken = telegramHasBotToken
         self.telegramRuntime = telegramRuntime
+        self.discordConfiguration = discordConfiguration
+        self.discordHasBotToken = discordHasBotToken
+        self.discordRuntime = discordRuntime
+        self.discordPresenceRuntime = discordPresenceRuntime
     }
 
     func startFromLaunch() async {
         await refreshSlackRuntime()
         await refreshTelegramRuntime()
+        await refreshDiscordRuntime()
     }
 
     func refreshSlackRuntime(now: Date = Date()) async {
@@ -141,15 +161,48 @@ actor AgentChannelTransportSupervisor {
             && slackHasAppToken()
             && !configuration.readableChannelIds.isEmpty
             && !configuration.senderAllowlist.isEmpty {
-            guard !slackStarted else { return }
-            slackStarted = true
-            await slackRuntime.start(pollInterval: 1)
-            return
+            if !slackStarted {
+                slackStarted = true
+                await slackRuntime.start(pollInterval: 1)
+            }
+        } else if slackStarted {
+            slackStarted = false
+            await slackRuntime.stop(now: now)
         }
 
-        guard slackStarted else { return }
-        slackStarted = false
-        await slackRuntime.stop(now: now)
+        await refreshAdditionalSlackRuntimes(configuration: configuration, now: now)
+    }
+
+    private func refreshAdditionalSlackRuntimes(
+        configuration: SlackConnectionConfiguration,
+        now: Date
+    ) async {
+        let desired = Set<String>(configuration.workspaceAccounts.compactMap { account in
+            guard !account.readableChannelIds.isEmpty,
+                  !account.senderAllowlist.isEmpty,
+                  SlackConnectionService.shared.socketModeAppToken(teamId: account.teamId) != nil
+            else { return nil }
+            return account.teamId
+        })
+        for teamId in additionalSlackRuntimes.keys where !desired.contains(teamId) {
+            if let runtime = additionalSlackRuntimes.removeValue(forKey: teamId) {
+                await runtime.stop(now: now)
+            }
+        }
+        for teamId in desired where additionalSlackRuntimes[teamId] == nil {
+            let runtime = SlackSocketModeTransportRuntime(teamId: teamId)
+            additionalSlackRuntimes[teamId] = runtime
+            await runtime.start(pollInterval: 1)
+        }
+    }
+
+    /// Temporarily stop the Telegram long-poll runtime so another consumer
+    /// (settings discovery issuing its own getUpdates) does not conflict
+    /// with it. Resume with `refreshTelegramRuntime()`.
+    func suspendTelegramRuntime(now: Date = Date()) async {
+        guard telegramStarted else { return }
+        telegramStarted = false
+        await telegramRuntime.stop(now: now)
     }
 
     func refreshTelegramRuntime(now: Date = Date()) async {
@@ -166,6 +219,32 @@ actor AgentChannelTransportSupervisor {
         await telegramRuntime.stop(now: now)
     }
 
+    func refreshDiscordRuntime(now: Date = Date()) async {
+        let configuration = discordConfiguration()
+        // Platform presence only needs the bot token — a send-only Discord
+        // setup should still show the bot online while Osaurus runs.
+        if discordHasBotToken() {
+            if !discordPresenceStarted {
+                discordPresenceStarted = true
+                await discordPresenceRuntime.start()
+            }
+        } else if discordPresenceStarted {
+            discordPresenceStarted = false
+            await discordPresenceRuntime.stop()
+        }
+        if discordHasBotToken()
+            && !configuration.readableChannelIds.isEmpty
+            && !configuration.senderAllowlist.isEmpty {
+            guard !discordStarted else { return }
+            discordStarted = true
+            await discordRuntime.start(pollInterval: 3)
+            return
+        }
+        guard discordStarted else { return }
+        discordStarted = false
+        await discordRuntime.stop(now: now)
+    }
+
     func stop(now: Date = Date()) async {
         if slackStarted {
             slackStarted = false
@@ -175,5 +254,17 @@ actor AgentChannelTransportSupervisor {
             telegramStarted = false
             await telegramRuntime.stop(now: now)
         }
+        if discordStarted {
+            discordStarted = false
+            await discordRuntime.stop(now: now)
+        }
+        if discordPresenceStarted {
+            discordPresenceStarted = false
+            await discordPresenceRuntime.stop()
+        }
+        for runtime in additionalSlackRuntimes.values {
+            await runtime.stop(now: now)
+        }
+        additionalSlackRuntimes.removeAll()
     }
 }

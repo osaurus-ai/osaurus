@@ -70,6 +70,9 @@ struct ModelDetailView: View, Identifiable {
     /// Whether the Advanced section is expanded
     @State private var isAdvancedExpanded = false
 
+    /// Whether the developer-oriented Runtime Diagnostics section is expanded
+    @State private var isDiagnosticsExpanded = false
+
     /// Rendered model card markdown (README with front-matter stripped).
     @State private var readme: String? = nil
 
@@ -132,8 +135,6 @@ struct ModelDetailView: View, Identifiable {
 
                     variantPickerSection
 
-                    runtimeDiagnosticsCard
-
                     modelCardSection
 
                     detailsCard
@@ -141,6 +142,8 @@ struct ModelDetailView: View, Identifiable {
                     filesSection
 
                     advancedSection
+
+                    runtimeDiagnosticsSection
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 18)
@@ -408,57 +411,81 @@ struct ModelDetailView: View, Identifiable {
         return model.isVLM
     }
 
-    @ViewBuilder
-    private var runtimeDiagnosticsCard: some View {
-        if let report = diagnostics {
-            diagnosticsCard(for: report)
-        } else {
-            diagnosticsLoadingCard
-        }
-    }
-
-    /// Placeholder shown while `diagnostics` is being read from disk so the
-    /// card slot keeps its place and the layout doesn't jump when the real
-    /// report lands.
-    private var diagnosticsLoadingCard: some View {
-        HStack(spacing: 10) {
-            ProgressView()
-                .controlSize(.small)
-            Text("Checking runtime compatibility…", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.tertiaryText)
-            Spacer(minLength: 0)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .detailCardSurface()
-    }
-
-    private func diagnosticsCard(
-        for report: ModelCompatibilityDiagnostics.Report
-    ) -> some View {
-        let tint = runtimeDiagnosticTint(report.runtime.kind)
-
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: runtimeDiagnosticIcon(report.runtime.kind))
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(tint)
-                    .frame(width: 18, height: 18)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(report.primaryTitle)
+    /// Collapsible, developer-oriented runtime diagnostics. Collapsed by
+    /// default and placed last so the runtime-proof details (bundle status,
+    /// preflight, evidence keys) don't lead the sheet for regular users.
+    /// The header still surfaces the one-line verdict so a blocked or
+    /// unproven runtime is visible without expanding.
+    private var runtimeDiagnosticsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isDiagnosticsExpanded.toggle()
+                }
+            }) {
+                HStack(spacing: 8) {
+                    Text("Runtime Diagnostics", bundle: .module)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    Text(report.primaryDetail)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                    if let report = diagnostics {
+                        HStack(spacing: 4) {
+                            Image(systemName: runtimeDiagnosticIcon(report.runtime.kind))
+                                .font(.system(size: 10, weight: .semibold))
+                            Text(report.primaryTitle)
+                                .font(.system(size: 11, weight: .medium))
+                                .lineLimit(1)
+                        }
+                        .foregroundColor(runtimeDiagnosticTint(report.runtime.kind))
+                    } else {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.6)
+                            .frame(width: 12, height: 12)
+                    }
 
-                Spacer(minLength: 0)
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                        .rotationEffect(.degrees(isDiagnosticsExpanded ? 90 : 0))
+                }
+                .padding(14)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(PlainButtonStyle())
+
+            if isDiagnosticsExpanded {
+                Group {
+                    if let report = diagnostics {
+                        diagnosticsDetail(for: report)
+                    } else {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Checking runtime compatibility…", bundle: .module)
+                                .font(.system(size: 12))
+                                .foregroundColor(theme.tertiaryText)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
+            }
+        }
+        .detailCardSurface()
+    }
+
+    private func diagnosticsDetail(
+        for report: ModelCompatibilityDiagnostics.Report
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(report.primaryDetail)
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
 
             LazyVGrid(
                 columns: [
@@ -536,9 +563,7 @@ struct ModelDetailView: View, Identifiable {
                 }
             }
         }
-        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .detailCardSurface()
     }
 
     private func runtimeDiagnosticTint(_ kind: ModelCompatibilityDiagnostics.RuntimeStatus.Kind) -> Color {

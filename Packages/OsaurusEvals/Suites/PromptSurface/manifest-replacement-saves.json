@@ -1,0 +1,19 @@
+{
+  "id": "prompt_surface.manifest-replacement-saves",
+  "domain": "prompt_surface",
+  "label": "prompt_surface • dropping enabledManifest validates (list-mode replacement exists) and saves tokens",
+  "query": "",
+  "notes": "The manifest-replacement architecture axis: now that capabilities_discover carries the exact paginated {\"list\": \"enabled\"} mode, dropping the prompt manifest is a VALID experiment (it used to be refused). The section must actually vanish and the surface must get strictly cheaper. Promotion still requires the CapabilityClaims/tool-use quality gates — this fixture only pins that the harness can measure the candidate.",
+  "fixtures": {},
+  "expect": {
+    "promptSurface": {
+      "profile": {
+        "name": "arch-manifest-replacement",
+        "dropSections": ["enabledManifest"]
+      },
+      "mustExcludeSections": ["enabledManifest"],
+      "requireSavingsVsBaseline": true,
+      "expectDeterministic": true
+    }
+  }
+}

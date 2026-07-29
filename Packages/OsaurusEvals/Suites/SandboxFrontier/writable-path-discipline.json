@@ -1,0 +1,43 @@
+{
+  "id": "sandbox.writable-path-discipline",
+  "domain": "agent_loop",
+  "label": "sandbox • writable combined mode: one write tool, two filesystems, path decides",
+  "query": "Create two files with file_write: first, host-note.txt containing exactly 'HOST-SIDE-4471' in the workspace (relative path host-note.txt); second, vm-note.txt containing exactly 'VM-SIDE-8825' in your sandbox home (use the absolute path under your sandbox home — your system prompt states it; relative paths go to the workspace).",
+  "notes": "Path-routing discipline for the unified WRITERS in writable combined mode: the same file_write must land one file on the host (relative path, tracked change) and one in the VM (absolute /workspace/... path via the sandbox write bridge) with zero errors. The dual assertion (files + sandboxFiles) can only pass if both routes actually worked; a model that writes both to one side fails the other side's assertion.",
+  "fixtures": {
+    "sandbox": {
+      "hostFolder": true,
+      "allowHostFolderWrites": true
+    },
+    "workspaceFiles": [
+      {
+        "path": "README.md",
+        "contents": "# Workspace\n\nScratch workspace for the writable combined-mode eval.\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 12,
+      "toolUsageAudit": [
+        {
+          "tool": "file_write",
+          "minCalls": 2,
+          "maxErrors": 0
+        }
+      ],
+      "files": [
+        {
+          "path": "host-note.txt",
+          "contains": "HOST-SIDE-4471"
+        }
+      ],
+      "sandboxFiles": [
+        {
+          "path": "vm-note.txt",
+          "contains": "VM-SIDE-8825"
+        }
+      ]
+    }
+  }
+}

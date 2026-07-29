@@ -285,6 +285,9 @@ struct ComposedContext: Sendable {
     /// mid-session from silently appearing in turn 2. It may include a
     /// trivial-turn baseline even when `tools` is empty for that one request.
     let alwaysLoadedNames: LoadedTools
+    /// Exact tool payloads to freeze on the first compose of a session. This
+    /// can be non-empty when `tools` is empty for the greeting-only fast path.
+    let initialToolSpecs: [Tool]
     /// Hash of the static prefix + canonical tool payloads for cache evidence.
     let cacheHint: String
     /// Rendered static-only system content for prefix cache building.

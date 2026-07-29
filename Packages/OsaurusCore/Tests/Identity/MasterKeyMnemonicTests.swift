@@ -29,6 +29,16 @@ struct MasterKeyMnemonicTests {
     }
 
     @Test
+    func roundTripRestoresSameOsaurusId() throws {
+        // The restore promise: the phrase exported on one Mac derives the
+        // identical master address when pasted on another.
+        let mnemonic = try MasterKeyMnemonic.mnemonic(forKey: TestKeys.alicePrivateKey)
+        var recovered = try MasterKeyMnemonic.key(fromMnemonic: mnemonic)
+        defer { recovered.zeroOut() }
+        #expect(try deriveOsaurusId(from: recovered) == TestKeys.aliceAddress)
+    }
+
+    @Test
     func roundTripRandom() throws {
         // Generate 10 random 32-byte keys and confirm round-trip integrity for
         // each. Catches encoding/decoding bit-packing bugs that wouldn't show

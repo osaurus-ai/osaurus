@@ -104,7 +104,7 @@ public enum AppleScriptEffectClassifier {
     /// NOT here — it is classified by its shell command in `shellEffect`.
     static let editSignals: Set<String> = [
         "make", "duplicate", "create", "add", "insert", "paste",
-        "keystroke", "click", "activate", "launch", "mount",
+        "keystroke", "click", "activate", "launch", "mount", "save",
         "set volume", "set the volume", "set the clipboard", "set clipboard",
         "key code", "open location", "perform action",
         "open for access",

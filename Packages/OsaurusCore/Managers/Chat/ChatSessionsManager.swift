@@ -51,6 +51,18 @@ final class ChatSessionsManager: ObservableObject {
                     self?.refresh()
                 }
                 .store(in: &cancellables)
+
+            // The initial load can also be deferred because the background
+            // prewarm was still mid-open (ChatSessionStore.ensureOpen no
+            // longer waits behind an in-flight open on the main thread).
+            // Reload once the database reports open.
+            NotificationCenter.default.publisher(for: ChatHistoryDatabase.didOpenNotification)
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    ChatSessionStore.flushPendingSaves()
+                    self?.refresh()
+                }
+                .store(in: &cancellables)
         }
     }
 
@@ -114,6 +126,10 @@ final class ChatSessionsManager: ObservableObject {
             currentSessionId = nil
         }
         sessions.removeAll { $0.id == id }
+        // Drop the session's tracked sandbox changes + baseline snapshot
+        // (the DB rows cascade in deleteSession; this clears the in-memory
+        // cache, pending background-job records, and baseline clone).
+        Task { await SandboxWorkspaceChangeTracker.shared.purgeSession(id.uuidString) }
     }
 
     /// Rename a session.
@@ -132,6 +148,26 @@ final class ChatSessionsManager: ObservableObject {
         upsertInMemory(session)
     }
 
+    /// Rename a session without bumping `updatedAt`, persisting off the
+    /// main thread. Used by the auto-title generator: a background rename
+    /// must not reorder the sidebar out from under the user, and it runs on
+    /// the main actor right after a completed turn — a synchronous DB
+    /// transaction here could trip the app-hang watchdog. Same
+    /// in-memory-first lookup as `rename`.
+    func renameQuietly(id: UUID, title: String) {
+        guard
+            var session = sessions.first(where: { $0.id == id })
+                ?? ChatSessionStore.load(id: id)
+        else { return }
+        guard session.title != title else { return }
+        session.title = title
+        // Title-only DB update: the in-memory copy may be metadata-only
+        // (empty turns), and a full save would delete the conversation's
+        // turn rows. See `ChatSessionStore.renameTitleAsync`.
+        ChatSessionStore.renameTitleAsync(id: id, title: title)
+        upsertInMemory(session)
+    }
+
     /// Toggle a session's archive flag. Same in-memory-first lookup as
     /// `rename` because a freshly created chat may not be in the store yet.
     /// Does not touch `updatedAt` so an archive doesn't bubble the row to
@@ -147,6 +183,20 @@ final class ChatSessionsManager: ObservableObject {
         upsertInMemory(session)
     }
 
+    /// Toggle a session's pin flag. Like `setArchived`, this does not touch
+    /// `updatedAt`: pinning is a display-ordering concern handled by the
+    /// sidebar and must not bubble the row up the recency list.
+    func setPinned(id: UUID, pinned: Bool) {
+        guard
+            var session = sessions.first(where: { $0.id == id })
+                ?? ChatSessionStore.load(id: id)
+        else { return }
+        guard session.pinned != pinned else { return }
+        session.pinned = pinned
+        ChatSessionStore.save(session)
+        upsertInMemory(session)
+    }
+
     /// Get a session by ID
     func session(for id: UUID) -> ChatSessionData? {
         sessions.first { $0.id == id }
@@ -155,12 +205,20 @@ final class ChatSessionsManager: ObservableObject {
     // MARK: - Private
 
     /// Insert or replace a session in the in-memory array, maintaining updatedAt descending order.
+    ///
+    /// Built as one assignment (not remove-then-insert) so `$sessions`
+    /// observers see a single emission per upsert and never a transient
+    /// state with the session absent — subscribers that race the mutation
+    /// (the willSet-timing hazard documented on
+    /// `ChatWindowState.observeSessionsManager`) otherwise capture the gap.
     private func upsertInMemory(_ session: ChatSessionData) {
-        if let index = sessions.firstIndex(where: { $0.id == session.id }) {
-            sessions.remove(at: index)
+        var updated = sessions
+        if let index = updated.firstIndex(where: { $0.id == session.id }) {
+            updated.remove(at: index)
         }
         // Insert at the correct position to maintain updatedAt descending order
-        let insertIndex = sessions.firstIndex(where: { $0.updatedAt < session.updatedAt }) ?? sessions.endIndex
-        sessions.insert(session, at: insertIndex)
+        let insertIndex = updated.firstIndex(where: { $0.updatedAt < session.updatedAt }) ?? updated.endIndex
+        updated.insert(session, at: insertIndex)
+        sessions = updated
     }
 }

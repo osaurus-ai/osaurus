@@ -83,24 +83,23 @@ enum SkyLightBridge {
     /// auth-signed channel. This bypasses `IOHIDPostEvent`, so the user's
     /// cursor never moves and Chromium-class renderers accept the event.
     ///
-    /// Returns `true` when the bridge is available and the call succeeded.
-    /// Callers must treat `false` as "fall back to a different transport".
+    /// Returns `true` when the bridge was available and the call completed.
+    /// The private function's status is diagnostic only; callers must not use
+    /// it to retry the same event through a second transport.
     @discardableResult
     static func postEvent(_ event: CGEvent, toPid pid: pid_t) -> Bool {
         guard let fn = symbols.eventPostToPid else { return false }
         // Same WindowServer-knowability guard as processSerialNumber. Avoids
         // segfaults inside the private function when targeting a CLI process.
         guard isWindowServerVisible(pid: pid) else { return false }
-        // SLEventPostToPid does NOT use the CGError "0 == success" convention: it
-        // returns a non-zero status (observed 0xB0000000 / -1342177280) when it
-        // accepts and delivers the event. Gating success on `== 0` made this
-        // ALWAYS report failure, so `BackgroundDriver.route` treated SkyLight as a
-        // miss and *also* posted the same event via `CGEvent.postToPid` — every
-        // keystroke and click was delivered twice (the Chrome-omnibox / TextEdit
-        // "abb" doubling). A completed call to a window-server-visible pid IS the
-        // delivery, so report success and let `route` stop there.
+        // The status is not a delivery acknowledgement. Non-zero has been seen
+        // on delivery, but the live TextEdit regression also proved that a zero
+        // return can deliver. Therefore a completed call is terminal. Log the
+        // raw value for diagnosis and never make it trigger a second transport.
         let rc = fn(pid, event)
-        InputDebug.log("SLEventPostToPid pid=\(pid) rc=\(rc) (non-zero is success) -> delivered")
+        InputDebug.log(
+            "SLEventPostToPid pid=\(pid) rc=\(rc) (diagnostic only; call is terminal)"
+        )
         return true
     }
 

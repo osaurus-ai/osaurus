@@ -90,17 +90,22 @@ struct AgentSheetFooter: View {
         let label: LocalizedStringKey
         let isEnabled: Bool
         let isLoading: Bool
+        /// Render the primary slot with `DestructiveButtonStyle` (tinted, not
+        /// filled) for commit actions that remove or revert user data.
+        let isDestructive: Bool
         let handler: () -> Void
 
         init(
             label: LocalizedStringKey,
             isEnabled: Bool = true,
             isLoading: Bool = false,
+            isDestructive: Bool = false,
             handler: @escaping () -> Void
         ) {
             self.label = label
             self.isEnabled = isEnabled
             self.isLoading = isLoading
+            self.isDestructive = isDestructive
             self.handler = handler
         }
     }
@@ -152,19 +157,23 @@ struct AgentSheetFooter: View {
                 }
 
                 if let primary {
-                    Button(action: primary.handler) {
+                    let button = Button(action: primary.handler) {
                         HStack(spacing: 6) {
                             if primary.isLoading {
                                 ProgressView()
                                     .controlSize(.small)
-                                    .tint(.white)
+                                    .tint(primary.isDestructive ? theme.errorColor : .white)
                             }
                             Text(primary.label, bundle: .module)
                         }
                     }
-                    .buttonStyle(PrimaryButtonStyle())
                     .disabled(!primary.isEnabled || primary.isLoading)
                     .keyboardShortcut(.return, modifiers: .command)
+                    if primary.isDestructive {
+                        button.buttonStyle(DestructiveButtonStyle())
+                    } else {
+                        button.buttonStyle(PrimaryButtonStyle())
+                    }
                 }
             }
             .padding(.horizontal, 24)

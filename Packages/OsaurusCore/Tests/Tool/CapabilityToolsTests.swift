@@ -122,6 +122,12 @@ struct CapabilityLoadBufferTests {
 @Suite(.serialized)
 struct CapabilitiesDiscoverToolTests {
 
+    @Test func modelFacingSchemaDoesNotSeedNonexistentCapabilityIds() {
+        let description = CapabilitiesDiscoverTool().description
+        #expect(!description.contains("tool/sandbox_exec"))
+        #expect(!description.contains("skill/plot-data"))
+    }
+
     @Test func rejectsEmptyQueries() async throws {
         let tool = CapabilitiesDiscoverTool()
         let result = try await tool.execute(argumentsJSON: "{\"queries\": []}")
@@ -179,6 +185,40 @@ struct CapabilitiesDiscoverToolTests {
             argumentsJSON: "{\"queries\": [\"zzz_completely_nonexistent_capability_xyz\"]}"
         )
         #expect(result.contains("No capabilities found") || result.contains("capability"))
+    }
+
+    @Test func listModeRejectsUnknownListValue() async throws {
+        let tool = CapabilitiesDiscoverTool()
+        let result = try await tool.execute(argumentsJSON: "{\"list\": \"everything\"}")
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("enabled"))
+    }
+
+    @Test @MainActor
+    func listModeReturnsPaginatedEnabledCapabilities() async throws {
+        let tool = CapabilitiesDiscoverTool()
+        let result = try await tool.execute(argumentsJSON: "{\"list\": \"enabled\"}")
+        #expect(!ToolEnvelope.isError(result))
+        // Either an exact paginated listing or (empty test registry) the
+        // explicit no-capabilities message — never a search result.
+        #expect(
+            result.contains("Enabled capabilities (page 1 of")
+                || result.contains("No capabilities are enabled")
+        )
+        #expect(!result.contains("Found "))
+    }
+
+    @Test @MainActor
+    func listModeRejectsOutOfRangePage() async throws {
+        let tool = CapabilitiesDiscoverTool()
+        let first = try await tool.execute(argumentsJSON: "{\"list\": \"enabled\"}")
+        // Out-of-range paging only applies when there IS a list to page.
+        guard first.contains("Enabled capabilities (page 1 of") else { return }
+        let result = try await tool.execute(
+            argumentsJSON: "{\"list\": \"enabled\", \"page\": 9999}"
+        )
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("out of range"))
     }
 
     @Test func namedToolCandidateExtractionIsConservative() {
@@ -360,6 +400,19 @@ struct CapabilitiesDiscoverToolTests {
 
 @Suite(.serialized)
 struct CapabilitiesLoadToolTests {
+
+    @Test func modelFacingSchemaDoesNotSeedNonexistentCapabilityIds() throws {
+        let tool = CapabilitiesLoadTool()
+        let spec = tool.asOpenAITool().toTokenizerToolSpec()
+        let serialized = String(describing: spec)
+
+        #expect(!tool.description.contains("plugin/calendar"))
+        #expect(!tool.description.contains("tool/sandbox_exec"))
+        #expect(!tool.description.contains("skill/plot-data"))
+        #expect(!serialized.contains("plugin/calendar"))
+        #expect(!serialized.contains("tool/sandbox_exec"))
+        #expect(!serialized.contains("skill/plot-data"))
+    }
 
     @Test func rejectsEmptyIds() async throws {
         let tool = CapabilitiesLoadTool()
@@ -578,6 +631,52 @@ struct CapabilitiesLoadToolTests {
         }
     }
 
+    /// Parity between the two skill-delivery paths: `capabilities_load
+    /// skill/<name>` must return the same "skill is active" payload as
+    /// `/skill-name` — instructions AND reference materials. Regression for
+    /// the gap where the load path emitted raw `skill.instructions` only,
+    /// so reference-dependent skills silently degraded when the model (not
+    /// the user) invoked them.
+    @Test @MainActor
+    func skillLoadIncludesReferenceMaterials() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-skill-refs-root-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            await SkillManager.shared.refresh()
+
+            let skill = await SkillManager.shared.create(
+                name: "RefParity \(UUID().uuidString.prefix(6))",
+                description: "Reference parity fixture",
+                instructions: "Follow the style guide in the references."
+            )
+            try? await SkillStore.addReference(
+                to: skill,
+                name: "style-guide.md",
+                content: Data("Always write in haiku.".utf8)
+            )
+            await SkillManager.shared.refresh()
+
+            let tool = CapabilitiesLoadTool()
+            let result = try await tool.execute(
+                argumentsJSON: "{\"ids\": [\"skill/\(skill.name)\"]}"
+            )
+
+            #expect(result.contains("## Skill:"))
+            #expect(result.contains("Follow the style guide in the references."))
+            #expect(result.contains("## Reference Materials"))
+            #expect(result.contains("Always write in haiku."))
+
+            OsaurusPaths.overrideRoot = previousRoot
+            try? FileManager.default.removeItem(at: root)
+            await SkillManager.shared.refresh()
+        }
+    }
+
     @Test @MainActor
     func skillLoadAutoLoadsPluginToolGroup() async throws {
         try await StoragePathsTestLock.shared.run {
@@ -627,7 +726,6 @@ struct CapabilitiesLoadToolTests {
                     description: "Governs the AutoGroup tool group",
                     version: "1.0.0",
                     keywords: [],
-                    enabled: true,
                     instructions: "Use the AutoGroup tools.",
                     isBuiltIn: false,
                     pluginId: plugin.id
@@ -662,6 +760,59 @@ struct CapabilitiesLoadToolTests {
                 _ = await AgentManager.shared.delete(id: agent.id)
             }
         }
+    }
+
+    /// The built-in Data Visualizer skill is not plugin-backed, but its
+    /// instructions require the gated `render_chart` tool for raw tabular
+    /// data. Loading the skill must therefore make that exact tool callable in
+    /// the same session; instructions without the schema strand small models
+    /// in a deterministic `tool_not_found` loop.
+    @Test @MainActor
+    func dataVisualizerSkillLoadAutoLoadsRenderChart() async throws {
+        await SkillManager.shared.refresh()
+        _ = await CapabilityLoadBuffer.shared.drain()
+
+        let tool = CapabilitiesLoadTool()
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+            try await tool.execute(
+                argumentsJSON: #"{"ids":["skill/Data Visualizer"]}"#
+            )
+        }
+
+        #expect(!ToolEnvelope.isError(result))
+        #expect(result.contains("## Skill: Data Visualizer"))
+        #expect(result.contains("Auto-loaded tools (callable NOW by name): render_chart"))
+        #expect(result.contains("Schema for `render_chart`"))
+
+        let buffered = await CapabilityLoadBuffer.shared.drain()
+        #expect(buffered.map(\.function.name) == ["render_chart"])
+    }
+
+    /// Web Researcher must teach the existing, permission-checked dynamic-load
+    /// transition instead of silently authorizing a gated tool as a skill side
+    /// effect. This keeps the visible Web setting and manual tool selection in
+    /// control while preventing the model from narrating the next step and
+    /// stopping because the extraction schema is absent.
+    @Test @MainActor
+    func webResearcherSkillLoadTeachesExplicitSearchAndExtractLoad() async throws {
+        await SkillManager.shared.refresh()
+        _ = await CapabilityLoadBuffer.shared.drain()
+
+        let tool = CapabilitiesLoadTool()
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+            try await tool.execute(
+                argumentsJSON: #"{"ids":["skill/Web Researcher"]}"#
+            )
+        }
+
+        #expect(!ToolEnvelope.isError(result))
+        #expect(result.contains("## Skill: Web Researcher"))
+        #expect(result.contains("tool/search_and_extract"))
+        #expect(result.contains("call `search_and_extract` in this same run"))
+        #expect(!result.contains("Schema for `search_and_extract`"))
+
+        let buffered = await CapabilityLoadBuffer.shared.drain()
+        #expect(buffered.isEmpty)
     }
 
     @Test @MainActor

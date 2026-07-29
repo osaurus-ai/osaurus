@@ -1,0 +1,19 @@
+{
+  "id": "prompt_surface.defer-tool-strips-schema",
+  "domain": "prompt_surface",
+  "label": "prompt_surface • deferring file_search strips it from the schema and saves tokens",
+  "query": "",
+  "notes": "The defer-to-discovery axis: the deferred tool must vanish from the request schema (it stays registered + loadable via capabilities_load) while the core read tool survives, and the schema must get strictly cheaper.",
+  "fixtures": {},
+  "expect": {
+    "promptSurface": {
+      "profile": {
+        "name": "defer-file-search",
+        "deferTools": ["file_search"]
+      },
+      "mustExcludeTools": ["file_search"],
+      "mustIncludeTools": ["file_read"],
+      "requireSavingsVsBaseline": true
+    }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "id": "sandbox.binary-bridge-roundtrip",
+  "domain": "agent_loop",
+  "label": "sandbox • writable combined mode: file_copy in, sandbox_exec transform, file_copy back to the workspace",
+  "query": "The workspace contains assets/logo.png, a binary file. Copy it into your sandbox with file_copy, base64-encode it there with sandbox_exec into a file named logo.b64, then copy that encoded file back into the workspace at out/logo.b64 with file_copy.",
+  "notes": "Writable combined mode roundtrip (allowHostFolderWrites=true) — the exact stage->convert->deliver flow from the live transcript (PDF-to-PNG). The result must land back in the HOST workspace via a host-bound file_copy, which is change-tracked. base64('PNGDATA-OSAURUS-EVAL-BRIDGE-1\\n') = UE5HREFUQS1PU0FVUlVTLUVWQUwtQlJJREdFLTEK.",
+  "fixtures": {
+    "sandbox": {
+      "hostFolder": true,
+      "allowHostFolderWrites": true
+    },
+    "workspaceFiles": [
+      {
+        "path": "assets/logo.png",
+        "contents": "PNGDATA-OSAURUS-EVAL-BRIDGE-1\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 14,
+      "mustCallTools": [
+        "file_copy",
+        "sandbox_exec"
+      ],
+      "mustNotCallTools": [
+        "shell_run"
+      ],
+      "files": [
+        {
+          "path": "out/logo.b64",
+          "contains": "UE5HREFUQS1PU0FVUlVTLUVWQUwtQlJJREdFLTEK"
+        }
+      ]
+    }
+  }
+}

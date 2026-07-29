@@ -1,0 +1,54 @@
+{
+  "id": "agentdb.import-mode-canonical",
+  "domain": "agent_loop",
+  "label": "agentdb • 'append' phrasing must still produce a canonical db_import mode",
+  "query": "Your agent database already has a table repo_stats(day, repo, stars) holding yesterday's snapshot. Append the rows from stars_today.csv in your working folder (columns: day, repo, stars) to that existing table, then tell me how many rows the table has in total.",
+  "notes": "Regression for a live transcript failure: asked to 'append', the model called db_import with mode='append', which the tool rejects (`mode` accepts exactly insert|upsert; insert IS the append). The query deliberately uses the word 'append' as bait. toolUsageAudit pins that no db_import call ever carries an 'append' arg value and that db_import produces zero error envelopes, i.e. the model translates the user's phrasing into the canonical mode on the FIRST call rather than burning a retry. mustNotCallTools forbids the per-row fallback. seedSql stages a table shaped like a real db_create_table table (system columns) per the suite's seedSql gotcha.",
+  "fixtures": {
+    "agentCapabilities": {
+      "dbEnabled": true
+    },
+    "workspaceFiles": [
+      {
+        "path": "stars_today.csv",
+        "contentsFromFixture": "stars-today.csv"
+      }
+    ],
+    "seedSql": [
+      "CREATE TABLE repo_stats (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT, repo TEXT, stars INTEGER, _created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')), _updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')), _deleted_at INTEGER);",
+      "INSERT INTO repo_stats (day, repo, stars) VALUES ('2026-06-20','repoA',100),('2026-06-20','repoB',50);"
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "mustCallTools": [
+        "db_import"
+      ],
+      "mustNotCallTools": [
+        "db_insert",
+        "db_upsert"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "db_import",
+          "maxErrors": 0,
+          "argsMustNotContain": "append"
+        }
+      ],
+      "dbState": [
+        {
+          "sql": "SELECT COUNT(*) FROM repo_stats",
+          "expectFirstValue": "4"
+        },
+        {
+          "sql": "SELECT SUM(stars) FROM repo_stats WHERE day = '2026-06-21'",
+          "expectFirstValue": "175"
+        }
+      ],
+      "finalTextContains": [
+        "4"
+      ]
+    }
+  }
+}

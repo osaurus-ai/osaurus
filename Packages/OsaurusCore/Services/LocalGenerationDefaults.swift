@@ -79,6 +79,14 @@ enum LocalGenerationDefaults {
 
         let resolved = load(modelId: modelId)
 
+        // A main-thread lookup during the launch scan can miss purely
+        // because the local-models cache is still cold (see
+        // `localDirectory(forModelId:)`). Don't memoize that provisional
+        // miss — the next lookup after the scan lands gets the real answer.
+        if resolved == .empty, !ModelManager.isLocalModelsCacheWarm {
+            return resolved
+        }
+
         lock.lock()
         cache[key] = resolved
         lock.unlock()
@@ -172,10 +180,18 @@ enum LocalGenerationDefaults {
     }
 
     private static func localDirectory(forModelId modelId: String) -> URL? {
-        guard let found = ModelManager.findInstalledMLXModel(named: modelId) else {
-            return nil
-        }
-        return found.localDirectory
+        // Main thread: cache-only lookup — the blocking variant parks on the
+        // cold-cache scan condition (up to ~10s at launch) and this is
+        // reachable from SwiftUI body evaluation. Off-main callers keep the
+        // authoritative blocking lookup.
+        // Production-only shortcut — see LocalReasoningCapability: test
+        // suites run on the main thread and expect the blocking answer.
+        let cacheOnly = Thread.isMainThread && !RuntimeEnvironment.isUnderTests
+        let found =
+            cacheOnly
+            ? ModelManager.findInstalledMLXModelFromCache(named: modelId)
+            : ModelManager.findInstalledMLXModel(named: modelId)
+        return found?.localDirectory
     }
 
     // MARK: - Parsers

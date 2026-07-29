@@ -27,82 +27,14 @@ struct WatchersView: View {
             headerView
                 .managerHeaderEntrance(hasAppeared: hasAppeared)
 
-            // Content
-            ZStack {
-                if watcherManager.watchers.isEmpty {
-                    SettingsEmptyState(
-                        icon: "eye.fill",
-                        title: L("Create Your First Watcher"),
-                        subtitle: L("Monitor folders for changes and trigger work tasks automatically."),
-                        examples: [
-                            .init(
-                                icon: "arrow.down.circle",
-                                title: L("Downloads Organizer"),
-                                description: L("Auto-sort files into folders by type")
-                            ),
-                            .init(
-                                icon: "camera",
-                                title: L("Screenshot Manager"),
-                                description: L("Rename and organize screenshots")
-                            ),
-                            .init(
-                                icon: "externaldrive.connected.to.line.below",
-                                title: L("Dropbox Automation"),
-                                description: L("Process shared files on change")
-                            ),
-                        ],
-                        primaryAction: .init(title: L("Create Watcher"), icon: "plus", handler: { isCreating = true }),
-                        hasAppeared: hasAppeared
-                    )
-                } else {
-                    ScrollView {
-                        LazyVGrid(
-                            columns: [
-                                GridItem(.flexible(minimum: 300), spacing: 20),
-                                GridItem(.flexible(minimum: 300), spacing: 20),
-                            ],
-                            spacing: 20
-                        ) {
-                            ForEach(Array(watcherManager.watchers.enumerated()), id: \.element.id) {
-                                index,
-                                watcher in
-                                WatcherCard(
-                                    watcher: watcher,
-                                    isRunning: watcherManager.isRunning(watcher.id),
-                                    animationDelay: Double(index) * 0.05,
-                                    hasAppeared: hasAppeared,
-                                    onToggle: { enabled in
-                                        watcherManager.setEnabled(watcher.id, enabled: enabled)
-                                    },
-                                    onRunNow: {
-                                        watcherManager.runNow(watcher.id)
-                                        showSuccess("Triggered \"\(watcher.name)\"")
-                                    },
-                                    onEdit: {
-                                        editingWatcher = watcher
-                                    },
-                                    onDelete: {
-                                        watcherManager.delete(id: watcher.id)
-                                        showSuccess("Deleted \"\(watcher.name)\"")
-                                    }
-                                )
-                            }
-                        }
-                        .padding(24)
-                    }
-                    .opacity(hasAppeared ? 1 : 0)
-                }
-
-                // Success toast
-                if let message = successMessage {
-                    VStack {
-                        Spacer()
+            contentView
+                .overlay(alignment: .bottom) {
+                    if let message = successMessage {
                         ThemedToastView(message, type: .success)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                             .padding(.bottom, 20)
                     }
                 }
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
@@ -168,6 +100,72 @@ struct WatchersView: View {
         }
     }
 
+    // MARK: - Content
+
+    @ViewBuilder
+    private var contentView: some View {
+        if watcherManager.watchers.isEmpty {
+            SettingsEmptyState(
+                icon: "eye.fill",
+                title: L("Create Your First Watcher"),
+                subtitle: L("Monitor folders for changes and trigger work tasks automatically."),
+                examples: [
+                    .init(
+                        icon: "arrow.down.circle",
+                        title: L("Downloads Organizer"),
+                        description: L("Auto-sort files into folders by type")
+                    ),
+                    .init(
+                        icon: "camera",
+                        title: L("Screenshot Manager"),
+                        description: L("Rename and organize screenshots")
+                    ),
+                    .init(
+                        icon: "externaldrive.connected.to.line.below",
+                        title: L("Dropbox Automation"),
+                        description: L("Process shared files on change")
+                    ),
+                ],
+                primaryAction: .init(title: L("Create Watcher"), icon: "plus", handler: { isCreating = true }),
+                hasAppeared: hasAppeared
+            )
+        } else {
+            ScrollView {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(minimum: 300), spacing: 20, alignment: .top),
+                        GridItem(.flexible(minimum: 300), spacing: 20, alignment: .top),
+                    ],
+                    alignment: .leading,
+                    spacing: 20
+                ) {
+                    ForEach(watcherManager.watchers) { watcher in
+                        WatcherCard(
+                            watcher: watcher,
+                            isRunning: watcherManager.isRunning(watcher.id),
+                            onToggle: { enabled in
+                                watcherManager.setEnabled(watcher.id, enabled: enabled)
+                            },
+                            onRunNow: {
+                                watcherManager.runNow(watcher.id)
+                                showSuccess("Triggered \"\(watcher.name)\"")
+                            },
+                            onEdit: {
+                                editingWatcher = watcher
+                            },
+                            onDelete: {
+                                watcherManager.delete(id: watcher.id)
+                                showSuccess("Deleted \"\(watcher.name)\"")
+                            }
+                        )
+                    }
+                }
+                .padding(24)
+            }
+            .opacity(hasAppeared ? 1 : 0)
+        }
+    }
+
     // MARK: - Success Toast
 
     private func showSuccess(_ message: String) {
@@ -190,8 +188,6 @@ private struct WatcherCard: View {
 
     let watcher: Watcher
     let isRunning: Bool
-    let animationDelay: Double
-    let hasAppeared: Bool
     let onToggle: (Bool) -> Void
     let onRunNow: () -> Void
     let onEdit: () -> Void
@@ -324,7 +320,7 @@ private struct WatcherCard: View {
                 compactStats
             }
             .padding(16)
-            .frame(maxHeight: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity, minHeight: 156, alignment: .topLeading)
             .background(cardBackground)
             .overlay(hoverGradient)
             .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -340,12 +336,9 @@ private struct WatcherCard: View {
         }
         .buttonStyle(PlainButtonStyle())
         .scaleEffect(isHovered ? 1.01 : 1.0)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
-        .opacity(hasAppeared ? 1 : 0)
-        .offset(y: hasAppeared ? 0 : 20)
-        .animation(.spring(response: 0.4, dampingFraction: 0.8).delay(animationDelay), value: hasAppeared)
+        .animation(.easeOut(duration: 0.12), value: isHovered)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
+            isHovered = hovering
         }
         .themedAlert(
             "Delete Watcher",

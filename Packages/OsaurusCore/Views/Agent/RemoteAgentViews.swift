@@ -317,9 +317,10 @@ struct RemoteAgentDetailView: View {
             if let remote {
                 header(for: remote)
 
-                AgentDetailTabStrip(items: tabItems(for: remote), selection: $selectedTab)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 8)
+                // Same folder-tab chrome as the local agent detail. Each tab
+                // is a single-item group, so no sub-tab drawer renders — the
+                // strip owns its own padding and sits flush here.
+                AgentDetailGroupedTabStrip(groups: tabGroups(for: remote), selection: $selectedTab)
 
                 Divider()
                     .foregroundColor(theme.primaryBorder)
@@ -381,16 +382,26 @@ struct RemoteAgentDetailView: View {
         )
     }
 
-    /// Built-in tab descriptors for the strip. The Activity tab carries a badge
-    /// with this session's request count once the agent has been used.
-    private func tabItems(for remote: RemoteAgent) -> [AgentDetailTabItem<RemoteDetailTab>] {
+    /// Overview / Activity as single-item groups so the remote detail shares
+    /// the local detail's folder-tab strip (no second row renders for
+    /// single-tab groups). The Activity tab carries a badge with this
+    /// session's request count once the agent has been used.
+    private func tabGroups(for remote: RemoteAgent) -> [AgentDetailTabGroup<RemoteDetailTab>] {
         let activity = insights.activity(forProviderId: remote.providerId)
         return [
-            AgentDetailTabItem(id: .overview, label: L("Overview"), icon: "info.circle"),
-            AgentDetailTabItem(
-                id: .activity,
+            AgentDetailTabGroup(
+                id: "overview",
+                label: L("Overview"),
+                icon: "info.circle",
+                items: [AgentDetailTabItem(id: .overview, label: L("Overview"), icon: "info.circle")]
+            ),
+            AgentDetailTabGroup(
+                id: "activity",
                 label: L("Activity"),
                 icon: "waveform.path.ecg",
+                items: [
+                    AgentDetailTabItem(id: .activity, label: L("Activity"), icon: "waveform.path.ecg")
+                ],
                 badgeCount: activity.isEmpty ? nil : activity.requestCount
             ),
         ]

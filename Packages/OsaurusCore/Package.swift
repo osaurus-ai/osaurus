@@ -61,9 +61,52 @@ let package = Package(
         // a Swift bounds check. Contains the previous ff714f1 pin. Now also
         // carries #149: native schema-2 affine1 JANG loading and Metal kernels,
         // Qwen3-VL tool-schema preservation, and bounded media-cache cleanup.
+        // Also carries #153: fail-closed support for historical schema-1 JANG
+        // affine manifests. Also carries #93: Gemma4 model registrations no
+        // longer inject the stale `<end_of_turn>` token into extraEOSTokens;
+        // bundle generation_config.json remains the stop-token authority. The
+        // PR #154 proof revision also reports the exact cache-layer topology
+        // before/after each real TurboQuant transition. The ZAYA cache proof
+        // revision adds real-attention-only TQ ownership, native CCA companion
+        // restore, atomic typed L2 records, and a proven four-bit floor for
+        // TQ-native ZAYA disk boundaries. The Nemotron Omni revision also
+        // aligns the RADIO/projector contract, bounds media prefill, and
+        // enables safe image/audio hybrid-prefix restore. The paged-cache
+        // follow-up separates typed-disk persistence from paged compatibility,
+        // restores recurrent companions at the exact matched boundary, and
+        // keeps every unproven cache topology fail-closed. PR #171 persists
+        // stable system/tool warm-up boundaries in SSD L2 and excludes unsafe
+        // exact hybrid/GDN candidates while preserving their matched recurrent
+        // companion state. The Laguna S 2.1 revision adds the released
+        // full-KV + rotating-SWA runtime contract, safe fresh-session SSD
+        // seeds, growing partial-leaf reuse, and complete TQ window restore.
+        // vmlx-swift#179 additionally recovers Qwen XML plain bracket lists
+        // only for schema-declared array<string> tool arguments and routes
+        // Gemma's decoded thought-channel opener into reasoning. The static
+        // prefix hint revision lets Osaurus's byte-stable system prefix seed
+        // SSD cache boundaries even when mutable DB/tool state changes later
+        // in the same rendered system message. The disk-recency revision
+        // refreshes accepted KV + recurrent companion groups on restore so
+        // combined-quota eviction preserves genuinely hot SSD prefixes. The
+        // stable-checkpoint follow-up also refreshes the existing canonical
+        // system/tool seed when a longer compatible disk entry serves a
+        // growing turn, preventing tool-loop snapshots from evicting the next
+        // chat's warm-start checkpoint. vmlx-swift#189 makes the solo
+        // TokenIterator path report an accepted disk/paged restore only after
+        // path-dependent rollback checks, with exact restored/total counts.
+        // vmlx-swift#190 captures the exact prompt-minus-one SSD seed while the real
+        // prefill crosses it for standalone rotating/SWA cache topologies.
+        // This preserves the existing fail-closed post-hoc rederive guard
+        // while allowing a later compatible turn to restore the longer seed.
+        // vmlx-swift#191 preserves canonical scalar content for Gemma 4
+        // text-only system/developer turns. Real bundle templates otherwise
+        // omit prompt-affecting settings text and can accept an incompatible
+        // SSD checkpoint because distinct revisions tokenize identically.
+        // vmlx-swift#192 adds Nanbeige 4.2's looped-transformer runtime with
+        // 44 loop-layer KV slots and fail-closed runtime-contract validation.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "1ca402953bf941341889bb00b186e46bf0c18d6f"
+            revision: "7300afaa764f50743b11d8f7f8ececf0100731a2"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

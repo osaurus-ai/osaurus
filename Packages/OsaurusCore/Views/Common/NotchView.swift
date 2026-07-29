@@ -1240,7 +1240,8 @@ struct NotchView: View {
                 : "\(L("Needs your input")) · \(group.tasks.count) \(L("sessions"))"
         }
         if group.activeTaskCount > 0 {
-            return "\(group.activeTaskCount) \(L("active")) · \(group.tasks.count) \(L("sessions"))"
+            let sessionLabel = group.tasks.count == 1 ? L("session") : L("sessions")
+            return "\(group.activeTaskCount) \(L("active")) · \(group.tasks.count) \(sessionLabel)"
         }
         return group.tasks.count == 1
             ? L("Recent session")

@@ -65,6 +65,34 @@ struct TelegramMessageReference: Codable, Equatable, Sendable {
     }
 }
 
+struct TelegramPhotoSize: Codable, Equatable, Sendable {
+    let fileId: String
+    let width: Int
+    let height: Int
+    let fileSize: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case fileId = "file_id"
+        case width
+        case height
+        case fileSize = "file_size"
+    }
+}
+
+struct TelegramMediaFile: Codable, Equatable, Sendable {
+    let fileId: String
+    let fileName: String?
+    let mimeType: String?
+    let fileSize: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case fileId = "file_id"
+        case fileName = "file_name"
+        case mimeType = "mime_type"
+        case fileSize = "file_size"
+    }
+}
+
 struct TelegramMessage: Codable, Equatable, Sendable {
     let messageId: Int
     let date: Int
@@ -74,6 +102,12 @@ struct TelegramMessage: Codable, Equatable, Sendable {
     let text: String?
     let caption: String?
     let replyToMessage: TelegramMessageReference?
+    let photo: [TelegramPhotoSize]
+    let document: TelegramMediaFile?
+    let audio: TelegramMediaFile?
+    let video: TelegramMediaFile?
+    let voice: TelegramMediaFile?
+    let animation: TelegramMediaFile?
 
     enum CodingKeys: String, CodingKey {
         case messageId = "message_id"
@@ -84,10 +118,76 @@ struct TelegramMessage: Codable, Equatable, Sendable {
         case text
         case caption
         case replyToMessage = "reply_to_message"
+        case photo
+        case document
+        case audio
+        case video
+        case voice
+        case animation
     }
 
     var contentText: String {
-        text ?? caption ?? ""
+        if let text, !text.isEmpty { return text }
+        if let caption, !caption.isEmpty { return caption }
+        if !photo.isEmpty { return "[Photo]" }
+        if document != nil { return "[Document]" }
+        if audio != nil { return "[Audio]" }
+        if video != nil { return "[Video]" }
+        if voice != nil { return "[Voice message]" }
+        if animation != nil { return "[Animation]" }
+        return ""
+    }
+
+    init(
+        messageId: Int,
+        date: Int,
+        chat: TelegramChat,
+        from: TelegramUser?,
+        senderChat: TelegramChat?,
+        text: String?,
+        caption: String?,
+        replyToMessage: TelegramMessageReference?,
+        photo: [TelegramPhotoSize] = [],
+        document: TelegramMediaFile? = nil,
+        audio: TelegramMediaFile? = nil,
+        video: TelegramMediaFile? = nil,
+        voice: TelegramMediaFile? = nil,
+        animation: TelegramMediaFile? = nil
+    ) {
+        self.messageId = messageId
+        self.date = date
+        self.chat = chat
+        self.from = from
+        self.senderChat = senderChat
+        self.text = text
+        self.caption = caption
+        self.replyToMessage = replyToMessage
+        self.photo = photo
+        self.document = document
+        self.audio = audio
+        self.video = video
+        self.voice = voice
+        self.animation = animation
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            messageId: try container.decode(Int.self, forKey: .messageId),
+            date: try container.decode(Int.self, forKey: .date),
+            chat: try container.decode(TelegramChat.self, forKey: .chat),
+            from: try container.decodeIfPresent(TelegramUser.self, forKey: .from),
+            senderChat: try container.decodeIfPresent(TelegramChat.self, forKey: .senderChat),
+            text: try container.decodeIfPresent(String.self, forKey: .text),
+            caption: try container.decodeIfPresent(String.self, forKey: .caption),
+            replyToMessage: try container.decodeIfPresent(TelegramMessageReference.self, forKey: .replyToMessage),
+            photo: try container.decodeIfPresent([TelegramPhotoSize].self, forKey: .photo) ?? [],
+            document: try container.decodeIfPresent(TelegramMediaFile.self, forKey: .document),
+            audio: try container.decodeIfPresent(TelegramMediaFile.self, forKey: .audio),
+            video: try container.decodeIfPresent(TelegramMediaFile.self, forKey: .video),
+            voice: try container.decodeIfPresent(TelegramMediaFile.self, forKey: .voice),
+            animation: try container.decodeIfPresent(TelegramMediaFile.self, forKey: .animation)
+        )
     }
 }
 
@@ -160,6 +260,7 @@ struct TelegramNormalizedInboundEvent: Equatable, Sendable {
     let roomId: String
     let providerMessageId: String
     let content: String
+    let attachments: [AgentChannelStoredAttachment]
     let senderId: String?
     let authorName: String?
     let isBotMessage: Bool
@@ -180,7 +281,25 @@ struct TelegramReceiveBatchResult: Equatable, Sendable {
     let source: String
     let received: Int
     let stored: Int
+    let dispatchAttempted: Int
+    let dispatchSuppressed: Int
     let results: [TelegramReceiveResult]
+
+    init(
+        source: String,
+        received: Int,
+        stored: Int,
+        dispatchAttempted: Int = 0,
+        dispatchSuppressed: Int = 0,
+        results: [TelegramReceiveResult]
+    ) {
+        self.source = source
+        self.received = received
+        self.stored = stored
+        self.dispatchAttempted = dispatchAttempted
+        self.dispatchSuppressed = dispatchSuppressed
+        self.results = results
+    }
 }
 
 enum TelegramAPIError: LocalizedError, Equatable, Sendable {
@@ -218,8 +337,50 @@ protocol TelegramAPIClientProtocol: Sendable {
         chatId: String,
         text: String,
         replyToMessageId: Int?,
+        parseMode: String?,
         token: String
     ) async throws -> TelegramMessage
+    func editMessage(
+        chatId: String,
+        messageId: Int,
+        text: String,
+        parseMode: String?,
+        token: String
+    ) async throws -> TelegramMessage
+    func deleteMessage(chatId: String, messageId: Int, token: String) async throws -> Bool
+    func setReaction(
+        chatId: String,
+        messageId: Int,
+        reaction: TelegramReactionPayload?,
+        token: String
+    ) async throws -> Bool
+    func sendChatAction(chatId: String, action: String, token: String) async throws -> Bool
+}
+
+extension TelegramAPIClientProtocol {
+    func editMessage(
+        chatId _: String,
+        messageId _: Int,
+        text _: String,
+        parseMode _: String?,
+        token _: String
+    ) async throws -> TelegramMessage {
+        throw TelegramAPIError.invalidResponse("Telegram message editing is not implemented by this client.")
+    }
+    func deleteMessage(chatId _: String, messageId _: Int, token _: String) async throws -> Bool {
+        throw TelegramAPIError.invalidResponse("Telegram message deletion is not implemented by this client.")
+    }
+    func setReaction(
+        chatId _: String,
+        messageId _: Int,
+        reaction _: TelegramReactionPayload?,
+        token _: String
+    ) async throws -> Bool {
+        throw TelegramAPIError.invalidResponse("Telegram reactions are not implemented by this client.")
+    }
+    func sendChatAction(chatId _: String, action _: String, token _: String) async throws -> Bool {
+        throw TelegramAPIError.invalidResponse("Telegram chat actions are not implemented by this client.")
+    }
 }
 
 final class TelegramAPIClient: TelegramAPIClientProtocol, @unchecked Sendable {
@@ -273,6 +434,7 @@ final class TelegramAPIClient: TelegramAPIClientProtocol, @unchecked Sendable {
         chatId: String,
         text: String,
         replyToMessageId: Int?,
+        parseMode: String?,
         token: String
     ) async throws -> TelegramMessage {
         var body: [String: Any] = [
@@ -283,7 +445,69 @@ final class TelegramAPIClient: TelegramAPIClientProtocol, @unchecked Sendable {
         if let replyToMessageId {
             body["reply_to_message_id"] = replyToMessageId
         }
+        if let parseMode {
+            body["parse_mode"] = parseMode
+        }
         return try await post(method: "sendMessage", token: token, body: body)
+    }
+
+    func editMessage(
+        chatId: String,
+        messageId: Int,
+        text: String,
+        parseMode: String?,
+        token: String
+    ) async throws -> TelegramMessage {
+        var body: [String: Any] = [
+            "chat_id": chatId,
+            "message_id": messageId,
+            "text": text,
+            "disable_web_page_preview": true,
+        ]
+        if let parseMode {
+            body["parse_mode"] = parseMode
+        }
+        return try await post(
+            method: "editMessageText",
+            token: token,
+            body: body
+        )
+    }
+
+    func deleteMessage(chatId: String, messageId: Int, token: String) async throws -> Bool {
+        try await post(
+            method: "deleteMessage",
+            token: token,
+            body: ["chat_id": chatId, "message_id": messageId]
+        )
+    }
+
+    func setReaction(
+        chatId: String,
+        messageId: Int,
+        reaction: TelegramReactionPayload?,
+        token: String
+    ) async throws -> Bool {
+        // An empty list clears the bot's reaction (Telegram bots keep at most
+        // one reaction per message).
+        let reactions: [[String: String]] = reaction.map { [$0.dictionary] } ?? []
+        return try await post(
+            method: "setMessageReaction",
+            token: token,
+            body: [
+                "chat_id": chatId,
+                "message_id": messageId,
+                "reaction": reactions,
+            ]
+        )
+    }
+
+    func sendChatAction(chatId: String, action: String, token: String) async throws -> Bool {
+        try await post(
+            method: "sendChatAction",
+            token: token,
+            body: ["chat_id": chatId, "action": action]
+        )
     }
 
     private func post<T: Decodable>(

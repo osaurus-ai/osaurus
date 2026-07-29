@@ -30,6 +30,7 @@ struct SandboxEvalFixtureTests {
                   "backgroundProcessEnabled": true,
                   "networkEnabled": false,
                   "allowHostSecretReads": true,
+                  "allowHostFolderWrites": true,
                   "maxCommandsPerTurn": 4,
                   "hostFolder": true,
                   "seedFiles": [
@@ -57,6 +58,7 @@ struct SandboxEvalFixtureTests {
         #expect(sandbox.backgroundProcessEnabled == true)
         #expect(sandbox.networkEnabled == false)
         #expect(sandbox.allowHostSecretReads == true)
+        #expect(sandbox.allowHostFolderWrites == true)
         #expect(sandbox.maxCommandsPerTurn == 4)
         #expect(sandbox.hostFolder == true)
         #expect(sandbox.seedFiles?.first?.path == "data/info.txt")
@@ -92,6 +94,7 @@ struct SandboxEvalFixtureTests {
         #expect(config.maxCommandsPerTurn == 10)
         #expect(config.pluginCreate)
         #expect(!config.allowHostSecretReads)
+        #expect(!config.allowHostFolderWrites)
         #expect(config.sandboxNetworkEnabled)
         #expect(!config.backgroundProcessEnabled)
     }
@@ -103,6 +106,7 @@ struct SandboxEvalFixtureTests {
                 backgroundProcessEnabled: true,
                 networkEnabled: false,
                 allowHostSecretReads: true,
+                allowHostFolderWrites: true,
                 maxCommandsPerTurn: 3
             )
         )
@@ -110,6 +114,7 @@ struct SandboxEvalFixtureTests {
         #expect(config.maxCommandsPerTurn == 3)
         #expect(!config.pluginCreate)
         #expect(config.allowHostSecretReads)
+        #expect(config.allowHostFolderWrites)
         #expect(!config.sandboxNetworkEnabled)
         #expect(config.backgroundProcessEnabled)
     }
