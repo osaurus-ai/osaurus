@@ -446,6 +446,48 @@ struct ChatSessionSidebar: View {
         )
     }
 
+    // MARK: - Import Guide
+
+    /// Entry point for the header's Import button. First-time users get a
+    /// themed guide explaining how to obtain an export from each provider;
+    /// the persisted "don't show again" toggle skips straight to the panel.
+    private func requestImport() {
+        let scope = alertScope
+        let startImport = {
+            ChatSessionImportCoordinator.run(
+                agentId: agentId == Agent.defaultId ? nil : agentId,
+                scope: scope,
+                // A single-conversation import opens immediately so the
+                // user isn't left hunting the list for it.
+                onOpen: { onSelect($0) }
+            )
+        }
+        if ImportGuidePreference.shared.skip {
+            startImport()
+            return
+        }
+        let requestId = UUID()
+        let sheet = ImportGuideSheet {
+            ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+            startImport()
+        }
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: "Import Conversations",
+                message: nil,
+                buttons: [.cancel(L("Cancel"))],
+                showsCloseButton: true,
+                customContent: AnyView(sheet),
+                width: 470,
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
+    }
+
     // MARK: - Header
 
     private var sidebarHeader: some View {
@@ -457,12 +499,7 @@ struct ChatSessionSidebar: View {
             Spacer()
 
             Button {
-                ChatSessionImportCoordinator.run(
-                    agentId: agentId == Agent.defaultId ? nil : agentId,
-                    // A single-conversation import opens immediately so the
-                    // user isn't left hunting the list for it.
-                    onOpen: { onSelect($0) }
-                )
+                requestImport()
             } label: {
                 Image(systemName: "square.and.arrow.down")
                     .font(.system(size: 14, weight: .medium))

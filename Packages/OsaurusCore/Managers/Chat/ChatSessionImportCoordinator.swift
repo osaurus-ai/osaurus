@@ -58,7 +58,11 @@ enum ChatSessionImportCoordinator {
     /// `onOpen` fires when the import produced exactly one conversation:
     /// the caller (the sidebar) loads it into the window so the user
     /// isn't left hunting the list for what they just imported.
-    static func run(agentId: UUID?, onOpen: ((ChatSessionData) -> Void)? = nil) {
+    static func run(
+        agentId: UUID?,
+        scope: ThemedAlertScope = .unspecified,
+        onOpen: ((ChatSessionData) -> Void)? = nil
+    ) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
@@ -90,7 +94,7 @@ enum ChatSessionImportCoordinator {
 
             switch parsed {
             case .failure(let error):
-                presentError(error)
+                presentError(error, scope: scope)
             case .success(let conversations):
                 let summary = persist(conversations, agentId: agentId)
                 NotificationCenter.default.post(name: .chatSessionsImported, object: nil)
@@ -155,13 +159,19 @@ enum ChatSessionImportCoordinator {
         ToastManager.shared.success(L("Import complete"), message: parts.joined(separator: " · "))
     }
 
-    private static func presentError(_ error: Error) {
-        let alert = NSAlert()
-        alert.messageText = L("Import failed")
-        alert.informativeText =
-            (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: L("OK"))
-        alert.runModal()
+    private static func presentError(_ error: Error, scope: ThemedAlertScope) {
+        let requestId = UUID()
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: "Import failed",
+                message: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
+                buttons: [.primary(L("OK")) {}],
+                onDismiss: {
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
     }
 }

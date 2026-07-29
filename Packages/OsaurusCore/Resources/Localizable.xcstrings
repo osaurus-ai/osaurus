@@ -198,6 +198,346 @@
         }
       }
     },
+    "Bring conversations from other AI apps into Osaurus and continue them with any model. Export your chats first:" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Holen Sie Unterhaltungen aus anderen KI-Apps in Osaurus und setzen Sie sie mit jedem Modell fort. Exportieren Sie zuerst Ihre Chats:"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다른 AI 앱의 대화를 Osaurus로 가져와 어떤 모델로든 이어갈 수 있습니다. 먼저 채팅을 내보내세요:"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенесите беседы из других ИИ-приложений в Osaurus и продолжайте их с любой моделью. Сначала экспортируйте свои чаты:"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将其他 AI 应用中的对话导入 Osaurus，并可使用任意模型继续。请先导出您的聊天记录："
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將其他 AI 應用中的對話導入 Osaurus，並可使用任意模型繼續。請先導出您的聊天記錄："
+          }
+        }
+      }
+    },
+    "Choose File…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datei auswählen …"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일 선택…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбрать файл…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择文件…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇檔案…"
+          }
+        }
+      }
+    },
+    "Don't show this again" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht mehr anzeigen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다시 표시하지 않음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Больше не показывать"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不再显示"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不再顯示"
+          }
+        }
+      }
+    },
+    "In Google Takeout, select My Activity → Gemini Apps and create the export. The zip contains MyActivity.json." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wählen Sie in Google Takeout „Meine Aktivitäten“ → „Gemini Apps“ und erstellen Sie den Export. Die Zip-Datei enthält MyActivity.json."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google Takeout에서 내 활동 → Gemini Apps를 선택해 내보내기를 생성하세요. zip 안에 MyActivity.json이 들어 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В Google Takeout выберите «Мои действия» → «Gemini Apps» и создайте экспорт. В zip-архиве находится MyActivity.json."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Google Takeout 中选择“我的活动”→“Gemini 应用”并创建导出。zip 中包含 MyActivity.json。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Google Takeout 中選擇「我的活動」→「Gemini 應用程式」並建立導出。zip 中包含 MyActivity.json。"
+          }
+        }
+      }
+    },
+    "Open export page" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exportseite öffnen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "내보내기 페이지 열기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть страницу экспорта"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开导出页面"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打開導出頁面"
+          }
+        }
+      }
+    },
+    "Settings → Data controls → Export account data. The download link arrives by email." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einstellungen → Datenkontrollen → Kontodaten exportieren. Der Download-Link kommt per E-Mail."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 → 데이터 제어 → 계정 데이터 내보내기. 다운로드 링크가 이메일로 전송됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройки → Управление данными → Экспорт данных аккаунта. Ссылка для скачивания придёт по электронной почте."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置 → 数据控制 → 导出账户数据。下载链接将通过电子邮件发送。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定 → 資料控制 → 導出帳戶資料。下載連結將透過電子郵件傳送。"
+          }
+        }
+      }
+    },
+    "Settings → Data Controls → Export Chats downloads a JSON file right away." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einstellungen → Datenkontrollen → Chats exportieren lädt sofort eine JSON-Datei herunter."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 → 데이터 제어 → 채팅 내보내기를 선택하면 JSON 파일이 바로 다운로드됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройки → Управление данными → Экспорт чатов сразу скачивает JSON-файл."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置 → 数据控制 → 导出聊天会立即下载一个 JSON 文件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定 → 資料控制 → 導出聊天會立即下載一個 JSON 檔案。"
+          }
+        }
+      }
+    },
+    "Settings → Data controls → Export data. The download link arrives by email as a zip file." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einstellungen → Datenkontrollen → Daten exportieren. Der Download-Link kommt per E-Mail als Zip-Datei."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 → 데이터 제어 → 데이터 내보내기. 다운로드 링크가 zip 파일로 이메일로 전송됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройки → Управление данными → Экспорт данных. Ссылка для скачивания придёт по электронной почте в виде zip-файла."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置 → 数据控制 → 导出数据。下载链接将以 zip 文件形式通过电子邮件发送。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定 → 資料控制 → 導出資料。下載連結將以 zip 檔案形式透過電子郵件傳送。"
+          }
+        }
+      }
+    },
+    "Settings → Privacy → Export data. The download link arrives by email as a zip file." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einstellungen → Datenschutz → Daten exportieren. Der Download-Link kommt per E-Mail als Zip-Datei."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 → 개인정보 보호 → 데이터 내보내기. 다운로드 링크가 zip 파일로 이메일로 전송됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройки → Конфиденциальность → Экспорт данных. Ссылка для скачивания придёт по электронной почте в виде zip-файла."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置 → 隐私 → 导出数据。下载链接将以 zip 文件形式通过电子邮件发送。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定 → 隱私 → 導出資料。下載連結將以 zip 檔案形式透過電子郵件傳送。"
+          }
+        }
+      }
+    },
+    "Then choose the downloaded file below. You can select several files at once." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wählen Sie dann unten die heruntergeladene Datei aus. Sie können mehrere Dateien gleichzeitig auswählen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "그다음 아래에서 다운로드한 파일을 선택하세요. 여러 파일을 한 번에 선택할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Затем выберите скачанный файл ниже. Можно выбрать несколько файлов сразу."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "然后在下方选择已下载的文件。可以一次选择多个文件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "然後在下方選擇已下載的檔案。可以一次選擇多個檔案。"
+          }
+        }
+      }
+    },
     "—" : {
       "comment" : "A placeholder text to indicate missing data.",
       "isCommentAutoGenerated" : true,
