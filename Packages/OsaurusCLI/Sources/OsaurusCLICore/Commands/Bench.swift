@@ -32,6 +32,11 @@ public struct BenchCommand: Command {
 
     private static let defaultTuneCandidates = [512, 1_024, 2_048, 4_096]
 
+    /// `--kv-matrix` defaults cover a common long prompt and a larger context
+    /// where codec overhead and memory pressure can become visible.
+    private static let defaultKVMatrixPromptTokens = [8_192, 32_768]
+    private static let defaultKVMatrixRuns = 2
+
     struct Options {
         var model: String?
         var promptTokens: [Int] = BenchCommand.defaultPromptTokens
@@ -41,6 +46,11 @@ public struct BenchCommand: Command {
         var port: Int
         var tunePrefill: Bool = false
         var tuneCandidates: [Int] = BenchCommand.defaultTuneCandidates
+        var kvMatrix: Bool = false
+        /// Set when the user passed the flag explicitly, so `--kv-matrix`
+        /// can apply its own defaults without overriding a user's choice.
+        var promptTokensExplicit: Bool = false
+        var runsExplicit: Bool = false
     }
 
     public static func execute(args: [String]) async {
@@ -67,6 +77,13 @@ public struct BenchCommand: Command {
         if options.tunePrefill {
             await tunePrefill(options: options, model: model, base: base, health: health)
             // tunePrefill exits the process itself.
+        }
+
+        if options.kvMatrix {
+            if !options.promptTokensExplicit { options.promptTokens = defaultKVMatrixPromptTokens }
+            if !options.runsExplicit { options.runs = defaultKVMatrixRuns }
+            await kvMatrix(options: options, model: model, base: base, health: health)
+            // kvMatrix exits the process itself.
         }
 
         fputs("Benchmarking \(model) (\(options.runs) runs × prompt sizes \(options.promptTokens))…\n", stderr)
@@ -128,6 +145,12 @@ public struct BenchCommand: Command {
             ],
         ]
 
+        emitReportAndExit(report, jsonPath: options.jsonPath)
+    }
+
+    /// Serializes a report and emits it (file with `--json`, stdout
+    /// otherwise). Shared by the main bench path and `--kv-matrix`.
+    static func emitReportAndExit(_ report: [String: Any], jsonPath: String?) -> Never {
         let data: Data
         do {
             data = try JSONSerialization.data(
@@ -136,7 +159,7 @@ public struct BenchCommand: Command {
             fputs("Failed to encode report: \(error.localizedDescription)\n", stderr)
             exit(EXIT_FAILURE)
         }
-        if let path = options.jsonPath {
+        if let path = jsonPath {
             let url = URL(fileURLWithPath: path)
             try? FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -351,6 +374,785 @@ public struct BenchCommand: Command {
         }
     }
 
+    // MARK: - KV codec matrix (`--kv-matrix`)
+
+    /// `cache.liveKVCodec` values under test (raw values of the vmlx
+    /// `VMLXKVCacheCodec` contract in `server-runtime.json`). Baseline first,
+    /// so turboquant cells can be reported against engine-selected behavior.
+    static let kvMatrixCodecs = ["engine_selected", "turboquant"]
+    static let kvMatrixTurboQuantBits = 3
+
+    static let kvMatrixCodecDescriptions: [String: String] = [
+        "engine_selected":
+            "engine-selected live KV baseline; effective codec resolution remains runtime-defined",
+        "turboquant": "TurboQuant live KV — explicit opt-in, never auto-enabled",
+    ]
+
+    /// Below this many completion tokens the decode window is too short for
+    /// a stable tok/s estimate, so the cell is flagged low-confidence.
+    static let kvMatrixLowConfidenceCompletionTokens = 32
+
+    enum KVMatrixError: LocalizedError {
+        case malformedConfig(String)
+        case runtimeSettingsReadbackMismatch
+        case persistedSettingsReadbackMismatch
+        case restoreFailed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .malformedConfig(let detail):
+                return "server-runtime.json does not look like a runtime settings file (\(detail))"
+            case .runtimeSettingsReadbackMismatch:
+                return "runtime settings readback differs from the requested probe; Osaurus normalized or migrated additional fields, or another settings writer changed them"
+            case .persistedSettingsReadbackMismatch:
+                return "server-runtime.json differs from /admin/runtime-settings readback; preserving it as an unrecognized settings change"
+            case .restoreFailed(let detail):
+                return "could not restore server-runtime.json (\(detail))"
+            }
+        }
+    }
+
+    /// Fp16 vs TurboQuant live-KV measurement matrix. It produces per-model,
+    /// per-machine evidence without changing runtime defaults.
+    ///
+    /// Per codec: write `cache.liveKVCodec`, full app restart (the app only
+    /// reads `server-runtime.json` at launch — a bare server stop/serve keeps
+    /// the in-memory snapshot), verify the active codec over HTTP, then run
+    /// the same uncached/cached measurement pairs as the main bench path.
+    static func kvMatrix(
+        options: Options, model: String, base: URL, health: [String: Any]
+    ) async -> Never {
+        let configURL = runtimeConfigFileURL()
+        let originalData: Data
+        do {
+            originalData = try Data(contentsOf: configURL)
+        } catch {
+            fputs(
+                "Cannot use \(configURL.path): \(error.localizedDescription)\nLaunch Osaurus once so the runtime settings file exists.\n",
+                stderr)
+            exit(EXIT_FAILURE)
+        }
+        guard
+            let baselineResponse = await fetchJSON(
+                base.appendingPathComponent("admin/runtime-settings")),
+            let baselineSettingsData = runtimeSettingsData(
+                inRuntimeSettingsResponse: baselineResponse)
+        else {
+            fputs(
+                "Cannot read canonical settings from /admin/runtime-settings; no runtime settings were changed.\n",
+                stderr)
+            exit(EXIT_FAILURE)
+        }
+        guard (try? Data(contentsOf: configURL)) == originalData else {
+            fputs(
+                "server-runtime.json changed while reading the canonical runtime-settings baseline; no runtime settings were changed.\n",
+                stderr)
+            exit(EXIT_FAILURE)
+        }
+        let codecConfigData: [String: Data]
+        do {
+            // Build probes from the running app's canonical settings rather
+            // than potentially pre-normalized disk bytes. The exact disk bytes
+            // remain the restoration source.
+            codecConfigData = try Dictionary(
+                uniqueKeysWithValues: kvMatrixCodecs.map { codec in
+                    (codec, try configData(settingLiveKVCodec: codec, in: baselineSettingsData))
+                })
+        } catch {
+            fputs(
+                "Cannot use \(configURL.path): \(error.localizedDescription)\nLaunch Osaurus once so the runtime settings file exists.\n",
+                stderr)
+            exit(EXIT_FAILURE)
+        }
+
+        // Interruption safety: the run mutates the LIVE server-runtime.json,
+        // so Ctrl-C/SIGTERM mid-run would otherwise leave a probe codec
+        // installed permanently. Before the first mutation: (1) write a
+        // sidecar backup so even SIGKILL is hand-recoverable, and (2) install
+        // SIGINT/SIGTERM handlers that restore the original bytes (printing
+        // the recovery blob on failure) and exit non-zero.
+        let backup = kvMatrixBackupURL(for: configURL)
+        do {
+            try createKVMatrixBackup(originalData, at: backup)
+        } catch {
+            fputs(
+                "Cannot create backup \(backup.path): \(error.localizedDescription)\n"
+                    + "If this is left from an interrupted run, restore or remove it before retrying.\n",
+                stderr)
+            exit(EXIT_FAILURE)
+        }
+        var ownedConfigData =
+            [originalData, baselineSettingsData] + Array(codecConfigData.values)
+        armKVMatrixRestore(
+            configURL: configURL,
+            originalData: originalData,
+            ownedData: ownedConfigData,
+            backup: backup
+        )
+        installKVMatrixSignalHandlers()
+
+        fputs(
+            "KV matrix for \(model): codecs \(kvMatrixCodecs), prompt sizes \(options.promptTokens), \(options.runs) run(s) each.\n"
+                + "Each codec needs a full app restart; the original config is restored on clean completion. Unrecognized settings changes are preserved and keep the pre-run backup at \(backup.path).\n",
+            stderr)
+
+        var codecBlocks: [[String: Any]] = []
+        var cells: [KVMatrixCell] = []
+        var fatal: String?
+        var didMutateConfig = false
+        var lastWrittenData: Data?
+
+        measurement: for codec in kvMatrixCodecs {
+            guard let mutated = codecConfigData[codec] else {
+                fatal = "missing prepared config for codec \(codec)"
+                break measurement
+            }
+            do {
+                let expected = lastWrittenData ?? originalData
+                guard try writeKVMatrixConfig(
+                    at: configURL, expectedData: expected, newData: mutated)
+                else {
+                    fatal =
+                        "server-runtime.json changed after the last verified runtime-settings readback; refusing to overwrite the unrecognized file"
+                    break measurement
+                }
+                didMutateConfig = true
+                lastWrittenData = mutated
+            } catch {
+                fatal = "failed to write \(configURL.path): \(error.localizedDescription)"
+                break measurement
+            }
+            fputs("[\(codec)] restarting server…\n", stderr)
+            guard await restartServerForConfigReload(port: options.port) else {
+                fatal = "server did not come back healthy after restart for codec \(codec)"
+                break measurement
+            }
+            guard
+                let runtimeSettingsResponse = await fetchJSON(
+                    base.appendingPathComponent("admin/runtime-settings")),
+                let active = activeLiveKVCodec(
+                    inRuntimeSettingsResponse: runtimeSettingsResponse)
+            else {
+                fatal =
+                    "cannot verify codec \"\(codec)\": /admin/runtime-settings did not return cache.liveKVCodec"
+                break measurement
+            }
+            guard active == codec else {
+                fatal =
+                    "server reports live KV codec \"\(active)\" after restart (expected \"\(codec)\") — aborting so cells are not mislabeled"
+                break measurement
+            }
+            do {
+                let persistedData = try Data(contentsOf: configURL)
+                try verifyKVMatrixReadback(
+                    requestedData: mutated,
+                    runtimeSettingsResponse: runtimeSettingsResponse,
+                    persistedData: persistedData)
+                // ServerRuntimeSettingsStore may re-encode the file while
+                // loading. Adopt those verified bytes for the next exact CAS;
+                // semantic changes beyond the canonical probe fail above.
+                lastWrittenData = persistedData
+                if !ownedConfigData.contains(persistedData) {
+                    ownedConfigData.append(persistedData)
+                }
+                armKVMatrixRestore(
+                    configURL: configURL,
+                    originalData: originalData,
+                    ownedData: ownedConfigData,
+                    backup: backup)
+            } catch {
+                fatal = "[\(codec)] \(error.localizedDescription)"
+                break measurement
+            }
+            // Absorb the cold model load after the restart so it doesn't
+            // pollute the first uncached TTFT sample (same warm-up as
+            // --tune-prefill).
+            do {
+                _ = try await measureOnce(
+                    base: base, model: model,
+                    prompt: makePrompt(targetTokens: 256, nonce: "kv-warm-\(UUID().uuidString)"),
+                    maxTokens: 8)
+            } catch {
+                fatal = "[\(codec)] warm-up generation failed: \(error.localizedDescription)"
+                break measurement
+            }
+            guard let effectiveKVMode = await effectiveKVMode(base: base, model: model) else {
+                fatal = "[\(codec)] /admin/cache-stats did not report an effective KV mode for \(model)"
+                break measurement
+            }
+            if codec == "turboquant",
+               effectiveKVMode != "turbo(\(kvMatrixTurboQuantBits),\(kvMatrixTurboQuantBits))" {
+                fatal =
+                    "[turboquant] runtime reports effective KV mode \"\(effectiveKVMode)\"; "
+                    + "expected turbo(\(kvMatrixTurboQuantBits),\(kvMatrixTurboQuantBits))"
+                break measurement
+            }
+
+            var scenarios: [[String: Any]] = []
+            for target in options.promptTokens {
+                var uncached: [Sample] = []
+                var cached: [Sample] = []
+                for run in 0..<options.runs {
+                    // Unique-nonce prompt then identical resend, exactly like
+                    // the main bench path: first request cannot hit the prefix
+                    // cache, the resend measures the cache-hit path.
+                    let prompt = makePrompt(
+                        targetTokens: target, nonce: "kv-\(codec)-run\(run)-\(UUID().uuidString)")
+                    do {
+                        let first = try await measureOnce(
+                            base: base, model: model, prompt: prompt, maxTokens: options.maxTokens)
+                        let second = try await measureOnce(
+                            base: base, model: model, prompt: prompt, maxTokens: options.maxTokens)
+                        uncached.append(first)
+                        cached.append(second)
+                        fputs(
+                            String(
+                                format:
+                                    "[%@] prompt≈%d run %d: uncached TTFT %.0f ms → cached %.0f ms, decode %.1f tok/s\n",
+                                codec, target, run + 1, first.ttftMs, second.ttftMs,
+                                first.decodeTps),
+                            stderr)
+                    } catch {
+                        fatal =
+                            "[\(codec)] prompt≈\(target) run \(run + 1) failed: \(error.localizedDescription)"
+                        break measurement
+                    }
+                }
+                guard uncached.count == options.runs, cached.count == options.runs else {
+                    fatal =
+                        "[\(codec)] prompt≈\(target) produced an incomplete sample set; no evidence report was emitted"
+                    break measurement
+                }
+                let lowConfidence = kvMatrixIsLowConfidence(
+                    completionTokens: (uncached + cached).map { $0.completionTokens })
+                scenarios.append([
+                    "target_prompt_tokens": target,
+                    "actual_prompt_tokens": uncached.map { $0.promptTokens },
+                    "completion_tokens": [
+                        "uncached": uncached.map { $0.completionTokens },
+                        "cached": cached.map { $0.completionTokens },
+                    ],
+                    "low_confidence": lowConfidence,
+                    "uncached": summarize(uncached),
+                    "cached": summarize(cached),
+                ])
+                cells.append(
+                    KVMatrixCell(
+                        codec: codec,
+                        targetPromptTokens: target,
+                        medianUncachedTTFTMs: median(uncached.map { $0.ttftMs }),
+                        medianCachedTTFTMs: median(cached.map { $0.ttftMs }),
+                        medianDecodeTps: median(uncached.map { $0.decodeTps }),
+                        lowConfidence: lowConfidence))
+            }
+            codecBlocks.append(
+                kvMatrixCodecBlock(
+                    codec: codec,
+                    effectiveKVMode: effectiveKVMode,
+                    scenarios: scenarios
+                )
+            )
+        }
+
+        // Restore the user's exact bytes, reload them, verify the app's
+        // canonical interpretation, then re-pin the exact bytes because load
+        // normalization may have re-encoded or migrated the file.
+        if didMutateConfig {
+            var restored = false
+            var restoreFailure: String?
+            if let lastWrittenData {
+                do {
+                    let restoredForReload = try restoreKVMatrixConfig(
+                        at: configURL,
+                        expectedData: [lastWrittenData],
+                        originalData: originalData)
+                    guard restoredForReload else {
+                        throw KVMatrixError.restoreFailed(
+                            "server-runtime.json no longer matches a verified KV-matrix state")
+                    }
+                    guard await restartServerForConfigReload(port: options.port) else {
+                        throw KVMatrixError.restoreFailed(
+                            "server did not come back healthy after loading the original config")
+                    }
+                    guard
+                        let restoredResponse = await fetchJSON(
+                            base.appendingPathComponent("admin/runtime-settings"))
+                    else {
+                        throw KVMatrixError.restoreFailed(
+                            "/admin/runtime-settings was unavailable after reload")
+                    }
+                    let normalizedRestoredData = try Data(contentsOf: configURL)
+                    try verifyKVMatrixReadback(
+                        requestedData: baselineSettingsData,
+                        runtimeSettingsResponse: restoredResponse,
+                        persistedData: normalizedRestoredData)
+                    guard try writeKVMatrixConfig(
+                        at: configURL,
+                        expectedData: normalizedRestoredData,
+                        newData: originalData)
+                    else {
+                        throw KVMatrixError.restoreFailed(
+                            "server-runtime.json changed after restoration readback")
+                    }
+                    restored = true
+                } catch {
+                    restoreFailure = error.localizedDescription
+                }
+            }
+            if restored {
+                fputs(
+                    "Restored byte-identical original \(configURL.lastPathComponent) after canonical reload.\n",
+                    stderr)
+            } else {
+                let detail = restoreFailure ?? "exact restoration could not be verified"
+                let recoveryFailure =
+                    "\(detail); the current settings file was preserved and the original bytes remain in \(backup.path)"
+                fatal = fatal.map { "\($0); \(recoveryFailure)" } ?? recoveryFailure
+                fputs(
+                    "KV matrix could not verify exact settings restoration: \(recoveryFailure).\n",
+                    stderr)
+            }
+            // Disarm the signal-handler safety net; keep the sidecar backup
+            // around when the restore failed (it is the recovery source).
+            clearKVMatrixRestore()
+            disarmKVMatrixSignalHandlers()
+            if restored { try? FileManager.default.removeItem(at: backup) }
+            if !restored {
+                _ = await AppControl.terminateAppAndWait()
+            }
+        } else {
+            // A rejected or failed first write may still have raced after its
+            // pre-write check. Remove the recovery copy only when the config
+            // is provably still the byte-identical original.
+            clearKVMatrixRestore()
+            disarmKVMatrixSignalHandlers()
+            do {
+                if try removeKVMatrixBackupIfOriginalIsIntact(
+                    configURL: configURL,
+                    originalData: originalData,
+                    backupURL: backup
+                ) == false {
+                    let recoveryFailure =
+                        "server-runtime.json is not the pre-run original; the current file was preserved and the original bytes remain in \(backup.path)"
+                    if fatal == nil { fatal = recoveryFailure }
+                    fputs("KV matrix retained recovery backup: \(recoveryFailure).\n", stderr)
+                }
+            } catch {
+                let recoveryFailure =
+                    "could not verify cleanup of server-runtime.json (\(error.localizedDescription)); the pre-run backup remains in \(backup.path)"
+                fatal = fatal.map { "\($0); \(recoveryFailure)" } ?? recoveryFailure
+                fputs("KV matrix retained recovery backup: \(recoveryFailure).\n", stderr)
+            }
+        }
+
+        if let fatal {
+            fputs("KV matrix failed: \(fatal)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        let measuredCodecs = Set(cells.map { $0.codec })
+        guard measuredCodecs.count == kvMatrixCodecs.count else {
+            fputs(
+                "KV matrix incomplete: measured \(measuredCodecs.sorted()) of \(kvMatrixCodecs); no comparison possible.\n",
+                stderr)
+            exit(EXIT_FAILURE)
+        }
+
+        fputs("\n" + kvMatrixTableLines(cells).joined(separator: "\n") + "\n\n", stderr)
+
+        let report: [String: Any] = [
+            "schema": "osaurus-kv-matrix/1",
+            "timestamp": ISO8601DateFormatter().string(from: Date()),
+            "model": model,
+            "max_tokens": options.maxTokens,
+            "runs": options.runs,
+            "hardware": (health["hardware"] as? [String: Any]) ?? NSNull(),
+            "codecs": codecBlocks,
+            "methodology": [
+                "sampling": "temperature 0 (greedy)",
+                "token_counts": "server usage via stream_options.include_usage",
+                "ttft": "request start → first non-empty content delta",
+                "decode_tps": "(completion_tokens - 1) / (last delta - first delta)",
+                "codec_application":
+                    "probe documents derived from canonical GET /admin/runtime-settings, cache.liveKVCodec written to server-runtime.json (TurboQuant uses explicit 3/3 bits), full app restart per codec, semantic API and disk readback verified after every restart, verified app re-encodings adopted for the next byte-exact write guard, effective mode verified from /admin/cache-stats after generation, and the byte-exact original restored, canonically reloaded, then re-pinned",
+                "codec_verified":
+                    "always true in an emitted report; settings and effective runtime mode are both verified, and any unavailable endpoint, malformed response, or mismatch aborts the run",
+                "low_confidence":
+                    "cells with any sample below \(kvMatrixLowConfidenceCompletionTokens) completion_tokens are flagged low_confidence: the decode window is too short for a stable tok/s estimate",
+                "context":
+                    "per-family evidence for the fail-closed TurboQuant policy (2026-06-12): TurboQuant live KV is never auto-enabled and must win per family on measured numbers like these",
+            ],
+        ]
+        emitReportAndExit(report, jsonPath: options.jsonPath)
+    }
+
+    /// Per-codec block of the JSON report. Pure so the codec_verified
+    /// plumbing is unit-testable.
+    static func kvMatrixCodecBlock(
+        codec: String,
+        effectiveKVMode: String,
+        scenarios: [[String: Any]]
+    ) -> [String: Any] {
+        [
+            "codec": codec,
+            "description": kvMatrixCodecDescriptions[codec] ?? "",
+            "codec_verified": true,
+            "effective_kv_mode": effectiveKVMode,
+            "scenarios": scenarios,
+        ]
+    }
+
+    /// Sidecar backup of the pre-run config, written before the first
+    /// mutation and removed on clean completion — recovery source for
+    /// SIGKILL (which no handler can catch) and for a failed restore.
+    static func kvMatrixBackupURL(for configURL: URL) -> URL {
+        URL(fileURLWithPath: configURL.path + ".kvmatrix-backup")
+    }
+
+    static func createKVMatrixBackup(_ data: Data, at backupURL: URL) throws {
+        let temporaryURL = backupURL.deletingLastPathComponent().appendingPathComponent(
+            ".\(backupURL.lastPathComponent).\(UUID().uuidString).tmp")
+        defer { try? FileManager.default.removeItem(at: temporaryURL) }
+        try data.write(to: temporaryURL, options: .atomic)
+        // Publishing with a hard link is atomic and fails when the recovery
+        // path already exists; unlike Data's writing options, it supports
+        // both guarantees together.
+        try FileManager.default.linkItem(at: temporaryURL, to: backupURL)
+    }
+
+    /// Removes the recovery copy only when no write, including a raced or
+    /// partially observed first probe write, changed the original config.
+    static func removeKVMatrixBackupIfOriginalIsIntact(
+        configURL: URL,
+        originalData: Data,
+        backupURL: URL
+    ) throws -> Bool {
+        guard try Data(contentsOf: configURL) == originalData else { return false }
+        try FileManager.default.removeItem(at: backupURL)
+        return true
+    }
+
+    struct KVMatrixRestoreState {
+        let configURL: URL
+        let originalData: Data
+        let ownedData: [Data]
+        let backup: URL
+    }
+
+    nonisolated(unsafe) static var kvMatrixRestore: KVMatrixRestoreState?
+    private static let kvMatrixRestoreLock = NSLock()
+    nonisolated(unsafe) static var kvMatrixSignalSources: [DispatchSourceSignal] = []
+
+    static func armKVMatrixRestore(
+        configURL: URL, originalData: Data, ownedData: [Data], backup: URL
+    ) {
+        kvMatrixRestoreLock.lock()
+        kvMatrixRestore = KVMatrixRestoreState(
+            configURL: configURL,
+            originalData: originalData,
+            ownedData: ownedData,
+            backup: backup)
+        kvMatrixRestoreLock.unlock()
+    }
+
+    @discardableResult
+    static func clearKVMatrixRestore() -> KVMatrixRestoreState? {
+        kvMatrixRestoreLock.lock()
+        defer { kvMatrixRestoreLock.unlock() }
+        let state = kvMatrixRestore
+        kvMatrixRestore = nil
+        return state
+    }
+
+    static func hasKVMatrixRestoreState() -> Bool {
+        kvMatrixRestoreLock.lock()
+        defer { kvMatrixRestoreLock.unlock() }
+        return kvMatrixRestore != nil
+    }
+
+    static func installKVMatrixSignalHandlers() {
+        signal(SIGINT, SIG_IGN)
+        signal(SIGTERM, SIG_IGN)
+        kvMatrixSignalSources = [SIGINT, SIGTERM].map { signalNumber in
+            let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .main)
+            source.setEventHandler {
+                if BenchCommand.kvMatrixAbortRestore() {
+                    _Exit(EXIT_FAILURE)
+                }
+            }
+            source.resume()
+            return source
+        }
+    }
+
+    static func disarmKVMatrixSignalHandlers() {
+        kvMatrixSignalSources.forEach { $0.cancel() }
+        kvMatrixSignalSources = []
+        signal(SIGINT, SIG_DFL)
+        signal(SIGTERM, SIG_DFL)
+    }
+
+    /// Restores the pre-run `server-runtime.json` bytes and removes the
+    /// sidecar backup; prints the recovery blob (and keeps the backup) when
+    /// the restore write fails. Called from the SIGINT/SIGTERM handlers;
+    /// a no-op once the run has disarmed it.
+    @discardableResult
+    static func kvMatrixAbortRestore() -> Bool {
+        guard let state = clearKVMatrixRestore() else { return false }
+        do {
+            if try restoreKVMatrixConfig(
+                at: state.configURL,
+                expectedData: state.ownedData,
+                originalData: state.originalData) {
+                try? FileManager.default.removeItem(at: state.backup)
+                fputs(
+                    "\nInterrupted — restored original \(state.configURL.lastPathComponent). The server may still be running a probe codec; restart it (`osaurus serve`) to reload the restored config.\n",
+                    stderr)
+            } else {
+                fputs(
+                    "\nInterrupted after an unrecognized config change. The current file was preserved; pre-run bytes remain in \(state.backup.path). Restart Osaurus to apply the current file.\n",
+                    stderr)
+            }
+        } catch {
+            fputs(
+                "\nInterrupted — FAILED to restore \(state.configURL.path): \(error.localizedDescription)\nRestore it manually from \(state.backup.path) — original contents follow:\n\(String(bytes: state.originalData, encoding: .utf8) ?? "<binary>")\n",
+                stderr)
+        }
+        return true
+    }
+
+    /// Restores only when the on-disk document is still semantically owned by
+    /// this run. App load may re-encode a probe; semantic equality accepts that
+    /// rewrite while still rejecting changes to any setting value.
+    static func restoreKVMatrixConfig(
+        at configURL: URL, expectedData: [Data], originalData: Data
+    ) throws -> Bool {
+        let current = try Data(contentsOf: configURL)
+        guard expectedData.contains(where: { configDocumentsMatch(current, $0) }) else {
+            return false
+        }
+        try originalData.write(to: configURL, options: .atomic)
+        guard try Data(contentsOf: configURL) == originalData else {
+            throw KVMatrixError.restoreFailed("post-write byte verification failed")
+        }
+        return true
+    }
+
+    /// Replaces a probe config only if the file still contains the bytes this
+    /// run last wrote. This catches settings-panel or process edits between
+    /// codec cells instead of silently overwriting them.
+    static func writeKVMatrixConfig(
+        at configURL: URL, expectedData: Data, newData: Data
+    ) throws -> Bool {
+        guard try Data(contentsOf: configURL) == expectedData else { return false }
+        try newData.write(to: configURL, options: .atomic)
+        return try Data(contentsOf: configURL) == newData
+    }
+
+    /// The runtime settings file owned by the app's
+    /// `ServerRuntimeSettingsStore` (OsaurusCore); the CLI edits the same
+    /// JSON contract without linking OsaurusCore — mirrors `tuningFileURL()`.
+    static func runtimeConfigFileURL() -> URL {
+        Configuration.root()
+            .appendingPathComponent("config", isDirectory: true)
+            .appendingPathComponent("server-runtime.json")
+    }
+
+    /// Returns `data` re-serialized with the requested live codec. The
+    /// TurboQuant probe also sets explicit 3/3 bits because a codec selection
+    /// with nil bit widths resolves to fp16. Every unrelated field is kept.
+    /// Throws instead of inventing
+    /// structure: a document without a `cache` object is not a runtime
+    /// settings file, and writing a partial one could destroy user config.
+    static func configData(settingLiveKVCodec codec: String, in data: Data) throws -> Data {
+        guard var root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw KVMatrixError.malformedConfig("top level is not an object")
+        }
+        guard var cache = root["cache"] as? [String: Any] else {
+            throw KVMatrixError.malformedConfig("no \"cache\" object")
+        }
+        cache["liveKVCodec"] = codec
+        if codec == "turboquant" {
+            cache["turboQuantKeyBits"] = kvMatrixTurboQuantBits
+            cache["turboQuantValueBits"] = kvMatrixTurboQuantBits
+        }
+        root["cache"] = cache
+        return try JSONSerialization.data(
+            withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+    }
+
+    static func liveKVCodec(inConfigData data: Data) -> String? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let cache = root["cache"] as? [String: Any]
+        else { return nil }
+        return cache["liveKVCodec"] as? String
+    }
+
+    /// Extracts the Codable settings document from the admin response. Probe
+    /// configs are based on this canonical runtime state so load-time repairs
+    /// such as legacy MTP `off` -> `auto` are not reintroduced from stale bytes.
+    static func runtimeSettingsData(
+        inRuntimeSettingsResponse response: [String: Any]
+    ) -> Data? {
+        guard let settings = response["settings"],
+              JSONSerialization.isValidJSONObject(settings)
+        else { return nil }
+        return try? JSONSerialization.data(
+            withJSONObject: settings, options: [.prettyPrinted, .sortedKeys])
+    }
+
+    static func configDocumentsMatch(_ lhs: Data, _ rhs: Data) -> Bool {
+        if lhs == rhs { return true }
+        guard
+            let lhsObject = try? JSONSerialization.jsonObject(with: lhs),
+            let rhsObject = try? JSONSerialization.jsonObject(with: rhs),
+            JSONSerialization.isValidJSONObject(lhsObject),
+            JSONSerialization.isValidJSONObject(rhsObject),
+            let normalizedLHS = try? JSONSerialization.data(
+                withJSONObject: lhsObject, options: [.sortedKeys]),
+            let normalizedRHS = try? JSONSerialization.data(
+                withJSONObject: rhsObject, options: [.sortedKeys])
+        else { return false }
+        return normalizedLHS == normalizedRHS
+    }
+
+    /// Confirms that both the running snapshot and the file persisted during
+    /// app load still describe exactly the requested probe. Formatting-only
+    /// rewrites are accepted; any value change remains fail-closed.
+    static func verifyKVMatrixReadback(
+        requestedData: Data,
+        runtimeSettingsResponse: [String: Any],
+        persistedData: Data
+    ) throws {
+        guard
+            let runtimeData = runtimeSettingsData(
+                inRuntimeSettingsResponse: runtimeSettingsResponse),
+            configDocumentsMatch(requestedData, runtimeData)
+        else {
+            throw KVMatrixError.runtimeSettingsReadbackMismatch
+        }
+        guard configDocumentsMatch(runtimeData, persistedData) else {
+            throw KVMatrixError.persistedSettingsReadbackMismatch
+        }
+    }
+
+    static func kvMatrixIsLowConfidence(completionTokens: [Int]) -> Bool {
+        completionTokens.contains { $0 < kvMatrixLowConfidenceCompletionTokens }
+    }
+
+    /// Stop notification → app termination → relaunch → serve notification →
+    /// /health 200. A bare server stop/serve cycle is deliberately NOT used:
+    /// the app never re-reads `server-runtime.json` after launch, so only a
+    /// full app relaunch applies an on-disk codec edit (see
+    /// `AppControl.terminateAppAndWait`).
+    static func restartServerForConfigReload(port: Int) async -> Bool {
+        AppControl.postDistributedNotification(
+            name: "com.dinoki.osaurus.control.stop", userInfo: [:])
+        // Let in-flight requests wind down before the app exits (Stop.swift's
+        // stop-then-verify pattern, with a longer budget for model unload).
+        let stopDeadline = Date().addingTimeInterval(10)
+        while Date() < stopDeadline {
+            if !(await ServerControl.checkHealth(port: port)) { break }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        guard await AppControl.terminateAppAndWait() else { return false }
+        await AppControl.launchAppIfNeeded()
+        AppControl.postDistributedNotification(
+            name: "com.dinoki.osaurus.control.serve", userInfo: [:])
+        let start = Date()
+        let deadline = start.addingTimeInterval(60)
+        var reposted = false
+        while Date() < deadline {
+            if await ServerControl.checkHealth(port: port) { return true }
+            // The app may miss the first signal while still initializing;
+            // re-post once, like Serve.swift.
+            if !reposted, Date().timeIntervalSince(start) > 3 {
+                AppControl.postDistributedNotification(
+                    name: "com.dinoki.osaurus.control.serve", userInfo: [:])
+                reposted = true
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+        return false
+    }
+
+    /// `/admin/runtime-settings` serializes the settings value through its
+    /// Codable contract, so this key intentionally matches server-runtime.json.
+    /// `/admin/cache-stats` uses a separate hand-built snake_case contract.
+    static func activeLiveKVCodec(
+        inRuntimeSettingsResponse response: [String: Any]
+    ) -> String? {
+        guard let settings = response["settings"] as? [String: Any],
+              let cache = settings["cache"] as? [String: Any]
+        else { return nil }
+        return cache["liveKVCodec"] as? String
+    }
+
+    static func effectiveKVMode(base: URL, model: String) async -> String? {
+        guard let response = await fetchJSON(base.appendingPathComponent("admin/cache-stats"))
+        else { return nil }
+        return effectiveKVMode(inCacheStatsResponse: response, model: model)
+    }
+
+    static func effectiveKVMode(
+        inCacheStatsResponse response: [String: Any],
+        model: String
+    ) -> String? {
+        guard let models = response["models"] as? [[String: Any]],
+              let row = models.first(where: { ($0["name"] as? String) == model }),
+              row["cache_enabled"] as? Bool == true
+        else { return nil }
+        return row["effective_kv_mode"] as? String
+    }
+
+    struct KVMatrixCell {
+        let codec: String
+        let targetPromptTokens: Int
+        let medianUncachedTTFTMs: Double
+        let medianCachedTTFTMs: Double
+        let medianDecodeTps: Double
+        let lowConfidence: Bool
+    }
+
+    /// Final medians table (stderr). Deltas are against the `engine_selected`
+    /// baseline cell of the same prompt size — the comparison that decides
+    /// whether TurboQuant earns a per-family allow-list entry.
+    static func kvMatrixTableLines(_ cells: [KVMatrixCell]) -> [String] {
+        func pad(_ text: String, _ width: Int) -> String {
+            text.count >= width
+                ? text + " " : text + String(repeating: " ", count: width - text.count)
+        }
+        func delta(_ value: Double, _ baseline: Double?) -> String {
+            guard let baseline, baseline > 0 else { return "" }
+            return String(format: " (%+.0f%%)", (value - baseline) / baseline * 100)
+        }
+        var baselines: [Int: KVMatrixCell] = [:]
+        for cell in cells where cell.codec == kvMatrixCodecs[0] {
+            baselines[cell.targetPromptTokens] = cell
+        }
+        var lines = [
+            pad("codec", 17) + pad("prompt", 8) + pad("uncached TTFT", 21) + pad("cached TTFT", 19)
+                + "decode tok/s"
+        ]
+        for cell in cells {
+            let baseline = cell.codec == kvMatrixCodecs[0]
+                ? nil : baselines[cell.targetPromptTokens]
+            let uncached =
+                String(format: "%.0f ms", cell.medianUncachedTTFTMs)
+                + delta(cell.medianUncachedTTFTMs, baseline?.medianUncachedTTFTMs)
+            let cached =
+                String(format: "%.0f ms", cell.medianCachedTTFTMs)
+                + delta(cell.medianCachedTTFTMs, baseline?.medianCachedTTFTMs)
+            var decode =
+                String(format: "%.1f", cell.medianDecodeTps)
+                + delta(cell.medianDecodeTps, baseline?.medianDecodeTps)
+            if cell.lowConfidence { decode += " [low-confidence]" }
+            lines.append(
+                pad(cell.codec, 17) + pad(String(cell.targetPromptTokens), 8)
+                    + pad(uncached, 21) + pad(cached, 19) + decode)
+        }
+        return lines
+    }
+
     // MARK: - Single measurement
 
     struct Sample {
@@ -522,12 +1324,14 @@ public struct BenchCommand: Command {
                 let parsed = v.split(separator: ",").compactMap { Int($0) }.filter { $0 > 0 }
                 guard !parsed.isEmpty else { return nil }
                 options.promptTokens = parsed
+                options.promptTokensExplicit = true
             case "--max-tokens":
                 guard let v = value(), let n = Int(v), n > 0 else { return nil }
                 options.maxTokens = n
             case "--runs":
                 guard let v = value(), let n = Int(v), n > 0 else { return nil }
                 options.runs = n
+                options.runsExplicit = true
             case "--json":
                 guard let v = value() else { return nil }
                 options.jsonPath = v
@@ -536,6 +1340,8 @@ public struct BenchCommand: Command {
                 options.port = n
             case "--tune-prefill":
                 options.tunePrefill = true
+            case "--kv-matrix":
+                options.kvMatrix = true
             case "--candidates":
                 guard let v = value() else { return nil }
                 let parsed = v.split(separator: ",").compactMap { Int($0) }.filter { $0 > 0 }
@@ -547,6 +1353,10 @@ public struct BenchCommand: Command {
             }
             index += 1
         }
+        if options.tunePrefill && options.kvMatrix {
+            fputs("--tune-prefill and --kv-matrix are mutually exclusive.\n", stderr)
+            return nil
+        }
         return options
     }
 
@@ -557,6 +1367,8 @@ public struct BenchCommand: Command {
                                  [--max-tokens 128] [--runs 3] [--json <path>] [--port N]
                    osaurus bench --tune-prefill [--model <id>] [--candidates 512,1024,2048,4096]
                                  [--prompt-tokens 8192] [--runs 3]
+                   osaurus bench --kv-matrix [--model <id>] [--prompt-tokens 8192,32768]
+                                 [--runs 2] [--json <path>]
 
             Requires a running server (`osaurus serve`). Reports uncached/cached
             TTFT, prefill tok/s, and decode tok/s per prompt size as JSON.
@@ -564,6 +1376,14 @@ public struct BenchCommand: Command {
             --tune-prefill measures the model's TTFT at each candidate prefill
             step size and persists the per-model winner (the optimum is
             model-architecture-dependent); the server applies it immediately.
+
+            --kv-matrix measures engine-selected vs TurboQuant live-KV
+            per prompt size: uncached/cached TTFT and decode tok/s. It edits
+            cache.liveKVCodec in server-runtime.json and restarts the app per
+            codec (the file is only read at launch). The original is restored
+            on clean completion; unrecognized settings changes are preserved
+            with a pre-run recovery backup. Measurement only — it changes no
+            defaults.
 
             """, stderr)
     }

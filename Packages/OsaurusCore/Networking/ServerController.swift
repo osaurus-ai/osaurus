@@ -244,10 +244,10 @@ final class ServerController: ObservableObject {
         if let saved = ServerConfigurationStore.load() {
             self.configuration = saved
         }
-        // Read-only load. The legacy → vmlx migration (which writes to
-        // `~/.osaurus/config/`) is intentionally deferred to
-        // `bootstrapRuntimeSettings()` so a fresh install stays pristine
-        // until the AppDelegate explicitly runs it during launch.
+        // Load an existing runtime file without creating one from legacy
+        // settings. `load()` may normalize and rewrite an existing file;
+        // first-time legacy → vmlx creation is intentionally deferred to
+        // `bootstrapRuntimeSettings()` until AppDelegate launch.
         if let existing = ServerRuntimeSettingsStore.load() {
             self.runtimeSettings = existing
         }
