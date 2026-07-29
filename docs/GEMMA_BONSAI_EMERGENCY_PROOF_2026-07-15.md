@@ -74,6 +74,7 @@ real UI:
 | P0 | Untouched Thinking state on agent/tool runs | VERIFIED-SOURCE + VERIFIED-LIVE on exact current Release app: OFF→ON→OFF and restart |
 | P0 | Reasoning-mode cache isolation across same-chat tool turns | VERIFIED-SOURCE + VERIFIED-LIVE: no stale replay after vMLX reset plus detached recurrent snapshots |
 | P0 | Ornith/Qwen post-tool cutoff or partial completion | REPRODUCED AS PARTIAL MUTATION on JANG_4M and MXFP8; exact pre-write cutoff not reproduced |
+| P0 | Ornith JANG_4M repeated DB-query/post-tool output loop | USER-REPORTED 2026-07-28; UNVERIFIED on a captured source SHA/pin; dedicated reproduction required |
 | P0 | Bonsai tiny-pool paged-cache eviction and hybrid replay tail | VERIFIED-SOURCE + VERIFIED-LIVE for the cache defect; model semantic-quality controls remain mixed |
 | P0 | PR scope contains no deferred routing/hardware changes | PASS for current pin-only source/test diff plus ledger; repeat on final diff |
 | P0 | Exact pin-only candidate Release UI rerun | PASS for the scoped agent reasoning/cache matrix; semantic handbook behavior remains a separate reproduced failure |
@@ -657,6 +658,54 @@ did not recur. This proves the load portion only; the same live row failed the
 handbook correctness gate below.
 
 ### Ornith post-tool completion
+
+#### 2026-07-28 user report: repeated DB queries and degenerate final output
+
+Status: **OPEN / USER-REPORTED / NOT YET REPRODUCED on a captured Osaurus SHA
+and vMLX pin.** This row is deliberately separate from the subagent batching
+cleanup and must not be treated as closed by that work.
+
+The supplied chat transcript identifies
+`OsaurusAI/Ornith-1.0-9B-JANG_4M` with Vision capability. Four screenshots of a
+Swift change plan were attached. The user asked the model to review the plan,
+inspect the project's Swift file, consult the local Swift-practices database,
+wait for approval, and then implement only the approved first step.
+
+Observed failure sequence:
+
+- `file_read` succeeded and returned the requested Swift source.
+- Two near-identical `capabilities_discover` calls both returned no matching
+  capability.
+- The model then issued a broad database query, followed by multiple repeated
+  or near-identical `db_query` calls over the same six-row Swift 6.4 result set
+  without gaining new information.
+- It eventually produced a coherent plan review and waited for approval.
+- After the user approved step 1, the model reread the same source but did not
+  perform the requested edit. Its next assistant output degenerated into a
+  very long run of `!` characters instead of a tool call, error, or coherent
+  final answer.
+
+This is a failed lifecycle row even though the earlier reads and database
+queries succeeded. The transcript proves redundant tool-selection behavior and
+an incoherent post-tool generation loop; it does **not** establish whether the
+Stop control disappeared, whether input unlocked, the effective reasoning
+setting, sampler/defaults, cache hit topology, or the exact source and runtime
+pins.
+
+Required reproduction before diagnosis or a fix claim:
+
+1. Use the exact installed JANG_4M bundle and record Osaurus SHA, vMLX pin,
+   `generation_config.json`/template defaults, Thinking state, attachment
+   hashes, and the sanitized fixture/database schema.
+2. Re-run the two-turn approve-then-edit flow in a fresh isolated Release app
+   and inspect image ingestion, every DB/tool card, full streamed output,
+   finish reason, Stop/input terminal state, token/s, and a follow-up turn.
+3. Capture the longest-prefix and hybrid companion-cache restore counters
+   around the post-tool continuation, then compare a cold-cache run. Repeated
+   database queries must be attributed separately from token repetition.
+4. Add deterministic eval coverage for repeated equivalent tool calls and a
+   post-tool punctuation loop. Do not mask the failure with forced stop tokens,
+   sampler overrides, repetition penalties, output caps, or prompt coercion.
 
 `AgentToolLoop.run` accepts any non-empty model step as `.finalResponse`.
 `ModelFamilyGuidance` contains an existing Qwen persistence block specifically
