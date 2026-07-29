@@ -61,6 +61,13 @@ struct FireworksModelDiscoveryTests {
                   "supportsServerless": true
                 },
                 {
+                  "name": "accounts/fireworks/models/embedding-with-chat-template",
+                  "state": "READY",
+                  "kind": "EMBEDDING_MODEL",
+                  "supportsServerless": true,
+                  "conversationConfig": {"style": "jinja"}
+                },
+                {
                   "name": "accounts/fireworks/models/still-uploading",
                   "state": "UPLOADING",
                   "supportsServerless": true,

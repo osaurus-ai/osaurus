@@ -22,16 +22,20 @@ struct FireworksModel: Decodable, Sendable {
     /// The OpenAI-compatible inference endpoints accept this as the model id.
     let name: String
     let state: String?
+    let kind: String?
     let supportsServerless: Bool?
     let conversationConfig: FireworksConversationConfig?
 
     /// Serverless-hosted, chat-capable, live model — what the model picker
     /// should show. `conversationConfig` presence is Fireworks' signal that
-    /// the Chat Completions API is enabled for the model.
+    /// the Chat Completions API is enabled for the model, but embedding and
+    /// reranker models carry one too (verified live), so `kind` is also
+    /// checked. Unknown/missing kinds are kept to stay forward-compatible.
     var isServerlessChatModel: Bool {
         state == "READY"
             && supportsServerless == true
             && conversationConfig != nil
+            && !(kind?.contains("EMBEDDING") ?? false)
     }
 }
 
