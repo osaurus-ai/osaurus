@@ -243,6 +243,77 @@ struct ChatSessionImporterTests {
         #expect(imported.first?.session.turns.first?.content == "solo")
     }
 
+    // MARK: - Zip archives
+
+    /// Builds a real zip in memory (CRCs left zero — the reader doesn't
+    /// verify them) so the archive path is tested without fixtures.
+    private func makeZip(_ entries: [(name: String, data: Data, deflate: Bool)]) throws -> Data {
+        func u16(_ v: Int) -> Data { withUnsafeBytes(of: UInt16(v).littleEndian) { Data($0) } }
+        func u32(_ v: Int) -> Data { withUnsafeBytes(of: UInt32(v).littleEndian) { Data($0) } }
+
+        var zip = Data()
+        var central = Data()
+        for entry in entries {
+            let name = Data(entry.name.utf8)
+            let payload =
+                entry.deflate
+                ? try (entry.data as NSData).compressed(using: .zlib) as Data
+                : entry.data
+            let method = entry.deflate ? 8 : 0
+            let localOffset = zip.count
+
+            zip.append(Data([0x50, 0x4B, 0x03, 0x04]))
+            zip.append(u16(20) + u16(0) + u16(method) + u16(0) + u16(0) + u32(0))
+            zip.append(u32(payload.count) + u32(entry.data.count) + u16(name.count) + u16(0))
+            zip.append(name)
+            zip.append(payload)
+
+            central.append(Data([0x50, 0x4B, 0x01, 0x02]))
+            central.append(u16(20) + u16(20) + u16(0) + u16(method) + u16(0) + u16(0) + u32(0))
+            central.append(u32(payload.count) + u32(entry.data.count) + u16(name.count))
+            central.append(u16(0) + u16(0) + u16(0) + u16(0) + u32(0) + u32(localOffset))
+            central.append(name)
+        }
+        let centralOffset = zip.count
+        zip.append(central)
+        zip.append(Data([0x50, 0x4B, 0x05, 0x06]))
+        zip.append(u16(0) + u16(0) + u16(entries.count) + u16(entries.count))
+        zip.append(u32(central.count) + u32(centralOffset) + u16(0))
+        return zip
+    }
+
+    @Test func zippedChatGPTExportImportsConversationsAndSkipsSidecars() throws {
+        let zip = try makeZip([
+            ("user.json", Data("{\"id\": \"user-1\"}".utf8), false),
+            ("conversations.json", Data(chatGPTExport.utf8), true),
+        ])
+        let imported = try ChatSessionImporter.parse(data: zip)
+
+        #expect(imported.count == 1)
+        let session = try #require(imported.first).session
+        #expect(session.title == "Rust lifetimes")
+        #expect(session.externalSessionKey == "chatgpt:abc-123")
+    }
+
+    @Test func zippedTakeoutFindsNestedGeminiActivity() throws {
+        let zip = try makeZip([
+            ("Takeout/Gemini Apps/MyActivity.json", Data(geminiExport.utf8), true)
+        ])
+        let imported = try ChatSessionImporter.parse(data: zip)
+
+        #expect(imported.count == 2)
+        #expect(imported.allSatisfy { $0.format == .gemini })
+    }
+
+    @Test func zipWithoutConversationsThrows() throws {
+        let zip = try makeZip([
+            ("user.json", Data("{\"id\": \"user-1\"}".utf8), false)
+        ])
+        #expect(throws: ChatSessionImporter.ImportError.self) {
+            _ = try ChatSessionImporter.parse(data: zip)
+        }
+    }
+
     // MARK: - Rejection
 
     @Test func rejectsUnrecognizedJSON() {

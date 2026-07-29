@@ -27,10 +27,10 @@ enum ChatSessionImportCoordinator {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
-        panel.allowedContentTypes = [.json]
+        panel.allowedContentTypes = [.json, .zip]
         panel.title = L("Import Conversations")
         panel.message = L(
-            "Choose a ChatGPT conversations.json, Claude export, Gemini Takeout MyActivity.json, or Osaurus import JSON file."
+            "Choose an export from ChatGPT, Claude, or Gemini (.zip or .json), or an Osaurus import JSON file."
         )
 
         Task { @MainActor in

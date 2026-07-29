@@ -49,8 +49,13 @@ public enum ChatSessionImporter {
 
     /// Detects the export format and parses every conversation in `data`.
     /// Conversations with no usable messages are dropped rather than
-    /// failing the whole import.
+    /// failing the whole import. Zip archives (how ChatGPT and Google
+    /// Takeout deliver exports) are unpacked and every recognizable JSON
+    /// entry inside is imported.
     public static func parse(data: Data) throws -> [ImportedConversation] {
+        if ZipArchive.isArchive(data) {
+            return try parseArchive(data)
+        }
         guard let root = try? JSONSerialization.jsonObject(with: data) else {
             throw ImportError.invalidJSON
         }
@@ -84,6 +89,33 @@ public enum ChatSessionImporter {
 
         guard !conversations.isEmpty else { throw ImportError.noConversations }
         return conversations
+    }
+
+    // MARK: - Zip archives
+
+    /// Unpacks a zipped export and imports every JSON entry that parses
+    /// as a known format. ChatGPT zips also contain `user.json`,
+    /// `message_feedback.json`, etc. — entries that don't look like a
+    /// conversation export are skipped, not fatal. Fails only when no
+    /// entry yields conversations.
+    private static func parseArchive(_ data: Data) throws -> [ImportedConversation] {
+        let jsonEntries = try ZipArchive.entries(in: data).filter { entry in
+            let name = entry.name.lowercased()
+            // AppleDouble metadata ("__MACOSX/…", "._foo.json") isn't JSON.
+            return name.hasSuffix(".json") && !name.hasPrefix("__macosx/")
+                && !(name.split(separator: "/").last?.hasPrefix("._") ?? false)
+        }
+        guard !jsonEntries.isEmpty else { throw ImportError.unrecognizedFormat }
+
+        var all: [ImportedConversation] = []
+        for entry in jsonEntries {
+            let entryData = try ZipArchive.extract(entry, from: data)
+            if let conversations = try? parse(data: entryData) {
+                all.append(contentsOf: conversations)
+            }
+        }
+        guard !all.isEmpty else { throw ImportError.noConversations }
+        return all
     }
 
     // MARK: - ChatGPT (conversations.json)
