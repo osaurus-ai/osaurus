@@ -46,6 +46,10 @@ struct ChatSessionSidebar: View {
     @Environment(\.theme) private var theme
     @Environment(\.themedAlertScope) private var alertScope
     @ObservedObject private var agentManager = AgentManager.shared
+    /// Freshly imported session ids; their rows glow briefly and the list
+    /// scrolls the first one into view so the user can see where the
+    /// imports landed (they sort by original date, not to the top).
+    @ObservedObject private var importHighlight = ChatSessionImportHighlight.shared
     @State private var editingSessionId: UUID?
     @State private var editingBuffer: String = ""
     /// IDs the user has multi-selected (⌘-click to toggle, ⇧-click to
@@ -454,7 +458,10 @@ struct ChatSessionSidebar: View {
 
             Button {
                 ChatSessionImportCoordinator.run(
-                    agentId: agentId == Agent.defaultId ? nil : agentId
+                    agentId: agentId == Agent.defaultId ? nil : agentId,
+                    // A single-conversation import opens immediately so the
+                    // user isn't left hunting the list for it.
+                    onOpen: { onSelect($0) }
                 )
             } label: {
                 Image(systemName: "square.and.arrow.down")
@@ -612,62 +619,75 @@ struct ChatSessionSidebar: View {
     // MARK: - Session List
 
     private var sessionList: some View {
-        ScrollView {
-            LazyVStack(spacing: 2) {
-                ForEach(filteredSessions) { session in
-                    SessionRow(
-                        session: session,
-                        agent: agentManager.agent(for: session.agentId ?? Agent.defaultId),
-                        isSelected: session.id == currentSessionId,
-                        isMultiSelected: selectedIds.contains(session.id),
-                        isEditing: editingSessionId == session.id,
-                        onSelect: {
-                            handleTap(session)
-                        },
-                        onStartRename: {
-                            if editingSessionId != nil && editingSessionId != session.id {
-                                dismissEditing()
-                            }
-                            editingSessionId = session.id
-                            editingBuffer = session.title
-                        },
-                        onConfirmRename: { newTitle in
-                            let trimmed = newTitle.trimmingCharacters(in: .whitespaces)
-                            if !trimmed.isEmpty {
-                                onRename(session.id, trimmed)
-                            }
-                            editingSessionId = nil
-                        },
-                        onCancelRename: {
-                            editingSessionId = nil
-                        },
-                        onBufferChange: { editingBuffer = $0 },
-                        onDelete: {
-                            if editingSessionId != nil {
-                                dismissEditing()
-                            }
-                            onDelete(session.id)
-                        },
-                        onToggleArchive: {
-                            onSetArchived(session.id, !session.archived)
-                        },
-                        onTogglePin: {
-                            onSetPinned(session.id, !session.pinned)
-                        },
-                        onExport: { format in
-                            onExport(session, format)
-                        },
-                        onOpenInNewWindow: onOpenInNewWindow != nil
-                            ? {
-                                onOpenInNewWindow?(session)
-                            } : nil
-                    )
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(filteredSessions) { session in
+                        SessionRow(
+                            session: session,
+                            agent: agentManager.agent(for: session.agentId ?? Agent.defaultId),
+                            isSelected: session.id == currentSessionId,
+                            isMultiSelected: selectedIds.contains(session.id),
+                            isImportHighlighted: importHighlight.sessionIds.contains(session.id),
+                            isEditing: editingSessionId == session.id,
+                            onSelect: {
+                                handleTap(session)
+                            },
+                            onStartRename: {
+                                if editingSessionId != nil && editingSessionId != session.id {
+                                    dismissEditing()
+                                }
+                                editingSessionId = session.id
+                                editingBuffer = session.title
+                            },
+                            onConfirmRename: { newTitle in
+                                let trimmed = newTitle.trimmingCharacters(in: .whitespaces)
+                                if !trimmed.isEmpty {
+                                    onRename(session.id, trimmed)
+                                }
+                                editingSessionId = nil
+                            },
+                            onCancelRename: {
+                                editingSessionId = nil
+                            },
+                            onBufferChange: { editingBuffer = $0 },
+                            onDelete: {
+                                if editingSessionId != nil {
+                                    dismissEditing()
+                                }
+                                onDelete(session.id)
+                            },
+                            onToggleArchive: {
+                                onSetArchived(session.id, !session.archived)
+                            },
+                            onTogglePin: {
+                                onSetPinned(session.id, !session.pinned)
+                            },
+                            onExport: { format in
+                                onExport(session, format)
+                            },
+                            onOpenInNewWindow: onOpenInNewWindow != nil
+                                ? {
+                                    onOpenInNewWindow?(session)
+                                } : nil
+                        )
+                        .id(session.id)
+                    }
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 8)
+            }
+            .scrollIndicators(.hidden)
+            .onChange(of: importHighlight.sessionIds) { _, ids in
+                // Bring the topmost freshly imported row into view; the
+                // glow only helps if the row is on screen.
+                guard let target = filteredSessions.first(where: { ids.contains($0.id) })
+                else { return }
+                withAnimation(.easeInOut(duration: 0.35)) {
+                    proxy.scrollTo(target.id, anchor: .center)
                 }
             }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 8)
         }
-        .scrollIndicators(.hidden)
     }
 }
 
@@ -680,6 +700,9 @@ private struct SessionRow: View {
     /// Whether this row is part of an active multi-selection. Drives the
     /// accent background and the leading checkmark.
     var isMultiSelected: Bool = false
+    /// True while this session is in the freshly-imported flash window;
+    /// renders a short accent glow so the row is findable in the list.
+    var isImportHighlighted: Bool = false
     let isEditing: Bool
     let onSelect: () -> Void
     let onStartRename: () -> Void
@@ -791,6 +814,19 @@ private struct SessionRow: View {
             .padding(.vertical, 8)
             .background(SidebarRowBackground(isSelected: isSelected || isMultiSelected, isHovered: isHovered))
             .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous)
+                    .stroke(
+                        theme.accentColor.opacity(isImportHighlighted ? 0.8 : 0),
+                        lineWidth: 1.5
+                    )
+                    .shadow(
+                        color: theme.accentColor.opacity(isImportHighlighted ? 0.5 : 0),
+                        radius: 5
+                    )
+                    .allowsHitTesting(false)
+            )
+            .animation(.easeOut(duration: 0.6), value: isImportHighlighted)
             .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
             .onTapGesture {
                 onSelect()
