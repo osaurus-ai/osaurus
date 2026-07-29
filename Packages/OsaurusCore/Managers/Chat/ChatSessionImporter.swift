@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Parses conversation exports from other assistants (ChatGPT, Claude,
-//  Gemini, Grok, or a generic JSON schema) into `ChatSessionData` so they can be
+//  Gemini, Grok, Open WebUI, or a generic JSON schema) into `ChatSessionData` so they can be
 //  continued as native sessions. Pure data transformation — no I/O,
 //  no persistence; the coordinator owns file access and saving.
 //
@@ -19,6 +19,7 @@ public enum ChatSessionImporter {
         case claude = "claude"
         case gemini = "gemini"
         case grok = "grok"
+        case openWebUI = "openwebui"
         case generic = "import"
     }
 
@@ -38,7 +39,7 @@ public enum ChatSessionImporter {
                 return L("The file is not valid JSON.")
             case .unrecognizedFormat:
                 return L(
-                    "Unrecognized export format. Supported: ChatGPT conversations.json, Claude export JSON, Grok account export, Gemini Takeout MyActivity.json, or Osaurus generic import JSON."
+                    "Unrecognized export format. Supported: ChatGPT conversations.json, Claude export JSON, Grok account export, Gemini Takeout MyActivity.json, Open WebUI chat export, or Osaurus generic import JSON."
                 )
             case .noConversations:
                 return L("No importable conversations were found in the file.")
@@ -69,6 +70,8 @@ public enum ChatSessionImporter {
                 conversations = array.compactMap { parseClaude($0) }
             } else if array.contains(where: isGeminiActivityEntry) {
                 conversations = array.compactMap { parseGeminiActivity($0) }
+            } else if array.contains(where: { ($0["chat"] as? [String: Any])?["messages"] is [Any] }) {
+                conversations = array.compactMap { parseOpenWebUI($0) }
             } else {
                 throw ImportError.unrecognizedFormat
             }
@@ -357,6 +360,43 @@ public enum ChatSessionImporter {
             of: "\n{3,}", with: "\n\n", options: .regularExpression
         )
         return text
+    }
+
+    // MARK: - Open WebUI (Export chats)
+
+    /// Open WebUI's export is an array of chat records with the
+    /// conversation under a `chat` key. `chat.messages` is already
+    /// linearized along the current branch (the edit tree lives
+    /// separately in `chat.history`), with `role`/`content` exactly like
+    /// our generic schema and epoch-second timestamps.
+    private static func parseOpenWebUI(_ record: [String: Any]) -> ImportedConversation? {
+        guard
+            let chat = record["chat"] as? [String: Any],
+            let messages = chat["messages"] as? [[String: Any]]
+        else { return nil }
+
+        var turns: [ChatTurnData] = []
+        for message in messages {
+            guard
+                let roleString = message["role"] as? String,
+                let role = importedRole(from: roleString)
+            else { continue }
+            let content = genericText(from: message["content"])
+            guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            turns.append(
+                ChatTurnData(role: role, content: content, createdAt: flexibleDate(message["timestamp"]))
+            )
+        }
+        guard turns.contains(where: { $0.role == .user }) else { return nil }
+
+        return assemble(
+            format: .openWebUI,
+            title: (record["title"] as? String) ?? (chat["title"] as? String),
+            externalId: record["id"] as? String,
+            createdAt: flexibleDate(record["created_at"]),
+            updatedAt: flexibleDate(record["updated_at"]),
+            turns: turns
+        )
     }
 
     // MARK: - Grok (accounts.x.ai data export)

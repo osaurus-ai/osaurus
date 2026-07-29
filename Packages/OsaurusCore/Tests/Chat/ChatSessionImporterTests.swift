@@ -187,6 +187,54 @@ struct ChatSessionImporterTests {
         #expect(promptOnly.turns[0].role == .user)
     }
 
+    // MARK: - Open WebUI
+
+    private let openWebUIExport = """
+        [
+          {
+            "id": "owui-1",
+            "title": "Llama chat",
+            "created_at": 1750100000,
+            "updated_at": 1750100060,
+            "chat": {
+              "title": "Llama chat",
+              "models": ["llama3:latest"],
+              "messages": [
+                {"id": "m1", "parentId": null, "role": "user", "content": "What is a tensor?", "timestamp": 1750100000},
+                {"id": "m2", "parentId": "m1", "role": "assistant", "model": "llama3:latest", "content": "A multi-dimensional array with transformation rules.", "timestamp": 1750100060, "done": true}
+              ],
+              "history": {"currentId": "m2"}
+            }
+          }
+        ]
+        """
+
+    @Test func openWebUIExportMapsChatMessages() throws {
+        let imported = try ChatSessionImporter.parse(data: Data(openWebUIExport.utf8))
+
+        #expect(imported.count == 1)
+        let entry = try #require(imported.first)
+        #expect(entry.format == .openWebUI)
+        #expect(entry.session.title == "Llama chat")
+        #expect(entry.session.externalSessionKey == "openwebui:owui-1")
+        #expect(entry.session.turns.count == 2)
+        #expect(entry.session.turns[0].role == .user)
+        #expect(entry.session.turns[1].content == "A multi-dimensional array with transformation rules.")
+        #expect(entry.session.createdAt == Date(timeIntervalSince1970: 1_750_100_000))
+        #expect(entry.session.updatedAt == Date(timeIntervalSince1970: 1_750_100_060))
+    }
+
+    @Test func openWebUIRecordWithoutMessagesIsDropped() throws {
+        let export = """
+            [
+              {"id": "empty", "title": "No chat", "chat": {"messages": []}},
+              \(openWebUIExport.dropFirst().dropLast())
+            ]
+            """
+        let imported = try ChatSessionImporter.parse(data: Data(export.utf8))
+        #expect(imported.count == 1)
+    }
+
     // MARK: - Grok (account export)
 
     private let grokExport = """
