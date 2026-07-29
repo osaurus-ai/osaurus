@@ -78530,6 +78530,9 @@
         }
       }
     },
+    "Fireworks AI" : {
+
+    },
     "Fit" : {
       "localizations" : {
         "de" : {
@@ -81731,6 +81734,9 @@
         }
       }
     },
+    "Get a key from app.fireworks.ai." : {
+
+    },
     "Get a key from console.mistral.ai." : {
       "localizations" : {
         "de" : {
@@ -83174,6 +83180,9 @@
           }
         }
       }
+    },
+    "Go to the Fireworks AI API keys page" : {
+
     },
     "Go to the MiniMax platform API keys page" : {
       "localizations" : {
@@ -172585,6 +172594,9 @@
           }
         }
       }
+    },
+    "Serverless open models" : {
+
     },
     "Service: com.osaurus.storage" : {
       "localizations" : {
