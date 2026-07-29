@@ -64614,7 +64614,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在下方下载模型以进行选择。"
+            "value" : "在下方下载模型后即可选择。"
           }
         },
         "zh-Hant" : {
@@ -82732,7 +82732,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "为智能体提供专用的设备端模型，用于编写和运行 AppleScript 来自动化此 Mac——控制 Finder、Safari、邮件、备忘录和系统事件等应用。在「智能体」标签页中按智能体启用；在下方下载模型以使其可用。"
+            "value" : "为智能体提供专用的设备端模型，用于编写和运行 AppleScript 来自动化此 Mac——控制访达、Safari、邮件、备忘录和系统事件等应用。在「智能体」标签页中按智能体启用；在下方下载模型以使其可用。"
           }
         },
         "zh-Hant" : {
@@ -82875,7 +82875,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让助手获得你正在处理内容的环境感知。开启后，Osaurus 会在每次对话开始时，快速捕捉你打开的窗口与当前聚焦的输入框，定格为一帧快照，并将其作为背景上下文传给助手。该快照仅提取屏幕文字，不含截图，并会在发送给云端模型前经隐私过滤器清洗。"
+            "value" : "让助手获得你正在处理内容的环境感知。开启后，Osaurus 会在每次对话开始时，快速捕捉你打开的窗口与当前聚焦的输入框，定格为一帧快照，并将其作为背景上下文传给助手。该快照仅提取屏幕文字，不含截图，并会在发送给云端模型前先经隐私过滤器脱敏。"
           }
         },
         "zh-Hant" : {
@@ -87215,7 +87215,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每个生成的脚本在运行前如何经过把关。"
+            "value" : "每个生成的脚本在运行前的门控方式。"
           }
         },
         "zh-Hant" : {
@@ -105424,7 +105424,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "仅遮罩检测到的敏感文本"
+            "value" : "仅对检测到的敏感文本脱敏"
           }
         },
         "zh-Hant" : {
@@ -134055,7 +134055,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "按应用规则、应用白名单和云端视觉。"
+            "value" : "按应用划分的规则、应用允许列表和云端视觉。"
           }
         },
         "zh-Hant" : {
@@ -160060,7 +160060,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在 Finder 中显示"
+            "value" : "在访达中显示"
           }
         },
         "zh-Hant" : {
@@ -160094,7 +160094,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在 Finder 中显示此智能体的沙盒主目录。"
+            "value" : "在访达中显示此智能体的沙盒主目录。"
           }
         },
         "zh-Hant" : {
@@ -165577,7 +165577,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "沙盒命令将 ~/.osaurus/container/workspace/ 视为 /workspace — 这是它们唯一可写入的目录。在 Finder 中打开即可直接浏览或编辑文件。"
+            "value" : "沙盒命令将 ~/.osaurus/container/workspace/ 视为 /workspace — 这是它们唯一可写入的目录。在访达中打开即可直接浏览或编辑文件。"
           }
         },
         "zh-Hant" : {
@@ -175288,7 +175288,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "分享屏幕上下文"
+            "value" : "共享屏幕上下文"
           }
         },
         "zh-Hant" : {
@@ -176029,7 +176029,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在 Finder 中显示 agent-channels.json"
+            "value" : "在访达中显示 agent-channels.json"
           }
         },
         "zh-Hant" : {
@@ -178670,7 +178670,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "单驻留"
+            "value" : "单模型驻留"
           }
         },
         "zh-Hant" : {
