@@ -698,7 +698,11 @@ struct SwiftTransformersTokenizerLoaderTests {
         let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
 
         #expect(decoded.contains("Create a file named osaurus_live_probe.txt"), "Decoded: \(decoded)")
-        #expect(decoded.contains("capabilities_discover"), "Decoded: \(decoded)")
+        // This snapshot is the Default configuration agent. Its current
+        // contract exposes the consolidated osaurus_* surface directly and
+        // intentionally omits the custom-agent discovery gateway.
+        #expect(decoded.contains("osaurus_status"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("capabilities_discover"), "Decoded: \(decoded)")
     }
 
     @Test func loaderNormalizesRawGemmaSensitiveToolSchemas() throws {

@@ -528,11 +528,23 @@ struct OsaurusPersonasMigrationTests {
                     systemPrompt: "restore should roll back JSON only"
                 )
                 try seedLoadableAgentJSON(at: backupURL, agent: orphan)
+                // POSIX mode bits alone do not constrain a root-run local
+                // test process. The immutable flag makes backup consumption
+                // fail on macOS for both ordinary CI users and root while
+                // keeping the fixture readable for restore decoding.
+                try fm.setAttributes(
+                    [.immutable: NSNumber(value: true)],
+                    ofItemAtPath: backupURL.path
+                )
                 try fm.setAttributes(
                     [.posixPermissions: NSNumber(value: 0o555)],
                     ofItemAtPath: backupDirectory.path
                 )
                 defer {
+                    try? fm.setAttributes(
+                        [.immutable: NSNumber(value: false)],
+                        ofItemAtPath: backupURL.path
+                    )
                     try? fm.setAttributes(
                         [.posixPermissions: NSNumber(value: 0o755)],
                         ofItemAtPath: backupDirectory.path
