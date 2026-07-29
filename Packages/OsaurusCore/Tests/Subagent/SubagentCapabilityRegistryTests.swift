@@ -535,20 +535,22 @@ struct SubagentCapabilityRegistryTests {
         )
     }
 
-    @Test("effectiveBudgets: Default uses the global budgets; a custom agent its own; both normalized")
+    @Test("effectiveBudgets: every launcher shares parallel fan-out while custom agents keep other budgets")
     func effectiveBudgetsResolves() {
         let config = SubagentConfiguration(
             budgets: SubagentBudgets(
                 maxDelegateTokens: 4096,
                 maxDelegateTurns: 3,
-                maxElapsedSeconds: 240
+                maxElapsedSeconds: 240,
+                maxParallelSpawns: 7
             )
         )
         var custom = AgentSettings.defaultDisabled
         custom.subagentBudgets = SubagentBudgets(
             maxDelegateTokens: 1024,
             maxDelegateTurns: 2,
-            maxElapsedSeconds: 60
+            maxElapsedSeconds: 60,
+            maxParallelSpawns: 2
         )
 
         // Default / main chat → global budgets.
@@ -560,8 +562,9 @@ struct SubagentCapabilityRegistryTests {
         #expect(def.maxDelegateTokens == 4096)
         #expect(def.maxDelegateTurns == 3)
         #expect(def.maxElapsedSeconds == 240)
+        #expect(def.maxParallelSpawns == 7)
 
-        // Custom agent → its own budgets.
+        // Custom agent → its own non-concurrency budgets plus shared fan-out.
         let cus = SubagentToolVisibility.effectiveBudgets(
             isDefault: false,
             config: config,
@@ -570,15 +573,17 @@ struct SubagentCapabilityRegistryTests {
         #expect(cus.maxDelegateTokens == 1024)
         #expect(cus.maxDelegateTurns == 2)
         #expect(cus.maxElapsedSeconds == 60)
+        #expect(cus.maxParallelSpawns == 7)
 
-        // nil settings (custom) → normalized defaults.
-        #expect(
-            SubagentToolVisibility.effectiveBudgets(
-                isDefault: false,
-                config: config,
-                settings: nil
-            ) == SubagentBudgets().normalized
+        // Missing custom settings still inherit the shared fan-out while the
+        // other fields retain their normalized defaults.
+        let missing = SubagentToolVisibility.effectiveBudgets(
+            isDefault: false,
+            config: config,
+            settings: nil
         )
+        #expect(missing.maxDelegateTokens == SubagentBudgets().maxDelegateTokens)
+        #expect(missing.maxParallelSpawns == 7)
     }
 
     // MARK: - BUG E parity guard

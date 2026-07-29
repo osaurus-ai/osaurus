@@ -644,14 +644,19 @@ public enum SubagentToolVisibility {
     }
 
     /// The effective (clamped) `spawn` budgets for an agent. Default / main chat
-    /// uses the global budgets; a custom agent uses its own.
+    /// uses the global budgets. A custom agent keeps its own token / turn /
+    /// tool / elapsed limits, while parallel fan-out comes from the one shared
+    /// Server + Spawn concurrency setting.
     static func effectiveBudgets(
         isDefault: Bool,
         config: SubagentConfiguration,
         settings: AgentSettings?
     ) -> SubagentBudgets {
         let budgets = isDefault ? config.budgets : (settings?.subagentBudgets ?? SubagentBudgets())
-        return budgets.normalized
+        return SpawnBatchConcurrencyContract.applyingSharedLimit(
+            from: config,
+            to: budgets
+        )
     }
 
     /// The effective child-tool grant for spawn runs launched by an agent.

@@ -204,8 +204,8 @@ enum SubagentConfigurationStore {
     /// One linearizable Spawn-authority read. The two scoped generations
     /// advance only for fields that can affect Spawn execution:
     ///
-    /// - `spawnSharedRevision`: residency handoff / RAM-safety settings shared
-    ///   by every launcher;
+    /// - `spawnSharedRevision`: residency handoff / RAM-safety settings and the
+    ///   parallel fan-out limit shared by every launcher;
     /// - `spawnDefaultRevision`: the Default launcher's target/model pools,
     ///   Spawn permission, budgets, model override, and child-tool grant.
     ///

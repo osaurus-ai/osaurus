@@ -38,7 +38,7 @@ struct SpawnConfigurationUISourceTests {
         #expect(editor.contains("modelPickerCache.items.chatModelCandidates"))
     }
 
-    @Test("open custom-agent editor refreshes shared handoff state")
+    @Test("open custom-agent editor refreshes shared handoff and concurrency state")
     func customAgentEditorObservesGlobalSubagentChanges() throws {
         let agents = try Self.source("Views/Agent/AgentsView.swift")
 
@@ -53,6 +53,13 @@ struct SpawnConfigurationUISourceTests {
                 "if latest != globalSubagentConfig { globalSubagentConfig = latest }"
             )
         )
+        #expect(agents.contains("budgets: sharedSpawnBudgetsBinding"))
+        #expect(
+            agents.contains(
+                "SpawnBatchConcurrencyContract.applyingSharedLimit("
+            )
+        )
+        #expect(agents.contains("ServerController.applyAgentSpawnBatchLimit(requested)"))
     }
 
     @Test("shared global editors use revision-safe three-way store saves")
@@ -80,7 +87,9 @@ struct SpawnConfigurationUISourceTests {
 
         #expect(settings.contains("server.applyMainChatBatchLimit(from: saved)"))
         #expect(controller.contains("func applyMainChatBatchLimit("))
-        #expect(controller.contains("synchronizeMainChatBatchLimit(from: latest)"))
+        #expect(controller.contains("synchronizeSpawnBatchLimit(from: latest)"))
+        #expect(controller.contains("static func applyAgentSpawnBatchLimit("))
+        #expect(controller.contains("func applySpawnBatchLimit("))
         #expect(!controller.contains("subagentConfigurationCancellable"))
     }
 
@@ -114,7 +123,7 @@ struct SpawnConfigurationUISourceTests {
         #expect(editor.contains(#""Configured same-model local ceiling""#))
         #expect(editor.contains("Different local models run in serial model waves"))
         #expect(editor.contains("persist one configured limit"))
-        #expect(editor.contains("per-batch cap is additionally bounded"))
+        #expect(editor.contains("This agent and Server Concurrent Sessions persist"))
 
         #expect(concurrency.contains("same-model local waves"))
         #expect(concurrency.contains("Shared with Main Chat Spawn"))

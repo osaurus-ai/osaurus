@@ -457,7 +457,7 @@ struct SpawnConfigurationEditor: View {
                 "Main Chat Spawn and Server Concurrent Sessions persist one configured limit. Existing engine work and RAM-Safety can queue or split it into smaller waves at run time. Different local models run in serial model waves; remote jobs can overlap."
         }
         return
-            "This agent's per-batch cap is additionally bounded by the shared Server Concurrent Sessions ceiling. Existing engine work and RAM-Safety can queue or split it into smaller waves at run time. Different local models run in serial model waves; remote jobs can overlap."
+            "This agent and Server Concurrent Sessions persist one configured limit. Existing engine work and RAM-Safety can queue or split it into smaller waves at run time. Different local models run in serial model waves; remote jobs can overlap."
     }
 
     /// Reuse the runtime admission planner for the static settings-level

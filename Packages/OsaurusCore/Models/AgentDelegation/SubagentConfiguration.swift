@@ -976,6 +976,7 @@ struct SpawnSharedConfigurationAuthority: Equatable, Sendable {
     let localTextDelegationEnabled: Bool
     let ramSafetyPreflightEnabled: Bool
     let subagentCoexistenceEnabled: Bool
+    let maxParallelSpawns: Int
 }
 
 /// Spawn authority owned only by the Default / main-chat launcher.
@@ -1043,7 +1044,8 @@ extension SubagentConfiguration {
         SpawnSharedConfigurationAuthority(
             localTextDelegationEnabled: localTextDelegationEnabled,
             ramSafetyPreflightEnabled: ramSafetyPreflightEnabled,
-            subagentCoexistenceEnabled: subagentCoexistenceEnabled
+            subagentCoexistenceEnabled: subagentCoexistenceEnabled,
+            maxParallelSpawns: budgets.normalized.maxParallelSpawns
         )
     }
 

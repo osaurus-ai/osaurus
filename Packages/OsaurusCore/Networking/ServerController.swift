@@ -38,6 +38,24 @@ final class ServerController: ObservableObject {
         }
     }
 
+    /// Agent-detail views are not constructed with the Server environment
+    /// object. Route their explicit Spawn fan-out edits through the live
+    /// controller so persistence, RuntimeConfig invalidation, and every open
+    /// Server / Spawn settings surface observe one atomic value.
+    static func applyAgentSpawnBatchLimit(_ requested: Int) async {
+        let normalized = SpawnBatchConcurrencyContract.normalized(requested)
+        guard let controller = ServerControllerHolder.shared.controller else {
+            var settings = ServerRuntimeSettingsStore.snapshot()
+            settings.concurrency.maxConcurrentSequences = normalized
+            ServerRuntimeSettingsStore.save(settings)
+            SubagentConfigurationStore.mutate { configuration in
+                configuration.budgets.maxParallelSpawns = normalized
+            }
+            return
+        }
+        await controller.applySpawnBatchLimit(normalized)
+    }
+
     /// Convenience property for accessing port
     var port: Int {
         get { configuration.port }
@@ -261,17 +279,20 @@ final class ServerController: ObservableObject {
         )
         .receive(on: DispatchQueue.main)
         .sink { [weak self] _ in
-            let latest = ServerRuntimeSettingsStore.snapshot()
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                // Read only after reaching the owning actor. Capturing a
+                // snapshot before this hop can replay an older notification
+                // over a newer explicit Server or Spawn editor save.
+                let latest = ServerRuntimeSettingsStore.snapshot()
                 if self.runtimeSettings != latest {
                     self.runtimeSettings = latest
                 }
-                self.synchronizeMainChatBatchLimit(from: latest)
+                self.synchronizeSpawnBatchLimit(from: latest)
             }
         }
         if let existingRuntimeSettings {
-            synchronizeMainChatBatchLimit(from: existingRuntimeSettings)
+            synchronizeSpawnBatchLimit(from: existingRuntimeSettings)
         }
         // Keep exposeToNetwork in sync with Bonjour-enabled agents.
         // Only turn ON when a Bonjour agent requires it — never force
@@ -315,7 +336,7 @@ final class ServerController: ObservableObject {
     /// is fully up.
     func bootstrapRuntimeSettings() {
         self.runtimeSettings = ServerRuntimeSettingsStore.loadOrMigrate()
-        synchronizeMainChatBatchLimit(from: runtimeSettings)
+        synchronizeSpawnBatchLimit(from: runtimeSettings)
     }
 
     /// Applies an explicit edit from General -> Main Chat Spawn to the shared
@@ -325,22 +346,30 @@ final class ServerController: ObservableObject {
     func applyMainChatBatchLimit(
         from configuration: SubagentConfiguration
     ) async {
-        let requested = SpawnBatchConcurrencyContract.configuredLimit(
-            for: configuration
+        await applySpawnBatchLimit(
+            SpawnBatchConcurrencyContract.configuredLimit(for: configuration)
         )
+    }
+
+    /// Origin-aware shared edit used by both the built-in and custom-agent
+    /// Spawn editors. Runtime RAM admission and active occupancy may still
+    /// execute a smaller wave, but no second configured fan-out value remains.
+    func applySpawnBatchLimit(_ value: Int) async {
+        let requested = SpawnBatchConcurrencyContract.normalized(value)
         guard
             SpawnBatchConcurrencyContract.configuredLimit(
                 for: runtimeSettings
             ) != requested
-        else { return }
-        let updated = SpawnBatchConcurrencyContract.applyingMainChatLimit(
-            configuration,
-            to: runtimeSettings
-        )
+        else {
+            synchronizeSpawnBatchLimit(from: runtimeSettings)
+            return
+        }
+        var updated = runtimeSettings
+        updated.concurrency.maxConcurrentSequences = requested
         _ = await saveRuntimeSettings(updated)
     }
 
-    private func synchronizeMainChatBatchLimit(
+    private func synchronizeSpawnBatchLimit(
         from settings: VMLXServerRuntimeSettings
     ) {
         let current = SubagentConfigurationStore.snapshot()
@@ -411,6 +440,7 @@ final class ServerController: ObservableObject {
 
         runtimeSettings = settings
         ServerRuntimeSettingsStore.save(settings)
+        synchronizeSpawnBatchLimit(from: settings)
 
         let configChanged = projected != previousConfig
         let restartNeeded =

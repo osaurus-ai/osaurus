@@ -185,6 +185,23 @@ struct SubagentConfigurationStoreTests {
         )
     }
 
+    @Test("shared fan-out changes invalidate every launcher authority")
+    func sharedFanOutAdvancesSharedAuthority() async {
+        let lease = await acquireSubagentStoreSandbox("shared-spawn-fan-out-authority")
+        defer { lease.release() }
+
+        SubagentConfigurationStore.save(.default)
+        let before = SubagentConfigurationStore.snapshotWithSpawnAuthorityRevisions()
+        SubagentConfigurationStore.mutate { configuration in
+            configuration.budgets.maxParallelSpawns =
+                before.configuration.budgets.maxParallelSpawns + 1
+        }
+        let after = SubagentConfigurationStore.snapshotWithSpawnAuthorityRevisions()
+
+        #expect(after.spawnSharedRevision == before.spawnSharedRevision &+ 1)
+        #expect(after.spawnDefaultRevision == before.spawnDefaultRevision &+ 1)
+    }
+
     @Test("legacy names migrate once, persist UUIDs, and collisions fail closed")
     func legacyNameMigrationPersistsStableIDs() async throws {
         let lease = await acquireSubagentStoreSandbox("legacy-agent-name-migration")

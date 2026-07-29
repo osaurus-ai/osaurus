@@ -41,6 +41,30 @@ struct SpawnBatchConcurrencyContractTests {
         #expect(configuration.budgets.maxParallelSpawns == 6)
     }
 
+    @Test("custom agents preserve their other budgets and inherit shared fan-out")
+    func sharedLimitUpdatesCustomAgentBudgets() {
+        var configuration = SubagentConfiguration()
+        configuration.budgets.maxParallelSpawns = 5
+        let custom = SubagentBudgets(
+            maxDelegateTokens: 1_024,
+            maxDelegateTurns: 4,
+            maxToolCalls: 6,
+            maxElapsedSeconds: 75,
+            maxParallelSpawns: 2
+        )
+
+        let updated = SpawnBatchConcurrencyContract.applyingSharedLimit(
+            from: configuration,
+            to: custom
+        )
+
+        #expect(updated.maxDelegateTokens == 1_024)
+        #expect(updated.maxDelegateTurns == 4)
+        #expect(updated.maxToolCalls == 6)
+        #expect(updated.maxElapsedSeconds == 75)
+        #expect(updated.maxParallelSpawns == 5)
+    }
+
     @Test("automatic Server mode mirrors its safe resolved capacity")
     func automaticServerModeUsesResolvedCapacity() {
         var settings = VMLXServerRuntimeSettings()

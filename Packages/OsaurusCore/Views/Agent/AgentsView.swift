@@ -1221,6 +1221,45 @@ struct AgentDetailView: View {
     /// Orchestrator Handoff state while configuring an agent's spawn pool; the
     /// handoff toggle itself lives in Settings → Subagents.
     @State private var globalSubagentConfig: SubagentConfiguration = .default
+
+    /// Custom agents keep their own token / turn / tool / elapsed budgets, but
+    /// parallel fan-out is one shared Server + Spawn setting. The binding makes
+    /// the shared value visible immediately and routes an explicit agent-editor
+    /// change through the live Server controller before the debounced agent save.
+    private var sharedSpawnBudgetsBinding: Binding<SubagentBudgets> {
+        Binding(
+            get: {
+                SpawnBatchConcurrencyContract.applyingSharedLimit(
+                    from: globalSubagentConfig,
+                    to: subagentBudgets
+                )
+            },
+            set: { newValue in
+                let normalized = newValue.normalized
+                let requested = normalized.maxParallelSpawns
+                subagentBudgets = normalized
+
+                let live = SubagentConfigurationStore.snapshot()
+                guard
+                    SpawnBatchConcurrencyContract.configuredLimit(for: live)
+                        != requested
+                else {
+                    if globalSubagentConfig != live {
+                        globalSubagentConfig = live
+                    }
+                    return
+                }
+
+                let saved = SubagentConfigurationStore.mutate { configuration in
+                    configuration.budgets.maxParallelSpawns = requested
+                }
+                globalSubagentConfig = saved
+                Task { @MainActor in
+                    await ServerController.applyAgentSpawnBatchLimit(requested)
+                }
+            }
+        )
+    }
     /// Display mirror of `Agent.hostWorkspacePath`. Drives the Host Files row
     /// so the selected folder updates immediately after the user picks/clears
     /// it (the persisted bookmark on `Agent.hostWorkspaceBookmark` is the real
@@ -1530,6 +1569,13 @@ struct AgentDetailView: View {
         ) { _ in
             let latest = SubagentConfigurationStore.snapshot()
             if latest != globalSubagentConfig { globalSubagentConfig = latest }
+            let synchronized = SpawnBatchConcurrencyContract.applyingSharedLimit(
+                from: latest,
+                to: subagentBudgets
+            )
+            if synchronized != subagentBudgets {
+                subagentBudgets = synchronized
+            }
         }
         .onChange(of: selfSchedulingEnabled) { _, newValue in
             // The master Self-scheduling switch owns the on/off state, so the
@@ -3836,7 +3882,7 @@ struct AgentDetailView: View {
                 spawnableModelNames: $spawnableModelNames,
                 spawnableModelNotes: $spawnableModelNotes,
                 permissionDefaults: $subagentPermissions,
-                budgets: $subagentBudgets,
+                budgets: sharedSpawnBudgetsBinding,
                 toolAccess: $spawnToolAccess,
                 onChange: debouncedSave
             )
@@ -6019,6 +6065,7 @@ struct AgentDetailView: View {
     // MARK: - Data Loading
 
     private func loadAgentData() {
+        let globalSpawnConfiguration = SubagentConfigurationStore.snapshot()
         name = agent.name
         description = agent.description
         systemPrompt = agent.systemPrompt
@@ -6055,11 +6102,14 @@ struct AgentDetailView: View {
         appleScriptExecutionMode = agent.settings.appleScriptExecutionMode
         subagentPermissions = agent.settings.subagentPermissions
         loadedSubagentPermissions = agent.settings.subagentPermissions
-        subagentBudgets = agent.settings.subagentBudgets
+        subagentBudgets = SpawnBatchConcurrencyContract.applyingSharedLimit(
+            from: globalSpawnConfiguration,
+            to: agent.settings.subagentBudgets
+        )
         subagentModelOverrides = agent.settings.subagentModelOverrides
         spawnToolAccess = agent.settings.spawnToolAccess
         // Snapshot the global subagent config for the spawn-handoff warning.
-        globalSubagentConfig = SubagentConfigurationStore.snapshot()
+        globalSubagentConfig = globalSpawnConfiguration
         hostWorkspacePath = agent.hostWorkspacePath
         generativeGreetingsEnabled = agent.settings.generativeGreetingsEnabled
         // Hydrate the Personality editor with the resolved default

@@ -168,6 +168,16 @@ struct ServerControllerConfigLoadingTests {
                 .maxConcurrentSequences == 5
         )
 
+        await controller.applySpawnBatchLimit(4)
+        #expect(
+            controller.runtimeSettings.concurrency
+                .maxConcurrentSequences == 4
+        )
+        #expect(
+            SubagentConfigurationStore.snapshot().budgets
+                .maxParallelSpawns == 4
+        )
+
         var serverEdit = controller.runtimeSettings
         serverEdit.concurrency.maxConcurrentSequences = 3
         ServerRuntimeSettingsStore.save(serverEdit)

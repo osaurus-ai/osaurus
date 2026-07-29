@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  One configured concurrency value shared by Server -> Concurrent Sessions
-//  and the built-in main chat's Max subagents per batch control.
+//  and every Spawn editor's Max subagents per batch control.
 //
 
 import Foundation
@@ -18,7 +18,7 @@ enum SpawnBatchConcurrencyContract {
         min(max(value, bounds.lowerBound), bounds.upperBound)
     }
 
-    /// The configured main-chat fan-out represented by Server settings.
+    /// The configured Spawn fan-out represented by Server settings.
     ///
     /// An explicit Concurrent Sessions value is authoritative. In Automatic
     /// mode, mirror the resolved safe profile value without materializing an
@@ -43,8 +43,19 @@ enum SpawnBatchConcurrencyContract {
         normalized(configuration.budgets.maxParallelSpawns)
     }
 
-    /// Main Chat Spawn -> Server. Editing the built-in launcher's limit makes
-    /// the same number an explicit BatchEngine ceiling.
+    /// Preserve an agent's token / turn / tool / elapsed budgets while making
+    /// its parallel fan-out read the one shared Server + Spawn value.
+    static func applyingSharedLimit(
+        from configuration: SubagentConfiguration,
+        to budgets: SubagentBudgets
+    ) -> SubagentBudgets {
+        var updated = budgets
+        updated.maxParallelSpawns = configuredLimit(for: configuration)
+        return updated.normalized
+    }
+
+    /// Any Spawn editor -> Server. Editing a launcher's limit makes the same
+    /// number an explicit BatchEngine ceiling.
     static func applyingMainChatLimit(
         _ configuration: SubagentConfiguration,
         to settings: VMLXServerRuntimeSettings
@@ -56,9 +67,9 @@ enum SpawnBatchConcurrencyContract {
         return updated
     }
 
-    /// Server -> Main Chat Spawn. Custom-agent budgets remain independent
-    /// per-agent safety caps; only the built-in main chat shares the server
-    /// concurrency control.
+    /// Server -> every Spawn editor. The shared configuration is the persisted
+    /// source of truth for parallel fan-out; custom agents keep independent
+    /// token / turn / tool / elapsed budgets.
     static func applyingServerLimit(
         _ settings: VMLXServerRuntimeSettings,
         to configuration: SubagentConfiguration
