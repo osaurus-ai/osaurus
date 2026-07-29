@@ -634,9 +634,14 @@ struct ChatWarmupControllerRuntimeResidencyTests {
         #expect(controller.state == .warm)
         #expect(engine.requestCount == 1)
 
-        controller.reconcileRuntimeResidency(
-            selectedModel: session.selectedModel,
-            residentModelNames: ["different-model"]
+        controller.handleRuntimeResidencyChanged(
+            session: session,
+            snapshot: residencySnapshot(
+                names: ["different-model"],
+                revision: 1,
+                reason: .modelSwitch
+            ),
+            isSessionActive: false
         )
         #expect(controller.state == .cold)
 
@@ -652,6 +657,567 @@ struct ChatWarmupControllerRuntimeResidencyTests {
         // without touching the runtime.
         #expect(engine.requestCount == 2)
         #expect(controller.state == .warm)
+    }
+
+    @Test("focus-style rearm after external eviction remains speculative")
+    func focusRearmAfterExternalEvictionRemainsSpeculative() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.selectedModel = "org/test-model"
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "org/test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "org/test-model|focus-rearm"
+        )
+
+        let controller = ChatWarmupController()
+        controller.projectedLoadFeasibility = { _ in nil }
+        controller.hasResidentModelOther = { _ in false }
+        controller.chatActivationResidencySnapshot = { _ in
+            activationResidencySnapshot(
+                names: [],
+                revision: 1,
+                reason: .modelSwitch
+            )
+        }
+        controller.runtimeResidencySnapshot = {
+            residencySnapshot(names: [], revision: 1, reason: .modelSwitch)
+        }
+        controller.scheduleWarmup(session: session, debounce: .zero)
+
+        for _ in 0 ..< 100 {
+            if controller.state == .warm { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        await controller.awaitInFlightWarmup()
+        #expect(engine.requestCount == 1)
+        #expect(engine.lastRequest?.backgroundModelLoad == true)
+
+        // `ChatWindowManager.windowDidBecomeKey` reaches this same scheduling
+        // path through `ChatSession.notifySessionBecameActive()`. Deliberately
+        // leave the stale warm claim intact: the activation-time runtime check
+        // must clear it without relying on notification delivery ordering.
+        controller.handleSessionBecameActive(session: session, debounce: .zero)
+        await controller.awaitSessionActivation()
+        await controller.scheduledWarmupTaskForTests?.value
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.requestCount == 2)
+        #expect(engine.lastRequest?.backgroundModelLoad == true)
+        #expect(controller.state == .warm)
+    }
+
+    @Test("eviction during the focus debounce cannot reuse a stale warm fingerprint")
+    func focusEvictionDuringDebounceRearmsWarmup() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.selectedModel = "org/test-model"
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "org/test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "org/test-model|focus-debounce-eviction"
+        )
+
+        let controller = ChatWarmupController()
+        controller.projectedLoadFeasibility = { _ in nil }
+        controller.hasResidentModelOther = { _ in false }
+        controller.scheduleWarmup(session: session, debounce: .zero)
+        await controller.scheduledWarmupTaskForTests?.value
+        await controller.awaitInFlightWarmup()
+        #expect(engine.requestCount == 1)
+        #expect(controller.state == .warm)
+
+        // The activation snapshot still sees the selected model. Hold the
+        // following debounce, then make the execution-time snapshot report the
+        // idle eviction. Without the second reconciliation, fingerprint
+        // equality suppresses the required replacement request.
+        let snapshots = ResidentSnapshotSequence([
+            residencySnapshot(names: ["test-model"], revision: 1),
+            residencySnapshot(
+                names: [],
+                revision: 2,
+                reason: .idlePolicy,
+                idleDecisionID: 41
+            ),
+        ])
+        let debounce = WarmupDebounceGate()
+        controller.chatActivationResidencySnapshot = { _ in
+            ModelRuntimeChatActivationResidencySnapshot(
+                residency: await snapshots.next(),
+                recoverableIdleDecisionID: nil
+            )
+        }
+        controller.runtimeResidencySnapshot = { await snapshots.next() }
+        controller.scheduleDebounceSleep = { _ in await debounce.wait() }
+
+        controller.handleSessionBecameActive(session: session, debounce: .seconds(30))
+        await controller.awaitSessionActivation()
+        await debounce.waitUntilBlocked()
+        #expect(await snapshots.callCount() == 1)
+
+        await debounce.release()
+        await controller.scheduledWarmupTaskForTests?.value
+        await controller.awaitInFlightWarmup()
+
+        #expect(await snapshots.callCount() == 2)
+        #expect(engine.requestCount == 2)
+        #expect(controller.state == .warm)
+    }
+
+    @Test("matching idle decision after focus coalescing performs exactly one replacement warmup")
+    func focusRemovalAfterCoalescingRearmsExactlyOnce() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.selectedModel = "org/test-model"
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "org/test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "org/test-model|post-coalesce-removal"
+        )
+
+        let controller = ChatWarmupController()
+        controller.projectedLoadFeasibility = { _ in nil }
+        controller.hasResidentModelOther = { _ in false }
+        controller.scheduleWarmup(session: session, debounce: .zero)
+        await controller.scheduledWarmupTaskForTests?.value
+        await controller.awaitInFlightWarmup()
+        #expect(engine.requestCount == 1)
+        #expect(controller.state == .warm)
+
+        // Both focus snapshots report resident, so the activation request
+        // legitimately coalesces on the existing fingerprint. Only after that
+        // return does the runtime publish the completed removal. The active
+        // chat must receive one replacement warm-up instead of staying cold.
+        let snapshots = ResidentSnapshotSequence([
+            residencySnapshot(names: ["test-model"], revision: 10),
+            residencySnapshot(names: ["test-model"], revision: 10),
+            residencySnapshot(
+                names: [],
+                revision: 11,
+                reason: .idlePolicy,
+                idleDecisionID: 71
+            ),
+        ])
+        let debounce = WarmupDebounceGate()
+        controller.chatActivationResidencySnapshot = { _ in
+            ModelRuntimeChatActivationResidencySnapshot(
+                residency: await snapshots.next(),
+                recoverableIdleDecisionID: 71
+            )
+        }
+        controller.runtimeResidencySnapshot = { await snapshots.next() }
+        controller.scheduleDebounceSleep = { _ in await debounce.wait() }
+
+        controller.handleSessionBecameActive(session: session, debounce: .seconds(30))
+        await controller.awaitSessionActivation()
+        await debounce.waitUntilBlocked()
+        await debounce.release()
+        await controller.scheduledWarmupTaskForTests?.value
+        await controller.awaitInFlightWarmup()
+
+        #expect(await snapshots.callCount() == 2)
+        #expect(engine.requestCount == 1)
+        #expect(controller.state == .warm)
+
+        controller.scheduleDebounceSleep = { _ in }
+        controller.handleRuntimeResidencyChanged(
+            session: session,
+            snapshot: residencySnapshot(
+                names: [],
+                revision: 11,
+                reason: .idlePolicy,
+                idleDecisionID: 71
+            ),
+            isSessionActive: true
+        )
+        await controller.scheduledWarmupTaskForTests?.value
+        await controller.awaitInFlightWarmup()
+
+        #expect(await snapshots.callCount() == 3)
+        #expect(engine.requestCount == 2)
+        #expect(controller.state == .warm)
+
+        // Duplicate and stale delivery from the same runtime timeline cannot
+        // invalidate the replacement warm claim or create another warm-up.
+        controller.handleRuntimeResidencyChanged(
+            session: session,
+            snapshot: residencySnapshot(
+                names: [],
+                revision: 11,
+                reason: .idlePolicy,
+                idleDecisionID: 71
+            ),
+            isSessionActive: true
+        )
+        controller.handleRuntimeResidencyChanged(
+            session: session,
+            snapshot: residencySnapshot(
+                names: [],
+                revision: 9,
+                reason: .idlePolicy,
+                idleDecisionID: 71
+            ),
+            isSessionActive: true
+        )
+        await controller.scheduledWarmupTaskForTests?.value
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.requestCount == 2)
+        #expect(controller.state == .warm)
+    }
+
+    @Test("matching idle removal while focus is warming preserves the activation warmup")
+    func focusRemovalWhileWarmingPreservesScheduledWarmup() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.selectedModel = "org/test-model"
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "org/test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "org/test-model|focus-warming-removal"
+        )
+
+        let controller = ChatWarmupController()
+        controller.projectedLoadFeasibility = { _ in nil }
+        controller.hasResidentModelOther = { _ in false }
+        let debounce = WarmupDebounceGate()
+        controller.chatActivationResidencySnapshot = { _ in
+            activationResidencySnapshot(
+                names: ["test-model"],
+                revision: 10,
+                recoverableIdleDecisionID: 71
+            )
+        }
+        controller.runtimeResidencySnapshot = {
+            residencySnapshot(
+                names: [],
+                revision: 11,
+                reason: .idlePolicy,
+                idleDecisionID: 71
+            )
+        }
+        controller.scheduleDebounceSleep = { _ in await debounce.wait() }
+
+        controller.handleSessionBecameActive(session: session, debounce: .seconds(30))
+        await controller.awaitSessionActivation()
+        await debounce.waitUntilBlocked()
+        #expect(controller.state == .warming)
+
+        controller.handleRuntimeResidencyChanged(
+            session: session,
+            snapshot: residencySnapshot(
+                names: [],
+                revision: 11,
+                reason: .idlePolicy,
+                idleDecisionID: 71
+            ),
+            isSessionActive: true
+        )
+        #expect(controller.state == .warming)
+
+        await debounce.release()
+        await controller.scheduledWarmupTaskForTests?.value
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.requestCount == 1)
+        #expect(controller.state == .warm)
+    }
+
+    @Test("mismatched idle-decision identity does not rewarm")
+    func mismatchedIdleDecisionDoesNotRewarm() async {
+        await expectArmedRecoveryToStayCold(
+            reason: .idlePolicy,
+            idleDecisionID: 72,
+            isSessionActive: true
+        )
+    }
+
+    @Test("non-idle removal reasons do not rewarm")
+    func nonIdleRemovalReasonsDoNotRewarm() async {
+        let reasons: [ModelRuntimeResidencyChangeReason] = [
+            .initial,
+            .load,
+            .memoryPressure,
+            .handoff,
+            .modelSwitch,
+            .explicit,
+            .settingsClear,
+            .shutdown,
+        ]
+        for reason in reasons {
+            await expectArmedRecoveryToStayCold(
+                reason: reason,
+                idleDecisionID: 71,
+                isSessionActive: true
+            )
+        }
+    }
+
+    @Test("matching idle decision does not rewarm an inactive session")
+    func inactiveSessionDoesNotRewarm() async {
+        await expectArmedRecoveryToStayCold(
+            reason: .idlePolicy,
+            idleDecisionID: 71,
+            isSessionActive: false
+        )
+    }
+
+    @Test("duplicate and stale residency revisions are ignored")
+    func duplicateAndStaleRevisionsAreIgnored() async {
+        let fixture = await makeArmedRecoveryFixture()
+
+        for revision: UInt64 in [10, 9] {
+            fixture.controller.handleRuntimeResidencyChanged(
+                session: fixture.session,
+                snapshot: residencySnapshot(
+                    names: [],
+                    revision: revision,
+                    reason: .idlePolicy,
+                    idleDecisionID: 71
+                ),
+                isSessionActive: true
+            )
+        }
+        await fixture.controller.scheduledWarmupTaskForTests?.value
+        await fixture.controller.awaitInFlightWarmup()
+
+        #expect(fixture.engine.requestCount == 1)
+        #expect(fixture.controller.state == .warm)
+    }
+
+    @Test("focus-style rearm does not displace another resident model")
+    func focusRearmDoesNotDisplaceAnotherResidentModel() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.selectedModel = "org/test-model"
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "org/test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "org/test-model|focus-rearm"
+        )
+
+        let controller = ChatWarmupController()
+        controller.projectedLoadFeasibility = { _ in nil }
+        controller.hasResidentModelOther = { _ in false }
+        controller.scheduleWarmup(session: session, debounce: .zero)
+        for _ in 0 ..< 100 {
+            if controller.state == .warm { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        await controller.awaitInFlightWarmup()
+        #expect(engine.requestCount == 1)
+
+        controller.chatActivationResidencySnapshot = { _ in
+            activationResidencySnapshot(
+                names: ["different-model"],
+                revision: 1,
+                reason: .load
+            )
+        }
+        controller.runtimeResidencySnapshot = {
+            residencySnapshot(names: ["different-model"], revision: 1)
+        }
+        controller.hasResidentModelOther = { _ in true }
+        controller.handleSessionBecameActive(session: session, debounce: .zero)
+        await controller.awaitSessionActivation()
+        await controller.scheduledWarmupTaskForTests?.value
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.requestCount == 1)
+        #expect(controller.state == .cold)
+    }
+
+    @Test("focus-style activation preserves a valid resident warm claim")
+    func focusActivationPreservesResidentWarmClaim() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.selectedModel = "org/test-model"
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "org/test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "org/test-model|focus-resident"
+        )
+
+        let controller = ChatWarmupController()
+        controller.chatActivationResidencySnapshot = { _ in
+            activationResidencySnapshot(names: ["test-model"], revision: 1)
+        }
+        controller.runtimeResidencySnapshot = {
+            residencySnapshot(names: ["test-model"], revision: 1)
+        }
+        controller.scheduleWarmup(session: session, debounce: .zero)
+        for _ in 0 ..< 100 {
+            if controller.state == .warm { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        await controller.awaitInFlightWarmup()
+        #expect(engine.requestCount == 1)
+
+        controller.handleSessionBecameActive(session: session, debounce: .zero)
+        await controller.awaitSessionActivation()
+        await controller.scheduledWarmupTaskForTests?.value
+        await controller.awaitInFlightWarmup()
+
+        #expect(controller.state == .warm)
+        #expect(engine.requestCount == 1)
+    }
+
+    @Test("newest activation snapshot wins when an older runtime reply resumes last")
+    func newestActivationSnapshotWins() async throws {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.selectedModel = "org/test-model"
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "org/test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "org/test-model|activation-order"
+        )
+
+        let controller = ChatWarmupController()
+        controller.scheduleWarmup(session: session, debounce: .zero)
+        await controller.scheduledWarmupTaskForTests?.value
+        await controller.awaitInFlightWarmup()
+        #expect(controller.state == .warm)
+        #expect(engine.requestCount == 1)
+
+        let gate = ResidentSnapshotGate()
+        controller.chatActivationResidencySnapshot = { _ in await gate.snapshot() }
+        controller.runtimeResidencySnapshot = {
+            residencySnapshot(names: ["test-model"], revision: 2)
+        }
+
+        controller.handleSessionBecameActive(session: session, debounce: .zero)
+        await gate.waitForCallCount(1)
+        let staleActivation = try #require(controller.sessionActivationTaskForTests)
+
+        controller.handleSessionBecameActive(session: session, debounce: .zero)
+        await gate.waitForCallCount(2)
+        await gate.resume(
+            call: 2,
+            with: activationResidencySnapshot(names: ["test-model"], revision: 2)
+        )
+        await controller.awaitSessionActivation()
+        await controller.scheduledWarmupTaskForTests?.value
+
+        // The cancelled first runtime lookup deliberately ignores cooperative
+        // cancellation. Its late empty snapshot must not clear the valid warm
+        // claim or create another hidden warm-up.
+        await gate.resume(
+            call: 1,
+            with: activationResidencySnapshot(
+                names: [],
+                revision: 1,
+                reason: .modelSwitch
+            )
+        )
+        await staleActivation.value
+
+        #expect(controller.state == .warm)
+        #expect(engine.requestCount == 1)
+    }
+
+    @Test("reset invalidates a suspended activation snapshot")
+    func resetInvalidatesSuspendedActivationSnapshot() async throws {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.selectedModel = "org/test-model"
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "org/test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "org/test-model|activation-reset"
+        )
+
+        let controller = ChatWarmupController()
+        controller.scheduleWarmup(session: session, debounce: .zero)
+        await controller.scheduledWarmupTaskForTests?.value
+        await controller.awaitInFlightWarmup()
+        #expect(controller.state == .warm)
+
+        let gate = ResidentSnapshotGate()
+        controller.chatActivationResidencySnapshot = { _ in await gate.snapshot() }
+        controller.handleSessionBecameActive(session: session, debounce: .zero)
+        await gate.waitForCallCount(1)
+        let staleActivation = try #require(controller.sessionActivationTaskForTests)
+
+        controller.reset()
+        await gate.resume(
+            call: 1,
+            with: activationResidencySnapshot(
+                names: [],
+                revision: 1,
+                reason: .modelSwitch
+            )
+        )
+        await staleActivation.value
+
+        #expect(controller.state == .cold)
+        #expect(engine.requestCount == 1)
+        #expect(controller.sessionActivationTaskForTests == nil)
+    }
+
+    @Test("user Stop invalidates a suspended activation snapshot")
+    func userStopInvalidatesSuspendedActivationSnapshot() async throws {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.selectedModel = "org/test-model"
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "org/test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "org/test-model|activation-stop"
+        )
+
+        let controller = ChatWarmupController()
+        controller.scheduleWarmup(session: session, debounce: .zero)
+        await controller.scheduledWarmupTaskForTests?.value
+        await controller.awaitInFlightWarmup()
+
+        let gate = ResidentSnapshotGate()
+        controller.chatActivationResidencySnapshot = { _ in await gate.snapshot() }
+        controller.handleSessionBecameActive(session: session, debounce: .zero)
+        await gate.waitForCallCount(1)
+        let staleActivation = try #require(controller.sessionActivationTaskForTests)
+
+        controller.cancelPendingWorkForUserStop()
+        await gate.resume(
+            call: 1,
+            with: activationResidencySnapshot(
+                names: [],
+                revision: 1,
+                reason: .modelSwitch
+            )
+        )
+        await staleActivation.value
+
+        #expect(controller.state == .cold)
+        #expect(engine.requestCount == 1)
+        #expect(controller.sessionActivationTaskForTests == nil)
     }
 
     @Test("canonical and tail model identifiers preserve the warm claim")
@@ -677,13 +1243,81 @@ struct ChatWarmupControllerRuntimeResidencyTests {
         await controller.awaitInFlightWarmup()
         #expect(controller.state == .warm)
 
-        controller.reconcileRuntimeResidency(
-            selectedModel: session.selectedModel,
-            residentModelNames: ["test-model"]
+        controller.handleRuntimeResidencyChanged(
+            session: session,
+            snapshot: residencySnapshot(names: ["test-model"], revision: 1),
+            isSessionActive: false
         )
 
         #expect(controller.state == .warm)
         #expect(engine.requestCount == 1)
+    }
+
+    private func expectArmedRecoveryToStayCold(
+        reason: ModelRuntimeResidencyChangeReason,
+        idleDecisionID: UInt64?,
+        isSessionActive: Bool
+    ) async {
+        let fixture = await makeArmedRecoveryFixture()
+        fixture.controller.handleRuntimeResidencyChanged(
+            session: fixture.session,
+            snapshot: residencySnapshot(
+                names: [],
+                revision: 11,
+                reason: reason,
+                idleDecisionID: idleDecisionID
+            ),
+            isSessionActive: isSessionActive
+        )
+        await fixture.controller.scheduledWarmupTaskForTests?.value
+        await fixture.controller.awaitInFlightWarmup()
+
+        #expect(fixture.engine.requestCount == 1, "unexpected rewarm for \(reason.rawValue)")
+        #expect(fixture.controller.state == .cold, "unexpected state for \(reason.rawValue)")
+    }
+
+    private func makeArmedRecoveryFixture() async -> (
+        controller: ChatWarmupController,
+        session: WarmupTestSession,
+        engine: WarmupRecordingEngine
+    ) {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.selectedModel = "org/test-model"
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "org/test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "org/test-model|armed-idle-recovery"
+        )
+
+        let controller = ChatWarmupController()
+        controller.projectedLoadFeasibility = { _ in nil }
+        controller.hasResidentModelOther = { _ in false }
+        controller.chatActivationResidencySnapshot = { _ in
+            activationResidencySnapshot(
+                names: ["test-model"],
+                revision: 10,
+                recoverableIdleDecisionID: 71
+            )
+        }
+        controller.runtimeResidencySnapshot = {
+            residencySnapshot(names: ["test-model"], revision: 10)
+        }
+
+        controller.scheduleWarmup(session: session, debounce: .zero)
+        await controller.scheduledWarmupTaskForTests?.value
+        await controller.awaitInFlightWarmup()
+        controller.handleSessionBecameActive(session: session, debounce: .zero)
+        await controller.awaitSessionActivation()
+        await controller.scheduledWarmupTaskForTests?.value
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.requestCount == 1)
+        #expect(controller.state == .warm)
+        return (controller, session, engine)
     }
 }
 
@@ -759,6 +1393,38 @@ private final class WarmupTestSession: ChatWarmupSessionContext {
     func makeWarmupEngine() -> ChatEngineProtocol { engine }
 }
 
+private func residencySnapshot(
+    names: [String],
+    revision: UInt64,
+    reason: ModelRuntimeResidencyChangeReason = .load,
+    idleDecisionID: UInt64? = nil
+) -> ModelRuntimeResidencySnapshot {
+    ModelRuntimeResidencySnapshot(
+        names: names,
+        revision: revision,
+        reason: reason,
+        idleDecisionID: idleDecisionID
+    )
+}
+
+private func activationResidencySnapshot(
+    names: [String],
+    revision: UInt64,
+    reason: ModelRuntimeResidencyChangeReason = .load,
+    idleDecisionID: UInt64? = nil,
+    recoverableIdleDecisionID: UInt64? = nil
+) -> ModelRuntimeChatActivationResidencySnapshot {
+    ModelRuntimeChatActivationResidencySnapshot(
+        residency: residencySnapshot(
+            names: names,
+            revision: revision,
+            reason: reason,
+            idleDecisionID: idleDecisionID
+        ),
+        recoverableIdleDecisionID: recoverableIdleDecisionID
+    )
+}
+
 private final class WarmupRecordingEngine: ChatEngineProtocol, @unchecked Sendable {
     var lastRequest: ChatCompletionRequest?
     var requestCount = 0
@@ -798,6 +1464,71 @@ private actor FirstResidentPreflightGate {
 
     func releaseFirst() {
         continuation?.resume(returning: false)
+        continuation = nil
+    }
+}
+
+private actor ResidentSnapshotGate {
+    private var callCount = 0
+    private var continuations: [
+        Int: CheckedContinuation<ModelRuntimeChatActivationResidencySnapshot, Never>
+    ] = [:]
+
+    func snapshot() async -> ModelRuntimeChatActivationResidencySnapshot {
+        callCount += 1
+        let call = callCount
+        return await withCheckedContinuation { continuation in
+            continuations[call] = continuation
+        }
+    }
+
+    func waitForCallCount(_ expected: Int) async {
+        while callCount < expected {
+            await Task.yield()
+        }
+    }
+
+    func resume(call: Int, with snapshot: ModelRuntimeChatActivationResidencySnapshot) {
+        continuations.removeValue(forKey: call)?.resume(returning: snapshot)
+    }
+}
+
+private actor ResidentSnapshotSequence {
+    private var snapshots: [ModelRuntimeResidencySnapshot]
+    private var calls = 0
+
+    init(_ snapshots: [ModelRuntimeResidencySnapshot]) {
+        self.snapshots = snapshots
+    }
+
+    func next() -> ModelRuntimeResidencySnapshot {
+        calls += 1
+        precondition(!snapshots.isEmpty, "unexpected residency snapshot request")
+        return snapshots.removeFirst()
+    }
+
+    func callCount() -> Int { calls }
+}
+
+private actor WarmupDebounceGate {
+    private var blocked = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        blocked = true
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func waitUntilBlocked() async {
+        while !blocked {
+            await Task.yield()
+        }
+    }
+
+    func release() {
+        continuation?.resume()
         continuation = nil
     }
 }

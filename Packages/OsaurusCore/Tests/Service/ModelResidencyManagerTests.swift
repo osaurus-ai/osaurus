@@ -104,6 +104,42 @@ struct ModelResidencyManagerTests {
         #expect(snapshots.first?.unloadAt == nil)
     }
 
+    @Test("conditional cancel cannot erase a newer owner decision")
+    func conditionalCancelPreservesNewerOwnerDecision() async {
+        let sleeper = ResidencySleepRecorder()
+        let unloads = ResidencyUnloadRecorder()
+        let manager = ModelResidencyManager(sleep: { nanoseconds in
+            await sleeper.sleep(nanoseconds)
+        })
+
+        await manager.scheduleIdleUnload(
+            modelName: "ornith",
+            policy: .afterSeconds(30),
+            ownerDecisionID: 41,
+            unload: { name in await unloads.unload(name) },
+            leaseCount: { _ in 0 },
+            isResident: { _ in true }
+        )
+        await manager.scheduleIdleUnload(
+            modelName: "ornith",
+            policy: .afterSeconds(30),
+            ownerDecisionID: 42,
+            unload: { name in await unloads.unload(name) },
+            leaseCount: { _ in 0 },
+            isResident: { _ in true }
+        )
+        await Self.allowTasksToRun()
+
+        // A focus activation that observed decision 41 must not cancel the
+        // replacement installed by a later generation release.
+        await manager.cancel(modelName: "ornith", ownerDecisionID: 41)
+        #expect(await manager.snapshots().first?.ownerDecisionID == 42)
+
+        await sleeper.finishAll()
+        await Self.allowTasksToRun()
+        #expect(await unloads.names() == ["ornith"])
+    }
+
     @Test("never policy records residency without scheduling a timer")
     func neverPolicyDoesNotScheduleTimer() async {
         let sleeper = ResidencySleepRecorder()
@@ -538,5 +574,33 @@ struct ModelResidencyManagerTests {
 
         #expect(await unloads.names().isEmpty)
         #expect(await manager.snapshots().isEmpty)
+    }
+}
+
+@Suite("Model runtime residency publication")
+struct ModelRuntimeResidencyPublicationTests {
+    @Test("ledger publishes monotonic revisions with exact reason and decision identity")
+    func ledgerPreservesReasonAndDecisionIdentity() {
+        var ledger = ModelRuntimeResidencyLedger()
+
+        let loaded = ledger.record(names: ["zaya", "ornith"], reason: .load)
+        #expect(loaded.names == ["ornith", "zaya"])
+        #expect(loaded.revision == 1)
+        #expect(loaded.reason == .load)
+        #expect(loaded.idleDecisionID == nil)
+
+        let idleRemoval = ledger.record(
+            names: ["zaya"],
+            reason: .idlePolicy,
+            idleDecisionID: 77
+        )
+        #expect(idleRemoval.revision == 2)
+        #expect(idleRemoval.reason == .idlePolicy)
+        #expect(idleRemoval.idleDecisionID == 77)
+
+        let pressureRemoval = ledger.record(names: [], reason: .memoryPressure)
+        #expect(pressureRemoval.revision == 3)
+        #expect(pressureRemoval.reason == .memoryPressure)
+        #expect(pressureRemoval.idleDecisionID == nil)
     }
 }

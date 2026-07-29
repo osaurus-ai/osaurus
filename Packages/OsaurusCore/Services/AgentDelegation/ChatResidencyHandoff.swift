@@ -182,7 +182,7 @@ enum ChatResidencyHandoff {
 
         onPhase("unloading_chat_models", resident.joined(separator: ", "))
         for name in resident {
-            await ModelRuntime.shared.unload(name: name)
+            await ModelRuntime.shared.unload(name: name, reason: .handoff)
         }
         return ChatResidencyLease(unloadedModelNames: resident)
     }

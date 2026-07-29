@@ -2010,6 +2010,19 @@ struct RuntimePolicySourceTests {
             ensureShutdown.lowerBound < clearRuntime.lowerBound,
             "network/VM teardown must run before the abandonable MLX clearAll tail"
         )
+
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let clearAllBody = try Self.functionBody("func clearAll(quit:", in: runtime)
+        let clearCancel = try #require(
+            clearAllBody.range(of: "await cancelAllGenerations()")
+        )
+        let awaitIdleTeardown = try #require(
+            clearAllBody.range(of: "let idleTeardownTasks = idleResidencyTeardowns.values.map")
+        )
+        #expect(
+            clearCancel.lowerBound < awaitIdleTeardown.lowerBound,
+            "clearAll must cancel generations before awaiting pre-commit idle teardown tasks"
+        )
     }
 
     @Test("NIO server stop reports completion so the group isn't dropped mid-shutdown")
@@ -2730,9 +2743,8 @@ struct RuntimePolicySourceTests {
     func modelRuntimeWiresIdleResidencyAroundLeases() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
         let manager = try Self.source("Services/ModelRuntime/ModelResidencyManager.swift")
-
         #expect(runtime.contains("ModelResidencyManager.shared.markActive(modelName: modelName)"))
-        #expect(runtime.contains("ModelResidencyManager.shared.markActive(modelName: holder.name)"))
+        #expect(runtime.contains("await markModelActiveForResidency(holder.name)"))
         #expect(runtime.contains("private func scheduleIdleResidency(for modelName: String) async"))
         #expect(runtime.contains("ServerConfigurationStore.load()?.modelIdleResidencyPolicy"))
         #expect(runtime.contains("ModelResidencyManager.shared.scheduleIdleUnload"))
@@ -2741,6 +2753,45 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("await ModelResidencyManager.shared.cancelAll()"))
         #expect(manager.contains("guard await leaseCount(modelName) == 0"))
         #expect(manager.contains("guard await isResident(modelName)"))
+
+        let unloadBody = try Self.functionBody("func unload(", in: runtime)
+        let idleBranch = try #require(unloadBody.range(of: "if reason == .idlePolicy, let idleDecisionID"))
+        let finalDecisionGate = try #require(
+            unloadBody.range(
+                of: "guard inFlightIdleResidencyDecisions[name] == idleDecisionID else {",
+                range: idleBranch.upperBound ..< unloadBody.endIndex
+            )
+        )
+        let commit = try #require(
+            unloadBody.range(
+                of: "committedIdleResidencyDecisions[name] = idleDecisionID",
+                range: finalDecisionGate.upperBound ..< unloadBody.endIndex
+            )
+        )
+        let idleShutdown = try #require(
+            unloadBody.range(
+                of: "await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)",
+                range: commit.upperBound ..< unloadBody.endIndex
+            )
+        )
+        #expect(finalDecisionGate.lowerBound < commit.lowerBound)
+        #expect(commit.lowerBound < idleShutdown.lowerBound)
+
+        let markActiveBody = try Self.functionBody(
+            "private func markModelActiveForResidency(",
+            in: runtime
+        )
+        let committedWait = try #require(markActiveBody.range(of: "await teardown.task.value"))
+        let cancelPrecommit = try #require(
+            markActiveBody.range(
+                of: "inFlightIdleResidencyDecisions.removeValue(forKey: modelName)"
+            )
+        )
+        let managerMark = try #require(
+            markActiveBody.range(of: "await ModelResidencyManager.shared.markActive")
+        )
+        #expect(committedWait.lowerBound < managerMark.lowerBound)
+        #expect(cancelPrecommit.lowerBound < managerMark.lowerBound)
     }
 
     @Test("RuntimeConfig snapshot does not hop to MainActor before model load")
@@ -2770,11 +2821,87 @@ struct RuntimePolicySourceTests {
         #expect(health.contains("\"idle_unload_at\""))
         #expect(health.contains("\"idle_seconds_remaining\""))
         #expect(windows.contains("modelIdleResidencyPolicy"))
+        let focusBody = try Self.functionBody(
+            "fileprivate func windowDidBecomeKey(id: UUID)",
+            in: windows
+        )
+        #expect(focusBody.contains("windowStates[id]?.session.notifySessionBecameActive()"))
+        let activationBody = try Self.functionBody(
+            "func notifySessionBecameActive()",
+            in: try Self.source("Services/Chat/ChatSessionWarmup.swift")
+        )
+        #expect(activationBody.contains("handleSessionBecameActive(session: self)"))
+        let warmup = try Self.source("Services/Chat/ChatWarmupController.swift")
+        let activationRearmBody = try Self.functionBody(
+            "func handleSessionBecameActive(",
+            in: warmup
+        )
+        #expect(activationRearmBody.contains("sessionActivation = Task"))
+        #expect(
+            activationRearmBody.contains(
+                "let activation = await self.chatActivationResidencySnapshot(selectedModel)"
+            )
+        )
+        #expect(activationRearmBody.contains("self.sessionActivationID == id"))
+        #expect(activationRearmBody.contains("self.switchEpoch == epoch"))
+        #expect(activationRearmBody.contains("activation.residency"))
+        #expect(activationRearmBody.contains("allowDuplicateRevision: true"))
+        #expect(activationRearmBody.contains("activation.recoverableIdleDecisionID"))
+        #expect(activationRearmBody.contains("activationRecovery = ActivationRecovery("))
+        #expect(
+            activationRearmBody.contains(
+                "revalidateResidencyAfterDebounce: true"
+            )
+        )
+        let removalRecoveryBody = try Self.functionBody(
+            "func handleRuntimeResidencyChanged(",
+            in: warmup
+        )
+        #expect(removalRecoveryBody.contains("snapshot: ModelRuntimeResidencySnapshot"))
+        #expect(
+            removalRecoveryBody.contains(
+                "guard acceptResidencySnapshot(snapshot, selectedModel: selectedModel) else { return }"
+            )
+        )
+        #expect(removalRecoveryBody.contains("snapshot.reason == .idlePolicy"))
+        #expect(removalRecoveryBody.contains("recovery?.idleDecisionID == snapshot.idleDecisionID"))
+        #expect(removalRecoveryBody.contains("let matchesActivationIdleDecision = isSessionActive"))
+        #expect(
+            removalRecoveryBody.contains(
+                "if matchesActivationIdleDecision,\n            state == .warming,\n            scheduledActivationID != nil"
+            )
+        )
+        #expect(
+            removalRecoveryBody.contains(
+                "revalidateResidencyAfterDebounce: true"
+            )
+        )
+        let revisionGateBody = try Self.functionBody(
+            "private func acceptResidencySnapshot(",
+            in: warmup
+        )
+        #expect(revisionGateBody.contains("snapshot.revision < lastResidencyRevision"))
+        #expect(
+            revisionGateBody.contains(
+                "snapshot.revision == lastResidencyRevision, !allowDuplicateRevision"
+            )
+        )
+        #expect(revisionGateBody.contains("lastResidencyRevision = max("))
+        let activeWindowBody = try Self.functionBody(
+            "func isChatWindowActive(id: UUID)",
+            in: windows
+        )
+        #expect(activeWindowBody.contains("NSApp.isActive"))
+        #expect(activeWindowBody.contains("window.isVisible && window.isKeyWindow"))
+        let chatView = try Self.source("Views/Chat/ChatView.swift")
+        #expect(chatView.contains("ChatWindowManager.shared.isChatWindowActive"))
+        #expect(chatView.contains("warmupController.handleRuntimeResidencyChanged("))
         // Window close must branch on the full policy: immediate GC for
         // `.immediately`, short-grace acceleration for `.afterSeconds`
         // (chat-sourced models only, with a fire-time reopen guard), and no
         // action for `.never`.
         #expect(windows.contains("case .immediately:"))
+        #expect(windows.contains("await ModelRuntime.shared.unloadModelsNotIn(active)"))
         #expect(windows.contains("case .afterSeconds:"))
         #expect(windows.contains("accelerateIdleUnloadAfterChatClose"))
         #expect(

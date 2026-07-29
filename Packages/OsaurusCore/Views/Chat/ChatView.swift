@@ -683,12 +683,16 @@ final class ChatSession: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] note in
-            let residentModelNames = note.object as? [String] ?? []
+            guard let snapshot = note.object as? ModelRuntimeResidencySnapshot else { return }
             Task { @MainActor in
                 guard let self else { return }
-                self.warmupController.reconcileRuntimeResidency(
-                    selectedModel: self.selectedModel,
-                    residentModelNames: residentModelNames
+                let isSessionActive = self.windowState.map {
+                    ChatWindowManager.shared.isChatWindowActive(id: $0.windowId)
+                } ?? false
+                self.warmupController.handleRuntimeResidencyChanged(
+                    session: self,
+                    snapshot: snapshot,
+                    isSessionActive: isSessionActive
                 )
             }
         }
