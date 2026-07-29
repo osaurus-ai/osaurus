@@ -2,18 +2,21 @@
 
 ## Status
 
-`PARTIAL` — the current dirty campaign source passes the full token-free eval
-package and the broad Core regression matrix, but the fresh isolated
-Release-app UI matrix has not run yet. Authenticated remote-provider proof is
-also expected to remain blocked until a credentialed provider is available.
+`PARTIAL` — the current dirty campaign source passes the fresh six-suite
+focused Core lifecycle gate. The full token-free eval package and broad Core
+matrix remain historical until rerun on the frozen source, and the fresh
+isolated Release-app UI matrix has not run yet. Authenticated remote-provider
+proof is also expected to remain blocked until a credentialed provider is
+available.
 
-- Osaurus campaign HEAD: `69485fd09e9a2736c2f5680814ec6545b3a9be79`
-- Previous rebased upstream base:
-  `e294c616d3e0688d4fd5a26d0cd1c9f2e62252ab`.
-- Current upstream target:
-  `d6216d23b3577c7819c196ead25855bf144aefdd`; the final rebase and
-  post-rebase reruns are still pending.
-- vMLX Swift pin: `d7483a88668bb3ec70e0ea7f8423a5f684084c28`
+- Osaurus campaign HEAD: `a283c8a84b79df0807cf66ebb5a241bb6cb8adc9`
+- Current rebased upstream base:
+  `d6216d23b3577c7819c196ead25855bf144aefdd`.
+- Current upstream target after PR #2216:
+  `33f455e4ce7fac1e2ee130db4c951081907a926e`.
+- Post-rebase automated reruns and the Release-app UI matrix are still
+  pending.
+- vMLX Swift pin: `84612e143d2e51da865316dbc49167530a1717ad`
 - Worktree: `/private/tmp/osaurus-subagent-batching-complete-20260727`
 - Branch: `codex/subagent-batching-complete-20260727`
 
@@ -150,6 +153,7 @@ remain out of scope until their runtime consumers exist.
 | BATCH-23 | Spawn copy implied configured workers retained all enabled/direct-chat tools, but production correctly exposes only the enabled subset with audited cooperative abort-and-drain ownership. Plugin, MCP, sandbox-process, database, and knowledge tools do not yet meet that spawned-operation contract. | PARTIAL | Child tool ownership/product copy |
 | BATCH-24 | A second concurrent `TaskCoalescer.remove` can return while the first remover still owns a BatchEngine/Metal drain, allowing reentrant unload to continue before teardown completes. | BROKEN | Runtime teardown ownership |
 | BATCH-25 | Laguna XS 2.1 requires bundle-driven `top_k=20`. Current local 2L/4M/6M bundles contain 20, but older/mis-shipped bundles and effective chat/spawn request plumbing still need a truthful migration and live proof. | PARTIAL | Bundle metadata/defaults |
+| BATCH-26 | Custom-agent launcher and target authority used final-value equality only, so an edit followed by a value-identical restore during approval or post-admission validation could escape ABA detection. | BROKEN | Per-agent Spawn authority |
 
 ## Historical evidence — not current-head proof
 
@@ -303,11 +307,10 @@ Release-app matrix below.
   BATCH-18 above. The earlier focused passes therefore do not make this branch
   merge-ready. Exact regression tests and current-head Release proof are still
   required after those owning-layer fixes.
-- Still pending before any merge-ready claim: the final rebase onto current
-  `osaurus/main`, its post-rebase automated reruns, OsaurusEvals model-backed
-  scoring, and every applicable live Release-app row. The current dirty source
-  has rerun the full token-free eval package plus the broad related Core
-  suites on the previous rebased base.
+- Still pending before any merge-ready claim: post-rebase automated reruns,
+  OsaurusEvals model-backed scoring, and every applicable live Release-app
+  row. The prior automated evidence remains historical until it is repeated on
+  final rebased HEAD `a283c8a8`.
 - Final focused verification on clean rebased HEAD `69485fd0` passed
   **341/341** with zero failures and zero skips. It covers the twelve
   batching, permission, persistence, residency, diagnostics, runtime-policy,
@@ -400,6 +403,22 @@ Cleanup removed **18.9 GB** of obsolete DerivedData; the Data volume reported
 approximately **1.2 TiB free** afterward. The model assets reserved for the
 live matrix were not removed. This is storage housekeeping only, not runtime
 proof.
+
+The post-handoff adversarial audit found BATCH-26. The owning fix adds separate
+monotonic launcher, permission, and target generations per custom-agent UUID;
+presentation-only edits do not move them, while edit-and-restore changes still
+invalidate prepared direct and batch work. The exact changed-source
+`SpawnPermissionGateTests` gate passed **20/20**, zero failures/skips, in
+`/private/tmp/osaurus-subagent-authority-aba-20260729.xcresult`. This is
+focused automated evidence only; the full frozen-source matrix and live app
+remain pending.
+
+The fresh combined focused lifecycle gate then passed **115/115**, zero
+failures/skips, across `SubagentAdmissionTests`,
+`SubagentSessionAdmissionTests`, `SubagentResidencyTests`,
+`SpawnPermissionGateTests`, `ServerRuntimeSettingsStoreTests`, and
+`SubagentOperationCancellationTests`. Result bundle:
+`/private/tmp/osaurus-subagent-focused-20260729-0112.xcresult`.
 
 ## Current-head live Release-app matrix
 
@@ -495,3 +514,6 @@ whole lifecycle through final unlock and a follow-up.
 | 2026-07-28 channels + spawn prompt surface | `69485fd0` + campaign diff | Combined prompt/tool schema composition | PASS WITH NON-FAILING DIAGNOSTIC (automated only) | 1/1; `/private/tmp/osaurus-prompt-surface-cross-feature-20260728.xcresult`; bundle also records a Thread Performance Checker warning at `ModelManager.swift:1856` |
 | 2026-07-28 pinned vMLX rerun | `d7483a88668bb3ec70e0ea7f8423a5f684084c28` | `BatchEngineIntegrationTests` | PASS (engine automated only) | 28/28, zero failures, 4.768 s; serial 425.4 total tok/s, batched 640.3, 1.51x; not live Osaurus/model proof |
 | 2026-07-28 storage cleanup | local machine | Obsolete build data | COMPLETE (housekeeping only) | 18.9 GB obsolete DerivedData removed; Data volume approximately 1.2 TiB free; reserved live-test model assets preserved |
+| 2026-07-28 final upstream rebase | `a283c8a8` on `d6216d23` | Five campaign commits rebased over current Osaurus main | PASS (source ancestry only) | Conflict-free rebase; all four vMLX pins resolve to `d7483a88668bb3ec70e0ea7f8423a5f684084c28`; post-rebase automated and live rows remain pending |
+| 2026-07-29 per-agent Spawn authority audit | `a283c8a8` + campaign diff | Custom launcher/permission/target ABA generations | FIXED IN SOURCE / LIVE PENDING | `SpawnPermissionGateTests` 20/20, zero failures/skips; `/private/tmp/osaurus-subagent-authority-aba-20260729.xcresult`; full frozen-source and Release-app reruns remain pending |
+| 2026-07-29 fresh focused lifecycle gate | `a283c8a8` + campaign diff | Admission, post-wait residency, permission/authority, server migration, cancellation | PASS (automated only) | 115/115, zero failures/skips; `/private/tmp/osaurus-subagent-focused-20260729-0112.xcresult`; broad/eval/live rows remain pending |

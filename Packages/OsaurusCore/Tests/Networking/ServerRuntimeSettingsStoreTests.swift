@@ -646,6 +646,45 @@ struct ServerRuntimeSettingsStoreTests {
         )
     }
 
+    @Test @MainActor
+    func retiredLegacyConcurrencyDoesNotReturnAfterCanonicalFileLoss() async throws {
+        let dir = try makeTempDirectory()
+        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
+        let defaults = throwawayDefaults()
+
+        try await withOverriddenDirectory(dir) {
+            let previousLegacy = ServerConfigurationStore.overrideDirectory
+            ServerConfigurationStore.overrideDirectory = dir
+            defer { ServerConfigurationStore.overrideDirectory = previousLegacy }
+
+            var canonical = VMLXServerRuntimeSettings()
+            canonical.concurrency.maxConcurrentSequences = 3
+            ServerRuntimeSettingsStore.save(canonical)
+
+            defaults.set(6, forKey: key)
+            try FileManager.default.removeItem(
+                at: dir.appendingPathComponent("server-runtime.json")
+            )
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+
+            let recovered = ServerRuntimeSettingsStore.loadOrMigrate(
+                userDefaults: defaults
+            )
+            #expect(recovered.concurrency.maxConcurrentSequences == nil)
+
+            try Data("not-json".utf8).write(
+                to: dir.appendingPathComponent("server-runtime.json"),
+                options: [.atomic]
+            )
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+
+            let recoveredAfterCorruption = ServerRuntimeSettingsStore.loadOrMigrate(
+                userDefaults: defaults
+            )
+            #expect(recoveredAfterCorruption.concurrency.maxConcurrentSequences == nil)
+        }
+    }
+
     @Test func projectIntoLegacy_mirrorsRuntimeChangesIntoServerConfiguration() async throws {
         let base = ServerConfiguration.default
         var settings = VMLXServerRuntimeSettings()

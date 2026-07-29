@@ -965,3 +965,230 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         return result
     }
 }
+
+/// Process-wide settings that can change whether or how any local Spawn job
+/// reaches execution. Kept separate from the Default launcher's pool so a
+/// Default-only edit does not invalidate an in-flight custom-agent spawn.
+struct SpawnSharedConfigurationAuthority: Equatable, Sendable {
+    let localTextDelegationEnabled: Bool
+    let ramSafetyPreflightEnabled: Bool
+    let subagentCoexistenceEnabled: Bool
+}
+
+/// Spawn authority owned only by the Default / main-chat launcher.
+///
+/// Image and AppleScript settings deliberately do not appear here: saving
+/// either sibling editor cannot change the target, model, permission, budget,
+/// or tool grant of an already-approved Spawn operation.
+struct SpawnDefaultConfigurationAuthority: Equatable, Sendable {
+    let spawnableAgentIDs: [UUID]
+    let spawnableModelNames: [String]
+    let permission: SubagentPermissionPolicy
+    let budgets: SubagentBudgets
+    let modelOverride: String?
+    let toolAccess: SpawnToolAccess
+}
+
+/// Agent-owned launcher fields that can alter a custom agent's Spawn
+/// execution. This projection intentionally excludes presentation metadata
+/// and the Spawn permission: permission has its own scoped generation so the
+/// approval panel's single Ask -> Always Allow write can be recognized without
+/// weakening ABA protection for the rest of the launcher.
+struct SpawnCustomLauncherAgentAuthority: Equatable, Sendable {
+    let spawnDelegationEnabled: Bool
+    let spawnableAgentIDs: [UUID]
+    let spawnableModelNames: [String]
+    let budgets: SubagentBudgets
+    let modelOverride: String?
+    let toolAccess: SpawnToolAccess
+
+    init(_ agent: Agent) {
+        let settings = agent.settings
+        spawnDelegationEnabled = settings.spawnDelegationEnabled
+        spawnableAgentIDs = settings.spawnableAgentIDs
+        spawnableModelNames = settings.spawnableModelNames
+        budgets = settings.subagentBudgets.normalized
+        let rawOverride = settings.subagentModelOverrides[
+            SubagentCapabilityRegistry.spawn.id
+        ]
+        let trimmedOverride = rawOverride?.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        modelOverride = (trimmedOverride?.isEmpty ?? true)
+            ? nil : trimmedOverride
+        toolAccess = settings.spawnToolAccess
+    }
+}
+
+/// Per-agent monotonic generations captured together with an AgentManager
+/// snapshot. Separate axes retain semantic narrowing while detecting an
+/// edit-and-restore (ABA) during an asynchronous approval or preparation.
+struct SpawnAgentAuthorityRevisions: Equatable, Sendable {
+    let launcher: UInt64
+    let permission: UInt64
+    let target: UInt64
+}
+
+struct SpawnAgentAuthoritySnapshot: Sendable {
+    let agent: Agent?
+    let revisions: SpawnAgentAuthorityRevisions
+}
+
+extension SubagentConfiguration {
+    var spawnSharedAuthority: SpawnSharedConfigurationAuthority {
+        SpawnSharedConfigurationAuthority(
+            localTextDelegationEnabled: localTextDelegationEnabled,
+            ramSafetyPreflightEnabled: ramSafetyPreflightEnabled,
+            subagentCoexistenceEnabled: subagentCoexistenceEnabled
+        )
+    }
+
+    var spawnDefaultAuthority: SpawnDefaultConfigurationAuthority {
+        SpawnDefaultConfigurationAuthority(
+            spawnableAgentIDs: spawnableAgentIDs,
+            spawnableModelNames: spawnableModelNames,
+            permission: permissionDefaults.policy(
+                for: SubagentCapabilityRegistry.spawn.id
+            ),
+            budgets: budgets.normalized,
+            modelOverride: SubagentToolVisibility.effectiveSubagentModel(
+                capabilityId: SubagentCapabilityRegistry.spawn.id,
+                isDefault: true,
+                config: self,
+                settings: nil
+            ),
+            toolAccess: spawnToolAccess
+        )
+    }
+}
+
+/// Scoped monotonic generations captured with one configuration snapshot.
+/// Custom launchers do not depend on the Default launcher's pool, so their
+/// `defaultLauncher` generation is intentionally absent.
+struct SpawnConfigurationAuthorityRevision: Equatable, Sendable {
+    let shared: UInt64
+    let defaultLauncher: UInt64?
+}
+
+/// The effective Spawn authority of the launching agent. This is deliberately
+/// semantic rather than a whole-`Agent` comparison: presentation fields and
+/// sibling Image / AppleScript settings cannot change an already-selected
+/// Spawn job.
+struct SpawnLauncherAuthority: Equatable, Sendable {
+    let id: UUID
+    let exists: Bool
+    let localTextDelegationEnabled: Bool
+    let ramSafetyPreflightEnabled: Bool
+    let subagentCoexistenceEnabled: Bool
+    let spawnableAgentIDs: [UUID]
+    let spawnableModelNames: [String]
+    let budgets: SubagentBudgets
+    let modelOverride: String?
+    let toolAccess: SpawnToolAccess
+
+    init(
+        id: UUID,
+        isDefault: Bool,
+        configuration: SubagentConfiguration,
+        agent: Agent?
+    ) {
+        let settings = agent?.settings
+        self.id = id
+        self.exists = isDefault || agent != nil
+        self.localTextDelegationEnabled =
+            configuration.localTextDelegationEnabled
+        self.ramSafetyPreflightEnabled =
+            configuration.ramSafetyPreflightEnabled
+        self.subagentCoexistenceEnabled =
+            configuration.subagentCoexistenceEnabled
+        self.spawnableAgentIDs =
+            SubagentToolVisibility.effectiveSpawnableAgents(
+                isDefault: isDefault,
+                config: configuration,
+                perAgentEnabled:
+                    settings?.spawnDelegationEnabled ?? false,
+                perAgentTargets: settings?.spawnableAgentIDs ?? []
+            )
+        self.spawnableModelNames =
+            SubagentToolVisibility.effectiveSpawnableModels(
+                isDefault: isDefault,
+                config: configuration,
+                perAgentEnabled:
+                    settings?.spawnDelegationEnabled ?? false,
+                perAgentModelTargets:
+                    settings?.spawnableModelNames ?? []
+            )
+        self.budgets = SubagentToolVisibility.effectiveBudgets(
+            isDefault: isDefault,
+            config: configuration,
+            settings: settings
+        )
+        self.modelOverride =
+            SubagentToolVisibility.effectiveSubagentModel(
+                capabilityId: SubagentCapabilityRegistry.spawn.id,
+                isDefault: isDefault,
+                config: configuration,
+                settings: settings
+            )
+        self.toolAccess =
+            SubagentToolVisibility.effectiveSpawnToolAccess(
+                isDefault: isDefault,
+                config: configuration,
+                settings: settings
+            )
+    }
+}
+
+/// Target fields consumed by the bounded child runtime. Display metadata,
+/// Image / AppleScript configuration, and the target's own Spawn pool are not
+/// part of the child that is already being launched.
+struct SpawnTargetAuthority: Equatable, Sendable {
+    let id: UUID
+    let createdAt: Date
+    let systemPrompt: String
+    let defaultModel: String?
+    let temperature: Float?
+    let toolsEnabled: Bool
+    let toolSelectionMode: ToolSelectionMode?
+    let manualToolNames: [String]?
+    let memoryEnabled: Bool
+    let autonomousExec: AutonomousExecConfig?
+    let hostWorkspaceBookmark: Data?
+    let dbEnabled: Bool
+    let schedule: AgentScheduleSettings
+    let limits: AgentLimitsSettings
+    let renderChartEnabled: Bool
+    let speakEnabled: Bool
+    let searchMemoryEnabled: Bool
+    let webSearchEnabled: Bool
+    let selfSchedulingEnabled: Bool
+    let knowledgeEnabled: Bool
+    let knowledgeCollectionIDs: [UUID]
+    let knowledgeCuratorEnabled: Bool
+
+    init(_ agent: Agent) {
+        id = agent.id
+        createdAt = agent.createdAt
+        systemPrompt = agent.systemPrompt
+        defaultModel = agent.defaultModel
+        temperature = agent.temperature
+        toolsEnabled = agent.toolsEnabled
+        toolSelectionMode = agent.toolSelectionMode
+        manualToolNames = agent.manualToolNames
+        memoryEnabled = agent.memoryEnabled
+        autonomousExec = agent.autonomousExec
+        hostWorkspaceBookmark = agent.hostWorkspaceBookmark
+        dbEnabled = agent.settings.dbEnabled
+        schedule = agent.settings.schedule
+        limits = agent.settings.limits
+        renderChartEnabled = agent.settings.renderChartEnabled
+        speakEnabled = agent.settings.speakEnabled
+        searchMemoryEnabled = agent.settings.searchMemoryEnabled
+        webSearchEnabled = agent.settings.webSearchEnabled
+        selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
+        knowledgeEnabled = agent.settings.knowledgeEnabled
+        knowledgeCollectionIDs = agent.settings.knowledgeCollectionIds
+        knowledgeCuratorEnabled =
+            agent.settings.knowledgeCuratorEnabled
+    }
+}

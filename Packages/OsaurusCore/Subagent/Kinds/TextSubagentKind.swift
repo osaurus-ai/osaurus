@@ -26,7 +26,9 @@
 
 import Foundation
 
-final class TextSubagentKind: SubagentKind, @unchecked Sendable {
+final class TextSubagentKind:
+    SubagentKind, SubagentPostAdmissionResidencyPlanning, @unchecked Sendable
+{
     let capability = SubagentCapabilityRegistry.spawn
 
     /// What this spawn delegates to. The two tools map onto exactly one case
@@ -57,14 +59,16 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     ///
     /// The permission field itself is normalized out because choosing
     /// "Always Allow" legitimately persists that one field while the panel is
-    /// open. Every other launcher/target/config value remains part of the
-    /// semantic fingerprint. The configuration revision separately catches an
-    /// ABA save/restore of byte-identical global settings.
+    /// open. Spawn-relevant launcher, target, and shared residency values stay
+    /// in the semantic fingerprint. Scoped configuration revisions catch a
+    /// relevant ABA save/restore without treating an unrelated Image or
+    /// AppleScript editor save as a Spawn authority change.
     private struct AuthoritySnapshot: Sendable, Equatable {
-        let configurationRevision: UInt64
-        let configuration: SubagentConfiguration
-        let launcher: Agent?
-        let target: Agent?
+        let configurationRevision: SpawnConfigurationAuthorityRevision
+        let launcher: SpawnLauncherAuthority
+        let target: SpawnTargetAuthority?
+        let launcherAgentRevisions: SpawnAgentAuthorityRevisions
+        let targetAgentRevision: UInt64?
         let isDefaultLauncher: Bool
         let effectivePermission: SubagentPermissionPolicy
     }
@@ -130,7 +134,9 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// settings can change while a batch is queued. The batch scheduler must
     /// therefore use this current decision for both capacity and the one
     /// group-owned handoff instead of replaying the preparation snapshot.
-    func refreshedBatchResidencyPlan(for resolved: ResolvedModel) async throws -> ResidencyPlan {
+    func refreshedResidencyPlanAfterAdmission(
+        for resolved: ResolvedModel
+    ) async throws -> ResidencyPlan {
         guard resolved.isLocal else { return .none }
 
         // Eval runs deliberately bypass production residency. A production
@@ -523,23 +529,27 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     private func authoritySnapshot(
         for scope: SubagentScope
     ) async -> AuthoritySnapshot {
-        // Materialize the store before reading its monotonic revision. A cold
-        // load increments the revision once and must not look like a mutation.
+        // Capture configuration plus Spawn-scoped monotonic revisions in one
+        // linearizable read. A cold load must not look like a mutation.
         let storeSnapshot =
-            SubagentConfigurationStore.snapshotWithRevision()
-        var configuration = storeSnapshot.configuration
-        let revision = storeSnapshot.revision
+            SubagentConfigurationStore
+                .snapshotWithSpawnAuthorityRevisions()
+        let configuration = storeSnapshot.configuration
         let isDefault = scope.agentId == Agent.defaultId
         let targetAgentID: UUID? = {
             guard case .agent(let id) = target else { return nil }
             return id
         }()
-        var pair = await MainActor.run {
-            (
-                launcher: AgentManager.shared.agent(for: scope.agentId),
-                target: targetAgentID.flatMap {
-                    AgentManager.shared.agent(for: $0)
-                }
+        let pair = await MainActor.run {
+            let launcher = AgentManager.shared.spawnAuthoritySnapshot(
+                for: scope.agentId
+            )
+            let target = targetAgentID.map {
+                AgentManager.shared.spawnAuthoritySnapshot(for: $0)
+            }
+            return (
+                launcher: launcher,
+                target: target
             )
         }
 
@@ -547,35 +557,26 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             capabilityId: capability.id,
             isDefault: isDefault,
             config: configuration,
-            settings: pair.launcher?.settings
+            settings: pair.launcher.agent?.settings
         )
-
-        // "Always Allow" is the permission panel's own expected write. Strip
-        // only this capability's permission from semantic comparison; every
-        // other field remains authoritative.
-        configuration.permissionDefaults.setPolicy(
-            .ask,
-            for: capability.id
-        )
-        if var launcher = pair.launcher {
-            launcher.settings.subagentPermissions.setPolicy(
-                .ask,
-                for: capability.id
-            )
-            // AgentManager.update advances this metadata timestamp for the
-            // permission panel's own Ask → Always Allow persistence. All
-            // semantic launcher fields remain in the fingerprint; normalizing
-            // only the timestamp prevents that legitimate write from
-            // invalidating itself.
-            launcher.updatedAt = .distantPast
-            pair.launcher = launcher
-        }
 
         return AuthoritySnapshot(
-            configurationRevision: revision,
-            configuration: configuration,
-            launcher: pair.launcher,
-            target: pair.target,
+            configurationRevision: SpawnConfigurationAuthorityRevision(
+                shared: storeSnapshot.spawnSharedRevision,
+                defaultLauncher:
+                    isDefault
+                    ? storeSnapshot.spawnDefaultRevision
+                    : nil
+            ),
+            launcher: SpawnLauncherAuthority(
+                id: scope.agentId,
+                isDefault: isDefault,
+                configuration: configuration,
+                agent: pair.launcher.agent
+            ),
+            target: pair.target?.agent.map(SpawnTargetAuthority.init),
+            launcherAgentRevisions: pair.launcher.revisions,
+            targetAgentRevision: pair.target?.revisions.target,
             isDefaultLauncher: isDefault,
             effectivePermission: effectivePermission
         )
@@ -585,22 +586,44 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         _ approved: AuthoritySnapshot,
         current: AuthoritySnapshot
     ) -> Bool {
-        guard approved.configuration == current.configuration,
-            approved.launcher == current.launcher,
+        guard approved.launcher == current.launcher,
             approved.target == current.target,
-            approved.isDefaultLauncher == current.isDefaultLauncher
+            approved.launcherAgentRevisions.launcher
+                == current.launcherAgentRevisions.launcher,
+            approved.targetAgentRevision == current.targetAgentRevision,
+            approved.isDefaultLauncher == current.isDefaultLauncher,
+            approved.configurationRevision.shared
+                == current.configurationRevision.shared
         else { return false }
 
         // Direct approval may legitimately persist Ask → Always Allow exactly
-        // once. Any other global-store generation change is an ABA-safe
-        // authority mutation and must reject.
-        if approved.isDefaultLauncher,
-            approved.effectivePermission == .ask,
+        // once. The Default launcher writes that policy to the shared store,
+        // advancing only its scoped Spawn generation. A custom launcher writes
+        // the policy to its own Agent; `SpawnLauncherAuthority` deliberately
+        // excludes that permission field, so no shared-store generation moves.
+        if approved.effectivePermission == .ask,
             current.effectivePermission == .alwaysAllow
         {
-            return current.configurationRevision == approved.configurationRevision &+ 1
+            if approved.isDefaultLauncher {
+                guard let approvedDefault =
+                    approved.configurationRevision.defaultLauncher,
+                    let currentDefault =
+                        current.configurationRevision.defaultLauncher
+                else { return false }
+                return approvedDefault < UInt64.max
+                    && currentDefault == approvedDefault + 1
+            }
+            return current.configurationRevision.defaultLauncher
+                == approved.configurationRevision.defaultLauncher
+                && approved.launcherAgentRevisions.permission < UInt64.max
+                && current.launcherAgentRevisions.permission
+                    == approved.launcherAgentRevisions.permission + 1
         }
-        return current.configurationRevision == approved.configurationRevision
+        return current.configurationRevision.defaultLauncher
+            == approved.configurationRevision.defaultLauncher
+            && current.launcherAgentRevisions.permission
+                == approved.launcherAgentRevisions.permission
+            && current.effectivePermission == approved.effectivePermission
     }
 
     private var toolName: String {

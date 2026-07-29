@@ -81,6 +81,20 @@ public protocol SubagentKind: Sendable {
     func admissionClass(_ resolved: ResolvedModel) -> SubagentAdmissionClass
 }
 
+/// A local-model kind whose residency decision can become stale while it waits
+/// for process-wide admission.
+///
+/// `TextSubagentKind` is the production conformer. Keeping this separate from
+/// `SubagentKind` avoids imposing model-residency policy on browser, media, and
+/// other kinds that already own a different execution contract.
+protocol SubagentPostAdmissionResidencyPlanning: SubagentKind {
+    /// Re-read live residency and RAM-safety inputs after admission is held and
+    /// update the kind's handoff state to match the returned plan.
+    func refreshedResidencyPlanAfterAdmission(
+        for resolved: ResolvedModel
+    ) async throws -> ResidencyPlan
+}
+
 extension SubagentKind {
     public var feedTitle: String { capability.id }
 

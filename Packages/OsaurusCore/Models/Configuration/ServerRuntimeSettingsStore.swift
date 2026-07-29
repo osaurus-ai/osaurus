@@ -65,6 +65,8 @@ public enum ServerRuntimeSettingsStore {
         ".server-runtime-paged-cache-default-off-v3-migrated"
     private static let memorySafetyOwnedCacheDefaultsMigrationMarkerName =
         ".server-runtime-memory-safety-cache-defaults-v4-migrated"
+    private static let legacyConcurrencyMigrationMarkerName =
+        ".server-runtime-legacy-concurrency-migrated"
 
     // MARK: - Load / Save
 
@@ -80,6 +82,7 @@ public enum ServerRuntimeSettingsStore {
             if decoded != raw {
                 save(decoded)
             }
+            writeLegacyConcurrencyMigrationMarker()
             cachedSnapshot = decoded
             return decoded
         } catch {
@@ -93,17 +96,22 @@ public enum ServerRuntimeSettingsStore {
     /// returned value is always non-nil. `ServerConfigurationStore` is
     /// `@MainActor`, so this helper must be called from the main actor.
     @MainActor
-    public static func loadOrMigrate() -> VMLXServerRuntimeSettings {
+    public static func loadOrMigrate(
+        userDefaults: UserDefaults = .standard
+    ) -> VMLXServerRuntimeSettings {
         if let existing = load() { return existing }
         // Brand-new install (no settings file): run the freshly-migrated
         // settings through the same normalization as a loaded file so the
         // product defaults (q6 tied head, diffusion denoising budget, cache
         // repairs) are seeded on the very first launch, not only on reload.
+        let serverConfiguration = ServerConfigurationStore.load() ?? .default
         let migrated = normalizeLoadedSettings(
-            migratedFromLegacy(
-                serverConfiguration: ServerConfigurationStore.load() ?? .default,
-                userDefaults: .standard
-            )
+            legacyConcurrencyMigrationCompleted
+                ? resetDefaults(serverConfiguration: serverConfiguration)
+                : migratedFromLegacy(
+                    serverConfiguration: serverConfiguration,
+                    userDefaults: userDefaults
+                )
         )
         save(migrated)
         return migrated
@@ -119,6 +127,7 @@ public enum ServerRuntimeSettingsStore {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(settings).write(to: url, options: [.atomic])
+            writeLegacyConcurrencyMigrationMarker()
             cachedSnapshot = settings
             NotificationCenter.default.post(
                 name: didSaveNotification,
@@ -151,10 +160,14 @@ public enum ServerRuntimeSettingsStore {
             cachedSnapshot = normalized
             return normalized
         }
-        let fallback = migratedFromLegacy(
-            serverConfiguration: diskBackedServerConfiguration() ?? .default,
-            userDefaults: .standard
-        )
+        let serverConfiguration = diskBackedServerConfiguration() ?? .default
+        let fallback =
+            legacyConcurrencyMigrationCompleted
+            ? resetDefaults(serverConfiguration: serverConfiguration)
+            : migratedFromLegacy(
+                serverConfiguration: serverConfiguration,
+                userDefaults: .standard
+            )
         cachedSnapshot = fallback
         return fallback
     }
@@ -714,6 +727,20 @@ public enum ServerRuntimeSettingsStore {
 
     private nonisolated static func memorySafetyOwnedCacheDefaultsMigrationMarkerURL() -> URL {
         directoryURL().appendingPathComponent(memorySafetyOwnedCacheDefaultsMigrationMarkerName)
+    }
+
+    private nonisolated static var legacyConcurrencyMigrationCompleted: Bool {
+        FileManager.default.fileExists(atPath: legacyConcurrencyMigrationMarkerURL().path)
+    }
+
+    private nonisolated static func legacyConcurrencyMigrationMarkerURL() -> URL {
+        directoryURL().appendingPathComponent(legacyConcurrencyMigrationMarkerName)
+    }
+
+    private nonisolated static func writeLegacyConcurrencyMigrationMarker() {
+        let url = legacyConcurrencyMigrationMarkerURL()
+        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
+        try? Data().write(to: url, options: [.atomic])
     }
 
     private nonisolated static func legacyConfigurationFileURL() -> URL {

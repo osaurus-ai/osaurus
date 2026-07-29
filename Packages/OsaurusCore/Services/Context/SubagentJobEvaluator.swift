@@ -1009,8 +1009,12 @@ public enum SubagentJobEvaluator {
     /// delay from tool start is not a valid "mid-run" proof: under full-suite
     /// contention it can land during target validation or approval. Scripted
     /// jobs that request a rendezvous therefore start the delay only after the
-    /// expected child runs have entered. A bounded fallback still exercises
-    /// Stop if a regression prevents the children from entering at all.
+    /// expected child runs have entered. There is deliberately no wall-clock
+    /// fallback: firing before run entry changes the contract under test from
+    /// mid-run child settlement to pre-execution cancellation. If execution
+    /// returns before entry, the caller cancels this waiter; if execution
+    /// itself hangs before entry, the eval's outer time limit reports that
+    /// distinct regression.
     private static func scheduleBatchInterrupt(
         afterMs: Int?,
         toolCallId: String,
@@ -1025,10 +1029,8 @@ public enum SubagentJobEvaluator {
             )
         }
         return Task {
-            let entryDeadline = Date().addingTimeInterval(3)
             while !Task.isCancelled,
-                probe.arrivals < requiredRunArrivals,
-                Date() < entryDeadline
+                probe.arrivals < requiredRunArrivals
             {
                 try? await Task.sleep(nanoseconds: 5_000_000)
             }

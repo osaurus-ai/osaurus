@@ -287,12 +287,14 @@ struct SubagentOperationCancellationTests {
     }
 
     private func waitUntil(
+        timeout: Duration = .seconds(2),
         _ predicate: @escaping @Sendable () async -> Bool
     ) async {
-        var spins = 4_000
-        while !(await predicate()), spins > 0 {
-            await Task.yield()
-            spins -= 1
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            if await predicate() { return }
+            try? await Task.sleep(for: .milliseconds(5))
         }
         #expect(await predicate())
     }

@@ -286,6 +286,81 @@ struct SpawnPermissionGateTests {
         #expect((await probe.snapshot()).requests.isEmpty)
     }
 
+    @Test("agent Spawn authority generations are scoped and ABA-safe")
+    @MainActor
+    func agentSpawnAuthorityGenerationsAreScoped() async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent(
+                    "osaurus-spawn-agent-authority-revisions-\(UUID().uuidString)",
+                    isDirectory: true
+                )
+            try? FileManager.default.createDirectory(
+                at: root,
+                withIntermediateDirectories: true
+            )
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            AgentManager.shared.refresh()
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                AgentManager.shared.refresh()
+                try? FileManager.default.removeItem(at: root)
+            }
+
+            let original = Agent(
+                name: "ScopedAuthority",
+                description: "before",
+                systemPrompt: "stable"
+            )
+            AgentStore.save(original)
+            AgentManager.shared.refresh()
+            let baseline = AgentManager.shared.spawnAuthoritySnapshot(
+                for: original.id
+            ).revisions
+
+            var presentationOnly = original
+            presentationOnly.description = "after"
+            AgentManager.shared.update(presentationOnly)
+            let afterPresentation = AgentManager.shared
+                .spawnAuthoritySnapshot(for: original.id).revisions
+            #expect(afterPresentation == baseline)
+
+            var launcherChanged = presentationOnly
+            launcherChanged.settings.spawnDelegationEnabled = true
+            AgentManager.shared.update(launcherChanged)
+            AgentManager.shared.update(presentationOnly)
+            let afterLauncherABA = AgentManager.shared
+                .spawnAuthoritySnapshot(for: original.id).revisions
+            #expect(afterLauncherABA.launcher == baseline.launcher + 2)
+            #expect(afterLauncherABA.permission == baseline.permission)
+            #expect(afterLauncherABA.target == baseline.target)
+
+            var denied = presentationOnly
+            denied.settings.subagentPermissions.setPolicy(
+                .deny,
+                for: SubagentCapabilityRegistry.spawn.id
+            )
+            AgentManager.shared.update(denied)
+            AgentManager.shared.update(presentationOnly)
+            let afterPermissionABA = AgentManager.shared
+                .spawnAuthoritySnapshot(for: original.id).revisions
+            #expect(afterPermissionABA.launcher == afterLauncherABA.launcher)
+            #expect(afterPermissionABA.permission == baseline.permission + 2)
+            #expect(afterPermissionABA.target == baseline.target)
+
+            var targetChanged = presentationOnly
+            targetChanged.systemPrompt = "transient"
+            AgentManager.shared.update(targetChanged)
+            AgentManager.shared.update(presentationOnly)
+            let afterTargetABA = AgentManager.shared
+                .spawnAuthoritySnapshot(for: original.id).revisions
+            #expect(afterTargetABA.launcher == afterLauncherABA.launcher)
+            #expect(afterTargetABA.permission == afterPermissionABA.permission)
+            #expect(afterTargetABA.target == baseline.target + 2)
+        }
+    }
+
     @Test("direct spawn revalidates Ask authority and execution authority")
     @MainActor
     func directSpawnRevalidatesMutableAuthority() async throws {
@@ -370,6 +445,78 @@ struct SpawnPermissionGateTests {
                     "changed while approval was open"
                 )
             )
+
+            // A target edit followed by a value-identical restore is still an
+            // authority change. The prepared run must not accept the restored
+            // final value after observing an intermediate target generation.
+            SubagentConfigurationStore.save(askConfig)
+            let targetABA = await SpawnPermissionGate.$promptOverride
+                .withValue(
+                    { _ in
+                        await MainActor.run {
+                            var transient = target
+                            transient.systemPrompt = "transient"
+                            AgentManager.shared.update(transient)
+                            AgentManager.shared.update(target)
+                        }
+                        return .allowOnce
+                    }
+                ) {
+                    await SubagentSession.prepare(
+                        TextSubagentKind(
+                            agentID: target.id,
+                            input: "Return one bounded result.",
+                            modelOverride: "eval/direct-authority"
+                        ),
+                        tool: SubagentCapabilityRegistry.spawnAgentToolName,
+                        scope: scope
+                    )
+                }
+            guard case .failure(let targetABAEnvelope) = targetABA else {
+                Issue.record("Expected target edit-and-restore during Ask to reject")
+                return
+            }
+            #expect(ToolEnvelope.isError(targetABAEnvelope))
+            #expect(
+                ToolEnvelope.failureMessage(targetABAEnvelope).contains(
+                    "changed while approval was open"
+                )
+            )
+
+            // Image and AppleScript share the same persisted configuration
+            // document but cannot alter this Spawn target, budget, model, or
+            // permission. Their editor save must not invalidate the approval.
+            SubagentConfigurationStore.save(askConfig)
+            let unrelatedApproval = await SpawnPermissionGate.$promptOverride
+                .withValue(
+                    { _ in
+                        var unrelated = askConfig
+                        unrelated.imageDelegationEnabled = true
+                        unrelated.defaultImageGenerationModelId =
+                            "image/unrelated"
+                        unrelated.appleScriptDelegationEnabled = true
+                        unrelated.defaultAppleScriptModelId =
+                            "applescript/unrelated"
+                        SubagentConfigurationStore.save(unrelated)
+                        return .allowOnce
+                    }
+                ) {
+                    await SubagentSession.prepare(
+                        TextSubagentKind(
+                            agentID: target.id,
+                            input: "Return one bounded result.",
+                            modelOverride: "eval/direct-authority"
+                        ),
+                        tool: SubagentCapabilityRegistry.spawnAgentToolName,
+                        scope: scope
+                    )
+                }
+            guard case .ready = unrelatedApproval else {
+                Issue.record(
+                    "Expected unrelated Image/AppleScript save to retain direct Spawn approval"
+                )
+                return
+            }
 
             // The permission panel's own Ask → Always Allow persistence is an
             // expected write and must not be mistaken for an authority change.
@@ -870,6 +1017,76 @@ struct SpawnPermissionGateTests {
         #expect(root["kind"] as? String == "rejected")
     }
 
+    @Test("batch ignores unrelated Image and AppleScript saves during Ask")
+    func batchAllowsUnrelatedConfigurationSaveDuringAsk() async throws {
+        let lease = await acquireSubagentStoreSandbox(
+            "spawn-permission-batch-unrelated-authority"
+        )
+        defer { lease.release() }
+
+        var permissions = SubagentPermissionDefaults()
+        permissions.setPolicy(.ask, for: SubagentCapabilityRegistry.spawn.id)
+        let configuration = SubagentConfiguration(
+            permissionDefaults: permissions,
+            budgets: SubagentBudgets(maxParallelSpawns: 1),
+            spawnableModelNames: ["allowed/model"]
+        )
+        SubagentConfigurationStore.save(configuration)
+
+        let probe = BatchAuthorityProbe()
+        let prompt = SpawnPromptProbe()
+        let overrides = SpawnBatchTool.EvaluationOverrides(
+            kindForJob: { _ in BatchAuthorityKind(probe: probe) },
+            maxParallel: 1,
+            localParallelism: 1,
+            localAdmissionPlan: Self.remoteAdmissionPlan()
+        )
+        let callID =
+            "spawn-batch-unrelated-authority-\(UUID().uuidString)"
+        let result = try await ChatExecutionContext.$currentSessionId.withValue(
+            "spawn-batch-unrelated-authority"
+        ) {
+            try await ChatExecutionContext.$currentToolCallId.withValue(callID) {
+                try await ChatExecutionContext.$currentAgentId.withValue(
+                    Agent.defaultId
+                ) {
+                    try await SpawnBatchTool.$evaluationOverrides.withValue(
+                        overrides
+                    ) {
+                        try await SpawnPermissionGate.$promptOverride.withValue(
+                            { request in
+                                let choice = await prompt.record(
+                                    request,
+                                    returning: .allowOnce
+                                )
+                                var unrelated = configuration
+                                unrelated.imageDelegationEnabled = true
+                                unrelated.defaultImageGenerationModelId =
+                                    "image/unrelated"
+                                unrelated.appleScriptDelegationEnabled = true
+                                unrelated.defaultAppleScriptModelId =
+                                    "applescript/unrelated"
+                                SubagentConfigurationStore.save(unrelated)
+                                return choice
+                            }
+                        ) {
+                            try await SpawnBatchTool().execute(
+                                argumentsJSON: Self.batchArguments()
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        SubagentFeedRegistry.shared.removeNow(toolCallId: callID)
+
+        let execution = await probe.snapshot()
+        #expect((await prompt.snapshot()).requests.count == 1)
+        #expect(execution.preparations == 2)
+        #expect(execution.runs == 1)
+        #expect(!ToolEnvelope.isError(result))
+    }
+
     @Test("batch accepts its own Ask to Always Allow persistence once")
     func batchAcceptsAlwaysAllowPersistence() async throws {
         let lease = await acquireSubagentStoreSandbox(
@@ -1082,9 +1299,16 @@ struct SpawnPermissionGateTests {
                     probe: probe,
                     onPreparation: { ordinal in
                         guard ordinal == 2 else { return }
-                        // Save byte-identical authority while the second
-                        // preparation is in flight. Value equality cannot
-                        // detect this ABA; the monotonic store revision must.
+                        // Change and restore Spawn-relevant authority while the
+                        // second preparation is in flight. Final value equality
+                        // cannot detect this ABA; the scoped monotonic Spawn
+                        // revision must.
+                        var changed = configuration
+                        changed.budgets = SubagentBudgets(
+                            maxDelegateTokens: 4_096,
+                            maxParallelSpawns: 1
+                        )
+                        SubagentConfigurationStore.save(changed)
                         SubagentConfigurationStore.save(configuration)
                     }
                 )
@@ -1263,9 +1487,9 @@ struct SpawnPermissionGateTests {
         }
     }
 
-    @Test("target-agent edit during post-Ask preparation rejects before run")
+    @Test("target-agent edit and restore during post-Ask preparation rejects before run")
     @MainActor
-    func batchRejectsTargetEditDuringRevalidation() async throws {
+    func batchRejectsTargetABADuringRevalidation() async throws {
         try await SandboxTestLock.runWithStoragePaths {
             let root = FileManager.default.temporaryDirectory
                 .appendingPathComponent(
@@ -1321,8 +1545,9 @@ struct SpawnPermissionGateTests {
                                 guard var current =
                                     AgentManager.shared.agent(for: target.id)
                                 else { return }
-                                current.description = "after"
+                                current.systemPrompt = "after"
                                 AgentManager.shared.update(current)
+                                AgentManager.shared.update(target)
                             }
                         }
                     )
@@ -1369,8 +1594,8 @@ struct SpawnPermissionGateTests {
             #expect(execution.preparations == 2)
             #expect(execution.runs == 0)
             #expect(
-                AgentManager.shared.agent(for: target.id)?.description
-                    == "after"
+                AgentManager.shared.agent(for: target.id)?.systemPrompt
+                    == target.systemPrompt
             )
             #expect(ToolEnvelope.isError(result))
             #expect(

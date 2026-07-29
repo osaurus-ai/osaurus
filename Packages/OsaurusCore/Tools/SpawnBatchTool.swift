@@ -143,15 +143,17 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         case cancelled
     }
 
-    struct BatchAgentAuthority: Sendable, Equatable {
+    struct BatchTargetAuthority: Sendable, Equatable {
         let id: UUID
-        let agent: Agent?
+        let target: SpawnTargetAuthority?
+        let revision: UInt64
     }
 
     struct BatchAuthorityFingerprint: Sendable, Equatable {
-        let configurationRevision: UInt64
-        let configuration: SubagentConfiguration
-        let agents: [BatchAgentAuthority]
+        let configurationRevision: SpawnConfigurationAuthorityRevision
+        let launcher: SpawnLauncherAuthority
+        let launcherAgentRevisions: SpawnAgentAuthorityRevisions
+        let targets: [BatchTargetAuthority]
         let isDefaultLauncher: Bool
         let effectivePermission: SubagentPermissionPolicy
     }
@@ -913,35 +915,40 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         jobs: [Job],
         parentScope: SubagentScope
     ) async -> BatchAuthorityFingerprint {
-        // Materialize a cold on-disk snapshot before capturing its monotonic
-        // revision. Otherwise the first resolve could load the same unchanged
-        // file and look like an authority mutation.
+        // Capture configuration plus Spawn-scoped monotonic revisions in one
+        // linearizable read. A cold load must not look like a mutation.
         let storeSnapshot =
-            SubagentConfigurationStore.snapshotWithRevision()
-        var configuration = storeSnapshot.configuration
-        let revision = storeSnapshot.revision
+            SubagentConfigurationStore
+                .snapshotWithSpawnAuthorityRevisions()
+        let configuration = storeSnapshot.configuration
         let isDefaultLauncher = parentScope.agentId == Agent.defaultId
-        var agentIDs = Set<UUID>()
-        agentIDs.insert(parentScope.agentId)
+        var targetAgentIDs = Set<UUID>()
         for job in jobs where job.targetType == .agent {
             if let id = UUID(uuidString: job.target) {
-                agentIDs.insert(id)
+                targetAgentIDs.insert(id)
             }
         }
-        let sortedIDs = agentIDs.sorted {
+        let sortedTargetIDs = targetAgentIDs.sorted {
             $0.uuidString < $1.uuidString
         }
-        var agents = await MainActor.run {
-            sortedIDs.map { id in
-                BatchAgentAuthority(
-                    id: id,
-                    agent: AgentManager.shared.agent(for: id)
-                )
-            }
+        let authorities = await MainActor.run {
+            let launcher = AgentManager.shared.spawnAuthoritySnapshot(
+                for: parentScope.agentId
+            )
+            return (
+                launcher: launcher,
+                targets: sortedTargetIDs.map { id in
+                    let snapshot =
+                        AgentManager.shared.spawnAuthoritySnapshot(for: id)
+                    return BatchTargetAuthority(
+                        id: id,
+                        target: snapshot.agent.map(SpawnTargetAuthority.init),
+                        revision: snapshot.revisions.target
+                    )
+                }
+            )
         }
-        let launcherSettings = agents.first {
-            $0.id == parentScope.agentId
-        }?.agent?.settings
+        let launcherSettings = authorities.launcher.agent?.settings
         let effectivePermission =
             SubagentToolVisibility.effectivePermission(
                 capabilityId: SubagentCapabilityRegistry.spawn.id,
@@ -950,31 +957,22 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 settings: launcherSettings
             )
 
-        // Choosing Always Allow legitimately persists exactly this permission
-        // while the panel is open. Normalize only that field and the custom
-        // launcher's persistence timestamp; all other authority stays exact.
-        configuration.permissionDefaults.setPolicy(
-            .ask,
-            for: SubagentCapabilityRegistry.spawn.id
-        )
-        if let launcherIndex = agents.firstIndex(where: {
-            $0.id == parentScope.agentId
-        }), var launcher = agents[launcherIndex].agent {
-            launcher.settings.subagentPermissions.setPolicy(
-                .ask,
-                for: SubagentCapabilityRegistry.spawn.id
-            )
-            launcher.updatedAt = .distantPast
-            agents[launcherIndex] = BatchAgentAuthority(
-                id: parentScope.agentId,
-                agent: launcher
-            )
-        }
-
         return BatchAuthorityFingerprint(
-            configurationRevision: revision,
-            configuration: configuration,
-            agents: agents,
+            configurationRevision: SpawnConfigurationAuthorityRevision(
+                shared: storeSnapshot.spawnSharedRevision,
+                defaultLauncher:
+                    isDefaultLauncher
+                    ? storeSnapshot.spawnDefaultRevision
+                    : nil
+            ),
+            launcher: SpawnLauncherAuthority(
+                id: parentScope.agentId,
+                isDefault: isDefaultLauncher,
+                configuration: configuration,
+                agent: authorities.launcher.agent
+            ),
+            launcherAgentRevisions: authorities.launcher.revisions,
+            targets: authorities.targets,
             isDefaultLauncher: isDefaultLauncher,
             effectivePermission: effectivePermission
         )
@@ -984,28 +982,43 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         _ approved: BatchAuthorityFingerprint,
         current: BatchAuthorityFingerprint
     ) -> Bool {
-        guard approved.configuration == current.configuration,
-            approved.agents == current.agents,
-            approved.isDefaultLauncher == current.isDefaultLauncher
+        guard approved.launcher == current.launcher,
+            approved.launcherAgentRevisions.launcher
+                == current.launcherAgentRevisions.launcher,
+            approved.targets == current.targets,
+            approved.isDefaultLauncher == current.isDefaultLauncher,
+            approved.configurationRevision.shared
+                == current.configurationRevision.shared
         else { return false }
 
         if approved.effectivePermission == current.effectivePermission {
-            return current.configurationRevision
-                == approved.configurationRevision
+            return current.configurationRevision.defaultLauncher
+                == approved.configurationRevision.defaultLauncher
+                && current.launcherAgentRevisions.permission
+                    == approved.launcherAgentRevisions.permission
         }
 
         // The permission panel's own Ask → Always Allow write is the sole
         // permitted semantic transition. Default/main chat persists it in the
-        // global store (one revision); custom agents persist it on the launcher.
+        // scoped Default Spawn authority; custom agents persist it on the
+        // launcher and do not touch the shared configuration revisions.
         guard approved.effectivePermission == .ask,
             current.effectivePermission == .alwaysAllow
         else { return false }
         if approved.isDefaultLauncher {
-            return current.configurationRevision
-                == approved.configurationRevision &+ 1
+            guard let approvedDefault =
+                approved.configurationRevision.defaultLauncher,
+                let currentDefault =
+                    current.configurationRevision.defaultLauncher
+            else { return false }
+            return approvedDefault < UInt64.max
+                && currentDefault == approvedDefault + 1
         }
-        return current.configurationRevision
-            == approved.configurationRevision
+        return current.configurationRevision.defaultLauncher
+            == approved.configurationRevision.defaultLauncher
+            && approved.launcherAgentRevisions.permission < UInt64.max
+            && current.launcherAgentRevisions.permission
+                == approved.launcherAgentRevisions.permission + 1
     }
 
     private static func preparationFailureMessage(
@@ -1745,7 +1758,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 if let liveResidencyPlanOverride {
                     plan = try await liveResidencyPlanOverride(first.run)
                 } else if let textKind = first.run.kind as? TextSubagentKind {
-                    plan = try await textKind.refreshedBatchResidencyPlan(
+                    plan = try await textKind.refreshedResidencyPlanAfterAdmission(
                         for: first.run.resolved
                     )
                 } else {
@@ -2212,7 +2225,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
             return try await override(run)
         }
         if let textKind = run.kind as? TextSubagentKind {
-            return try await textKind.refreshedBatchResidencyPlan(
+            return try await textKind.refreshedResidencyPlanAfterAdmission(
                 for: run.resolved
             )
         }

@@ -11,6 +11,12 @@ enum SubagentConfigurationStore {
     private nonisolated(unsafe) static var overrideDirectory: URL?
     private nonisolated(unsafe) static var cachedSnapshot: SubagentConfiguration?
     private nonisolated(unsafe) static var snapshotRevision: UInt64 = 0
+    private nonisolated(unsafe) static var cachedSpawnSharedAuthority:
+        SpawnSharedConfigurationAuthority?
+    private nonisolated(unsafe) static var cachedSpawnDefaultAuthority:
+        SpawnDefaultConfigurationAuthority?
+    private nonisolated(unsafe) static var spawnSharedAuthorityRevision: UInt64 = 0
+    private nonisolated(unsafe) static var spawnDefaultAuthorityRevision: UInt64 = 0
     private static let snapshotLock = NSLock()
     /// Serializes the one cold disk materialization without holding
     /// `snapshotLock` across I/O. A save may still proceed while the read is in
@@ -24,6 +30,10 @@ enum SubagentConfigurationStore {
         overrideDirectory = url
         cachedSnapshot = nil
         snapshotRevision &+= 1
+        cachedSpawnSharedAuthority = nil
+        cachedSpawnDefaultAuthority = nil
+        spawnSharedAuthorityRevision &+= 1
+        spawnDefaultAuthorityRevision &+= 1
         snapshotLock.unlock()
     }
 
@@ -60,6 +70,7 @@ enum SubagentConfigurationStore {
                 snapshotLock.unlock()
                 return nil
             }
+            installSpawnAuthorityWhileLocked(decoded, recordingChange: false)
             cachedSnapshot = decoded
             snapshotRevision &+= 1
             snapshotLock.unlock()
@@ -75,6 +86,7 @@ enum SubagentConfigurationStore {
         let normalized = configuration.normalized
         let url = fileURL()
         snapshotLock.lock()
+        installSpawnAuthorityWhileLocked(normalized, recordingChange: true)
         cachedSnapshot = normalized
         snapshotRevision &+= 1
         // Enqueue while the snapshot lock still owns commit order. If two
@@ -131,6 +143,7 @@ enum SubagentConfigurationStore {
             snapshotLock.unlock()
             return live
         }
+        installSpawnAuthorityWhileLocked(normalized, recordingChange: true)
         cachedSnapshot = normalized
         snapshotRevision &+= 1
         publishAndPersist(normalized, to: url)
@@ -184,11 +197,34 @@ enum SubagentConfigurationStore {
         configuration: SubagentConfiguration,
         revision: UInt64
     ) {
+        let snapshot = snapshotWithSpawnAuthorityRevisions()
+        return (snapshot.configuration, snapshot.revision)
+    }
+
+    /// One linearizable Spawn-authority read. The two scoped generations
+    /// advance only for fields that can affect Spawn execution:
+    ///
+    /// - `spawnSharedRevision`: residency handoff / RAM-safety settings shared
+    ///   by every launcher;
+    /// - `spawnDefaultRevision`: the Default launcher's target/model pools,
+    ///   Spawn permission, budgets, model override, and child-tool grant.
+    ///
+    /// This keeps ABA protection for relevant changes without rejecting a
+    /// pending Spawn merely because an Image or AppleScript editor saved the
+    /// same shared configuration document.
+    nonisolated static func snapshotWithSpawnAuthorityRevisions() -> (
+        configuration: SubagentConfiguration,
+        revision: UInt64,
+        spawnSharedRevision: UInt64,
+        spawnDefaultRevision: UInt64
+    ) {
         snapshotLock.lock()
         if let cached = cachedSnapshot {
             let revision = snapshotRevision
+            let sharedRevision = spawnSharedAuthorityRevision
+            let defaultRevision = spawnDefaultAuthorityRevision
             snapshotLock.unlock()
-            return (cached, revision)
+            return (cached, revision, sharedRevision, defaultRevision)
         }
         snapshotLock.unlock()
 
@@ -199,8 +235,10 @@ enum SubagentConfigurationStore {
             snapshotLock.lock()
             if let cached = cachedSnapshot {
                 let revision = snapshotRevision
+                let sharedRevision = spawnSharedAuthorityRevision
+                let defaultRevision = spawnDefaultAuthorityRevision
                 snapshotLock.unlock()
-                return (cached, revision)
+                return (cached, revision, sharedRevision, defaultRevision)
             }
             let revisionBeforeRead = snapshotRevision
             let url = fileURLWhileLocked()
@@ -212,8 +250,10 @@ enum SubagentConfigurationStore {
             // A save that won during the read is authoritative.
             if let cached = cachedSnapshot {
                 let revision = snapshotRevision
+                let sharedRevision = spawnSharedAuthorityRevision
+                let defaultRevision = spawnDefaultAuthorityRevision
                 snapshotLock.unlock()
-                return (cached, revision)
+                return (cached, revision, sharedRevision, defaultRevision)
             }
             // The active directory or invalidation generation changed while
             // reading. Discard stale bytes and retry from the current source.
@@ -221,15 +261,53 @@ enum SubagentConfigurationStore {
                 snapshotLock.unlock()
                 continue
             }
-            if let decoded {
-                cachedSnapshot = decoded
+            let configuration = decoded ?? .default
+            if decoded != nil {
+                cachedSnapshot = configuration
                 snapshotRevision &+= 1
             }
-            let configuration = decoded ?? .default
+            // Even an absent file has a real `.default` authority baseline.
+            // Recording it here ensures the first relevant save after an
+            // approval advances the scoped generation.
+            installSpawnAuthorityWhileLocked(
+                configuration,
+                recordingChange: false
+            )
             let revision = snapshotRevision
+            let sharedRevision = spawnSharedAuthorityRevision
+            let defaultRevision = spawnDefaultAuthorityRevision
             snapshotLock.unlock()
-            return (configuration, revision)
+            return (
+                configuration,
+                revision,
+                sharedRevision,
+                defaultRevision
+            )
         }
+    }
+
+    /// `snapshotLock` must be held.
+    private nonisolated static func installSpawnAuthorityWhileLocked(
+        _ configuration: SubagentConfiguration,
+        recordingChange: Bool
+    ) {
+        let shared = configuration.spawnSharedAuthority
+        let defaultAuthority = configuration.spawnDefaultAuthority
+
+        if let previous = cachedSpawnSharedAuthority,
+            previous != shared,
+            recordingChange
+        {
+            spawnSharedAuthorityRevision &+= 1
+        }
+        if let previous = cachedSpawnDefaultAuthority,
+            previous != defaultAuthority,
+            recordingChange
+        {
+            spawnDefaultAuthorityRevision &+= 1
+        }
+        cachedSpawnSharedAuthority = shared
+        cachedSpawnDefaultAuthority = defaultAuthority
     }
 
     /// Monotonic ABA-safe generation for execution-time authorization.
@@ -262,6 +340,10 @@ enum SubagentConfigurationStore {
         snapshotLock.lock()
         cachedSnapshot = nil
         snapshotRevision &+= 1
+        cachedSpawnSharedAuthority = nil
+        cachedSpawnDefaultAuthority = nil
+        spawnSharedAuthorityRevision &+= 1
+        spawnDefaultAuthorityRevision &+= 1
         snapshotLock.unlock()
     }
 

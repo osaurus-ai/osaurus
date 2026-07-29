@@ -69,6 +69,26 @@ struct SubagentResidencyTests {
         #expect(plan.maxElapsedSeconds == 60)
     }
 
+    @Test("same invoking parent reuses target despite unrelated protected residency")
+    func sameParentTargetIgnoresUnrelatedProtectedResidency() throws {
+        let plan = try SubagentResidency.decidePlan(
+            isLocal: true,
+            modelName: "local-a",
+            residentChatModels: ["LOCAL-A"],
+            protectedResidentModels: ["api-b"],
+            handoffEnabled: false,
+            ramSafetyEnabled: true,
+            requiredBytes: 4096,
+            idleWaitSeconds: 90,
+            deniedMessage: denied
+        )
+        #expect(!plan.shouldUnload)
+        #expect(!plan.coexists)
+        #expect(plan.requiredBytes == 4096)
+        #expect(plan.ramSafetyEnabled)
+        #expect(plan.maxElapsedSeconds == 90)
+    }
+
     @Test("nothing else resident means nothing to evict")
     func nothingResidentNeedsNoSwap() throws {
         let plan = try SubagentResidency.decidePlan(

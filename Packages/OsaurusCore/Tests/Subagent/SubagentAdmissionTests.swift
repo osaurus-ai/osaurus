@@ -588,8 +588,410 @@ private final class AdmissionAuthorityKind: SubagentKind, @unchecked Sendable {
     }
 }
 
+private final class DirectResidencyProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var plan: ResidencyPlan = .none
+    private var refreshes = 0
+    private var refreshStarted = false
+    private var runs = 0
+    private var handoffPlans: [ResidencyPlan] = []
+
+    func setPlan(_ value: ResidencyPlan) {
+        lock.lock()
+        plan = value
+        lock.unlock()
+    }
+
+    func currentPlan() -> ResidencyPlan {
+        lock.lock()
+        defer { lock.unlock() }
+        return plan
+    }
+
+    func refresh() -> ResidencyPlan {
+        lock.lock()
+        defer { lock.unlock() }
+        refreshes += 1
+        return plan
+    }
+
+    func markRefreshStarted() {
+        lock.lock()
+        refreshStarted = true
+        lock.unlock()
+    }
+
+    func recordHandoff(_ value: ResidencyPlan) {
+        lock.lock()
+        handoffPlans.append(value)
+        lock.unlock()
+    }
+
+    func recordRun() {
+        lock.lock()
+        runs += 1
+        lock.unlock()
+    }
+
+    func snapshot() -> (
+        refreshes: Int,
+        refreshStarted: Bool,
+        runs: Int,
+        handoffPlans: [ResidencyPlan]
+    ) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (refreshes, refreshStarted, runs, handoffPlans)
+    }
+}
+
+private struct DirectResidencyProbeHandoff: SubagentHandoff {
+    let probe: DirectResidencyProbe
+    let plan: ResidencyPlan
+
+    func around(
+        scope: SubagentScope,
+        resolved: ResolvedModel,
+        feed: SubagentFeed,
+        run body: () async throws -> SubagentResult
+    ) async throws -> SubagentResult {
+        probe.recordHandoff(plan)
+        return try await body()
+    }
+}
+
+private final class DirectResidencyKind:
+    SubagentKind, SubagentPostAdmissionResidencyPlanning, @unchecked Sendable
+{
+    let capability = SubagentCapability(
+        id: "direct-residency-test",
+        toolNames: ["direct-residency-test"],
+        gate: .delegation
+    )
+    let probe: DirectResidencyProbe
+    let refreshDelayNanoseconds: UInt64
+
+    init(
+        probe: DirectResidencyProbe,
+        refreshDelayNanoseconds: UInt64 = 0
+    ) {
+        self.probe = probe
+        self.refreshDelayNanoseconds = refreshDelayNanoseconds
+    }
+
+    func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
+        ResolvedModel(
+            name: "direct-residency-local",
+            id: "direct-residency-local",
+            isLocal: true
+        )
+    }
+
+    func permission(
+        _ scope: SubagentScope,
+        _ resolved: ResolvedModel
+    ) async -> SubagentDecision {
+        .allow
+    }
+
+    func admissionClass(
+        _ resolved: ResolvedModel
+    ) -> SubagentAdmissionClass {
+        SubagentResidency.admissionClass(
+            isLocal: resolved.isLocal,
+            plan: probe.currentPlan()
+        )
+    }
+
+    func refreshedResidencyPlanAfterAdmission(
+        for resolved: ResolvedModel
+    ) async throws -> ResidencyPlan {
+        probe.markRefreshStarted()
+        if refreshDelayNanoseconds > 0 {
+            try? await Task.sleep(
+                nanoseconds: refreshDelayNanoseconds
+            )
+        }
+        return probe.refresh()
+    }
+
+    func makeHandoff() -> SubagentHandoff {
+        DirectResidencyProbeHandoff(
+            probe: probe,
+            plan: probe.currentPlan()
+        )
+    }
+
+    func run(
+        _ scope: SubagentScope,
+        _ resolved: ResolvedModel,
+        feed: SubagentFeed,
+        interrupt: InterruptToken
+    ) async throws -> SubagentResult {
+        probe.recordRun()
+        return SubagentResult(
+            payload: ["summary": "ran with refreshed residency"]
+        )
+    }
+}
+
 @Suite("SubagentSession admission")
 struct SubagentSessionAdmissionTests {
+    @Test("queued direct run drops stale handoff after exclusive plan downgrades")
+    func directRunRefreshDropsStaleExclusiveHandoff() async {
+        let admission = SubagentAdmission(pollNanoseconds: 1_000_000)
+        #expect(
+            await admission.admit(
+                .localExclusive,
+                modelKey: "exclusive-blocker"
+            ) == .admitted
+        )
+
+        let probe = DirectResidencyProbe()
+        probe.setPlan(
+            ResidencyPlan(
+                shouldUnload: true,
+                requiredBytes: 4_096,
+                ramSafetyEnabled: true,
+                maxElapsedSeconds: 30
+            )
+        )
+        let scope = SubagentScope(
+            sessionId: "direct-residency-downgrade",
+            toolCallId:
+                "direct-residency-downgrade-\(UUID().uuidString)",
+            agentId: Agent.defaultId
+        )
+        let preparation = await SubagentSession.prepare(
+            DirectResidencyKind(probe: probe),
+            tool: "direct-residency-test",
+            scope: scope
+        )
+        guard case .ready(let prepared) = preparation else {
+            Issue.record("Expected direct residency test kind to prepare")
+            await admission.release(
+                .localExclusive,
+                modelKey: "exclusive-blocker"
+            )
+            return
+        }
+
+        let task = Task {
+            await SubagentSession.runPrepared(
+                prepared,
+                admissionController: admission,
+                postAdmissionLocalCapacityOverride: { _, _ in 1 }
+            )
+        }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        #expect(probe.snapshot().refreshes == 0)
+
+        probe.setPlan(.none)
+        await admission.release(
+            .localExclusive,
+            modelKey: "exclusive-blocker"
+        )
+
+        let envelope = await task.value
+        let snapshot = probe.snapshot()
+        #expect(ToolEnvelope.isSuccess(envelope))
+        #expect(snapshot.refreshes == 1)
+        #expect(snapshot.runs == 1)
+        #expect(snapshot.handoffPlans.count == 1)
+        #expect(snapshot.handoffPlans.first?.shouldUnload == false)
+        let counters = await admission.snapshot()
+        #expect(counters.exclusive == 0)
+        #expect(counters.inPlace == 0)
+    }
+
+    @Test("downgraded direct run still rejects unsafe single-child RAM plan")
+    func directRunDowngradeRechecksSingleChildRAM() async {
+        let admission = SubagentAdmission(pollNanoseconds: 1_000_000)
+        #expect(
+            await admission.admit(
+                .localExclusive,
+                modelKey: "exclusive-ram-blocker"
+            ) == .admitted
+        )
+
+        let probe = DirectResidencyProbe()
+        probe.setPlan(ResidencyPlan(shouldUnload: true))
+        let scope = SubagentScope(
+            sessionId: "direct-residency-ram-recheck",
+            toolCallId:
+                "direct-residency-ram-recheck-\(UUID().uuidString)",
+            agentId: Agent.defaultId
+        )
+        let preparation = await SubagentSession.prepare(
+            DirectResidencyKind(probe: probe),
+            tool: "direct-residency-test",
+            scope: scope
+        )
+        guard case .ready(let prepared) = preparation else {
+            Issue.record("Expected direct residency test kind to prepare")
+            await admission.release(
+                .localExclusive,
+                modelKey: "exclusive-ram-blocker"
+            )
+            return
+        }
+
+        let task = Task {
+            await SubagentSession.runPrepared(
+                prepared,
+                admissionController: admission,
+                postAdmissionLocalCapacityOverride: { _, _ in 0 }
+            )
+        }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        #expect(probe.snapshot().refreshes == 0)
+        probe.setPlan(.none)
+        await admission.release(
+            .localExclusive,
+            modelKey: "exclusive-ram-blocker"
+        )
+
+        let envelope = await task.value
+        let snapshot = probe.snapshot()
+        #expect(ToolEnvelope.isError(envelope))
+        #expect(
+            ToolEnvelope.failureMessage(envelope)
+                .localizedCaseInsensitiveContains("RAM-safety")
+        )
+        #expect(snapshot.refreshes == 1)
+        #expect(snapshot.runs == 0)
+        #expect(snapshot.handoffPlans.isEmpty)
+        let counters = await admission.snapshot()
+        #expect(counters.exclusive == 0)
+        #expect(counters.inPlace == 0)
+    }
+
+    @Test("interrupt during direct residency refresh stops before handoff and run")
+    func interruptDuringDirectResidencyRefreshStopsExecution() async {
+        let admission = SubagentAdmission(pollNanoseconds: 1_000_000)
+        let probe = DirectResidencyProbe()
+        let scope = SubagentScope(
+            sessionId: "direct-residency-refresh-stop",
+            toolCallId:
+                "direct-residency-refresh-stop-\(UUID().uuidString)",
+            agentId: Agent.defaultId
+        )
+        let preparation = await SubagentSession.prepare(
+            DirectResidencyKind(
+                probe: probe,
+                refreshDelayNanoseconds: 100_000_000
+            ),
+            tool: "direct-residency-test",
+            scope: scope
+        )
+        guard case .ready(let prepared) = preparation else {
+            Issue.record("Expected direct residency test kind to prepare")
+            return
+        }
+
+        let interrupt = InterruptToken()
+        let task = Task {
+            await SubagentSession.runPrepared(
+                prepared,
+                presentation: SubagentRunPresentation(
+                    feed: SubagentFeed(
+                        toolCallId: scope.toolCallId,
+                        kindId: "direct-residency-test",
+                        title: "direct residency"
+                    ),
+                    interrupt: interrupt,
+                    registerWithUI: false
+                ),
+                admissionController: admission
+            )
+        }
+        let deadline = Date().addingTimeInterval(2)
+        while !probe.snapshot().refreshStarted, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 1_000_000)
+        }
+        #expect(probe.snapshot().refreshStarted)
+        interrupt.interrupt()
+
+        let envelope = await task.value
+        let snapshot = probe.snapshot()
+        #expect(ToolEnvelope.isError(envelope))
+        #expect(
+            ToolEnvelope.failureMessage(envelope)
+                .localizedCaseInsensitiveContains("stopped")
+        )
+        #expect(snapshot.runs == 0)
+        #expect(snapshot.handoffPlans.isEmpty)
+        let counters = await admission.snapshot()
+        #expect(counters.exclusive == 0)
+        #expect(counters.inPlace == 0)
+    }
+
+    @Test("queued direct run refreshes residency and upgrades to exclusive")
+    func directRunRefreshesResidencyAfterAdmissionWait() async {
+        let admission = SubagentAdmission(pollNanoseconds: 1_000_000)
+        #expect(
+            await admission.admit(
+                .localInPlace,
+                modelKey: "different-resident-model"
+            ) == .admitted
+        )
+
+        let probe = DirectResidencyProbe()
+        let scope = SubagentScope(
+            sessionId: "direct-residency-replan",
+            toolCallId: "direct-residency-replan-\(UUID().uuidString)",
+            agentId: Agent.defaultId
+        )
+        let preparation = await SubagentSession.prepare(
+            DirectResidencyKind(probe: probe),
+            tool: "direct-residency-test",
+            scope: scope
+        )
+        guard case .ready(let prepared) = preparation else {
+            Issue.record("Expected direct residency test kind to prepare")
+            await admission.release(
+                .localInPlace,
+                modelKey: "different-resident-model"
+            )
+            return
+        }
+
+        let task = Task {
+            await SubagentSession.runPrepared(
+                prepared,
+                admissionController: admission
+            )
+        }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        #expect(probe.snapshot().refreshes == 0)
+
+        probe.setPlan(
+            ResidencyPlan(
+                shouldUnload: true,
+                requiredBytes: 9_876,
+                ramSafetyEnabled: true,
+                maxElapsedSeconds: 47
+            )
+        )
+        await admission.release(
+            .localInPlace,
+            modelKey: "different-resident-model"
+        )
+
+        let envelope = await task.value
+        let snapshot = probe.snapshot()
+        #expect(ToolEnvelope.isSuccess(envelope))
+        #expect(snapshot.refreshes == 2)
+        #expect(snapshot.runs == 1)
+        #expect(snapshot.handoffPlans.count == 1)
+        #expect(snapshot.handoffPlans.first?.shouldUnload == true)
+        #expect(snapshot.handoffPlans.first?.requiredBytes == 9_876)
+        #expect(snapshot.handoffPlans.first?.ramSafetyEnabled == true)
+        let counters = await admission.snapshot()
+        #expect(counters.exclusive == 0)
+        #expect(counters.inPlace == 0)
+    }
+
     @Test("authority revoked while queued is rejected after admission without running")
     func postAdmissionAuthorityRevalidation() async {
         let admission = SubagentAdmission(pollNanoseconds: 1_000_000)

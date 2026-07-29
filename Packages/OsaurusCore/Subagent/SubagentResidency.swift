@@ -133,6 +133,22 @@ enum SubagentResidency {
         // same-model batched children still allocate independent KV/SSM and
         // activation state, so returning the hard-coded `.none` plan here
         // would silently disable the batch admission memory clamp.
+        let targetIsInvokingParentResident = residentChatModels.contains {
+            $0.caseInsensitiveCompare(modelName) == .orderedSame
+        }
+        if targetIsInvokingParentResident {
+            // The invoking parent already owns the exact target model. This
+            // spawn neither loads a model nor unloads/restores residency, so an
+            // unrelated protected API/plugin model is not in its ownership
+            // path and must not cause a false refusal.
+            return ResidencyPlan(
+                shouldUnload: false,
+                requiredBytes: requiredBytes,
+                ramSafetyEnabled: ramSafetyEnabled,
+                maxElapsedSeconds: idleWaitSeconds
+            )
+        }
+
         let otherResidentModels = residentChatModels.filter {
             $0.caseInsensitiveCompare(modelName) != .orderedSame
         }

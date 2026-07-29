@@ -18,7 +18,10 @@ struct BatchDiagnosticsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 stat("Active slots", value: "\(snapshot.activeCount)")
                 stat("Queued", value: "\(snapshot.pendingCount)")
-                stat("High-water active", value: "\(snapshot.activeHighWatermark)")
+                stat(
+                    "Max per-model high-water",
+                    value: "\(snapshot.activeHighWatermark)"
+                )
                 stat(
                     "Configured engine capacity",
                     value: engineCapacityValue(snapshot)
