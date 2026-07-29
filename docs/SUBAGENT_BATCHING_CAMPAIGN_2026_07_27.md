@@ -3,7 +3,7 @@
 ## Status
 
 `MERGE CANDIDATE` — runtime/test source was frozen at
-`315f1f63b4eef7b8c966ceaa1c7601f18c9568a9`, rebased onto current upstream,
+`ebdd229381d6ed12abcfced407bc75e00c2b4543`, rebased onto current upstream,
 and passed the full Core and OsaurusEvals packages plus fresh Release-app
 acceptance runs. The live scope covers settings persistence,
 permission, configured fan-out, same-model batching, different-local
@@ -20,8 +20,8 @@ correctly. The provider proof uses a deterministic no-auth localhost emulator;
 it does not claim an authenticated public-cloud account test and did not read
 or copy Codex credentials.
 
-- Frozen runtime/test source: `315f1f63b4eef7b8c966ceaa1c7601f18c9568a9`.
-- Rebased upstream base: `af68b064167300d255ab1a1e37b5b5c2dd2943fc`.
+- Frozen runtime/test source: `ebdd229381d6ed12abcfced407bc75e00c2b4543`.
+- Rebased upstream base: `f013ccc7ac109aa5fba7c22c1174cfb9022e3150`.
 - vMLX Swift pin: `84612e143d2e51da865316dbc49167530a1717ad`
 - Worktree: `/private/tmp/osaurus-subagent-batching-complete-20260727`
 - Branch: `codex/subagent-batching-complete-20260727`
@@ -558,6 +558,89 @@ and
 The proof app was quit and the already-running production
 `com.dinoki.osaurus` app remained running.
 
+### Final PR #2222 base move
+
+Before push, upstream advanced again through PR #2222's chat-import guide. Its
+only source changes were `ChatSessionImportCoordinator.swift`,
+`ChatSessionSidebar.swift`, the new `ImportGuideSheet.swift`, and localization
+catalog additions. All 17 campaign commits remained patch-identical after a
+conflict-free rebase onto `f013ccc7ac109aa5fba7c22c1174cfb9022e3150`.
+The runtime commit became `ebdd229381d6ed12abcfced407bc75e00c2b4543`.
+
+The final-base full Core suite passed **7,312 passed, 21 skipped, 0 failed,
+7,333 total** in
+`/private/tmp/osaurus-subagent-broad-final-ebdd2293.xcresult`; raw log SHA-256
+`aaf63c0051476ea931376ee5eb7e1771a40c215aa56408052710d6798881b7d1`.
+Full Evals passed **299/299 across 36 suites** from a clean Xcode-toolchain
+scratch tree; raw log SHA-256
+`384c7ab03980849e1b83a7b28f09ad825cbe162d9b38dde3667466766fcf3fe9`.
+The i18n gate passed with 6,315 catalog keys, all 3,072 Swift references
+resolved, and zero suspect literals.
+
+Exact build source `8a70d427144d6059ee5b77a79c1c98ca041160ef`, a documentation-only child
+of the runtime commit, produced Release bundle
+`com.dinoki.osaurus.subagentbatchproof.8a70d427`. Strict deep code-sign
+verification passed; executable SHA-256 is
+`1e0b7062a4b132747e5494c2dd7b20bcb0b4ee2e83fbd37f2fadaddbc3df6a5f`
+and build-log SHA-256 is
+`273f4581fdc9610d027953be6f9589e9de1a9dcebccd9f2f4e5af468e8bfb4eb`.
+
+Computer Use changed the visible main-chat limit from three to two and
+RAM-Safety from off to on, proved General -> Server -> General stayed
+responsive, quit the app, relaunched the exact bundle, and confirmed both
+changes persisted. It then restored the shared configuration through the UI to
+three-per-batch and RAM-Safety off. The restored JSON retained SHA-256
+`e017dff20893795b4b8607321bdc4ff8e1223f91668ebbec2c6cd5fb035a1464`.
+Server-responsive and General-restored screenshot SHA-256 values are
+`d77c6fa1838716974925626af77b476701c9172397a29d9f58e3d42ce9aec802`
+and
+`2e73491354cbfd857badf8b11138d0d7f9d167d2d6cca3a1c9c1145588acfd78`.
+An initial accessibility capture immediately after dismissing onboarding timed
+out, but an exact-process sample showed the main thread idle in the AppKit event
+loop rather than blocked; the next capture returned the full chat UI and every
+subsequent action completed. The isolated app quit cleanly, and production
+Osaurus PID 90191 remained running.
+
+### Exact-pin Nanbeige, cache, prefill, and parser gate
+
+The final Release dependency checkout was independently verified at exact vMLX
+SHA `84612e143d2e51da865316dbc49167530a1717ad`. Its
+`LLMModelFactory.swift` explicitly registers model type `nanbeige`, so that
+bundle type does not fall through to the unsupported-model error. The Nanbeige
+runtime allocates `num_hidden_layers * totalLoops` independent cache slots,
+indexes every loop-layer pair without aliasing, and fails closed on unsupported
+future architecture flags. Osaurus RAM admission applies the same physical
+loop-layer multiplier. The exact-pin Nanbeige suite passed **6/6**, including a
+two-layer, two-loop forward assertion that all four cache offsets advance and
+the registry/model-cache construction row. Raw log SHA-256:
+`ff8da47d765aeea6223dfc015cabeacdd4032b3b1ba2e111ef46e950ba971bf8`.
+
+The exact-pin chunked-prefill suite passed **9/9**. It proves that a 600-token
+prompt with step 256 evaluates two largest full 256-token chunks and returns
+the 88-token remainder, while an exact 256-token boundary remains one complete
+final forward; 1D/2D input, mask flattening, progress, and cancellation rows
+also passed. Raw log SHA-256:
+`fa2ebcc68857fa325bceba138b1b692438034b08a8229d6809cea6f08d23f186`.
+
+Exact-pin reasoning and tool-parser suites passed **139/139**. Coverage includes
+Qwen reasoning start/close behavior, interleaved and split-stream boundaries,
+no-reasoning behavior, XML function calls, nested and multiline arguments,
+arrays, invalid/missing arguments, and the other supported parser families.
+Raw log SHA-256:
+`dcea39a7cc12a416ec5160cb84d67a3c00d11c1571a595236ba32eb753164067`.
+Together with the live Nanbeige thinking-on/off and tool/delegation rows, this
+closes the source, focused-test, and visible-lifecycle sides of the pin gate.
+
+The first combined terminal attempt did not reach these assertions because
+SwiftPM does not emit MLX's `default.metallib`. A second attempt initially used
+the app-root custom metallib instead of the packaged
+`mlx-swift_Cmlx.bundle` metallib and crashed on missing kernel `rbitsc`; that
+crash left the test-only named semaphore held. The final isolated reruns used
+the exact Release bundle's 3.6 MB Cmlx metallib, reset only that stale test
+semaphore, ran each test framework separately, and produced the passing logs
+above. These were runner-resource failures, not hidden product assertion
+failures.
+
 The full-matrix Release app was launched with a dedicated keychain-free test root
 and clicked through the real Chat and Settings UI. The final-candidate rerun
 visibly proved persisted target notes, Ask permission, worker-tool mode,
@@ -751,3 +834,5 @@ whole lifecycle through final unlock and a follow-up.
 | 2026-07-29 06:33–07:11 PDT exact post-rebase freeze | `c317e0f0` on `09a3dee9` + vMLX `84612e14` | Full Core, full Evals, i18n, Release build, changed model-discovery/settings surface, save/relaunch | PASS | Upstream PR #2219 changed only the OsaurusAI fetch cap; all 13 campaign patches are range-diff identical. Core passed 7,311/7,332 with 21 skips and zero failures; Evals passed 299/299 across 36 suites. The final localization-only source delta passed the i18n catalog/reference/literal gate. The fresh ad-hoc keychain-free Release bundle passed strict deep code-sign verification. Computer Use exposed 61 local models, assigned Nanbeige JANG_4M, persisted its note, changed the batch maximum 3→2, and re-proved target/note/Ask/tools/limit/handoff/RAM-Safety after relaunch. The isolated proof app was quit and production Osaurus was untouched. |
 | 2026-07-29 final upstream rebase | `033eb498` on `af68b064` + vMLX `84612e14` | Full Core/Evals/Release build followed by General -> Server UI navigation | FAIL LIVE / AUTOMATED PASS | Core passed 7,311/7,332 and Evals 299/299, but the exact Release app blocked in `SecItemCopyMatching` from `RelaysSectionView.body` during General -> Server navigation. Sample SHA-256 `5997d856076637dd93118276eac5bd820000de7f98cc728179136e1fca293c0e`; merge was stopped pending an owning-layer fix. |
 | 2026-07-29 final relay fix | `315f1f63` on `af68b064` + vMLX `84612e14` | Background relay identity, full Core/Evals, exact Release build, Settings navigation/relaunch/restore | PASS | Both automatic relay-identity call sites now use the detached Keychain helper. Focused source contracts passed 101/101, Core 7,312/7,333 with 21 skips, Evals 299/299, and strict deep code signing passed. Computer Use proved responsive General -> Server -> General, quit/relaunch persistence, and restoration through the UI to the measured shared defaults of three-per-batch plus RAM-Safety off. Production Osaurus remained running. |
+| 2026-07-29 final PR #2222 base move | `ebdd2293` on `f013ccc7` + vMLX `84612e14` | Patch-identical rebase, full Core/Evals/i18n, exact Release build, Settings navigation/relaunch/restore | PASS | PR #2222 touched only chat-import UI and localization. Core passed 7,312/7,333 with 21 skips, Evals 299/299, i18n passed, and strict deep code signing passed. Computer Use proved 3->2 plus RAM off->on, responsive General -> Server -> General, quit/relaunch persistence, and UI restoration to 3/off. Shared config returned to its original hash; the isolated app quit and production Osaurus remained running. |
+| 2026-07-29 exact-pin model gate | `ebdd2293` + vMLX `84612e14` | Nanbeige registration/two-loop cache slots, chunked prefill, reasoning and tool parsers | PASS | Exact dependency checkout passed Nanbeige 6/6, chunked prefill 9/9, and reasoning/tool parsers 139/139. The final runs used the packaged Cmlx metallib after two explicitly recorded terminal-runner resource failures. No product assertion failed. |
