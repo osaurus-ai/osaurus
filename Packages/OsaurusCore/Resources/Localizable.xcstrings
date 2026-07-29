@@ -402,36 +402,36 @@
         }
       }
     },
-    "Settings → Data Controls → Export Chats downloads a JSON file right away." : {
+    "Settings → Data Controls → Export Chats downloads a JSON file right away. A single chat can also be exported from its own menu via Download → Export as JSON." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Einstellungen → Datenkontrollen → Chats exportieren lädt sofort eine JSON-Datei herunter."
+            "value" : "Einstellungen → Datenkontrollen → Chats exportieren lädt sofort eine JSON-Datei herunter. Einzelne Chats lassen sich auch über das Chat-Menü mit Herunterladen → Als JSON exportieren sichern."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "설정 → 데이터 제어 → 채팅 내보내기를 선택하면 JSON 파일이 바로 다운로드됩니다."
+            "value" : "설정 → 데이터 제어 → 채팅 내보내기를 선택하면 JSON 파일이 바로 다운로드됩니다. 개별 채팅은 해당 채팅 메뉴의 다운로드 → JSON으로 내보내기로도 내보낼 수 있습니다."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Настройки → Управление данными → Экспорт чатов сразу скачивает JSON-файл."
+            "value" : "Настройки → Управление данными → Экспорт чатов сразу скачивает JSON-файл. Отдельный чат также можно экспортировать через его меню: Скачать → Экспорт в JSON."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "设置 → 数据控制 → 导出聊天会立即下载一个 JSON 文件。"
+            "value" : "设置 → 数据控制 → 导出聊天会立即下载一个 JSON 文件。单个聊天也可通过其菜单中的 下载 → 导出为 JSON 导出。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "設定 → 資料控制 → 導出聊天會立即下載一個 JSON 檔案。"
+            "value" : "設定 → 資料控制 → 導出聊天會立即下載一個 JSON 檔案。單個聊天也可透過其選單中的 下載 → 導出為 JSON 導出。"
           }
         }
       }

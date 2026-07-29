@@ -76,7 +76,7 @@ struct ImportGuideSheet: View {
             Provider(
                 id: "openwebui",
                 name: "Open WebUI",
-                recipe: "Settings → Data Controls → Export Chats downloads a JSON file right away.",
+                recipe: "Settings → Data Controls → Export Chats downloads a JSON file right away. A single chat can also be exported from its own menu via Download → Export as JSON.",
                 exportURL: nil
             ),
         ]
