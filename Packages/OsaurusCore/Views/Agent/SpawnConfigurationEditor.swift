@@ -300,7 +300,8 @@ struct SpawnConfigurationEditor: View {
 
     private var modelAddList: some View {
         let selected = spawnableModelNames
-        let filtered = selectableModelCandidates
+        let filtered =
+            selectableModelCandidates
             .filter { item in
                 guard let targetId = selectionID(for: item) else { return false }
                 return !selected.contains(targetId)
@@ -441,14 +442,22 @@ struct SpawnConfigurationEditor: View {
         let plan = currentLocalCapacityPlan
         return controlRow(
             "Configured same-model local ceiling",
-            subtitle:
-                "Same-model local jobs may be submitted together up to this configured engine ceiling. Existing engine work and RAM-Safety can queue or split them into smaller waves at run time. Different local models run in serial model waves; remote jobs can overlap."
+            subtitle: localExecutionContractSubtitle
         ) {
             Text("up to \(plan.localParallelism)")
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundColor(theme.primaryText)
                 .frame(width: 76, alignment: .trailing)
         }
+    }
+
+    private var localExecutionContractSubtitle: LocalizedStringKey {
+        if excludedAgentID == nil {
+            return
+                "Main Chat Spawn and Server Concurrent Sessions persist one configured limit. Existing engine work and RAM-Safety can queue or split it into smaller waves at run time. Different local models run in serial model waves; remote jobs can overlap."
+        }
+        return
+            "This agent's per-batch cap is additionally bounded by the shared Server Concurrent Sessions ceiling. Existing engine work and RAM-Safety can queue or split it into smaller waves at run time. Different local models run in serial model waves; remote jobs can overlap."
     }
 
     /// Reuse the runtime admission planner for the static settings-level

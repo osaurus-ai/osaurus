@@ -73,6 +73,17 @@ struct SpawnConfigurationUISourceTests {
         }
     }
 
+    @Test("Main Chat batch edits use an origin-aware Server update path")
+    func mainChatBatchEditsUpdateServerWithoutNotificationEchoes() throws {
+        let settings = try Self.source("Views/Settings/ConfigurationView.swift")
+        let controller = try Self.source("Networking/ServerController.swift")
+
+        #expect(settings.contains("server.applyMainChatBatchLimit(from: saved)"))
+        #expect(controller.contains("func applyMainChatBatchLimit("))
+        #expect(controller.contains("synchronizeMainChatBatchLimit(from: latest)"))
+        #expect(!controller.contains("subagentConfigurationCancellable"))
+    }
+
     @Test("model picker refresh, target status, and capacity contract stay in the shared editor")
     func sharedEditorOwnsRefreshStatusAndCapacityCopy() throws {
         let editor = try Self.source("Views/Agent/SpawnConfigurationEditor.swift")
@@ -102,8 +113,12 @@ struct SpawnConfigurationUISourceTests {
         #expect(editor.contains("SubagentBatchAdmissionPlanner.plan("))
         #expect(editor.contains(#""Configured same-model local ceiling""#))
         #expect(editor.contains("Different local models run in serial model waves"))
+        #expect(editor.contains("persist one configured limit"))
+        #expect(editor.contains("per-batch cap is additionally bounded"))
 
-        #expect(concurrency.contains("same-model local subagent waves"))
+        #expect(concurrency.contains("same-model local waves"))
+        #expect(concurrency.contains("Shared with Main Chat Spawn"))
+        #expect(concurrency.contains("SpawnBatchConcurrencyContract.bounds"))
         #expect(concurrency.contains("jobs targeting different local models remain serialized"))
         #expect(subagentSettings.contains("architecture-aware KV, SSM, and activation headroom"))
         #expect(subagentSettings.contains("split into smaller waves"))

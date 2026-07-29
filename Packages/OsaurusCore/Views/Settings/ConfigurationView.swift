@@ -6,6 +6,7 @@ struct ConfigurationView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var onboardingService = OnboardingService.shared
     @EnvironmentObject private var updater: UpdaterViewModel
+    @EnvironmentObject private var server: ServerController
 
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -564,6 +565,9 @@ struct ConfigurationView: View {
             )
             subagentConfigurationBaseline = saved
             if saved != newValue { subagentConfiguration = saved }
+            Task { @MainActor in
+                await server.applyMainChatBatchLimit(from: saved)
+            }
         }
         .onReceive(
             NotificationCenter.default.publisher(for: .subagentConfigurationChanged)

@@ -109,7 +109,7 @@ struct SubagentConfigurationTests {
         #expect(raw.normalized.maxDelegateTurns == 8)
         #expect(raw.normalized.maxToolCalls == 32)
         #expect(raw.normalized.maxElapsedSeconds == 1_800)
-        #expect(raw.normalized.maxParallelSpawns == 8)
+        #expect(raw.normalized.maxParallelSpawns == 32)
     }
 
     @Test("configuration round trips stable raw values")

@@ -248,7 +248,8 @@ final class ServerController: ObservableObject {
         // `~/.osaurus/config/`) is intentionally deferred to
         // `bootstrapRuntimeSettings()` so a fresh install stays pristine
         // until the AppDelegate explicitly runs it during launch.
-        if let existing = ServerRuntimeSettingsStore.load() {
+        let existingRuntimeSettings = ServerRuntimeSettingsStore.load()
+        if let existing = existingRuntimeSettings {
             self.runtimeSettings = existing
         }
         // `server-runtime.json` is also writable through the admin HTTP
@@ -262,9 +263,15 @@ final class ServerController: ObservableObject {
         .sink { [weak self] _ in
             let latest = ServerRuntimeSettingsStore.snapshot()
             Task { @MainActor [weak self] in
-                guard let self, self.runtimeSettings != latest else { return }
-                self.runtimeSettings = latest
+                guard let self else { return }
+                if self.runtimeSettings != latest {
+                    self.runtimeSettings = latest
+                }
+                self.synchronizeMainChatBatchLimit(from: latest)
             }
+        }
+        if let existingRuntimeSettings {
+            synchronizeMainChatBatchLimit(from: existingRuntimeSettings)
         }
         // Keep exposeToNetwork in sync with Bonjour-enabled agents.
         // Only turn ON when a Bonjour agent requires it — never force
@@ -308,6 +315,44 @@ final class ServerController: ObservableObject {
     /// is fully up.
     func bootstrapRuntimeSettings() {
         self.runtimeSettings = ServerRuntimeSettingsStore.loadOrMigrate()
+        synchronizeMainChatBatchLimit(from: runtimeSettings)
+    }
+
+    /// Applies an explicit edit from General -> Main Chat Spawn to the shared
+    /// Server concurrency setting. Keeping this an origin-aware call avoids
+    /// treating asynchronous persistence notifications as fresh user edits,
+    /// which could otherwise replay an older value over a newer Server save.
+    func applyMainChatBatchLimit(
+        from configuration: SubagentConfiguration
+    ) async {
+        let requested = SpawnBatchConcurrencyContract.configuredLimit(
+            for: configuration
+        )
+        guard
+            SpawnBatchConcurrencyContract.configuredLimit(
+                for: runtimeSettings
+            ) != requested
+        else { return }
+        let updated = SpawnBatchConcurrencyContract.applyingMainChatLimit(
+            configuration,
+            to: runtimeSettings
+        )
+        _ = await saveRuntimeSettings(updated)
+    }
+
+    private func synchronizeMainChatBatchLimit(
+        from settings: VMLXServerRuntimeSettings
+    ) {
+        let current = SubagentConfigurationStore.snapshot()
+        let updated = SpawnBatchConcurrencyContract.applyingServerLimit(
+            settings,
+            to: current
+        )
+        guard updated != current else { return }
+        SubagentConfigurationStore.mutate { configuration in
+            configuration.budgets.maxParallelSpawns =
+                updated.budgets.maxParallelSpawns
+        }
     }
 
     /// Checks if the server is responsive

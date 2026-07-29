@@ -37,9 +37,9 @@ struct ConcurrencySection: View {
             SettingsStepperField(
                 label: "Concurrent Sessions",
                 help:
-                    "BatchEngine max batch size and the engine ceiling for same-model local subagent waves. 1 keeps the compile fast-path engaged; >1 allows concurrent decode when Continuous Batching is on.",
+                    "Shared with Main Chat Spawn's Max subagents per batch. This is the BatchEngine ceiling for same-model local waves; RAM safety and current occupancy may run a smaller wave. 1 keeps the compile fast-path engaged; >1 allows concurrent decode when Continuous Batching is on.",
                 text: $maxConcurrentText,
-                range: 1 ... 32,
+                range: SpawnBatchConcurrencyContract.bounds,
                 step: 1,
                 defaultValue: effectiveBatchEngineLimit
             )
@@ -92,7 +92,7 @@ struct ConcurrencySection: View {
             return
         }
         guard let parsed = Int(trimmed), parsed > 0 else { return }
-        let clamped = min(parsed, 32)
+        let clamped = SpawnBatchConcurrencyContract.normalized(parsed)
 
         if draft.concurrency.maxConcurrentSequences != clamped {
             draft.concurrency.maxConcurrentSequences = clamped
