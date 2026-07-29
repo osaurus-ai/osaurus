@@ -6,9 +6,10 @@
 //  and frontier callers:
 //
 //    - `web_search` — always-loaded baseline built-in. One required param
-//      (`query`); optional `category` whose enum is generated from what the
-//      user's enabled providers actually support (omitted entirely when only
-//      web search is available).
+//      (`query`); optional `category` accepted as an open string so the
+//      schema never depends on which providers are configured (baseline
+//      schemas must be byte-stable across composes for KV-prefix reuse).
+//      Execution validates the category against the live provider set.
 //    - `search_and_extract` — dynamic built-in (loaded via capabilities);
 //      search plus Readability extraction of the top results.
 //
@@ -177,8 +178,17 @@ final class WebSearchTool: OsaurusTool, @unchecked Sendable {
         + "loaded and `capabilities_load` is available, load `tool/search_and_extract`. Do not "
         + "keep rephrasing `web_search` when you need source content."
 
-    var parameters: JSONValue? {
-        var properties: [String: JSONValue] = [
+    // Immutable by design: `web_search` is an always-loaded baseline tool, so
+    // its schema is part of every composed prompt's static prefix. Deriving
+    // any part of it from provider/Keychain state (which resolves on a
+    // background probe and changes with settings) would rewrite the tokenizer
+    // prefix between composes and invalidate KV-cache reuse for the whole
+    // conversation. `category` is therefore an open string — no
+    // provider-derived enum — and execution validates it against the live
+    // provider set, falling back to web with a warning.
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "properties": .object([
             "query": .object([
                 "type": .string("string"),
                 "description": .string("Plain-language search query."),
@@ -208,26 +218,17 @@ final class WebSearchTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("string"),
                 "description": .string("Region code 'xx-yy' (e.g. 'us-en'). Omit for global."),
             ]),
-        ]
-        // Only advertise `category` when the user's providers support more
-        // than plain web search — keeps the minimal schema minimal.
-        let categories = SearchToolSchemaState.availableCategories()
-        if categories.count > 1 {
-            properties["category"] = .object([
+            "category": .object([
                 "type": .string("string"),
-                "enum": .array(categories.map { .string($0) }),
                 "description": .string(
-                    "What to search: \(categories.joined(separator: " | ")). Default web."
+                    "What to search: web (default), news, images, or a "
+                        + "provider-specific category. Unsupported values fall back to web."
                 ),
-            ])
-        }
-        return .object([
-            "type": .string("object"),
-            "properties": .object(properties),
-            "required": .array([.string("query")]),
-            "additionalProperties": .bool(false),
-        ])
-    }
+            ]),
+        ]),
+        "required": .array([.string("query")]),
+        "additionalProperties": .bool(false),
+    ])
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)

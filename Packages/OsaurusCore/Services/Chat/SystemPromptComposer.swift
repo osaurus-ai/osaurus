@@ -2649,10 +2649,13 @@ public struct SystemPromptComposer: Sendable {
 
         // Freeze the exact first-compose payload for every baseline tool that
         // remains visible after the current permission/feature gates. Names
-        // alone are not sufficient: a computed schema can change while its
-        // registration and name remain identical (web_search categories are
-        // populated asynchronously after keychain/provider discovery). Such a
-        // change rewrites the tokenizer prefix and defeats disk-L2 reuse.
+        // alone are not sufficient: a schema can change while its registration
+        // and name remain identical (an MCP server re-registering a tool on
+        // reconnect, a plugin reload, a sandbox tool re-registered with new
+        // agent context). Such a change rewrites the tokenizer prefix and
+        // defeats disk-L2 reuse. Built-in baseline schemas are immutable by
+        // contract (see WebSearchTool.parameters) — this freeze is the
+        // backstop for dynamically registered tools.
         //
         // A tool explicitly loaded this session is the intentional exception:
         // `capabilities_load` must still be able to upgrade a compact

@@ -60,6 +60,79 @@ The single source of truth for the helpers is
 `Packages/OsaurusCore/Models/API/JSONDeterminism.swift`. Grep for
 `osaurusCanonical` to find every call site.
 
+## Tool-schema stability contract
+
+Canonical encoding only guarantees stable bytes for stable content. Tool
+schemas are the other half of the contract: they render into the static
+`<tools>` prefix of every composed prompt, ahead of all chat history, so
+a schema whose *content* changes between two composes invalidates the
+KV-cache prefix for the entire conversation even when every byte is
+canonically encoded.
+
+> A baseline (always-loaded) tool's schema MUST NOT depend on mutable or
+> background-resolved state — provider configuration, Keychain probes,
+> model discovery, locale, or anything else that can differ between two
+> composes of the same session.
+
+The canonical example of the failure: `web_search` used to derive its
+`category` enum from the user's configured search providers, which
+resolve on a background Keychain probe seconds after launch. The first
+compose after every app start advertised a different schema than the
+next one, forcing a full re-prefill of the tool block and all history
+behind it. The schema is now immutable (`category` is an open string;
+execution validates against the live provider set and falls back to
+`web` with a warning). If a tool needs to react to configuration, do it
+at execute time, never in `parameters` / `description`.
+
+Enforcement and backstops:
+
+- `SessionToolStateStore` freezes the first-compose tool payloads
+  (`initialToolSpecs`) per session; `SystemPromptComposer.resolveTools`
+  restores them for baseline tools on later turns. This is the backstop
+  for *dynamically registered* tools (MCP re-registration on reconnect,
+  plugin reloads, sandbox tools) — not a license for built-ins to carry
+  mutable schemas.
+- `canonicalToolOrder` fixes the tool ordering; registry listings are
+  name-sorted.
+- Regression tests:
+  `ToolSerializationStabilityTests.alwaysLoadedTokenizerToolPayload_isByteStableAcrossInvocations`
+  (whole ordered baseline payload),
+  `SystemPromptComposerToolResolutionTests.baselineToolPayloads_areStableAcrossRepeatedResolves`
+  (repeated resolves with and without frozen session state),
+  `WebSearchToolTests` immutable-schema contract tests.
+
+### Intentional schema transitions (audited)
+
+These transitions change the rendered tool block on purpose. They are
+attributable, bounded events — not drift — and must not be "fixed" by
+suppressing the change or weakening live authorization constraints to
+preserve cache reuse:
+
+- **Delegation constraints** (`spawn_agent` / `spawn_model` /
+  `spawn_batch` target enums and `maxItems`) are request-local
+  authorization guidance, reapplied *after* the frozen-spec restore.
+  Unchanged settings reproduce identical bytes (see
+  `frozenDelegationSchemaIsStableForUnchangedSettings`); an actual
+  settings/provider/model-pool edit legitimately changes the prefix.
+- **Sandbox provisioning**: sandbox tools enter the tool set when the
+  container comes online mid-session (the late-registration carve-out
+  in `resolveTools`). One prefix change per provisioning event.
+- **`capabilities_load`**: never rewrites the frozen prefix mid-run
+  (loaded schemas ride in the tool-result suffix); the loaded tool
+  folds into `<tools>` on the *next* user turn, growing the prefix
+  predictably. Explicit loads may also upgrade a compact bootstrap
+  schema to the full contract.
+- **MCP / plugin re-registration** affects tools not pinned by the
+  session freeze (newly loaded rows); session-frozen payloads keep the
+  first-compose bytes until the session invalidates.
+- **Stateless HTTP surfaces** (`/agents/{id}/run` without a
+  `session_id`, bare `/chat/completions`) have no cross-request
+  schema-freeze guarantee: each request composes fresh, so callers who
+  want prefix reuse must pass a `session_id`.
+- **Engine reload** (idle unload, app relaunch, model switch) resets
+  per-engine cache counters and re-prefills by definition. Diagnostics
+  should attribute this to engine lifecycle, not schema divergence.
+
 ## Where the contract is enforced
 
 Outbound (Osaurus is the client of an external model provider):

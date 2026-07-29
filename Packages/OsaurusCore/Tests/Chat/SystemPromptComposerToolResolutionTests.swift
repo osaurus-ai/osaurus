@@ -229,51 +229,55 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
-    @Test("session schema freeze preserves canonical payload across async provider discovery")
-    func sessionSchemaFreeze_preservesComputedWebSearchPayload() async {
-        let originalCategories = SearchToolSchemaState.availableCategories()
-        defer { SearchToolSchemaState.update(categories: originalCategories) }
-
+    @Test("baseline tool payloads are canonically stable across repeated resolves")
+    func baselineToolPayloads_areStableAcrossRepeatedResolves() async {
         await withSandboxAgent(autonomous: false) { agentId in
-            SearchToolSchemaState.update(categories: ["web"])
+            // Turn 1: the payloads captured here become the session's frozen
+            // baseline in production.
             let first = SystemPromptComposer.resolveTools(
                 agentId: agentId,
                 executionMode: .none
             )
-            let firstWeb = first.first { $0.function.name == "web_search" }
-            #expect(firstWeb != nil)
-            guard let firstWeb else { return }
+            #expect(first.contains { $0.function.name == "web_search" })
 
-            // Simulate the asynchronous keychain/provider refresh that used
-            // to mutate the same named tool after turn one.
-            SearchToolSchemaState.update(categories: ["web", "news", "images"])
-            let liveSecond = SystemPromptComposer.resolveTools(
-                agentId: agentId,
-                executionMode: .none,
-                frozenAlwaysLoadedNames: Set(first.map(\.function.name))
-            )
-            let liveWeb = liveSecond.first { $0.function.name == "web_search" }
-            #expect(liveWeb != nil)
-            guard let liveWeb else { return }
-            #expect(liveWeb.canonicalHashPayload() != firstWeb.canonicalHashPayload())
-
-            let frozenSecond = SystemPromptComposer.resolveTools(
+            // Turn 2 (frozen fields echoed like ChatView / PluginHostAPI do):
+            // every baseline tool must resolve to the exact same canonical
+            // payload, in the same canonical order, so the tokenizer prefix —
+            // and with it the KV cache — survives the turn boundary.
+            let second = SystemPromptComposer.resolveTools(
                 agentId: agentId,
                 executionMode: .none,
                 frozenAlwaysLoadedNames: Set(first.map(\.function.name)),
                 frozenToolSpecs: first
             )
-            let frozenWeb = frozenSecond.first { $0.function.name == "web_search" }
-            #expect(frozenWeb != nil)
-            guard let frozenWeb else { return }
-            #expect(frozenWeb.canonicalHashPayload() == firstWeb.canonicalHashPayload())
+            #expect(first.map(\.function.name) == second.map(\.function.name))
+            for (a, b) in zip(first, second) {
+                #expect(
+                    a.canonicalHashPayload() == b.canonicalHashPayload(),
+                    "baseline payload drifted for \(a.function.name)"
+                )
+            }
             #expect(
-                PromptPrefixHasher.hash(systemContent: "prefix", tools: frozenSecond)
+                PromptPrefixHasher.hash(systemContent: "prefix", tools: second)
                     == PromptPrefixHasher.hash(systemContent: "prefix", tools: first)
             )
 
-            // Explicit loading remains an intentional schema upgrade: it may
-            // replace the compact baseline with the current full contract.
+            // A fresh un-frozen resolve must ALSO be identical: baseline
+            // schemas are immutable by contract, so the freeze is a backstop
+            // for dynamically registered tools, not a crutch that hides
+            // mutable built-in schemas.
+            let fresh = SystemPromptComposer.resolveTools(
+                agentId: agentId,
+                executionMode: .none
+            )
+            #expect(
+                PromptPrefixHasher.hash(systemContent: "prefix", tools: fresh)
+                    == PromptPrefixHasher.hash(systemContent: "prefix", tools: first)
+            )
+
+            // Explicit loading remains an intentional schema upgrade: it
+            // replaces the compact bootstrap baseline with the full contract.
+            let firstWeb = first.first { $0.function.name == "web_search" }
             let explicitlyLoaded = SystemPromptComposer.resolveTools(
                 agentId: agentId,
                 executionMode: .none,
@@ -283,8 +287,9 @@ struct SystemPromptComposerToolResolutionTests {
             )
             let loadedWeb = explicitlyLoaded.first { $0.function.name == "web_search" }
             #expect(loadedWeb != nil)
-            guard let loadedWeb else { return }
-            #expect(loadedWeb.canonicalHashPayload() != firstWeb.canonicalHashPayload())
+            if let firstWeb, let loadedWeb {
+                #expect(loadedWeb.canonicalHashPayload() != firstWeb.canonicalHashPayload())
+            }
         }
     }
 

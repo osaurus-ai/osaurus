@@ -3,9 +3,10 @@
 //  OsaurusCoreTests
 //
 //  Tool-surface contracts for native search: `web_search` is an always-loaded
-//  built-in (and part of the Default-agent baseline), `search_and_extract` is
-//  a dynamic native tool, the `category` enum only appears in the schema when
-//  the user's providers serve more than plain web, the per-agent
+//  built-in (and part of the Default-agent baseline) whose schema is immutable
+//  by design — `category` is an open string with no provider-derived enum, so
+//  the advertised schema never depends on which providers are configured.
+//  `search_and_extract` is a dynamic native tool, the per-agent
 //  `webSearchEnabled` gate strips both tools in `resolveTools` (while loaded
 //  tools survive), and the weak-caller argument sanitizers never fail a call
 //  over a malformed value.
@@ -215,42 +216,70 @@ struct WebSearchToolTests {
         #expect(object["retryable"] as? Bool == false)
     }
 
-    // MARK: - Dynamic category enum
+    // MARK: - Immutable schema contract
 
-    private func categoryEnum(of tool: WebSearchTool) -> [String]? {
+    private func categoryProperty(of tool: WebSearchTool) -> [String: JSONValue]? {
         guard case .object(let root)? = tool.parameters,
             case .object(let properties)? = root["properties"],
-            case .object(let category)? = properties["category"],
-            case .array(let values)? = category["enum"]
+            case .object(let category)? = properties["category"]
         else { return nil }
-        return values.compactMap {
-            if case .string(let s) = $0 { return s }
-            return nil
+        return category
+    }
+
+    /// `web_search` is an always-loaded baseline tool: its schema sits in the
+    /// static prompt prefix of every compose. `category` must always be
+    /// advertised, as an open string with NO provider-derived enum — an enum
+    /// that tracked configured providers would flip the schema bytes when the
+    /// background Keychain probe lands (or on any settings edit) and
+    /// invalidate the KV-cache prefix for the whole conversation.
+    @Test func categoryIsAlwaysAdvertisedAsAnOpenString() throws {
+        let category = try #require(categoryProperty(of: WebSearchTool()))
+        #expect(category["enum"] == nil)
+        guard case .string(let type)? = category["type"] else {
+            Issue.record("category must be typed as a string")
+            return
         }
+        #expect(type == "string")
+        // Custom provider categories stay expressible: the description names
+        // the built-ins and the open-ended contract, not a closed list.
+        guard case .string(let description)? = category["description"] else {
+            Issue.record("category must carry a description")
+            return
+        }
+        #expect(description.contains("web"))
+        #expect(description.contains("news"))
+        #expect(description.contains("images"))
+        #expect(description.contains("fall back to web"))
     }
 
-    @Test func categoryParamOmittedWhenOnlyWebIsAvailable() {
-        let before = SearchToolSchemaState.availableCategories()
-        defer { SearchToolSchemaState.update(categories: before) }
-
-        SearchToolSchemaState.update(categories: ["web"])
-        #expect(categoryEnum(of: WebSearchTool()) == nil)
-    }
-
-    @Test func categoryParamEnumReflectsAvailableCategories() {
-        let before = SearchToolSchemaState.availableCategories()
-        defer { SearchToolSchemaState.update(categories: before) }
-
-        SearchToolSchemaState.update(categories: ["web", "news", "images"])
-        #expect(categoryEnum(of: WebSearchTool()) == ["web", "news", "images"])
-    }
-
-    @Test func emptyCategoriesFallBackToWeb() {
-        let before = SearchToolSchemaState.availableCategories()
-        defer { SearchToolSchemaState.update(categories: before) }
-
-        SearchToolSchemaState.update(categories: [])
-        #expect(SearchToolSchemaState.availableCategories() == ["web"])
+    /// The full schema must be byte-stable regardless of provider
+    /// availability: identical canonical payloads across fresh instances,
+    /// repeated reads, and the registry-registered spec.
+    @Test func schemaBytesDoNotDependOnProviderAvailability() throws {
+        func canonicalBytes(_ parameters: JSONValue?) throws -> Data {
+            let tool = Tool(
+                type: "function",
+                function: ToolFunction(
+                    name: "web_search",
+                    description: "probe",
+                    parameters: parameters
+                )
+            )
+            return try JSONSerialization.data(
+                withJSONObject: tool.toTokenizerToolSpec(),
+                options: [.sortedKeys]
+            )
+        }
+        // Two fresh instances and two reads of the same instance agree —
+        // there is no hidden state feeding the schema anymore.
+        let tool = WebSearchTool()
+        #expect(tool.parameters == tool.parameters)
+        #expect(try canonicalBytes(WebSearchTool().parameters) == canonicalBytes(tool.parameters))
+        // The registry-registered spec carries the same immutable payload.
+        let registered = try #require(
+            ToolRegistry.shared.specs(forTools: ["web_search"]).first
+        )
+        #expect(registered.function.parameters == tool.parameters)
     }
 
     // MARK: - Agent gating in resolveTools
