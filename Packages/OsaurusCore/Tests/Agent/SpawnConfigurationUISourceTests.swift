@@ -93,6 +93,34 @@ struct SpawnConfigurationUISourceTests {
         #expect(!controller.contains("subagentConfigurationCancellable"))
     }
 
+    @Test("runtime spawn boundaries inject the canonical Server concurrency")
+    func runtimeSpawnBoundariesUseCanonicalServerLimit() throws {
+        let snapshot = try Self.source("Services/Chat/AgentConfigSnapshot.swift")
+        let textSpawn = try Self.source("Subagent/Kinds/TextSubagentKind.swift")
+        let batchSpawn = try Self.source("Tools/SpawnBatchTool.swift")
+        let visibility = try Self.source(
+            "Subagent/SubagentCapabilityRegistry.swift"
+        )
+
+        #expect(snapshot.contains("for: ServerRuntimeSettingsStore.snapshot()"))
+        #expect(snapshot.contains("sharedParallelLimit: sharedParallelLimit"))
+        #expect(textSpawn.contains("for: ServerRuntimeSettingsStore.snapshot()"))
+        #expect(textSpawn.contains("sharedParallelLimit: sharedParallelLimit"))
+        #expect(batchSpawn.contains("maxParallelSpawns: maxParallelSpawns"))
+        #expect(batchSpawn.contains("sharedParallelLimit: maxParallelSpawns"))
+        #expect(
+            batchSpawn.contains(
+                "approved.maxParallelSpawns == current.maxParallelSpawns"
+            )
+        )
+
+        // Keep the budget merger pure: every production boundary must name the
+        // canonical source explicitly, while hand-built frozen-schema tests can
+        // inject the persisted mirror without reading developer-machine state.
+        #expect(!visibility.contains("ServerRuntimeSettingsStore.snapshot()"))
+        #expect(visibility.contains("sharedParallelLimit: Int"))
+    }
+
     @Test("model picker refresh, target status, and capacity contract stay in the shared editor")
     func sharedEditorOwnsRefreshStatusAndCapacityCopy() throws {
         let editor = try Self.source("Views/Agent/SpawnConfigurationEditor.swift")

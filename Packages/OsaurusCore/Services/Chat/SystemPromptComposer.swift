@@ -1063,6 +1063,7 @@ public struct SystemPromptComposer: Sendable {
                 SubagentCapabilityRegistry.spawnBatchToolName
             )
             if agentToolResolved || modelToolResolved || batchToolResolved {
+                let fallbackConfig = SubagentConfigurationStore.snapshot()
                 // The worker tool-reach line must match what the runtime will
                 // actually grant, so resolve it through the SAME helper the
                 // spawn kind uses (default agent → global config, custom →
@@ -1071,15 +1072,18 @@ public struct SystemPromptComposer: Sendable {
                     snapshot.spawnConfiguration?.toolAccess
                     ?? SubagentToolVisibility.effectiveSpawnToolAccess(
                         isDefault: snapshot.agentId == Agent.defaultId,
-                        config: SubagentConfigurationStore.snapshot(),
+                        config: fallbackConfig,
                         settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings
                     )
                 let maxParallel =
                     snapshot.spawnConfiguration?.budgets.maxParallelSpawns
                     ?? SubagentToolVisibility.effectiveBudgets(
                         isDefault: snapshot.agentId == Agent.defaultId,
-                        config: SubagentConfigurationStore.snapshot(),
-                        settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings
+                        config: fallbackConfig,
+                        settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings,
+                        sharedParallelLimit: SpawnBatchConcurrencyContract.configuredLimit(
+                            for: fallbackConfig
+                        )
                     ).normalized.maxParallelSpawns
                 composer.append(
                     .static(
@@ -2743,7 +2747,10 @@ public struct SystemPromptComposer: Sendable {
                     ?? SubagentToolVisibility.effectiveBudgets(
                         isDefault: isDefault,
                         config: config,
-                        settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings
+                        settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings,
+                        sharedParallelLimit: SpawnBatchConcurrencyContract.configuredLimit(
+                            for: config
+                        )
                     ).normalized.maxParallelSpawns
                 byName[SubagentCapabilityRegistry.spawnBatchToolName] =
                     SpawnBatchTool.constrainedSpec(

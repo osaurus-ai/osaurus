@@ -1096,7 +1096,8 @@ struct SpawnLauncherAuthority: Equatable, Sendable {
         id: UUID,
         isDefault: Bool,
         configuration: SubagentConfiguration,
-        agent: Agent?
+        agent: Agent?,
+        sharedParallelLimit: Int
     ) {
         let settings = agent?.settings
         self.id = id
@@ -1127,7 +1128,8 @@ struct SpawnLauncherAuthority: Equatable, Sendable {
         self.budgets = SubagentToolVisibility.effectiveBudgets(
             isDefault: isDefault,
             config: configuration,
-            settings: settings
+            settings: settings,
+            sharedParallelLimit: sharedParallelLimit
         )
         self.modelOverride =
             SubagentToolVisibility.effectiveSubagentModel(

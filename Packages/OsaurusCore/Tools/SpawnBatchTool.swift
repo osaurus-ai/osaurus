@@ -963,6 +963,10 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 config: configuration,
                 settings: launcherSettings
             )
+        let maxParallelSpawns =
+            SpawnBatchConcurrencyContract.configuredLimit(
+                for: ServerRuntimeSettingsStore.snapshot()
+            )
 
         return BatchAuthorityFingerprint(
             configurationRevision: SpawnConfigurationAuthorityRevision(
@@ -972,14 +976,13 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                     ? storeSnapshot.spawnDefaultRevision
                     : nil
             ),
-            maxParallelSpawns: SpawnBatchConcurrencyContract.configuredLimit(
-                for: ServerRuntimeSettingsStore.snapshot()
-            ),
+            maxParallelSpawns: maxParallelSpawns,
             launcher: SpawnLauncherAuthority(
                 id: parentScope.agentId,
                 isDefault: isDefaultLauncher,
                 configuration: configuration,
-                agent: authorities.launcher.agent
+                agent: authorities.launcher.agent,
+                sharedParallelLimit: maxParallelSpawns
             ),
             launcherAgentRevisions: authorities.launcher.revisions,
             targets: authorities.targets,
@@ -1321,7 +1324,10 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
         return SubagentToolVisibility.effectiveBudgets(
             isDefault: isDefault,
             config: config,
-            settings: settings
+            settings: settings,
+            sharedParallelLimit: SpawnBatchConcurrencyContract.configuredLimit(
+                for: ServerRuntimeSettingsStore.snapshot()
+            )
         ).normalized.maxParallelSpawns
     }
 

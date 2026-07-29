@@ -272,6 +272,10 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         let subagentConfig = SubagentConfigurationStore.snapshot()
         let isDefault = agentId == Agent.defaultId
         let settings = mgr.agent(for: agentId)?.settings
+        let sharedParallelLimit =
+            SpawnBatchConcurrencyContract.configuredLimit(
+                for: ServerRuntimeSettingsStore.snapshot()
+            )
         let spawnConfiguration = AgentSpawnConfigSnapshot(
             agentIDs: SubagentToolVisibility.effectiveSpawnableAgents(
                 isDefault: isDefault,
@@ -292,7 +296,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             budgets: SubagentToolVisibility.effectiveBudgets(
                 isDefault: isDefault,
                 config: subagentConfig,
-                settings: settings
+                settings: settings,
+                sharedParallelLimit: sharedParallelLimit
             ),
             toolAccess: SubagentToolVisibility.effectiveSpawnToolAccess(
                 isDefault: isDefault,

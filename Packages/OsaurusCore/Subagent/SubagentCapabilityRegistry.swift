@@ -651,19 +651,14 @@ public enum SubagentToolVisibility {
         isDefault: Bool,
         config: SubagentConfiguration,
         settings: AgentSettings?,
-        sharedParallelLimit: Int? = nil
+        sharedParallelLimit: Int
     ) -> SubagentBudgets {
         let budgets =
             isDefault
             ? config.budgets
             : (settings?.subagentBudgets ?? SubagentBudgets())
-        let limit =
-            sharedParallelLimit
-            ?? SpawnBatchConcurrencyContract.configuredLimit(
-                for: ServerRuntimeSettingsStore.snapshot()
-            )
         return SpawnBatchConcurrencyContract.applyingLimit(
-            limit,
+            sharedParallelLimit,
             to: budgets
         )
     }

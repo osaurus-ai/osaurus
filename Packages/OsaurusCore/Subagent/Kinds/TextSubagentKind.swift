@@ -274,7 +274,10 @@ final class TextSubagentKind:
         self.budgets = SubagentToolVisibility.effectiveBudgets(
             isDefault: isDefault,
             config: config,
-            settings: settings
+            settings: settings,
+            sharedParallelLimit: SpawnBatchConcurrencyContract.configuredLimit(
+                for: ServerRuntimeSettingsStore.snapshot()
+            )
         )
         self.toolAccess = SubagentToolVisibility.effectiveSpawnToolAccess(
             isDefault: isDefault,
@@ -559,6 +562,10 @@ final class TextSubagentKind:
             config: configuration,
             settings: pair.launcher.agent?.settings
         )
+        let sharedParallelLimit =
+            SpawnBatchConcurrencyContract.configuredLimit(
+                for: ServerRuntimeSettingsStore.snapshot()
+            )
 
         return AuthoritySnapshot(
             configurationRevision: SpawnConfigurationAuthorityRevision(
@@ -572,7 +579,8 @@ final class TextSubagentKind:
                 id: scope.agentId,
                 isDefault: isDefault,
                 configuration: configuration,
-                agent: pair.launcher.agent
+                agent: pair.launcher.agent,
+                sharedParallelLimit: sharedParallelLimit
             ),
             target: pair.target?.agent.map(SpawnTargetAuthority.init),
             launcherAgentRevisions: pair.launcher.revisions,
