@@ -581,13 +581,7 @@ struct PluginsView: View {
                             ToolPermissionBanner(count: pluginsWithMissingPermissionsCount, subject: .plugins)
                         }
 
-                        LazyVGrid(
-                            columns: [
-                                GridItem(.flexible(minimum: 300), spacing: 20),
-                                GridItem(.flexible(minimum: 300), spacing: 20),
-                            ],
-                            spacing: 20
-                        ) {
+                        LazyVGrid(columns: responsiveGrid, spacing: 20) {
                             ForEach(Array(installedPlugins.enumerated()), id: \.element.id) { index, plugin in
                                 PluginCard(
                                     plugin: plugin,
@@ -648,10 +642,11 @@ struct PluginsView: View {
 
     // MARK: - Browse Tab
 
-    private var twoColumnGrid: [GridItem] {
+    /// Keep cards readable in the management window's compact layout, while
+    /// still using multiple columns when the window has enough room.
+    private var responsiveGrid: [GridItem] {
         [
-            GridItem(.flexible(minimum: 300), spacing: 20),
-            GridItem(.flexible(minimum: 300), spacing: 20),
+            GridItem(.adaptive(minimum: 340), spacing: 20, alignment: .top)
         ]
     }
 
@@ -716,7 +711,7 @@ struct PluginsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 GitHubTokenCard()
-                LazyVGrid(columns: twoColumnGrid, spacing: 20) {
+                LazyVGrid(columns: responsiveGrid, spacing: 20) {
                     ForEach(Array(filteredPlugins.enumerated()), id: \.element.id) { index, plugin in
                     PluginCard(
                         plugin: plugin,
@@ -777,7 +772,7 @@ struct PluginsView: View {
         } else {
             // Installed plugins are excluded upstream (they live in the
             // Installed tab), so this grid is purely available discovery.
-            LazyVGrid(columns: twoColumnGrid, spacing: 20) {
+            LazyVGrid(columns: responsiveGrid, spacing: 20) {
                 ForEach(Array(filteredMarketplaceEntries.enumerated()), id: \.element.name) {
                     index,
                     entry in
@@ -794,7 +789,7 @@ struct PluginsView: View {
     }
 
     private var marketplaceLoadingGrid: some View {
-        LazyVGrid(columns: twoColumnGrid, spacing: 20) {
+        LazyVGrid(columns: responsiveGrid, spacing: 20) {
             ForEach(0 ..< 6, id: \.self) { _ in
                 MarketplaceSkeletonCard()
             }

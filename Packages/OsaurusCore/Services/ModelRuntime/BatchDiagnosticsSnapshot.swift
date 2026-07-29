@@ -19,6 +19,13 @@ public struct BatchDiagnosticsSnapshot: Equatable, Sendable {
     public let pendingCount: Int
     public let activeCount: Int
     public let activeHighWatermark: Int
+    /// Sum of the atomic configured maxima reported by every resolved engine.
+    public let configuredEngineCapacity: Int
+    /// Sum of each engine's currently available slots from the same atomic
+    /// snapshot. This can be lower than configured capacity while work runs.
+    public let nominalAvailableCapacity: Int
+    /// Stable per-model view (`model: capacity`) for live UI/API inspection.
+    public let engineCapacitySummary: String?
     public let decodeSplitCount: Int
     public let turboQuantCompressions: Int
     public let isAcceptingRequests: Bool
@@ -42,6 +49,9 @@ public struct BatchDiagnosticsSnapshot: Equatable, Sendable {
         pendingCount: Int,
         activeCount: Int,
         activeHighWatermark: Int,
+        configuredEngineCapacity: Int = 0,
+        nominalAvailableCapacity: Int = 0,
+        engineCapacitySummary: String? = nil,
         decodeSplitCount: Int,
         turboQuantCompressions: Int,
         isAcceptingRequests: Bool,
@@ -64,6 +74,9 @@ public struct BatchDiagnosticsSnapshot: Equatable, Sendable {
         self.pendingCount = pendingCount
         self.activeCount = activeCount
         self.activeHighWatermark = activeHighWatermark
+        self.configuredEngineCapacity = configuredEngineCapacity
+        self.nominalAvailableCapacity = nominalAvailableCapacity
+        self.engineCapacitySummary = engineCapacitySummary
         self.decodeSplitCount = decodeSplitCount
         self.turboQuantCompressions = turboQuantCompressions
         self.isAcceptingRequests = isAcceptingRequests
@@ -83,4 +96,18 @@ public struct BatchDiagnosticsSnapshot: Equatable, Sendable {
         self.ssmCompanionMisses = ssmCompanionMisses
         self.ssmCompanionReDerives = ssmCompanionReDerives
     }
+}
+
+/// Actor-consistent capacity for one resolved local model's vMLX
+/// `BatchEngine`. This is observability, not a second reservation system:
+/// the engine remains the sole authority that admits active decode slots.
+struct ModelBatchCapacitySnapshot: Equatable, Sendable {
+    let modelName: String
+    let configuredMaximum: Int
+    let activeCount: Int
+    let pendingCount: Int
+    let nominalAvailableCount: Int
+    let activeHighWatermark: Int
+    let isAcceptingRequests: Bool
+    let isShutdown: Bool
 }

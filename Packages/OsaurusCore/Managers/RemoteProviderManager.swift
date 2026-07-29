@@ -478,6 +478,10 @@ public final class RemoteProviderManager: ObservableObject {
             print("[Osaurus] Remote Provider '\(provider.name)': Connection failed - \(errorMessage)")
 
             notifyStatusChanged()
+            // `state.discoveredModels` was cleared above. Notify the shared
+            // picker cache as well so a previously connected provider cannot
+            // leave stale model rows behind after a failed reconnect.
+            notifyModelsChanged()
             throw error
         }
     }
@@ -1094,6 +1098,83 @@ public final class RemoteProviderManager: ObservableObject {
         public let models: [String]
     }
 
+    /// One exact connected provider/model pair exposed to subagent spawning.
+    /// `id` is UUID-backed and therefore remains stable across provider rename;
+    /// `pickerModelId` preserves the existing human-readable chat picker id.
+    struct ConnectedSpawnModelTarget: Sendable, Equatable {
+        let id: String
+        let providerId: UUID
+        let providerName: String
+        let modelId: String
+        let pickerModelId: String
+    }
+
+    /// Immutable lookup snapshot for one connected spawn catalog refresh.
+    ///
+    /// SwiftUI may ask for the same row identity many times while laying out a
+    /// picker. Indexing once keeps those body reads independent from
+    /// `RemoteProviderManager.shared` initialization and avoids rebuilding the
+    /// complete provider/model catalog per row.
+    struct ConnectedSpawnModelTargetIndex: Sendable {
+        private struct PickerKey: Hashable, Sendable {
+            let providerId: UUID
+            let pickerModelId: String
+        }
+
+        static let empty = ConnectedSpawnModelTargetIndex(targets: [])
+
+        private let canonicalTargets: [String: ConnectedSpawnModelTarget]
+        private let targetIDsByPicker: [PickerKey: String]
+        private let uniqueLegacyTargets: [String: ConnectedSpawnModelTarget]
+
+        init(targets: [ConnectedSpawnModelTarget]) {
+            var canonicalTargets: [String: ConnectedSpawnModelTarget] = [:]
+            var targetIDsByPicker: [PickerKey: String] = [:]
+            var legacyBuckets: [String: [ConnectedSpawnModelTarget]] = [:]
+
+            for target in targets {
+                canonicalTargets[target.id] = target
+                targetIDsByPicker[
+                    PickerKey(
+                        providerId: target.providerId,
+                        pickerModelId: target.pickerModelId
+                    )
+                ] = target.id
+                legacyBuckets[target.pickerModelId, default: []].append(target)
+            }
+
+            self.canonicalTargets = canonicalTargets
+            self.targetIDsByPicker = targetIDsByPicker
+            self.uniqueLegacyTargets = legacyBuckets.compactMapValues { matches in
+                matches.count == 1 ? matches[0] : nil
+            }
+        }
+
+        func target(forStoredId id: String) -> ConnectedSpawnModelTarget? {
+            let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+
+            if let parsed = SpawnRemoteModelIdentity.parse(trimmed),
+                let canonicalID = SpawnRemoteModelIdentity.make(
+                    providerId: parsed.providerId,
+                    modelId: parsed.modelId
+                )
+            {
+                return canonicalTargets[canonicalID]
+            }
+            return uniqueLegacyTargets[trimmed]
+        }
+
+        func targetID(
+            forPickerModelId pickerModelId: String,
+            providerId: UUID
+        ) -> String? {
+            targetIDsByPicker[
+                PickerKey(providerId: providerId, pickerModelId: pickerModelId)
+            ]
+        }
+    }
+
     /// Get all available models synchronously from cached state. Empty while
     /// offline so the model picker (via `ModelPickerItemCache`) hides every
     /// cloud model and chat sessions fall back to Foundation/local; the
@@ -1106,11 +1187,10 @@ public final class RemoteProviderManager: ObservableObject {
 
         for provider in configuration.providers {
             if let state = providerStates[provider.id], state.isConnected {
-                // Create prefixed model names
-                let prefix = provider.name
-                    .lowercased()
-                    .replacingOccurrences(of: " ", with: "-")
-                    .replacingOccurrences(of: "/", with: "-")
+                // Create prefixed model names. This remains the normal chat
+                // picker contract; spawn persistence uses the separate
+                // UUID-backed identity below.
+                let prefix = Self.pickerPrefix(for: provider.name)
                 let prefixedModels = state.discoveredModels.map { "\(prefix)/\($0)" }
                 result.append(
                     CachedProviderModels(
@@ -1125,6 +1205,72 @@ public final class RemoteProviderManager: ObservableObject {
         }
 
         return result
+    }
+
+    /// Current spawn-only remote catalog. A connected state without its live
+    /// service is not dispatchable, so it is deliberately omitted.
+    func connectedSpawnModelTargets() -> [ConnectedSpawnModelTarget] {
+        guard !isOffline else { return [] }
+        return configuration.providers.flatMap { provider -> [ConnectedSpawnModelTarget] in
+            guard
+                providerStates[provider.id]?.isConnected == true,
+                services[provider.id] != nil,
+                let models = providerStates[provider.id]?.discoveredModels
+            else {
+                return []
+            }
+            let pickerPrefix = Self.pickerPrefix(for: provider.name)
+            return models.compactMap { modelId in
+                guard
+                    let id = SpawnRemoteModelIdentity.make(
+                        providerId: provider.id,
+                        modelId: modelId
+                    )
+                else {
+                    return nil
+                }
+                return ConnectedSpawnModelTarget(
+                    id: id,
+                    providerId: provider.id,
+                    providerName: provider.name,
+                    modelId: modelId,
+                    pickerModelId: "\(pickerPrefix)/\(modelId)"
+                )
+            }
+        }
+    }
+
+    /// Capture one indexed view of the current connected spawn catalog.
+    func connectedSpawnModelTargetIndex() -> ConnectedSpawnModelTargetIndex {
+        ConnectedSpawnModelTargetIndex(targets: connectedSpawnModelTargets())
+    }
+
+    /// Resolve a canonical UUID-backed spawn id, or one unambiguous legacy
+    /// name-prefixed id, against current connected service truth. Legacy ids
+    /// normalize to the canonical id before the model request is routed.
+    func connectedSpawnModelTarget(
+        forStoredId id: String
+    ) -> ConnectedSpawnModelTarget? {
+        connectedSpawnModelTargetIndex().target(forStoredId: id)
+    }
+
+    /// Convert one current normal-chat picker item to its spawn-only stable id.
+    /// This does not mutate the chat picker id or any ordinary chat setting.
+    func spawnTargetId(
+        forPickerModelId pickerModelId: String,
+        providerId: UUID
+    ) -> String? {
+        connectedSpawnModelTargetIndex().targetID(
+            forPickerModelId: pickerModelId,
+            providerId: providerId
+        )
+    }
+
+    nonisolated static func pickerPrefix(for providerName: String) -> String {
+        providerName
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "-")
+            .replacingOccurrences(of: "/", with: "-")
     }
 
     /// The first chat-capable model id for `providerId`, prefixed exactly as the
@@ -1393,6 +1539,26 @@ public final class RemoteProviderManager: ObservableObject {
                         diagnostics
                     )
                 }
+                // Fireworks: augment with the serverless catalog so the Test
+                // badge matches what connect will discover. Best-effort — a
+                // catalog failure keeps the plain /models result.
+                if RemoteProviderService.isFireworksProvider(tempProvider) {
+                    do {
+                        let catalog = try await RemoteProviderService.fetchFireworksCatalogModels(
+                            headers: testHeaders,
+                            timeout: 30,
+                            transport: testConnectionTransportOverride
+                        )
+                        let merged = RemoteProviderService.mergeFireworksModelIds(
+                            discovered: models,
+                            catalog: catalog
+                        )
+                        print("[Osaurus] Test Connection: Success - found \(merged.count) models")
+                        return merged
+                    } catch {
+                        print("[Osaurus] Test Connection: Fireworks catalog unavailable, using /models only")
+                    }
+                }
                 print("[Osaurus] Test Connection: Success - found \(models.count) models")
                 return models
             }
@@ -1514,6 +1680,13 @@ public final class RemoteProviderManager: ObservableObject {
     /// Mutate a test-installed provider's state. Test-only.
     func _testSetState(_ state: RemoteProviderState, for id: UUID) {
         providerStates[id] = state
+    }
+
+    /// Replace the persisted record for a test-installed provider while
+    /// preserving its UUID-backed live state/service. Used to prove that a
+    /// display-name edit cannot invalidate or retarget a spawn identity.
+    func _testUpdateProviderRecord(_ provider: RemoteProvider) {
+        configuration.update(provider)
     }
 
     /// Await the connect spawned by the last `setOsaurusRouterEnabled(true)` so

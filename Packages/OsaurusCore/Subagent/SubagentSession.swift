@@ -63,6 +63,26 @@ struct PreparedSubagentRun: Sendable {
     let scope: SubagentScope
     let resolved: ResolvedModel
     let handoff: any SubagentHandoff
+    /// True when `handoff` came from `kind.makeHandoff()`. Direct text spawns
+    /// refresh that kind-owned value after a queued admission; explicit test
+    /// and caller overrides remain authoritative.
+    let handoffIsKindOwned: Bool
+
+    init(
+        kind: any SubagentKind,
+        tool: String,
+        scope: SubagentScope,
+        resolved: ResolvedModel,
+        handoff: any SubagentHandoff,
+        handoffIsKindOwned: Bool = false
+    ) {
+        self.kind = kind
+        self.tool = tool
+        self.scope = scope
+        self.resolved = resolved
+        self.handoff = handoff
+        self.handoffIsKindOwned = handoffIsKindOwned
+    }
 
     var admissionClass: SubagentAdmissionClass {
         kind.admissionClass(resolved)
@@ -131,6 +151,57 @@ public enum SubagentSession {
         }
     }
 
+    /// Spawn compatibility tools need their feed + Stop token visible while
+    /// target resolution and an `.ask` permission panel are still in flight.
+    /// The ordinary host historically registered those only after preparation,
+    /// which meant a direct spawn panel had no run-owned Stop path.
+    ///
+    /// This is deliberately opt-in (spawn_agent / spawn_model only) so kinds
+    /// whose existing presentation contract starts after preparation do not
+    /// change behavior.
+    static func runWithVisiblePreparation(
+        _ kind: any SubagentKind,
+        tool: String
+    ) async -> String {
+        let scope = SubagentScope.current()
+        let feed = SubagentFeed(
+            toolCallId: scope.toolCallId,
+            kindId: kind.capability.id,
+            title: kind.feedTitle
+        )
+        let interrupt = InterruptToken()
+        SubagentFeedRegistry.shared.register(feed)
+        SubagentInterruptCenter.shared.register(interrupt, for: scope.toolCallId)
+        defer {
+            SubagentInterruptCenter.shared.unregister(scope.toolCallId)
+            SubagentFeedRegistry.shared.unregister(toolCallId: scope.toolCallId)
+        }
+
+        feed.emitPhase("validating target")
+        switch await prepare(
+            kind,
+            tool: tool,
+            scope: scope,
+            interrupt: interrupt
+        ) {
+        case .failure(let envelope):
+            feed.finish(
+                success: false,
+                summary: ToolEnvelope.failureMessage(envelope)
+            )
+            return envelope
+        case .ready(let prepared):
+            return await runPrepared(
+                prepared,
+                presentation: SubagentRunPresentation(
+                    feed: feed,
+                    interrupt: interrupt,
+                    registerWithUI: false
+                )
+            )
+        }
+    }
+
     /// Resolve and authorize a kind without admitting it or changing model
     /// residency. This is the reject-before-load boundary used by both the
     /// compatibility tools and `spawn_batch`.
@@ -138,8 +209,30 @@ public enum SubagentSession {
         _ kind: any SubagentKind,
         tool: String,
         handoff: (any SubagentHandoff)? = nil,
-        scope explicitScope: SubagentScope? = nil
+        scope explicitScope: SubagentScope? = nil,
+        interrupt: InterruptToken? = nil
     ) async -> SubagentPreparationResult {
+        func cancellationEnvelope(_ message: String) -> String {
+            let userInterrupted = interrupt?.isInterrupted == true
+            return ToolEnvelope.failure(
+                kind: userInterrupted ? .userDenied : .executionError,
+                message:
+                    userInterrupted
+                    ? "Run was stopped by the user. \(message)"
+                    : message,
+                tool: tool,
+                retryable: false,
+                metadata: ["cancelled": true]
+            )
+        }
+        if interrupt?.isInterrupted == true || Task.isCancelled {
+            return .failure(
+                cancellationEnvelope(
+                    "Target preparation did not complete."
+                )
+            )
+        }
+
         // One recursion guard for the whole subagent family: a running
         // subagent (of any kind) cannot start another.
         if let active = activeKindId {
@@ -157,14 +250,50 @@ public enum SubagentSession {
 
         // Resolve + validate the model BEFORE any residency eviction.
         let resolved: ResolvedModel
+        let resolution = OwnedSubagentOperation {
+            try await kind.resolveModel(scope)
+        }
         do {
-            resolved = try await kind.resolveModel(scope)
+            resolved = try await resolution.value(
+                cancellationRequested: { interrupt?.isInterrupted == true }
+            )
+        } catch is CancellationError {
+            return .failure(
+                cancellationEnvelope(
+                    "Target resolution did not complete."
+                )
+            )
         } catch {
             return .failure(envelope(for: error, tool: tool))
         }
+        if interrupt?.isInterrupted == true || Task.isCancelled {
+            return .failure(
+                cancellationEnvelope(
+                    "Target resolution did not complete."
+                )
+            )
+        }
 
-        // Permission (policy gate / interactive prompt / rich gate).
-        switch await kind.permission(scope, resolved) {
+        // Permission (policy gate / interactive prompt / rich gate). Own and
+        // drain the operation exactly like target resolution so a visible Stop
+        // during an AppKit prompt cancels/dismisses it instead of leaving an
+        // unowned continuation behind.
+        let permissionOperation = OwnedSubagentOperation {
+            await kind.permission(scope, resolved)
+        }
+        let decision: SubagentDecision
+        do {
+            decision = try await permissionOperation.value(
+                cancellationRequested: { interrupt?.isInterrupted == true }
+            )
+        } catch {
+            return .failure(
+                cancellationEnvelope(
+                    "Target authorization did not complete."
+                )
+            )
+        }
+        switch decision {
         case .allow:
             break
         case .denied(let reason):
@@ -184,14 +313,53 @@ public enum SubagentSession {
                 retryable: false
             ))
         }
+        if interrupt?.isInterrupted == true || Task.isCancelled {
+            return .failure(
+                cancellationEnvelope(
+                    "Target authorization did not complete."
+                )
+            )
+        }
+
+        // An interactive permission panel is an asynchronous authority
+        // boundary. Kinds backed by mutable allow-lists/settings can re-read
+        // those values here, still before admission or model residency changes.
+        let revalidation = OwnedSubagentOperation {
+            try await kind.revalidateAfterPermission(
+                scope,
+                approved: resolved
+            )
+        }
+        let revalidated: ResolvedModel
+        do {
+            revalidated = try await revalidation.value(
+                cancellationRequested: { interrupt?.isInterrupted == true }
+            )
+        } catch is CancellationError {
+            return .failure(
+                cancellationEnvelope(
+                    "Post-authorization validation did not complete."
+                )
+            )
+        } catch {
+            return .failure(envelope(for: error, tool: tool))
+        }
+        if interrupt?.isInterrupted == true || Task.isCancelled {
+            return .failure(
+                cancellationEnvelope(
+                    "Post-authorization validation did not complete."
+                )
+            )
+        }
 
         return .ready(
             PreparedSubagentRun(
                 kind: kind,
                 tool: tool,
                 scope: scope,
-                resolved: resolved,
-                handoff: handoff ?? kind.makeHandoff()
+                resolved: revalidated,
+                handoff: handoff ?? kind.makeHandoff(),
+                handoffIsKindOwned: handoff == nil
             )
         )
     }
@@ -204,7 +372,11 @@ public enum SubagentSession {
         _ prepared: PreparedSubagentRun,
         presentation suppliedPresentation: SubagentRunPresentation? = nil,
         skipAdmission: Bool = false,
-        handoffOverride: (any SubagentHandoff)? = nil
+        handoffOverride: (any SubagentHandoff)? = nil,
+        captureProcessCacheSnapshot: Bool = true,
+        admissionController: SubagentAdmission = .shared,
+        postAdmissionLocalCapacityOverride:
+            (@Sendable (PreparedSubagentRun, ResidencyPlan) async -> Int)? = nil
     ) async -> String {
         if let active = activeKindId {
             return ToolEnvelope.failure(
@@ -242,50 +414,439 @@ public enum SubagentSession {
             }
         }
 
-        let admissionClass = prepared.admissionClass
+        // Close the prepare→admission race for kinds whose run authority is
+        // mutable. This is deliberately before any admission slot, unload, or
+        // model load; unrelated kinds use the protocol's no-op default.
+        do {
+            try await prepared.kind.validateExecutionAuthority(
+                prepared.scope,
+                resolved: prepared.resolved
+            )
+        } catch {
+            let envelope = envelope(for: error, tool: prepared.tool)
+            if presentation.finishFeed {
+                feed.finish(
+                    success: false,
+                    summary: ToolEnvelope.failureMessage(envelope)
+                )
+            }
+            return envelope
+        }
+        if interrupt.isInterrupted || Task.isCancelled {
+            let envelope = ToolEnvelope.failure(
+                kind: interrupt.isInterrupted ? .userDenied : .executionError,
+                message: interrupt.isInterrupted
+                    ? "Run was stopped by the user before execution began."
+                    : "Run was cancelled before execution began.",
+                tool: prepared.tool,
+                retryable: false,
+                metadata: ["cancelled": true]
+            )
+            if presentation.finishFeed {
+                feed.finish(
+                    success: false,
+                    summary: ToolEnvelope.failureMessage(envelope)
+                )
+            }
+            return envelope
+        }
+
+        var admissionClass = prepared.admissionClass
         let admissionModelKey = prepared.admissionModelKey
         var admissionHeld = false
+        var admissionHeldSlots = 0
         if !skipAdmission {
             // Process-wide admission: the TaskLocal guard above only covers one
             // task tree; parallel tool calls can reach here concurrently.
-            let admission = await SubagentAdmission.shared.admit(
-                admissionClass,
-                modelKey: admissionModelKey,
-                onWait: { [feed] active in
-                    feed.emitPhase("waiting for local GPU", detail: active)
-                }
-            )
-            switch admission {
-            case .admitted:
-                admissionHeld = true
-            case .timedOut(let active):
-                let message =
-                    "\(prepared.tool) is waiting on \(active) that did not finish in time. "
-                    + "Retry when the running subagent completes."
-                if presentation.finishFeed {
-                    feed.finish(success: false, summary: message)
-                }
-                return ToolEnvelope.failure(
-                    kind: .unavailable,
-                    message: message,
-                    tool: prepared.tool,
-                    retryable: true
+            if admissionClass == .localInPlace {
+                let capacity = await localInPlaceSlotCapacity(for: prepared)
+                let reservation = await admissionController.reserveLocalInPlace(
+                    modelKey: admissionModelKey,
+                    requestedSlots: 1,
+                    slotCapacity: capacity,
+                    onWait: { [feed] active in
+                        feed.emitPhase("waiting for local GPU", detail: active)
+                    },
+                    cancellationRequested: { interrupt.isInterrupted }
                 )
-            case .cancelled:
-                let message = "Run cancelled while waiting for another subagent to finish."
-                if presentation.finishFeed {
-                    feed.finish(success: false, summary: message)
+                switch reservation {
+                case .admitted(let slots):
+                    admissionHeld = true
+                    admissionHeldSlots = slots
+                case .timedOut(let active):
+                    let message =
+                        "\(prepared.tool) is waiting on \(active) that did not finish in time. "
+                        + "Retry when the running subagent completes."
+                    if presentation.finishFeed {
+                        feed.finish(success: false, summary: message)
+                    }
+                    return ToolEnvelope.failure(
+                        kind: .unavailable,
+                        message: message,
+                        tool: prepared.tool,
+                        retryable: true
+                    )
+                case .cancelled:
+                    let message =
+                        "Run stopped by the user while waiting for another subagent to finish."
+                    if presentation.finishFeed {
+                        feed.finish(success: false, summary: message)
+                    }
+                    return ToolEnvelope.failure(
+                        kind: .userDenied,
+                        message: message,
+                        tool: prepared.tool,
+                        retryable: false
+                    )
                 }
-                return ToolEnvelope.failure(
-                    kind: .executionError,
-                    message: message,
-                    tool: prepared.tool,
-                    retryable: false
+            } else {
+                let admission = await admissionController.admit(
+                    admissionClass,
+                    modelKey: admissionModelKey,
+                    onWait: { [feed] active in
+                        feed.emitPhase("waiting for local GPU", detail: active)
+                    },
+                    cancellationRequested: { interrupt.isInterrupted }
                 )
+                switch admission {
+                case .admitted:
+                    admissionHeld = true
+                case .timedOut(let active):
+                    let message =
+                        "\(prepared.tool) is waiting on \(active) that did not finish in time. "
+                        + "Retry when the running subagent completes."
+                    if presentation.finishFeed {
+                        feed.finish(success: false, summary: message)
+                    }
+                    return ToolEnvelope.failure(
+                        kind: .unavailable,
+                        message: message,
+                        tool: prepared.tool,
+                        retryable: true
+                    )
+                case .cancelled:
+                    let message =
+                        "Run stopped by the user while waiting for another subagent to finish."
+                    if presentation.finishFeed {
+                        feed.finish(success: false, summary: message)
+                    }
+                    return ToolEnvelope.failure(
+                        kind: .userDenied,
+                        message: message,
+                        tool: prepared.tool,
+                        retryable: false
+                    )
+                }
             }
         }
 
-        let effectiveHandoff = handoffOverride ?? prepared.handoff
+        // Admission can wait for minutes. Revalidate once more after the slot
+        // is held and immediately before any handoff/model side effect so a
+        // launcher disablement, target edit, permission revocation, or pool
+        // change during that wait cannot execute stale prepared authority.
+        do {
+            try await prepared.kind.validateExecutionAuthority(
+                prepared.scope,
+                resolved: prepared.resolved
+            )
+        } catch {
+            if admissionHeld {
+                if admissionHeldSlots > 0 {
+                    await admissionController.releaseLocalInPlace(
+                        modelKey: admissionModelKey,
+                        slots: admissionHeldSlots
+                    )
+                } else {
+                    await admissionController.release(
+                        admissionClass,
+                        modelKey: admissionModelKey
+                    )
+                }
+            }
+            let envelope = envelope(for: error, tool: prepared.tool)
+            if presentation.finishFeed {
+                feed.finish(
+                    success: false,
+                    summary: ToolEnvelope.failureMessage(envelope)
+                )
+            }
+            return envelope
+        }
+        if interrupt.isInterrupted || Task.isCancelled {
+            if admissionHeld {
+                if admissionHeldSlots > 0 {
+                    await admissionController.releaseLocalInPlace(
+                        modelKey: admissionModelKey,
+                        slots: admissionHeldSlots
+                    )
+                } else {
+                    await admissionController.release(
+                        admissionClass,
+                        modelKey: admissionModelKey
+                    )
+                }
+            }
+            let envelope = ToolEnvelope.failure(
+                kind: interrupt.isInterrupted ? .userDenied : .executionError,
+                message: interrupt.isInterrupted
+                    ? "Run was stopped by the user before execution began."
+                    : "Run was cancelled before execution began.",
+                tool: prepared.tool,
+                retryable: false,
+                metadata: ["cancelled": true]
+            )
+            if presentation.finishFeed {
+                feed.finish(
+                    success: false,
+                    summary: ToolEnvelope.failureMessage(envelope)
+                )
+            }
+            return envelope
+        }
+
+        var effectiveHandoff = handoffOverride ?? prepared.handoff
+        if !skipAdmission,
+            let replanningKind =
+                prepared.kind as? any SubagentPostAdmissionResidencyPlanning
+        {
+            let refreshedPlan: ResidencyPlan
+            do {
+                refreshedPlan = try await replanningKind
+                    .refreshedResidencyPlanAfterAdmission(
+                        for: prepared.resolved
+                    )
+            } catch {
+                if admissionHeld {
+                    if admissionHeldSlots > 0 {
+                        await admissionController.releaseLocalInPlace(
+                            modelKey: admissionModelKey,
+                            slots: admissionHeldSlots
+                        )
+                    } else {
+                        await admissionController.release(
+                            admissionClass,
+                            modelKey: admissionModelKey
+                        )
+                    }
+                }
+                let envelope = envelope(for: error, tool: prepared.tool)
+                if presentation.finishFeed {
+                    feed.finish(
+                        success: false,
+                        summary: ToolEnvelope.failureMessage(envelope)
+                    )
+                }
+                return envelope
+            }
+            if interrupt.isInterrupted || Task.isCancelled {
+                if admissionHeld {
+                    if admissionHeldSlots > 0 {
+                        await admissionController.releaseLocalInPlace(
+                            modelKey: admissionModelKey,
+                            slots: admissionHeldSlots
+                        )
+                    } else {
+                        await admissionController.release(
+                            admissionClass,
+                            modelKey: admissionModelKey
+                        )
+                    }
+                    admissionHeld = false
+                }
+                let envelope = ToolEnvelope.failure(
+                    kind: interrupt.isInterrupted
+                        ? .userDenied : .executionError,
+                    message: interrupt.isInterrupted
+                        ? "Run was stopped by the user before execution began."
+                        : "Run was cancelled before execution began.",
+                    tool: prepared.tool,
+                    retryable: false,
+                    metadata: ["cancelled": true]
+                )
+                if presentation.finishFeed {
+                    feed.finish(
+                        success: false,
+                        summary: ToolEnvelope.failureMessage(envelope)
+                    )
+                }
+                return envelope
+            }
+
+            var currentPlan = refreshedPlan
+            var refreshedClass = prepared.kind.admissionClass(
+                prepared.resolved
+            )
+            // A localInPlace -> localExclusive upgrade releases the shared
+            // slots before waiting for the writer lease. The opposite refresh
+            // (exclusive -> in-place) intentionally keeps the already-held
+            // stronger writer lease for this one direct run: releasing it would
+            // let a later exclusive waiter jump ahead and force a second queue.
+            // The refreshed kind-owned handoff below still prevents a stale
+            // unload/restore, and the writer lease is released normally as soon
+            // as this direct child finishes.
+            if admissionHeld,
+                admissionClass == .localInPlace,
+                refreshedClass == .localExclusive
+            {
+                await admissionController.releaseLocalInPlace(
+                    modelKey: admissionModelKey,
+                    slots: admissionHeldSlots
+                )
+                admissionHeld = false
+                admissionHeldSlots = 0
+
+                let upgradedAdmission = await admissionController.admit(
+                    .localExclusive,
+                    modelKey: admissionModelKey,
+                    onWait: { [feed] active in
+                        feed.emitPhase(
+                            "waiting for local GPU",
+                            detail: active
+                        )
+                    },
+                    cancellationRequested: { interrupt.isInterrupted }
+                )
+                switch upgradedAdmission {
+                case .admitted:
+                    admissionClass = .localExclusive
+                    admissionHeld = true
+                case .timedOut(let active):
+                    let message =
+                        "\(prepared.tool) is waiting on \(active) that did not finish in time. "
+                        + "Retry when the running subagent completes."
+                    if presentation.finishFeed {
+                        feed.finish(success: false, summary: message)
+                    }
+                    return ToolEnvelope.failure(
+                        kind: .unavailable,
+                        message: message,
+                        tool: prepared.tool,
+                        retryable: true
+                    )
+                case .cancelled:
+                    let message =
+                        "Run stopped by the user while waiting for another subagent to finish."
+                    if presentation.finishFeed {
+                        feed.finish(success: false, summary: message)
+                    }
+                    return ToolEnvelope.failure(
+                        kind: .userDenied,
+                        message: message,
+                        tool: prepared.tool,
+                        retryable: false
+                    )
+                }
+
+                // Switching from a shared in-place lease to the exclusive
+                // handoff can itself wait. Revalidate both mutable authority
+                // and residency one final time under the lease actually used
+                // for execution.
+                do {
+                    try await prepared.kind.validateExecutionAuthority(
+                        prepared.scope,
+                        resolved: prepared.resolved
+                    )
+                    currentPlan = try await replanningKind
+                        .refreshedResidencyPlanAfterAdmission(
+                            for: prepared.resolved
+                        )
+                    refreshedClass = prepared.kind.admissionClass(
+                        prepared.resolved
+                    )
+                } catch {
+                    await admissionController.release(
+                        admissionClass,
+                        modelKey: admissionModelKey
+                    )
+                    admissionHeld = false
+                    let envelope = envelope(for: error, tool: prepared.tool)
+                    if presentation.finishFeed {
+                        feed.finish(
+                            success: false,
+                            summary: ToolEnvelope.failureMessage(envelope)
+                        )
+                    }
+                    return envelope
+                }
+                if interrupt.isInterrupted || Task.isCancelled {
+                    await admissionController.release(
+                        admissionClass,
+                        modelKey: admissionModelKey
+                    )
+                    admissionHeld = false
+                    let envelope = ToolEnvelope.failure(
+                        kind: interrupt.isInterrupted
+                            ? .userDenied : .executionError,
+                        message: interrupt.isInterrupted
+                            ? "Run was stopped by the user before execution began."
+                            : "Run was cancelled before execution began.",
+                        tool: prepared.tool,
+                        retryable: false,
+                        metadata: ["cancelled": true]
+                    )
+                    if presentation.finishFeed {
+                        feed.finish(
+                            success: false,
+                            summary: ToolEnvelope.failureMessage(envelope)
+                        )
+                    }
+                    return envelope
+                }
+            }
+
+            if refreshedClass == .localInPlace {
+                let refreshedCapacity: Int
+                if let postAdmissionLocalCapacityOverride {
+                    refreshedCapacity =
+                        await postAdmissionLocalCapacityOverride(
+                            prepared,
+                            currentPlan
+                        )
+                } else {
+                    refreshedCapacity = await localInPlaceSlotCapacity(
+                        for: prepared,
+                        residencyPlan: currentPlan,
+                        rejectUnsafeSingleRun: true
+                    )
+                }
+
+                if admissionHeldSlots > 0 {
+                    admissionHeldSlots =
+                        await admissionController.resizeLocalInPlace(
+                            modelKey: admissionModelKey,
+                            heldSlots: admissionHeldSlots,
+                            requestedSlots: 1,
+                            slotCapacity: refreshedCapacity
+                        )
+                    admissionHeld = admissionHeldSlots > 0
+                }
+                if refreshedCapacity == 0 || !admissionHeld {
+                    if admissionHeld {
+                        await admissionController.release(
+                            admissionClass,
+                            modelKey: admissionModelKey
+                        )
+                        admissionHeld = false
+                    }
+                    let message =
+                        "\(prepared.tool) no longer fits the current local RAM-safety "
+                        + "and batching limits after waiting for admission."
+                    if presentation.finishFeed {
+                        feed.finish(success: false, summary: message)
+                    }
+                    return ToolEnvelope.failure(
+                        kind: .unavailable,
+                        message: message,
+                        tool: prepared.tool,
+                        retryable: true
+                    )
+                }
+            }
+
+            if handoffOverride == nil, prepared.handoffIsKindOwned {
+                effectiveHandoff = prepared.kind.makeHandoff()
+            }
+        }
         let started = Date()
 
         // Run under the recursion guard, wrapped by the optional handoff. Bind
@@ -317,7 +878,9 @@ public enum SubagentSession {
                                         feed: feed,
                                         interrupt: interrupt
                                     )
-                                    if prepared.resolved.isLocal {
+                                    if captureProcessCacheSnapshot,
+                                        prepared.resolved.isLocal
+                                    {
                                         cacheCapture.value =
                                             await ModelRuntime.batchDiagnosticsSnapshot()
                                     }
@@ -329,17 +892,26 @@ public enum SubagentSession {
                 }
             }
             if admissionHeld {
-                await SubagentAdmission.shared.release(
-                    admissionClass,
-                    modelKey: admissionModelKey
-                )
+                if admissionHeldSlots > 0 {
+                    await admissionController.releaseLocalInPlace(
+                        modelKey: admissionModelKey,
+                        slots: admissionHeldSlots
+                    )
+                } else {
+                    await admissionController.release(
+                        admissionClass,
+                        modelKey: admissionModelKey
+                    )
+                }
                 admissionHeld = false
             }
 
             // Residency telemetry: phase durations derived from the feed's own
-            // event timeline (the handoff emits its phases there), plus the
-            // post-run cache counters for local runs (prefix/L2 state at run
-            // end — the resume prefix-hit / L2 disk-cache mitigation signal).
+            // event timeline (the handoff emits its phases there), plus a
+            // process cache snapshot for an isolated local run. Batched
+            // siblings disable this child-local field because one process-wide
+            // snapshot cannot be attributed to one concurrent child;
+            // SpawnBatchTool records one aggregate before/after delta instead.
             var payload = result.payload
             var residency: [String: Any] = [:]
             let phases = Self.residencyPhaseTimings(
@@ -383,12 +955,33 @@ public enum SubagentSession {
             return ToolEnvelope.success(tool: prepared.tool, result: payload)
         } catch {
             if admissionHeld {
-                await SubagentAdmission.shared.release(
-                    admissionClass,
-                    modelKey: admissionModelKey
-                )
+                if admissionHeldSlots > 0 {
+                    await admissionController.releaseLocalInPlace(
+                        modelKey: admissionModelKey,
+                        slots: admissionHeldSlots
+                    )
+                } else {
+                    await admissionController.release(
+                        admissionClass,
+                        modelKey: admissionModelKey
+                    )
+                }
             }
-            let env = envelope(for: error, tool: prepared.tool)
+            let env: String
+            if error is CancellationError {
+                env = ToolEnvelope.failure(
+                    kind: interrupt.isInterrupted ? .userDenied : .executionError,
+                    message:
+                        interrupt.isInterrupted
+                        ? "Run was stopped by the user."
+                        : "Run was cancelled.",
+                    tool: prepared.tool,
+                    retryable: false,
+                    metadata: ["cancelled": true]
+                )
+            } else {
+                env = envelope(for: error, tool: prepared.tool)
+            }
             if presentation.finishFeed {
                 feed.finish(success: false, summary: ToolEnvelope.failureMessage(env))
             }
@@ -403,6 +996,76 @@ public enum SubagentSession {
             )
             return env
         }
+    }
+
+    /// Process-wide same-model callers share the active BatchEngine, so their
+    /// aggregate width must honor the same server/agent/RAM ceiling as
+    /// `spawn_batch`. This computes that ceiling for an ordinary one-child
+    /// spawn; the admission actor accounts for already-reserved sibling slots.
+    private static func localInPlaceSlotCapacity(
+        for prepared: PreparedSubagentRun,
+        residencyPlan suppliedResidencyPlan: ResidencyPlan? = nil,
+        rejectUnsafeSingleRun: Bool = false
+    ) async -> Int {
+        let runtime = ServerRuntimeSettingsStore.snapshot()
+        let engineSlots = InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
+            in: .standard,
+            runtime: runtime
+        )
+        let maxParallel = await SpawnBatchTool.effectiveMaxParallel(
+            scope: prepared.scope
+        )
+        let requested = max(
+            1,
+            min(
+                maxParallel,
+                runtime.concurrency.continuousBatching ? engineSlots : 1
+            )
+        )
+        guard
+            let residencyPlan =
+                suppliedResidencyPlan ?? prepared.textResidencyPlan
+        else {
+            return 1
+        }
+        if requested == 1, !rejectUnsafeSingleRun { return 1 }
+
+        let memoryFacts = await ModelRuntime.shared.subagentBatchMemoryFacts(
+            for: prepared.resolved.name,
+            residencyPlan: residencyPlan
+        )
+        let plan = SpawnBatchTool.makeLocalAdmissionPlan(
+            localJobCount: requested,
+            remoteJobCount: 0,
+            maxParallel: maxParallel,
+            engineParallelLimit: engineSlots,
+            continuousBatchingEnabled: runtime.concurrency.continuousBatching,
+            residencyPlan: residencyPlan,
+            memoryFacts: memoryFacts,
+            failClosedWhenEstimateUnknown: true
+        )
+        if case .admitted = plan.verdict {
+            return max(1, plan.localCapacity)
+        }
+        guard rejectUnsafeSingleRun, requested > 1 else {
+            return rejectUnsafeSingleRun ? 0 : 1
+        }
+
+        // A wider batch can be unsafe while the one already-reserved direct
+        // child still fits. Re-evaluate exactly that child before refusing.
+        let singleRunPlan = SpawnBatchTool.makeLocalAdmissionPlan(
+            localJobCount: 1,
+            remoteJobCount: 0,
+            maxParallel: maxParallel,
+            engineParallelLimit: engineSlots,
+            continuousBatchingEnabled:
+                runtime.concurrency.continuousBatching,
+            residencyPlan: residencyPlan,
+            memoryFacts: memoryFacts,
+            failClosedWhenEstimateUnknown: true
+        )
+        guard case .admitted = singleRunPlan.verdict else { return 0 }
+        return 1
     }
 
     /// Residency-relevant phase titles whose durations are worth reporting:
@@ -447,19 +1110,20 @@ public enum SubagentSession {
     /// every spawned/tool worker and therefore must remain pure: model
     /// discovery can synchronously scan every configured model root and would
     /// starve unrelated actor work (including Stop delivery) when many workers
-    /// start together. A known stable id wins; otherwise repository ids and
-    /// their short bundle names collapse by their final path component.
+    /// start together. A known stable id wins. An id-less fallback keeps the
+    /// complete model string instead of truncating it to a basename: two
+    /// installed bundles from different organizations must never share
+    /// admission or a handoff.
     ///
-    /// A display alias that cannot be normalized syntactically stays distinct.
-    /// That is deliberately conservative: unrecognized aliases serialize under
-    /// their own keys, while repository and short ids collapse by the documented
-    /// model-picker identity without performing filesystem discovery.
+    /// Production local Text workers carry the canonical installed id from
+    /// resolution, so full and short spellings of the same bundle still group
+    /// together without filesystem discovery in this pure hot path.
     static func canonicalAdmissionModelKey(_ resolved: ResolvedModel) -> String? {
         guard resolved.isLocal else { return nil }
         let identity = resolved.id ?? resolved.name
         let trimmed = identity.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalComponent = trimmed.split(separator: "/", omittingEmptySubsequences: true).last
-        return (finalComponent.map(String.init) ?? trimmed).lowercased()
+        guard !trimmed.isEmpty else { return nil }
+        return trimmed.lowercased()
     }
 }
 

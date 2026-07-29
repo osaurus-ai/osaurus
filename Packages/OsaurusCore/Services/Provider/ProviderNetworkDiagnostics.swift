@@ -350,6 +350,17 @@ public enum ProviderNetworkDiagnostics {
                 action: hasManual ? nil : L("Add at least one deployment/model ID in Advanced.")
             )
         case .openaiLegacy, .openResponses:
+            if RemoteProviderService.isFireworksProvider(provider) {
+                return ProviderDiagnosticRow(
+                    id: "models",
+                    title: L("Model discovery"),
+                    value: L("/models + Fireworks catalog"),
+                    severity: .info,
+                    detail: L(
+                        "Combines the /models response with Fireworks' serverless model catalog, since /models only lists the account's deployed models."
+                    )
+                )
+            }
             let manual = provider.mergedModelIds(discovered: [])
             let detail =
                 manual.isEmpty

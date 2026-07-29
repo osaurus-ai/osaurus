@@ -198,6 +198,346 @@
         }
       }
     },
+    "Bring conversations from other AI apps into Osaurus and continue them with any model. Export your chats first:" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Holen Sie Unterhaltungen aus anderen KI-Apps in Osaurus und setzen Sie sie mit jedem Modell fort. Exportieren Sie zuerst Ihre Chats:"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다른 AI 앱의 대화를 Osaurus로 가져와 어떤 모델로든 이어갈 수 있습니다. 먼저 채팅을 내보내세요:"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенесите беседы из других ИИ-приложений в Osaurus и продолжайте их с любой моделью. Сначала экспортируйте свои чаты:"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将其他 AI 应用中的对话导入 Osaurus，并可使用任意模型继续。请先导出您的聊天记录："
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將其他 AI 應用中的對話導入 Osaurus，並可使用任意模型繼續。請先導出您的聊天記錄："
+          }
+        }
+      }
+    },
+    "Choose File…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datei auswählen …"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일 선택…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбрать файл…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择文件…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇檔案…"
+          }
+        }
+      }
+    },
+    "Don't show this again" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht mehr anzeigen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다시 표시하지 않음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Больше не показывать"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不再显示"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不再顯示"
+          }
+        }
+      }
+    },
+    "In Google Takeout, select My Activity → Gemini Apps and create the export. The zip contains MyActivity.json." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wählen Sie in Google Takeout „Meine Aktivitäten“ → „Gemini Apps“ und erstellen Sie den Export. Die Zip-Datei enthält MyActivity.json."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google Takeout에서 내 활동 → Gemini Apps를 선택해 내보내기를 생성하세요. zip 안에 MyActivity.json이 들어 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В Google Takeout выберите «Мои действия» → «Gemini Apps» и создайте экспорт. В zip-архиве находится MyActivity.json."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Google Takeout 中选择“我的活动”→“Gemini 应用”并创建导出。zip 中包含 MyActivity.json。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Google Takeout 中選擇「我的活動」→「Gemini 應用程式」並建立導出。zip 中包含 MyActivity.json。"
+          }
+        }
+      }
+    },
+    "Open export page" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exportseite öffnen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "내보내기 페이지 열기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть страницу экспорта"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开导出页面"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打開導出頁面"
+          }
+        }
+      }
+    },
+    "Settings → Data controls → Export account data. The download link arrives by email." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einstellungen → Datenkontrollen → Kontodaten exportieren. Der Download-Link kommt per E-Mail."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 → 데이터 제어 → 계정 데이터 내보내기. 다운로드 링크가 이메일로 전송됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройки → Управление данными → Экспорт данных аккаунта. Ссылка для скачивания придёт по электронной почте."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置 → 数据控制 → 导出账户数据。下载链接将通过电子邮件发送。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定 → 資料控制 → 導出帳戶資料。下載連結將透過電子郵件傳送。"
+          }
+        }
+      }
+    },
+    "Settings → Data Controls → Export Chats downloads a JSON file right away. A single chat can also be exported from its own menu via Download → Export as JSON." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einstellungen → Datenkontrollen → Chats exportieren lädt sofort eine JSON-Datei herunter. Einzelne Chats lassen sich auch über das Chat-Menü mit Herunterladen → Als JSON exportieren sichern."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 → 데이터 제어 → 채팅 내보내기를 선택하면 JSON 파일이 바로 다운로드됩니다. 개별 채팅은 해당 채팅 메뉴의 다운로드 → JSON으로 내보내기로도 내보낼 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройки → Управление данными → Экспорт чатов сразу скачивает JSON-файл. Отдельный чат также можно экспортировать через его меню: Скачать → Экспорт в JSON."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置 → 数据控制 → 导出聊天会立即下载一个 JSON 文件。单个聊天也可通过其菜单中的 下载 → 导出为 JSON 导出。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定 → 資料控制 → 導出聊天會立即下載一個 JSON 檔案。單個聊天也可透過其選單中的 下載 → 導出為 JSON 導出。"
+          }
+        }
+      }
+    },
+    "Settings → Data controls → Export data. The download link arrives by email as a zip file." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einstellungen → Datenkontrollen → Daten exportieren. Der Download-Link kommt per E-Mail als Zip-Datei."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 → 데이터 제어 → 데이터 내보내기. 다운로드 링크가 zip 파일로 이메일로 전송됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройки → Управление данными → Экспорт данных. Ссылка для скачивания придёт по электронной почте в виде zip-файла."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置 → 数据控制 → 导出数据。下载链接将以 zip 文件形式通过电子邮件发送。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定 → 資料控制 → 導出資料。下載連結將以 zip 檔案形式透過電子郵件傳送。"
+          }
+        }
+      }
+    },
+    "Settings → Privacy → Export data. The download link arrives by email as a zip file." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einstellungen → Datenschutz → Daten exportieren. Der Download-Link kommt per E-Mail als Zip-Datei."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 → 개인정보 보호 → 데이터 내보내기. 다운로드 링크가 zip 파일로 이메일로 전송됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройки → Конфиденциальность → Экспорт данных. Ссылка для скачивания придёт по электронной почте в виде zip-файла."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置 → 隐私 → 导出数据。下载链接将以 zip 文件形式通过电子邮件发送。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定 → 隱私 → 導出資料。下載連結將以 zip 檔案形式透過電子郵件傳送。"
+          }
+        }
+      }
+    },
+    "Then choose the downloaded file below. You can select several files at once." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wählen Sie dann unten die heruntergeladene Datei aus. Sie können mehrere Dateien gleichzeitig auswählen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "그다음 아래에서 다운로드한 파일을 선택하세요. 여러 파일을 한 번에 선택할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Затем выберите скачанный файл ниже. Можно выбрать несколько файлов сразу."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "然后在下方选择已下载的文件。可以一次选择多个文件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "然後在下方選擇已下載的檔案。可以一次選擇多個檔案。"
+          }
+        }
+      }
+    },
     "—" : {
       "comment" : "A placeholder text to indicate missing data.",
       "isCommentAutoGenerated" : true,
@@ -1040,6 +1380,9 @@
           }
         }
       }
+    },
+    "/models + Fireworks catalog" : {
+
     },
     "/models probe" : {
       "localizations" : {
@@ -4104,6 +4447,40 @@
         }
       }
     },
+    "%lld conversations imported" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Unterhaltungen importiert"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화 %lld개 가져옴"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импортировано разговоров: %lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已导入 %lld 个对话"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已導入 %lld 個對話"
+          }
+        }
+      }
+    },
     "%lld conversations will be removed permanently. This can't be undone." : {
       "localizations" : {
         "de" : {
@@ -4471,6 +4848,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%1$lld 已下載 • %2$@"
+          }
+        }
+      }
+    },
+    "%lld duplicates skipped" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Duplikate übersprungen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "중복 %lld개 건너뜀"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пропущено дубликатов: %lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已跳过 %lld 个重复项"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已跳過 %lld 個重複項"
           }
         }
       }
@@ -9907,6 +10318,40 @@
         }
       }
     },
+    "1 conversation imported" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 Unterhaltung importiert"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화 1개 가져옴"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импортирован 1 разговор"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已导入 1 个对话"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已導入 1 個對話"
+          }
+        }
+      }
+    },
     "1 day" : {
       "localizations" : {
         "de" : {
@@ -12045,7 +12490,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "与您的聊天"
+            "value" : "与你的聊天"
           }
         },
         "zh-Hant" : {
@@ -19306,6 +19751,40 @@
         }
       }
     },
+    "All conversations in the file were already imported." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alle Unterhaltungen in der Datei wurden bereits importiert."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일의 모든 대화를 이미 가져왔습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Все разговоры из файла уже были импортированы."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文件中的所有对话均已导入。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文件中的所有對話均已導入。"
+          }
+        }
+      }
+    },
     "All disabled by default. Enable individually — Osaurus will redact matches and block sends that leak them." : {
       "comment" : "A longer description of the purpose of the \"Preset Rules\" section.",
       "isCommentAutoGenerated" : true,
@@ -21828,8 +22307,7 @@
       }
     },
     "Already using Osaurus on another Mac? With iCloud Keychain enabled on both, your identity restores here automatically — it can take a few minutes to sync." : {
-      "comment" : "A description of the restore feature.",
-      "isCommentAutoGenerated" : true
+
     },
     "Also selected: %@ — referenced by %@." : {
       "localizations" : {
@@ -38818,8 +39296,7 @@
       }
     },
     "Check again" : {
-      "comment" : "A button to check if your iCloud Keychain identity has been restored.",
-      "isCommentAutoGenerated" : true
+
     },
     "Check available disk space manually before cold provisioning." : {
       "localizations" : {
@@ -39738,6 +40215,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "選擇"
+          }
+        }
+      }
+    },
+    "Choose an export from ChatGPT, Claude, Grok, Gemini, or Open WebUI (.zip or .json), or an Osaurus import JSON file." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wählen Sie einen Export von ChatGPT, Claude, Grok, Gemini oder Open WebUI (.zip oder .json) oder eine Osaurus-Import-JSON-Datei."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT, Claude, Grok, Gemini 또는 Open WebUI 내보내기 파일(.zip 또는 .json)이나 Osaurus 가져오기 JSON 파일을 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите экспорт из ChatGPT, Claude, Grok, Gemini или Open WebUI (.zip или .json) либо JSON-файл импорта Osaurus."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择来自 ChatGPT、Claude、Grok、Gemini 或 Open WebUI 的导出文件（.zip 或 .json），或 Osaurus 导入 JSON 文件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇來自 ChatGPT、Claude、Grok、Gemini 或 Open WebUI 的導出文件（.zip 或 .json），或 Osaurus 導入 JSON 文件。"
           }
         }
       }
@@ -40839,7 +41350,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择用于驱动 AI 检测的端侧模型。“规则”选项卡中的模式规则无需任何模型即可运行。"
+            "value" : "选择用于驱动 AI 检测的端侧模型。“规则”标签页中的模式规则无需任何模型即可运行。"
           }
         },
         "zh-Hant" : {
@@ -40947,7 +41458,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择此智能体可以自行发帖的位置，以及是否先征求您的同意。"
+            "value" : "选择此智能体可以自行发帖的位置，以及是否先征求你的同意。"
           }
         },
         "zh-Hant" : {
@@ -43990,6 +44501,9 @@
           }
         }
       }
+    },
+    "Combines the /models response with Fireworks' serverless model catalog, since /models only lists the account's deployed models." : {
+
     },
     "Comma-separated (e.g. api.github.com, *.example.com). When set, sandbox traffic goes through a host proxy that only permits these domains. Takes effect on next sandbox start." : {
       "comment" : "A description of the format and effect of the \"Allowed Domains\" field in the agent detail view.",
@@ -55798,8 +56312,7 @@
       }
     },
     "Current identity" : {
-      "comment" : "A label for the current identity's address.",
-      "isCommentAutoGenerated" : true
+
     },
     "Currently Active" : {
       "localizations" : {
@@ -59028,7 +59541,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AI 生成问候语与快捷操作的默认风格。在智能体的外观选项卡中为每个智能体单独开启问候语，各智能体也可覆盖此风格。"
+            "value" : "AI 生成问候语与快捷操作的默认风格。在智能体的外观标签页中为每个智能体单独开启问候语，各智能体也可覆盖此风格。"
           }
         },
         "zh-Hant" : {
@@ -59063,7 +59576,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AI 生成问候语与快捷操作的默认风格。在智能体的\"功能\"标签下为每个智能体单独开启问候语；各智能体也可在\"自定义\"标签中覆盖此风格。"
+            "value" : "AI 生成问候语与快捷操作的默认风格。在智能体的\"功能\"标签页下为每个智能体单独开启问候语；各智能体也可在\"自定义\"标签页中覆盖此风格。"
           }
         },
         "zh-Hant" : {
@@ -60714,7 +61227,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此消息的送达未获确认——它可能已在频道中可见。“再次发送”可能会重复发布；如果您在频道中看到它，请使用“标记为已发送”。"
+            "value" : "此消息的送达未获确认——它可能已在频道中可见。“再次发送”可能会重复发布；如果你在频道中看到它，请使用“标记为已发送”。"
           }
         },
         "zh-Hant" : {
@@ -61351,7 +61864,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "一旦已连接的频道允许机器人在至少一个房间发帖，并选择了负责回复的智能体，目标就会自动出现在这里。智能体随后可以主动发起话题——发送前总会先询问您。"
+            "value" : "一旦已连接的频道允许机器人在至少一个房间发帖，并选择了负责回复的智能体，目标就会自动出现在这里。智能体随后可以主动发起话题——发送前总会先询问你。"
           }
         },
         "zh-Hant" : {
@@ -61392,7 +61905,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此智能体可以自行发起消息的目标——除非您更改某个目标的设置，否则它会先询问您。"
+            "value" : "此智能体可以自行发起消息的目标——除非你更改某个目标的设置，否则它会先询问你。"
           }
         },
         "zh-Hant" : {
@@ -73721,7 +74234,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "这里的每个模型都在您的 Mac 上私密运行。不确定？先从推荐的开始——您可以随时切换。"
+            "value" : "这里的每个模型都在你的 Mac 上私密运行。不确定？先从推荐的开始——你可以随时切换。"
           }
         },
         "zh-Hant" : {
@@ -73757,7 +74270,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每条发帖都会先等待您的批准。"
+            "value" : "每条发帖都会先等待你的批准。"
           }
         },
         "zh-Hant" : {
@@ -79557,6 +80070,9 @@
         }
       }
     },
+    "Fireworks AI" : {
+      "shouldTranslate" : false
+    },
     "Fit" : {
       "localizations" : {
         "de" : {
@@ -80065,7 +80581,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "要获得更快、更高质量的结果，请在新的搜索标签页中连接 Tavily 或 Exa 等提供商 — 大多数提供商都有免费套餐。提供商按您的顺序依次尝试，免费来源作为备选，您可以直接在设置中测试任意查询。"
+            "value" : "要获得更快、更高质量的结果，请在新的搜索标签页中连接 Tavily 或 Exa 等提供商 — 大多数提供商都有免费套餐。提供商按你的顺序依次尝试，免费来源作为备选，你可以直接在设置中测试任意查询。"
           }
         },
         "zh-Hant" : {
@@ -82758,6 +83274,40 @@
         }
       }
     },
+    "Get a key from app.fireworks.ai." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hol dir einen Schlüssel von app.fireworks.ai."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "app.fireworks.ai에서 키를 받으세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Получите ключ на app.fireworks.ai."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "从 app.fireworks.ai 获取密钥。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "從 app.fireworks.ai 獲取密鑰。"
+          }
+        }
+      }
+    },
     "Get a key from console.mistral.ai." : {
       "localizations" : {
         "de" : {
@@ -83385,7 +83935,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "给予智能体一个工具，通过辅助功能树来控制 macOS 应用程序——点击、输入和读取屏幕内容。读取和导航操作会自动运行，但编辑和任何重要操作则会暂停，等待您的批准。"
+            "value" : "给予智能体一个工具，通过辅助功能树来控制 macOS 应用程序——点击、输入和读取屏幕内容。读取和导航操作会自动运行，但编辑和任何重要操作则会暂停，等待你的批准。"
           }
         },
         "zh-Hant" : {
@@ -84198,6 +84748,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "前往DeepSeek平臺API密鑰頁面"
+          }
+        }
+      }
+    },
+    "Go to the Fireworks AI API keys page" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zur Fireworks AI-API-Schlüsselseite gehen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fireworks AI API 키 페이지로 이동"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перейдите на страницу ключей API Fireworks AI"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "前往 Fireworks AI API 密钥页面"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "前往 Fireworks AI API 密鑰頁面"
           }
         }
       }
@@ -88904,8 +89488,7 @@
       }
     },
     "I understand: agents get new addresses, existing access keys are revoked, and the current identity's recovery phrase will no longer restore this Mac unless I saved it." : {
-      "comment" : "A checkbox that requires the user to acknowledge the",
-      "isCommentAutoGenerated" : true
+
     },
     "I've saved it" : {
       "extractionState" : "stale",
@@ -90645,7 +91228,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将 CSV、TSV、JSON 或 JSONL 文件导入到所选表格或新表格中。您也可以将文件拖拽到此标签页上。"
+            "value" : "将 CSV、TSV、JSON 或 JSONL 文件导入到所选表格或新表格中。你也可以将文件拖拽到此标签页上。"
           }
         },
         "zh-Hant" : {
@@ -91027,6 +91610,40 @@
         }
       }
     },
+    "Import complete" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import abgeschlossen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "가져오기 완료"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импорт завершен"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导入完成"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "導入完成"
+          }
+        }
+      }
+    },
     "Import Complete" : {
       "localizations" : {
         "de" : {
@@ -91067,6 +91684,40 @@
         }
       }
     },
+    "Import Conversations" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unterhaltungen importieren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화 가져오기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импорт разговоров"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导入对话"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "導入對話"
+          }
+        }
+      }
+    },
     "Import diagnostics" : {
       "comment" : "The title of the section that displays the import diagnostics for a theme.",
       "isCommentAutoGenerated" : true,
@@ -91099,6 +91750,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "導入診斷"
+          }
+        }
+      }
+    },
+    "Import failed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import fehlgeschlagen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "가져오기 실패"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Импорт не удался"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导入失败"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "導入失敗"
           }
         }
       }
@@ -91888,7 +92573,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在聊天中，发送任何内容前都会显示批准卡片。对于计划任务运行，发帖会在发件箱中等待您的批准。"
+            "value" : "在聊天中，发送任何内容前都会显示批准卡片。对于计划任务运行，发帖会在发件箱中等待你的批准。"
           }
         },
         "zh-Hant" : {
@@ -99539,7 +100224,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让智能体为您操作 macOS 应用。"
+            "value" : "让智能体为你操作 macOS 应用。"
           }
         },
         "zh-Hant" : {
@@ -99684,7 +100369,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让智能体自行安排后续运行并通知您。"
+            "value" : "让智能体自行安排后续运行并通知你。"
           }
         },
         "zh-Hant" : {
@@ -99896,7 +100581,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允许智能体通过您的搜索提供商搜索网页。免费来源开箱即用；在设置 > 搜索中配置提供商。"
+            "value" : "允许智能体通过你的搜索提供商搜索网页。免费来源开箱即用；在设置 > 搜索中配置提供商。"
           }
         },
         "zh-Hant" : {
@@ -102396,7 +103081,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从您已启用的配置中按需加载。"
+            "value" : "从你已启用的配置中按需加载。"
           }
         },
         "zh-Hant" : {
@@ -117751,6 +118436,40 @@
         }
       }
     },
+    "No importable conversations were found in the file." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In der Datei wurden keine importierbaren Unterhaltungen gefunden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일에서 가져올 수 있는 대화를 찾지 못했습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В файле не найдено разговоров для импорта."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文件中未找到可导入的对话。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文件中未找到可導入的對話。"
+          }
+        }
+      }
+    },
     "No incoming Discord messages yet this session. Send the test message and press “Verify incoming message”." : {
       "comment" : "A hint text that appears when there are no incoming messages to verify in the current session. It instructs the user to send a test message and press the \"Verify incoming message\" button.",
       "isCommentAutoGenerated" : true,
@@ -124327,6 +125046,40 @@
         }
       }
     },
+    "Nothing to import" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nichts zu importieren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "가져올 항목 없음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нечего импортировать"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有可导入的内容"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沒有可導入的內容"
+          }
+        }
+      }
+    },
     "Nothing to import into Osaurus" : {
       "localizations" : {
         "de" : {
@@ -124387,7 +125140,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暂时没有可发帖的地方。一旦已连接的频道允许机器人在至少一个房间发帖，并选择此智能体在那里回复，目标就会自动出现在这里——智能体发送前总会先询问。您也可以在下方添加特定目标。"
+            "value" : "暂时没有可发帖的地方。一旦已连接的频道允许机器人在至少一个房间发帖，并选择此智能体在那里回复，目标就会自动出现在这里——智能体发送前总会先询问。你也可以在下方添加特定目标。"
           }
         },
         "zh-Hant" : {
@@ -128598,7 +129351,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "打开智能体选项卡并选择一个自定义智能体。"
+            "value" : "打开智能体标签页并选择一个自定义智能体。"
           }
         },
         "zh-Hant" : {
@@ -131471,7 +132224,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 即将退出。您可以在“访达”中手动删除所列项目。"
+            "value" : "Osaurus 即将退出。你可以在“访达”中手动删除所列项目。"
           }
         },
         "zh-Hant" : {
@@ -133804,8 +134557,7 @@
 
     },
     "Paste the 24-word recovery phrase of the identity you want to switch to. This replaces the identity currently on this Mac." : {
-      "comment" : "A description of the paste-to-restore flow.",
-      "isCommentAutoGenerated" : true
+
     },
     "Paste the 24-word recovery phrase you saved during onboarding. We'll restore the original master key and your existing agents and access keys will start working again." : {
       "comment" : "A description of the purpose of the recovery phrase field.",
@@ -137431,7 +138183,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择每种搜索类型的首选提供商。其余按您的主列表顺序排列，免费来源作为备选。"
+            "value" : "选择每种搜索类型的首选提供商。其余按你的主列表顺序排列，免费来源作为备选。"
           }
         },
         "zh-Hant" : {
@@ -139944,7 +140696,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在修复这些问题之前无法发帖。您现在仍可以保存。"
+            "value" : "在修复这些问题之前无法发帖。你现在仍可以保存。"
           }
         },
         "zh-Hant" : {
@@ -140016,7 +140768,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "需要您批准后才能发送的帖子会显示在这里。"
+            "value" : "需要你批准后才能发送的帖子会显示在这里。"
           }
         },
         "zh-Hant" : {
@@ -140052,7 +140804,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您的智能体想要发送的帖子。任何内容发出前，您都能看到确切的消息和目标，并且发送时会再次运行所有安全检查。"
+            "value" : "你的智能体想要发送的帖子。任何内容发出前，你都能看到确切的消息和目标，并且发送时会再次运行所有安全检查。"
           }
         },
         "zh-Hant" : {
@@ -156918,8 +157670,7 @@
       }
     },
     "Replaces the identity on this Mac with one restored from a 24-word phrase. Agents get new addresses and existing access keys are revoked." : {
-      "comment" : "A description of the restore from recovery phrase feature.",
-      "isCommentAutoGenerated" : true
+
     },
     "Replacing key for %@. Cancel keeps the existing key." : {
       "comment" : "Note displayed in the footer of the sheet, explaining that replacing the API key will clear the existing one. The argument is the name of the provider.",
@@ -157060,7 +157811,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "回复在上方每个已连接的频道中分别配置。此部分控制智能体可以在哪里主动发起消息——以及是否先征求您的同意。"
+            "value" : "回复在上方每个已连接的频道中分别配置。此部分控制智能体可以在哪里主动发起消息——以及是否先征求你的同意。"
           }
         },
         "zh-Hant" : {
@@ -160987,8 +161738,7 @@
       }
     },
     "Restore from recovery phrase" : {
-      "comment" : "A label displayed above a button that restores an identity from a recovery phrase",
-      "isCommentAutoGenerated" : true
+
     },
     "Restore Identity" : {
 
@@ -161097,8 +161847,7 @@
       }
     },
     "Restore…" : {
-      "comment" : "A button to restore an identity from a recovery phrase.",
-      "isCommentAutoGenerated" : true
+
     },
     "Restored" : {
       "extractionState" : "manual",
@@ -161136,8 +161885,7 @@
       }
     },
     "Restored identity" : {
-      "comment" : "A label for the address of a restored identity.",
-      "isCommentAutoGenerated" : true
+
     },
     "Restored the database" : {
       "localizations" : {
@@ -168729,7 +169477,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "当您按下「保存」时，将保存到 macOS 钥匙串中。"
+            "value" : "当你按下「保存」时，将保存到 macOS 钥匙串中。"
           }
         },
         "zh-Hant" : {
@@ -173371,7 +174119,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在“模型”选项卡中选择默认模型"
+            "value" : "在“模型”标签页中选择默认模型"
           }
         },
         "zh-Hant" : {
@@ -176091,6 +176839,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "服務器 URL"
+          }
+        }
+      }
+    },
+    "Serverless open models" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Serverlose offene Modelle"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "서버리스 오픈 모델"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Бессерверные открытые модели"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无服务器开源模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "無伺服器開源模型"
           }
         }
       }
@@ -192902,7 +193684,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "智能体将自行向此房间发送消息，无需您的确认。房间允许名单、频率限制和全局发送开关仍然有效。"
+            "value" : "智能体将自行向此房间发送消息，无需你的确认。房间允许名单、频率限制和全局发送开关仍然有效。"
           }
         },
         "zh-Hant" : {
@@ -192938,7 +193720,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "智能体只为您撰写草稿；绝不会发送任何内容。"
+            "value" : "智能体只为你撰写草稿；绝不会发送任何内容。"
           }
         },
         "zh-Hant" : {
@@ -192974,7 +193756,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "智能体撰写草稿供您审阅；绝不会发送任何内容。"
+            "value" : "智能体撰写草稿供你审阅；绝不会发送任何内容。"
           }
         },
         "zh-Hant" : {
@@ -193899,6 +194681,142 @@
         }
       }
     },
+    "The file is not valid JSON." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Datei ist kein gültiges JSON."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일이 올바른 JSON이 아닙니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл не является корректным JSON."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "该文件不是有效的 JSON。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "該文件不是有效的 JSON。"
+          }
+        }
+      }
+    },
+    "The file is not a zip archive." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Datei ist kein Zip-Archiv."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일이 zip 아카이브가 아닙니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл не является zip-архивом."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "该文件不是 zip 压缩包。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "該文件不是 zip 壓縮包。"
+          }
+        }
+      }
+    },
+    "The zip archive is damaged and can't be read." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Zip-Archiv ist beschädigt und kann nicht gelesen werden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "zip 아카이브가 손상되어 읽을 수 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zip-архив поврежден и не может быть прочитан."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "zip 压缩包已损坏，无法读取。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "zip 壓縮包已損壞，無法讀取。"
+          }
+        }
+      }
+    },
+    "The zip entry \"%@\" uses an unsupported format." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Zip-Eintrag „%@“ verwendet ein nicht unterstütztes Format."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "zip 항목 \"%@\"이(가) 지원되지 않는 형식을 사용합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Элемент zip-архива «%@» использует неподдерживаемый формат."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "zip 条目“%@”使用了不受支持的格式。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "zip 條目「%@」使用了不受支持的格式。"
+          }
+        }
+      }
+    },
     "The file isn't a readable database (corruption or a key mismatch). Reset to recreate it; the original is quarantined." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -194734,7 +195652,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "模型从一个小集合开始，并根据需要从您已启用的功能中按需加载更多。"
+            "value" : "模型从一个小集合开始，并根据需要从你已启用的功能中按需加载更多。"
           }
         },
         "zh-Hant" : {
@@ -202176,6 +203094,40 @@
         }
       }
     },
+    "Tool Permission" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Werkzeugberechtigung"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "도구 권한"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешение инструмента"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工具权限"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工具權限"
+          }
+        }
+      }
+    },
     "Tool Permissions" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -202719,7 +203671,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "工具、生成覆盖和主题在创建后可在配置选项卡中编辑。"
+            "value" : "工具、生成覆盖和主题在创建后可在配置标签页中编辑。"
           }
         },
         "zh-Hant" : {
@@ -204969,7 +205921,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在功能选项卡中开启生成式问候，以使用AI撰写的问候语。"
+            "value" : "在功能标签页中开启生成式问候，以使用AI撰写的问候语。"
           }
         },
         "zh-Hant" : {
@@ -205075,7 +206027,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "按智能体逐一开启：打开对应智能体的“子智能体”选项卡，启用“电脑操控”，并使用“共享屏幕上下文”选项（默认已开启）。需要辅助功能权限。"
+            "value" : "按智能体逐一开启：打开对应智能体的“子智能体”标签页，启用“电脑操控”，并使用“共享屏幕上下文”选项（默认已开启）。需要辅助功能权限。"
           }
         },
         "zh-Hant" : {
@@ -206271,7 +207223,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未知选项卡"
+            "value" : "未知标签页"
           }
         },
         "zh-Hant" : {
@@ -206609,6 +207561,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未經證實"
+          }
+        }
+      }
+    },
+    "Unrecognized export format. Supported: ChatGPT conversations.json, Claude export JSON, Grok account export, Gemini Takeout MyActivity.json, Open WebUI chat export, or Osaurus generic import JSON." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unbekanntes Exportformat. Unterstützt: ChatGPT conversations.json, Claude-Export-JSON, Grok-Kontoexport, Gemini Takeout MyActivity.json, Open WebUI-Chatexport oder generisches Osaurus-Import-JSON."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "인식할 수 없는 내보내기 형식입니다. 지원 형식: ChatGPT conversations.json, Claude 내보내기 JSON, Grok 계정 내보내기, Gemini Takeout MyActivity.json, Open WebUI 채팅 내보내기 또는 Osaurus 일반 가져오기 JSON."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нераспознанный формат экспорта. Поддерживаются: ChatGPT conversations.json, JSON-экспорт Claude, экспорт аккаунта Grok, Gemini Takeout MyActivity.json, экспорт чатов Open WebUI или универсальный JSON импорта Osaurus."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法识别的导出格式。支持：ChatGPT conversations.json、Claude 导出 JSON、Grok 账户导出、Gemini Takeout MyActivity.json、Open WebUI 聊天导出，或 Osaurus 通用导入 JSON。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法識別的導出格式。支持：ChatGPT conversations.json、Claude 導出 JSON、Grok 帳戶導出、Gemini Takeout MyActivity.json、Open WebUI 聊天導出，或 Osaurus 通用導入 JSON。"
           }
         }
       }
@@ -209054,7 +210040,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用“沙盒”选项卡中的“设置沙盒”，并在完成后重新运行此预检。"
+            "value" : "使用“沙盒”标签页中的“设置沙盒”，并在完成后重新运行此预检。"
           }
         },
         "zh-Hant" : {
@@ -213007,7 +213993,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "等待您的批准"
+            "value" : "等待你的批准"
           }
         },
         "zh-Hant" : {
@@ -215635,7 +216621,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "当你添加积分或使用 Osaurus Router 模型时，它会连同金额显示在这里。如果这台 Mac 发出过请求，你可以跳转到对应聊天或 Insights。"
+            "value" : "当你添加积分或使用 Osaurus Router 模型时，它会连同金额显示在这里。如果这台 Mac 发出过请求，你可以跳转到对应聊天或洞察。"
           }
         },
         "zh-Hant" : {
@@ -215739,7 +216725,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "当您使用 Osaurus 路由器模型时，每个请求都会显示在其成本和令牌上。如果这台 Mac 提出了请求，您可以跳转到聊天或 Insights。"
+            "value" : "当你使用 Osaurus 路由器模型时，每个请求都会连同其成本和令牌数显示在这里。如果这台 Mac 发出过请求，你可以跳转到聊天或洞察。"
           }
         },
         "zh-Hant" : {
@@ -219159,7 +220145,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您的智能体开箱即可搜索网页 — 无需插件，无需 API 密钥。免费来源默认启用，如果您之前使用过搜索插件，您的 API 密钥会自动转移。"
+            "value" : "你的智能体开箱即可搜索网页 — 无需插件，无需 API 密钥。免费来源默认启用，如果你之前使用过搜索插件，你的 API 密钥会自动转移。"
           }
         },
         "zh-Hant" : {
@@ -219367,7 +220353,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您的余额。本会话已花费 %@。点击添加积分。"
+            "value" : "你的余额。本会话已花费 %@。点击添加积分。"
           }
         },
         "zh-Hant" : {
@@ -219403,7 +220389,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您的余额。点击添加积分。"
+            "value" : "你的余额。点击添加积分。"
           }
         },
         "zh-Hant" : {
@@ -219611,7 +220597,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您的自定义将被移除。如果房间仍可写入且此智能体仍在那里回复，它会恢复为“自动”——智能体每次发帖前都会先询问。"
+            "value" : "你的自定义将被移除。如果房间仍可写入且此智能体仍在那里回复，它会恢复为“自动”——智能体每次发帖前都会先询问。"
           }
         },
         "zh-Hant" : {
@@ -219645,7 +220631,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "无法移除您的数据，数据仍保留在："
+            "value" : "无法移除你的数据，数据仍保留在："
           }
         },
         "zh-Hant" : {
@@ -220022,7 +221008,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您的密钥"
+            "value" : "你的密钥"
           }
         },
         "zh-Hant" : {

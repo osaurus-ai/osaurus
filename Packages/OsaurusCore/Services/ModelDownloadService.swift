@@ -232,6 +232,22 @@ final class ModelDownloadService: ObservableObject {
         case failed(path: String, error: Error)
     }
 
+    private enum ModelDeletionError: Error, LocalizedError, Sendable {
+        case unsafeUnload
+        case filesystem(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .unsafeUnload:
+                return
+                    "Could not safely unload the model before deleting its files. "
+                    + "Wait for active generation to finish and try again."
+            case .filesystem(let message):
+                return "Could not delete model: \(message)"
+            }
+        }
+    }
+
     init() {
         HuggingFaceAuth.preloadInBackground()
         refreshTotalDownloadedSize()
@@ -903,70 +919,93 @@ final class ModelDownloadService: ObservableObject {
     }
 
     func delete(_ model: MLXModel) async {
-        // Use-after-free guard: free any resident GPU buffers and drain
-        // in-flight per-request leases for this model BEFORE removing its
-        // on-disk weights. `ModelRuntime.unload` shuts the BatchEngine, waits
-        // for the lease count to hit zero, and frees the container. Deleting
-        // the files out from under a live `ModelContainer` would let Metal
-        // touch freed-then-reused memory (the `notifyExternalReferencesNonZero
-        // OnDealloc` class). `unload` is a no-op when the model isn't resident.
-        // Some callers (the "remove old id" migration notice) pass a synthetic
-        // model with an empty name; skip the unload there since the runtime is
-        // keyed by name and there's nothing to drain.
-        if !model.name.isEmpty {
-            await ModelRuntime.shared.unload(name: model.name)
-        }
-
         releaseOrchestrationResources(for: model.id)
         pausedDownloads[model.id] = nil
         clearDownloadTracking(for: model.id)
 
-        // Externally-discovered bundles (HF cache, LM Studio) are read-only
-        // references — Osaurus never owns those files. "Deleting" one only
-        // forgets it from the catalog; the source on disk is left untouched.
-        if model.bundleDirectory != nil || model.externalSource != nil {
-            ExternalModelLocator.forget(id: model.id)
-            downloadStates[model.id] = .notStarted
-            ModelManager.invalidateLocalModelsCache()
-            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
-            return
-        }
-
-        // Off the main actor: removing a downloaded model unlinks every
-        // weight file in the tree, which blocks for seconds on multi-GB
-        // models. Only the resulting state is published back here.
+        let modelID = model.id
+        let modelName = model.name
+        let isExternal = model.bundleDirectory != nil || model.externalSource != nil
         let localPath = model.localDirectory.path
         let cacheDirName = "models--\(model.id.replacingOccurrences(of: "/", with: "--"))"
         let cacheRoots = Self.hfCacheRoots()
-        let removalError: (any Error)? = await Task.detached(priority: .userInitiated) {
-            () -> (any Error)? in
-            let fm = FileManager.default
-            if fm.fileExists(atPath: localPath) {
-                do {
-                    try fm.removeItem(atPath: localPath)
-                } catch {
-                    return error
-                }
-            }
-            for cacheRoot in cacheRoots {
-                let cacheModelDir = cacheRoot.appendingPathComponent(cacheDirName)
-                if fm.fileExists(atPath: cacheModelDir.path) {
-                    try? fm.removeItem(at: cacheModelDir)
-                }
-            }
-            return nil
-        }.value
 
-        if let removalError {
+        // The runtime quarantine starts before unload and remains closed
+        // through filesystem mutation plus catalog invalidation. A request
+        // that arrives after deletion begins therefore waits, then resolves
+        // against the refreshed catalog instead of cold-loading weights in
+        // the old unload-to-unlink window.
+        let performDeletion: @Sendable () async throws -> Void = {
+            defer {
+                ModelManager.invalidateLocalModelsCache()
+                NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+            }
+
+            // Use-after-free guard: shut down the BatchEngine and drain the
+            // stream-lifetime ModelLease before touching any owned files.
+            if !modelName.isEmpty {
+                let unloaded = await ModelRuntime.shared.unload(name: modelName)
+                guard unloaded,
+                    await ModelRuntime.shared.residencyIdentity(named: modelName) == nil
+                else {
+                    throw ModelDeletionError.unsafeUnload
+                }
+            }
+
+            // Externally-discovered bundles (HF cache, LM Studio) are
+            // read-only references. Forget the catalog record but never
+            // unlink the source directory.
+            if isExternal {
+                ExternalModelLocator.forget(id: modelID)
+                return
+            }
+
+            // Multi-GB recursive unlinks stay off MainActor while the actor
+            // lease continues to quarantine this canonical model identity.
+            let removalError: String? = await Task.detached(priority: .userInitiated) {
+                () -> String? in
+                let fm = FileManager.default
+                if fm.fileExists(atPath: localPath) {
+                    do {
+                        try fm.removeItem(atPath: localPath)
+                    } catch {
+                        return error.localizedDescription
+                    }
+                }
+                for cacheRoot in cacheRoots {
+                    let cacheModelDir = cacheRoot.appendingPathComponent(cacheDirName)
+                    if fm.fileExists(atPath: cacheModelDir.path) {
+                        try? fm.removeItem(at: cacheModelDir)
+                    }
+                }
+                return nil
+            }.value
+            if let removalError {
+                throw ModelDeletionError.filesystem(removalError)
+            }
+        }
+
+        do {
+            // Synthetic migration entries can have no runtime name. They do
+            // not participate in model loading, so retain the historical
+            // direct-delete path while still refreshing the catalog.
+            if modelName.isEmpty {
+                try await performDeletion()
+            } else {
+                try await ModelRuntime.shared.withModelDeletionLease(
+                    modelID: modelID,
+                    modelName: modelName,
+                    operation: performDeletion
+                )
+            }
+        } catch {
             downloadStates[model.id] = .failed(
-                error: "Could not delete model: \(removalError.localizedDescription)"
+                error: error.localizedDescription
             )
             return
         }
 
         downloadStates[model.id] = .notStarted
-        ModelManager.invalidateLocalModelsCache()
-        NotificationCenter.default.post(name: .localModelsChanged, object: nil)
     }
 
     func estimateSize(for model: MLXModel) async -> Int64? {

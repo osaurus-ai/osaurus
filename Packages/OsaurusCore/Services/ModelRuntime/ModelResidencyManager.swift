@@ -15,6 +15,7 @@ import Foundation
 public actor ModelResidencyManager {
     public struct Snapshot: Equatable, Sendable {
         public var modelName: String
+        public var ownerDecisionID: UInt64?
         public var lastUsedAt: Date
         public var unloadAt: Date?
         public var policy: ModelIdleResidencyPolicy
@@ -26,6 +27,11 @@ public actor ModelResidencyManager {
 
     private struct Entry {
         var generation: UInt64
+        /// Runtime-owned identity for the idle policy decision that installed
+        /// this timer. `nil` is reserved for non-runtime/test callers. Keeping
+        /// it alongside the manager generation lets a focus activation cancel
+        /// only the timer it observed without deleting a newer replacement.
+        var ownerDecisionID: UInt64?
         var lastUsedAt: Date
         var unloadAt: Date?
         var policy: ModelIdleResidencyPolicy
@@ -51,6 +57,7 @@ public actor ModelResidencyManager {
         existing?.task?.cancel()
         entries[modelName] = Entry(
             generation: nextGeneration,
+            ownerDecisionID: nil,
             lastUsedAt: now,
             unloadAt: nil,
             policy: existing?.policy ?? .never,
@@ -62,10 +69,12 @@ public actor ModelResidencyManager {
     public func scheduleIdleUnload(
         modelName: String,
         policy: ModelIdleResidencyPolicy,
+        ownerDecisionID: UInt64? = nil,
         now: Date = Date(),
         unload: @Sendable @escaping (String) async -> Void,
         leaseCount: @Sendable @escaping (String) async -> Int,
-        isResident: @Sendable @escaping (String) async -> Bool
+        isResident: @Sendable @escaping (String) async -> Bool,
+        shouldStillUnload: @Sendable @escaping (String) async -> Bool = { _ in true }
     ) {
         nextGeneration &+= 1
         let generation = nextGeneration
@@ -84,6 +93,7 @@ public actor ModelResidencyManager {
         case .never:
             entries[modelName] = Entry(
                 generation: generation,
+                ownerDecisionID: ownerDecisionID,
                 lastUsedAt: now,
                 unloadAt: nil,
                 policy: policy,
@@ -102,12 +112,14 @@ public actor ModelResidencyManager {
                 generation: generation,
                 unload: unload,
                 leaseCount: leaseCount,
-                isResident: isResident
+                isResident: isResident,
+                shouldStillUnload: shouldStillUnload
             )
         }
 
         entries[modelName] = Entry(
             generation: generation,
+            ownerDecisionID: ownerDecisionID,
             lastUsedAt: now,
             unloadAt: unloadAt,
             policy: policy,
@@ -138,6 +150,7 @@ public actor ModelResidencyManager {
     public func accelerateIdleUnload(
         modelName: String,
         grace: TimeInterval,
+        ownerDecisionID: UInt64? = nil,
         now: Date = Date(),
         unload: @Sendable @escaping (String) async -> Void,
         leaseCount: @Sendable @escaping (String) async -> Int,
@@ -146,7 +159,8 @@ public actor ModelResidencyManager {
     ) {
         guard let existing = entries[modelName],
             existing.task != nil,
-            let existingUnloadAt = existing.unloadAt
+            let existingUnloadAt = existing.unloadAt,
+            ownerDecisionID == nil || existing.ownerDecisionID == ownerDecisionID
         else { return }
 
         let clampedGrace = max(0, grace)
@@ -175,6 +189,7 @@ public actor ModelResidencyManager {
 
         entries[modelName] = Entry(
             generation: generation,
+            ownerDecisionID: existing.ownerDecisionID,
             lastUsedAt: existing.lastUsedAt,
             unloadAt: target,
             policy: existing.policy,
@@ -182,8 +197,12 @@ public actor ModelResidencyManager {
         )
     }
 
-    public func cancel(modelName: String) {
-        entries[modelName]?.task?.cancel()
+    /// Cancel the current entry. When an owner decision is supplied, a newer
+    /// replacement entry is deliberately left untouched.
+    public func cancel(modelName: String, ownerDecisionID: UInt64? = nil) {
+        guard let entry = entries[modelName] else { return }
+        guard ownerDecisionID == nil || entry.ownerDecisionID == ownerDecisionID else { return }
+        entry.task?.cancel()
         entries.removeValue(forKey: modelName)
     }
 
@@ -198,6 +217,7 @@ public actor ModelResidencyManager {
         entries.map { modelName, entry in
             Snapshot(
                 modelName: modelName,
+                ownerDecisionID: entry.ownerDecisionID,
                 lastUsedAt: entry.lastUsedAt,
                 unloadAt: entry.unloadAt,
                 policy: entry.policy

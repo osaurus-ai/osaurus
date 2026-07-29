@@ -18,7 +18,18 @@ struct BatchDiagnosticsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 stat("Active slots", value: "\(snapshot.activeCount)")
                 stat("Queued", value: "\(snapshot.pendingCount)")
-                stat("High-water active", value: "\(snapshot.activeHighWatermark)")
+                stat(
+                    "Max per-model high-water",
+                    value: "\(snapshot.activeHighWatermark)"
+                )
+                stat(
+                    "Configured engine capacity",
+                    value: engineCapacityValue(snapshot)
+                )
+                stat(
+                    "Available engine slots",
+                    value: "\(snapshot.nominalAvailableCapacity)"
+                )
                 stat("Decode-split count", value: "\(snapshot.decodeSplitCount)")
                 stat("TurboQuant compressions", value: "\(snapshot.turboQuantCompressions)")
                 stat(
@@ -96,5 +107,12 @@ struct BatchDiagnosticsView: View {
             return "\(snapshot.nativeMTPModelCount) \(L("active")) (\(depthSummary))"
         }
         return "\(snapshot.nativeMTPModelCount) \(L("active"))"
+    }
+
+    private func engineCapacityValue(_ snapshot: BatchDiagnosticsSnapshot) -> String {
+        if let summary = snapshot.engineCapacitySummary, !summary.isEmpty {
+            return summary
+        }
+        return "\(snapshot.configuredEngineCapacity)"
     }
 }

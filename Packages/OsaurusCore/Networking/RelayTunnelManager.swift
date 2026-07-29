@@ -1025,7 +1025,7 @@ public final class RelayTunnelManager: ObservableObject {
         guard let agent = AgentManager.shared.agent(for: agentId),
             agent.agentAddress == nil || agent.agentIndex == nil
         else { return }
-        try? AgentManager.shared.assignAddress(to: agent)
+        AgentManager.shared.assignAddressInBackground(to: agent)
     }
 
     // MARK: - Reconnect

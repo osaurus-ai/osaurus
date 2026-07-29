@@ -30,6 +30,20 @@ import Foundation
 
 // MARK: - Public transcript
 
+/// One ordered child row returned by production `spawn_batch`.
+public struct SubagentBatchJobTranscript: Sendable, Codable {
+    public let id: String
+    public let targetType: String
+    public let target: String
+    public let succeeded: Bool
+    public let envelopeKind: String
+    public let summary: String
+    /// String-valued child result fields. Scripted evals assert the real
+    /// aggregated payload (`kind`, `model`, `summary`) without coupling the
+    /// transcript to JSONSerialization's non-Sendable `Any` graph.
+    public let payload: [String: String]?
+}
+
 /// Decode-friendly record of one `subagent` eval run, across all three
 /// lanes. Every field is lane-tolerant: scripted runs carry
 /// `handoffWrapped` / `nestedRefused`, the image lane carries `mode` /
@@ -95,6 +109,19 @@ public struct SubagentJobTranscript: Sendable, Codable {
     /// Parallel-batch lane only: how many of the batch's runs completed
     /// (success envelopes).
     public let runsCompleted: Int?
+    /// Parallel-batch lane only: how many child runs reached a terminal
+    /// envelope, including failures. This distinguishes sibling settlement
+    /// from aggregate success.
+    public let runsSettled: Int?
+    /// Parallel-batch lane only: terminal envelope kinds in input order.
+    /// Used by deterministic heterogeneous-batch evals to prove one failed
+    /// child does not discard successful siblings.
+    public let runEnvelopeKinds: [String]?
+    /// Production spawn_batch aggregate status (`succeeded` /
+    /// `partial_failure` / `all_failed` / `all_cancelled`).
+    public let batchAggregateStatus: String?
+    /// Production spawn_batch child rows in caller order.
+    public let batchJobs: [SubagentBatchJobTranscript]?
     /// Residency lane only: whether the local orchestrator was verified
     /// GPU-resident again AFTER the run (before the lane's cleanup) — the
     /// "restore verified resident" proof. `nil` when the case had no local
@@ -123,6 +150,10 @@ public struct SubagentJobTranscript: Sendable, Codable {
         postRunCache: [String: Int]? = nil,
         maxConcurrent: Int? = nil,
         runsCompleted: Int? = nil,
+        runsSettled: Int? = nil,
+        runEnvelopeKinds: [String]? = nil,
+        batchAggregateStatus: String? = nil,
+        batchJobs: [SubagentBatchJobTranscript]? = nil,
         restoredResident: Bool? = nil
     ) {
         self.tool = tool
@@ -146,6 +177,10 @@ public struct SubagentJobTranscript: Sendable, Codable {
         self.postRunCache = postRunCache
         self.maxConcurrent = maxConcurrent
         self.runsCompleted = runsCompleted
+        self.runsSettled = runsSettled
+        self.runEnvelopeKinds = runEnvelopeKinds
+        self.batchAggregateStatus = batchAggregateStatus
+        self.batchJobs = batchJobs
         self.restoredResident = restoredResident
     }
 }
@@ -270,6 +305,29 @@ public struct ScriptedSubagentSpec: Sendable {
     }
 }
 
+/// One deterministic child submitted to the production `SpawnBatchTool`.
+public struct ScriptedSpawnBatchJobSpec: Sendable {
+    public let id: String
+    public let targetType: String
+    public let target: String
+    public let input: String
+    public let subagent: ScriptedSubagentSpec
+
+    public init(
+        id: String,
+        targetType: String = "model",
+        target: String,
+        input: String,
+        subagent: ScriptedSubagentSpec
+    ) {
+        self.id = id
+        self.targetType = targetType
+        self.target = target
+        self.input = input
+        self.subagent = subagent
+    }
+}
+
 // MARK: - Facade
 
 public enum SubagentJobEvaluator {
@@ -313,74 +371,138 @@ public enum SubagentJobEvaluator {
         )
     }
 
-    /// Run `count` copies of the scripted spec CONCURRENTLY through the host —
-    /// the parallel-batch lane. Every run gets its own tool-call id + feed
-    /// (like a real parallel tool batch), and all share one overlap probe, so
-    /// the transcript reports the substantive observation: `maxConcurrent`
-    /// (did the admission gate serialize the local-exclusive runs, or fan the
-    /// remote runs out) and `runsCompleted` (nobody deadlocked or refused).
-    /// The combined transcript takes envelope/summary from the FIRST FAILURE
-    /// when one exists (so expectations catch it), else from the first run.
+    /// Run `count` copies of the scripted spec through production
+    /// `SpawnBatchTool`. Every child receives a caller-stable unique id while
+    /// retaining the same model identity, so this overload exercises the
+    /// same-model batching contract rather than being rejected as duplicate
+    /// input.
     public static func runScriptedParallelBatch(
         _ spec: ScriptedSubagentSpec,
         count: Int
     ) async -> SubagentJobTranscript {
         let runs = max(2, count)
-        let probe = SubagentOverlapProbe()
-        let started = Date()
+        let jobs = (0 ..< runs).map { index in
+            ScriptedSpawnBatchJobSpec(
+                id: "\(spec.kindId)-\(index + 1)",
+                target: spec.modelName,
+                input: "scripted batch job \(index + 1)",
+                subagent: spec
+            )
+        }
+        return await runScriptedSpawnBatch(jobs)
+    }
 
-        let results: [SubagentJobTranscript] = await withTaskGroup(
-            of: (Int, SubagentJobTranscript).self
-        ) { group in
-            for index in 0 ..< runs {
-                group.addTask {
-                    let kind = ScriptedSubagentKind(spec: spec, overlapProbe: probe)
-                    let toolCallId = freshToolCallId()
-                    let envelope = await withEvalScope(toolCallId: toolCallId) {
-                        await SubagentSession.run(kind, tool: spec.kindId)
-                    }
-                    return (
-                        index,
-                        transcript(
-                            fromEnvelope: envelope,
-                            tool: spec.kindId,
-                            kindId: spec.kindId,
-                            toolCallId: toolCallId,
-                            latencyMs: 0
+    /// Run a heterogeneous scripted batch through the same host/admission
+    /// path as the uniform overload. The ordered specs let deterministic
+    /// evals model mixed local/remote fan-out and one-child failure while
+    /// retaining every sibling's terminal envelope.
+    public static func runScriptedParallelBatch(
+        _ specs: [ScriptedSubagentSpec]
+    ) async -> SubagentJobTranscript {
+        let jobs = specs.enumerated().map { index, spec in
+            ScriptedSpawnBatchJobSpec(
+                id: spec.kindId.isEmpty ? "scripted-\(index + 1)" : spec.kindId,
+                target: spec.modelName,
+                input: "scripted batch job \(index + 1)",
+                subagent: spec
+            )
+        }
+        return await runScriptedSpawnBatch(jobs)
+    }
+
+    /// Execute a deterministic batch through the production SpawnBatchTool.
+    /// The tool's parser, prepare-all barrier, grouping/scheduler, sibling
+    /// settlement, and ordered aggregation are real production code. The
+    /// child kind, permission verdict, local-capacity facts, and admission
+    /// plan are deterministic eval inputs, so this lane does NOT prove live
+    /// model residency, BatchEngine overlap, RAM refusal, cache reuse, bundle
+    /// defaults, provider authentication, or reasoning behavior.
+    public static func runScriptedSpawnBatch(
+        _ jobs: [ScriptedSpawnBatchJobSpec],
+        interruptAfterMs: Int? = nil
+    ) async -> SubagentJobTranscript {
+        guard !jobs.isEmpty else {
+            return await runScripted(ScriptedSubagentSpec())
+        }
+        let probe = SubagentOverlapProbe()
+        let specsByID = Dictionary(
+            jobs.map { ($0.id, $0.subagent) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let maxParallel = max(1, jobs.count)
+        let localCount = jobs.filter { !$0.subagent.remote }.count
+        let admissionPlan = SpawnBatchTool.makeLocalAdmissionPlan(
+            localJobCount: localCount,
+            remoteJobCount: jobs.count - localCount,
+            maxParallel: maxParallel,
+            engineParallelLimit: maxParallel,
+            continuousBatchingEnabled: true,
+            residencyPlan: nil,
+            memoryFacts: nil,
+            failClosedWhenEstimateUnknown: false
+        )
+        let overrides = SpawnBatchTool.EvaluationOverrides(
+            kindForJob: { job in
+                let spec =
+                    specsByID[job.id]
+                    ?? ScriptedSubagentSpec(kindId: job.id)
+                return ScriptedSubagentKind(
+                    spec: spec,
+                    overlapProbe: probe
+                )
+            },
+            maxParallel: maxParallel,
+            localParallelism: maxParallel,
+            localAdmissionPlan: admissionPlan
+        )
+        let arguments = jsonString([
+            "jobs": jobs.map {
+                [
+                    "id": $0.id,
+                    "target_type": $0.targetType,
+                    "target": $0.target,
+                    "input": $0.input,
+                ]
+            }
+        ])
+        let toolCallId = freshToolCallId()
+        let started = Date()
+        let requiredRunArrivals =
+            jobs.map(\.subagent.rendezvousArrivals).max() ?? 0
+        let stopper = scheduleBatchInterrupt(
+            afterMs: interruptAfterMs,
+            toolCallId: toolCallId,
+            probe: probe,
+            requiredRunArrivals: requiredRunArrivals
+        )
+        let envelope = await withEvalScope(toolCallId: toolCallId) {
+            await SpawnPermissionGate.$policyOverrideForTests.withValue(
+                .alwaysAllow
+            ) {
+                await SpawnBatchTool.$evaluationOverrides.withValue(overrides) {
+                    do {
+                        return try await SpawnBatchTool().execute(
+                            argumentsJSON: arguments
                         )
-                    )
+                    } catch {
+                        return ToolEnvelope.failure(
+                            kind: .executionError,
+                            message: error.localizedDescription,
+                            tool: SubagentCapabilityRegistry.spawnBatchToolName,
+                            retryable: false
+                        )
+                    }
                 }
             }
-            var collected: [(Int, SubagentJobTranscript)] = []
-            for await item in group { collected.append(item) }
-            return collected.sorted { $0.0 < $1.0 }.map { $0.1 }
         }
-
-        let latency = Date().timeIntervalSince(started) * 1000
-        let completed = results.filter(\.succeeded).count
-        let primary = results.first { !$0.succeeded } ?? results[0]
-        return SubagentJobTranscript(
-            tool: primary.tool,
-            kindId: primary.kindId,
-            succeeded: completed == runs,
-            envelopeKind: primary.envelopeKind,
-            resultKind: primary.resultKind,
-            mode: primary.mode,
-            model: primary.model,
-            summary: primary.summary,
-            imageCount: nil,
-            feedEventKinds: primary.feedEventKinds,
-            feedPhases: primary.feedPhases,
-            handoffWrapped: nil,
-            nestedRefused: nil,
-            error: primary.error,
-            latencyMs: latency,
-            usage: primary.usage,
-            contextAccounting: primary.contextAccounting,
-            residencyPhases: primary.residencyPhases,
-            postRunCache: primary.postRunCache,
-            maxConcurrent: probe.maxConcurrent,
-            runsCompleted: completed
+        stopper?.cancel()
+        return transcript(
+            fromEnvelope: envelope,
+            tool: SubagentCapabilityRegistry.spawnBatchToolName,
+            kindId: SubagentCapabilityRegistry.spawn.id,
+            toolCallId: toolCallId,
+            latencyMs: Date().timeIntervalSince(started) * 1000,
+            maxConcurrent: probe.maxConcurrent
         )
     }
 
@@ -397,13 +519,13 @@ public enum SubagentJobEvaluator {
     /// agent must still exist and be spawnable; only the effective model is
     /// overridden.
     public static func runSpawn(
-        agent: String,
+        agentID: UUID,
         input: String,
         modelId: String? = nil,
         interruptAfterMs: Int? = nil
     ) async -> SubagentJobTranscript {
         let toolCallId = freshToolCallId()
-        let kind = TextSubagentKind(agentName: agent, input: input, modelOverride: modelId)
+        let kind = TextSubagentKind(agentID: agentID, input: input, modelOverride: modelId)
         let started = Date()
         let stopper = scheduleInterrupt(afterMs: interruptAfterMs, toolCallId: toolCallId)
         let envelope = await withEvalScope(toolCallId: toolCallId) {
@@ -579,7 +701,7 @@ public enum SubagentJobEvaluator {
         // the real "did the model swap happen" signal — so surface it as
         // `handoffWrapped`. A rejected envelope (handoff-OFF gate) has no
         // payload, leaving it `nil`, and the case asserts `rejected` instead.
-        let payload = (ToolEnvelope.successPayload(envelope) as? [String: Any]) ?? [:]
+        let payload = (ToolEnvelope.resultPayload(envelope) as? [String: Any]) ?? [:]
         let handoffFlag = payload["handoff"] as? Bool
 
         // Restore-verified-resident: after a successful run with a LOCAL
@@ -748,7 +870,7 @@ public enum SubagentJobEvaluator {
     /// Seed a spawnable agent named `name` for the duration of `body`, then
     /// restore. Creates an `Agent` with that name (when absent, with a concise
     /// agent prompt) and adds it to the Default agent's GLOBAL spawnable pool
-    /// (`SubagentConfiguration.spawnableAgentNames`, which the Default/main-chat
+    /// (`SubagentConfiguration.spawnableAgentIDs`, which the Default/main-chat
     /// agent the eval scope uses consults), so the `spawn` lane RUNS across
     /// models on any host instead of skipping for lack of a configured agent.
     /// Also forces `localTextDelegationEnabled` (the "Local Orchestrator
@@ -765,16 +887,24 @@ public enum SubagentJobEvaluator {
     /// `SubagentConfigurationStore` is nonisolated.
     public static func withSpawnableAgent<T: Sendable>(
         name: String,
-        _ body: @Sendable () async -> T
+        _ body: @Sendable (UUID) async -> T
     ) async -> T {
-        let state: (createdAgentId: UUID?, priorConfig: SubagentConfiguration, configChanged: Bool) =
+        let state: (
+            targetID: UUID,
+            createdAgentId: UUID?,
+            priorConfig: SubagentConfiguration,
+            configChanged: Bool
+        ) =
             await MainActor.run {
                 let priorConfig = SubagentConfigurationStore.snapshot()
                 var createdAgentId: UUID? = nil
-                let exists = AgentManager.shared.agents.contains {
+                let matches = AgentManager.shared.agents.filter {
                     $0.name.caseInsensitiveCompare(name) == .orderedSame
                 }
-                if !exists {
+                let targetID: UUID
+                if matches.count == 1 {
+                    targetID = matches[0].id
+                } else {
                     let agent = Agent(
                         id: UUID(),
                         name: name,
@@ -785,10 +915,14 @@ public enum SubagentJobEvaluator {
                     )
                     AgentStore.save(agent)
                     createdAgentId = agent.id
+                    targetID = agent.id
                 }
                 var updated = priorConfig
-                if !priorConfig.isAgentSpawnable(name) {
-                    updated.spawnableAgentNames = priorConfig.spawnableAgentNames + [name]
+                if !priorConfig.isAgentSpawnable(targetID) {
+                    updated.spawnableAgentIDs =
+                        SpawnableAgentIdentity.normalizedIDs(
+                            priorConfig.spawnableAgentIDs + [targetID]
+                        )
                 }
                 // Enable the local handoff switch so a LOCAL run model can
                 // spawn the local agent (the chat model unloads to make
@@ -798,9 +932,9 @@ public enum SubagentJobEvaluator {
                 let configChanged = updated != priorConfig
                 if configChanged { SubagentConfigurationStore.save(updated) }
                 if createdAgentId != nil { AgentManager.shared.refresh() }
-                return (createdAgentId, priorConfig, configChanged)
+                return (targetID, createdAgentId, priorConfig, configChanged)
             }
-        let result = await body()
+        let result = await body(state.targetID)
         await MainActor.run {
             if let id = state.createdAgentId {
                 AgentStore.delete(id: id)
@@ -871,6 +1005,48 @@ public enum SubagentJobEvaluator {
         }
     }
 
+    /// Batch interrupt fixture with an optional run-entry barrier. A fixed
+    /// delay from tool start is not a valid "mid-run" proof: under full-suite
+    /// contention it can land during target validation or approval. Scripted
+    /// jobs that request a rendezvous therefore start the delay only after the
+    /// expected child runs have entered. There is deliberately no wall-clock
+    /// fallback: firing before run entry changes the contract under test from
+    /// mid-run child settlement to pre-execution cancellation. If execution
+    /// returns before entry, the caller cancels this waiter; if execution
+    /// itself hangs before entry, the eval's outer time limit reports that
+    /// distinct regression.
+    private static func scheduleBatchInterrupt(
+        afterMs: Int?,
+        toolCallId: String,
+        probe: SubagentOverlapProbe,
+        requiredRunArrivals: Int
+    ) -> Task<Void, Never>? {
+        guard let afterMs, afterMs > 0 else { return nil }
+        guard requiredRunArrivals > 0 else {
+            return scheduleInterrupt(
+                afterMs: afterMs,
+                toolCallId: toolCallId
+            )
+        }
+        return Task {
+            while !Task.isCancelled,
+                probe.arrivals < requiredRunArrivals
+            {
+                try? await Task.sleep(nanoseconds: 5_000_000)
+            }
+            guard !Task.isCancelled else { return }
+            try? await Task.sleep(
+                nanoseconds: UInt64(afterMs) * 1_000_000
+            )
+            while !Task.isCancelled {
+                if SubagentInterruptCenter.shared.interrupt(toolCallId) {
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
+    }
+
     /// Bind the chat execution context the host resolves its scope from, plus
     /// headless auto-approval so `.ask`-gated kinds (image) don't block on a
     /// permission card. `autoApproveToolPrompts` is module-internal — binding
@@ -903,10 +1079,17 @@ public enum SubagentJobEvaluator {
         latencyMs: Double,
         handoffWrapped: Bool? = nil,
         nestedRefused: Bool? = nil,
+        maxConcurrent: Int? = nil,
         restoredResident: Bool? = nil
     ) -> SubagentJobTranscript {
         let succeeded = ToolEnvelope.isSuccess(envelope)
-        let payload = (ToolEnvelope.successPayload(envelope) as? [String: Any]) ?? [:]
+        // Failed aggregate operations (for example, a user-stopped batch)
+        // intentionally retain their settled per-child rows under `result`.
+        // Preserve those rows without changing the root success/failure
+        // classification so cancellation evals can prove every child reached
+        // a terminal state instead of mistaking the aggregate for an empty
+        // early cancellation.
+        let payload = (ToolEnvelope.resultPayload(envelope) as? [String: Any]) ?? [:]
 
         let feed = SubagentFeedRegistry.shared.feed(for: toolCallId)
         let events = feed?.currentEvents() ?? []
@@ -933,6 +1116,7 @@ public enum SubagentJobEvaluator {
         let residency = payload["residency"] as? [String: Any]
         let residencyPhases = numberMap(residency?["phases"])
         let postRunCache = intMap(residency?["post_run_cache"])
+        let batchJobs = batchJobTranscripts(payload["results"])
 
         return SubagentJobTranscript(
             tool: tool,
@@ -954,8 +1138,49 @@ public enum SubagentJobEvaluator {
             contextAccounting: contextAccounting,
             residencyPhases: residencyPhases,
             postRunCache: postRunCache,
+            maxConcurrent: maxConcurrent,
+            runsCompleted: batchJobs?.filter(\.succeeded).count,
+            runsSettled: batchJobs?.count,
+            runEnvelopeKinds: batchJobs?.map(\.envelopeKind),
+            batchAggregateStatus: payload["aggregate_status"] as? String,
+            batchJobs: batchJobs,
             restoredResident: restoredResident
         )
+    }
+
+    private static func batchJobTranscripts(
+        _ value: Any?
+    ) -> [SubagentBatchJobTranscript]? {
+        guard let rows = value as? [[String: Any]] else { return nil }
+        return rows.map { row in
+            let envelope = row["envelope"] as? [String: Any] ?? [:]
+            let succeeded = envelope["ok"] as? Bool == true
+            let result = envelope["result"] as? [String: Any]
+            let summary =
+                (result?["summary"] as? String)
+                ?? (result?["digest"] as? String)
+                ?? (envelope["message"] as? String)
+                ?? ""
+            let payload = result?.reduce(
+                into: [String: String]()
+            ) { partial, entry in
+                if let string = entry.value as? String {
+                    partial[entry.key] = string
+                }
+            }
+            return SubagentBatchJobTranscript(
+                id: row["id"] as? String ?? "",
+                targetType: row["target_type"] as? String ?? "",
+                target: row["target"] as? String ?? "",
+                succeeded: succeeded,
+                envelopeKind:
+                    succeeded
+                    ? "success"
+                    : (envelope["kind"] as? String ?? "execution_error"),
+                summary: summary,
+                payload: payload?.isEmpty == false ? payload : nil
+            )
+        }
     }
 
     /// `[String: any number]` → `[String: Double]` (nil when absent/empty).

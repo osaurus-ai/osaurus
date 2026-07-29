@@ -389,9 +389,9 @@ evals-compat:
 		$(if $(VALIDATE),--validate,--out reports/COMPATIBILITY.json --markdown reports/COMPATIBILITY.md)
 
 # Review-oriented artifact bundle for PRs that affect agent-loop behavior.
-# Defaults to the required local+frontier lanes and AgentLoop +
-# AgentLoopFrontier suites. SandboxFrontier is opt-in because it needs host
-# sandbox prerequisites.
+# Defaults to the required local+frontier lanes and AgentLoop,
+# AgentLoopFrontier, and Subagent suites. SandboxFrontier is opt-in because it
+# needs host sandbox prerequisites.
 evals-pr-report: evals-prep
 	@mkdir -p "$(EVALS_PR_REPORT_OUT)"
 	swift run --package-path Packages/OsaurusEvals osaurus-evals report \

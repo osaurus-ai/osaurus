@@ -281,6 +281,83 @@ struct TaskCoalescerTests {
         #expect(snap.resolved == 0 && snap.inFlight == 0 && snap.draining == 0)
     }
 
+    /// A second remover must preserve exclusive disposal ownership while
+    /// still joining the first remover's drain. Returning `nil` before the
+    /// drain completes lets a reentrant caller advance into model teardown
+    /// while the first remover still owns live producer / Metal work.
+    @Test("Concurrent remove() joins the sole disposer before returning nil")
+    func concurrentRemoves_joinSoleDisposer() async {
+        let coalescer = TaskCoalescer<Sentinel>()
+        let factory = SlowFactory(sleepMs: 1)
+        let stored = await coalescer.value(for: "k") { await factory.make() }
+
+        let disposeStarted = AtomicTimestamp()
+        let disposeGate = OneShotGate()
+        let disposeCount = AtomicCounter()
+        let firstFinished = AtomicTimestamp()
+        let secondStarted = AtomicTimestamp()
+        let secondFinished = AtomicTimestamp()
+
+        let first = Task {
+            let removed = await coalescer.remove("k") { _ in
+                await disposeCount.increment()
+                await disposeStarted.set()
+                await disposeGate.wait()
+            }
+            await firstFinished.set()
+            return removed
+        }
+
+        await disposeStarted.waitForSet()
+
+        let second = Task {
+            await secondStarted.set()
+            let removed = await coalescer.remove("k") { _ in
+                await disposeCount.increment()
+            }
+            await secondFinished.set()
+            return removed
+        }
+
+        await secondStarted.waitForSet()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        #expect(
+            await firstFinished.value == nil,
+            "the drain owner must remain suspended while its disposer is gated"
+        )
+        #expect(
+            await secondFinished.value == nil,
+            "a concurrent remover must join the existing drain instead of returning early"
+        )
+        #expect(
+            await disposeCount.value == 1,
+            "only the first remover may run the disposer"
+        )
+
+        let releasedAt = Date.timeIntervalSinceReferenceDate
+        await disposeGate.open()
+
+        let removedFirst = await first.value
+        let removedSecond = await second.value
+        let firstFinishedAt = await firstFinished.value
+        let secondFinishedAt = await secondFinished.value
+
+        #expect(removedFirst === stored)
+        #expect(removedSecond == nil)
+        #expect(await disposeCount.value == 1)
+        if let firstFinishedAt, let secondFinishedAt {
+            #expect(firstFinishedAt >= releasedAt)
+            #expect(
+                secondFinishedAt >= releasedAt,
+                "the non-owning remover returned before the sole disposer completed"
+            )
+        }
+
+        let snap = await coalescer.snapshot()
+        #expect(snap.resolved == 0 && snap.inFlight == 0 && snap.draining == 0)
+    }
+
     /// Same race surface as `value_during_remove_waitsForDrainThenStartsFresh`
     /// but for `removeAll()`: a `value(for:)` for a key whose in-flight
     /// task is being drained by a concurrent `removeAll()` must wait for
@@ -437,5 +514,34 @@ private actor AtomicTimestamp {
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             waiters.append(c)
         }
+    }
+}
+
+private actor AtomicCounter {
+    private(set) var value = 0
+
+    func increment() {
+        value += 1
+    }
+}
+
+private actor OneShotGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            waiters.append(continuation)
+        }
+    }
+
+    func open() {
+        guard !isOpen else { return }
+        isOpen = true
+        for waiter in waiters {
+            waiter.resume()
+        }
+        waiters.removeAll()
     }
 }

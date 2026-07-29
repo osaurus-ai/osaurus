@@ -58,6 +58,22 @@ public final class AgentManager: ObservableObject {
         didSet { syncIdentityRegistry() }
     }
 
+    /// Spawn authority changes can race asynchronous approval, provider
+    /// resolution, and admission waits. Keep semantic per-agent generations
+    /// rather than relying on final-value equality: an edit followed by a
+    /// restore must still invalidate work prepared through the transient
+    /// authority. Presentation-only fields are absent from these projections.
+    private var observedSpawnAuthorityAgentIDs: Set<UUID> = []
+    private var cachedSpawnLauncherAuthorities:
+        [UUID: SpawnCustomLauncherAgentAuthority] = [:]
+    private var cachedSpawnPermissions:
+        [UUID: SubagentPermissionPolicy] = [:]
+    private var cachedSpawnTargetAuthorities:
+        [UUID: SpawnTargetAuthority] = [:]
+    private var spawnLauncherAuthorityRevisions: [UUID: UInt64] = [:]
+    private var spawnPermissionAuthorityRevisions: [UUID: UInt64] = [:]
+    private var spawnTargetAuthorityRevisions: [UUID: UInt64] = [:]
+
     /// Mirror the current agents' crypto addresses / key indices into the
     /// thread-safe `AgentIdentityRegistry` so the off-main `APIKeyValidator`
     /// builder can accept agent-scoped tokens (e.g. keys minted by `/pair`).
@@ -227,7 +243,78 @@ public final class AgentManager: ObservableObject {
 
     /// Reload agents from disk
     public func refresh() {
-        agents = AgentStore.loadAll()
+        let loaded = AgentStore.loadAll()
+        let migrated = loaded.map { agent -> Agent in
+            guard !agent.isBuiltIn, !agent.settings.legacySpawnableAgentNames.isEmpty else {
+                return agent
+            }
+            var updated = agent
+            updated.settings = agent.settings.migratingLegacySpawnableAgents(using: loaded)
+            if updated.settings != agent.settings {
+                AgentStore.save(updated)
+            }
+            return updated
+        }
+        installAgentSnapshot(migrated)
+        SubagentConfigurationStore.migrateLegacyAgentNames(using: migrated)
+    }
+
+    /// Return one Agent plus the three Spawn-scoped generations from the same
+    /// MainActor turn. Callers use this at approval/execution boundaries so a
+    /// launcher, permission, or target ABA cannot produce a torn fingerprint.
+    func spawnAuthoritySnapshot(for id: UUID) -> SpawnAgentAuthoritySnapshot {
+        SpawnAgentAuthoritySnapshot(
+            agent: agents.first { $0.id == id },
+            revisions: SpawnAgentAuthorityRevisions(
+                launcher: spawnLauncherAuthorityRevisions[id] ?? 0,
+                permission: spawnPermissionAuthorityRevisions[id] ?? 0,
+                target: spawnTargetAuthorityRevisions[id] ?? 0
+            )
+        )
+    }
+
+    /// Install a refreshed agent list and advance only the semantic Spawn axes
+    /// that changed. The observed-id set survives deletion, so deleting and
+    /// recreating the same UUID is also a revision change instead of an ABA.
+    private func installAgentSnapshot(_ updatedAgents: [Agent]) {
+        // Match `agent(for:)`'s first-record semantics without assuming a
+        // hand-edited store can never contain duplicate UUID records.
+        var nextByID: [UUID: Agent] = [:]
+        for agent in updatedAgents where nextByID[agent.id] == nil {
+            nextByID[agent.id] = agent
+        }
+        let nextIDs = Set(nextByID.keys)
+        let allIDs = observedSpawnAuthorityAgentIDs.union(nextIDs)
+
+        for id in allIDs {
+            let nextAgent = nextByID[id]
+            let nextLauncher = nextAgent.map(
+                SpawnCustomLauncherAgentAuthority.init
+            )
+            let nextPermission = nextAgent?.settings.subagentPermissions.policy(
+                for: SubagentCapabilityRegistry.spawn.id
+            )
+            let nextTarget = nextAgent.map(SpawnTargetAuthority.init)
+
+            if observedSpawnAuthorityAgentIDs.contains(id) {
+                if cachedSpawnLauncherAuthorities[id] != nextLauncher {
+                    spawnLauncherAuthorityRevisions[id, default: 0] &+= 1
+                }
+                if cachedSpawnPermissions[id] != nextPermission {
+                    spawnPermissionAuthorityRevisions[id, default: 0] &+= 1
+                }
+                if cachedSpawnTargetAuthorities[id] != nextTarget {
+                    spawnTargetAuthorityRevisions[id, default: 0] &+= 1
+                }
+            }
+
+            cachedSpawnLauncherAuthorities[id] = nextLauncher
+            cachedSpawnPermissions[id] = nextPermission
+            cachedSpawnTargetAuthorities[id] = nextTarget
+        }
+
+        observedSpawnAuthorityAgentIDs.formUnion(nextIDs)
+        agents = updatedAgents
     }
 
     /// Set the active agent
@@ -426,7 +513,11 @@ public final class AgentManager: ObservableObject {
     /// main actor before detaching so two rapid creations can't collide, and
     /// the write-back re-loads the agent and only fills a still-empty address,
     /// so a concurrent `update`/`rotateAddress` can't be clobbered.
-    private func assignAddressInBackground(to agent: Agent) {
+    /// Schedule best-effort address assignment without synchronously touching
+    /// Keychain on the main actor. Automatic UI/runtime callers must use this
+    /// path; `assignAddress(to:)` remains for explicit flows that need a
+    /// synchronous result before continuing.
+    func assignAddressInBackground(to agent: Agent) {
         guard !agent.isBuiltIn, agent.agentAddress == nil else { return }
         let index = nextUnusedAgentIndex()
         // Park the reservation immediately (address comes later) so another
@@ -872,7 +963,8 @@ extension AgentManager {
             spawnDelegationEnabled: agent.settings.spawnDelegationEnabled,
             imageEnabled: agent.settings.imageEnabled,
             appleScriptEnabled: agent.settings.appleScriptEnabled,
-            spawnableAgentNames: agent.settings.spawnableAgentNames,
+            spawnableAgentIDs: agent.settings.spawnableAgentIDs,
+            spawnableAgentNames: agent.settings.legacySpawnableAgentNames,
             spawnableModelNames: agent.settings.spawnableModelNames,
             spawnableModelNotes: agent.settings.spawnableModelNotes,
             knowledgeEnabled: agent.settings.knowledgeEnabled,
@@ -1140,7 +1232,9 @@ extension AgentManager {
         // which has hung on the model-picker click that lands here. The saved
         // agent is the only record that changed.
         if let index = agents.firstIndex(where: { $0.id == agent.id }) {
-            agents[index] = agent
+            var updatedAgents = agents
+            updatedAgents[index] = agent
+            installAgentSnapshot(updatedAgents)
         } else {
             refresh()
         }

@@ -21,28 +21,38 @@ struct ConcurrencySection: View {
     @State private var maxConcurrentText: String = ""
     @State private var initialized: Bool = false
 
+    private var effectiveBatchEngineLimit: Int {
+        ServerRuntimeSettingsStore.resolvedBatchEngineMaxBatchSize(
+            for: draft
+        )
+    }
+
     var body: some View {
         ServerSettingsCard(
             section: .concurrency,
             status: .engineReady,
             blurb:
-                "How many requests the engine can decode at once. Higher = more throughput, more wired memory."
+                "How many same-model requests, including local subagents, the engine can decode at once. Higher = more throughput, more wired memory."
         ) {
             SettingsStepperField(
                 label: "Concurrent Sessions",
                 help:
-                    "BatchEngine max batch size. 1 keeps the compile fast-path engaged; >1 enables continuous batching.",
+                    "BatchEngine max batch size and the engine ceiling for same-model local subagent waves. 1 keeps the compile fast-path engaged; >1 allows concurrent decode when Continuous Batching is on.",
                 text: $maxConcurrentText,
                 range: 1 ... 32,
                 step: 1,
-                defaultValue: 1
+                defaultValue: effectiveBatchEngineLimit
             )
             .onChange(of: maxConcurrentText) { _, _ in commitMaxConcurrent() }
+
+            Text(effectiveBatchEngineSummary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             SettingsToggle(
                 title: L("Continuous Batching"),
                 description:
-                    "When off, Osaurus pins the BatchEngine to one active slot even if Concurrent Sessions is higher.",
+                    "When off, Osaurus pins each local model to one active job even if Concurrent Sessions is higher. Remote jobs can still overlap, and jobs targeting different local models remain serialized by model residency.",
                 isOn: $draft.concurrency.continuousBatching
             )
 
@@ -100,23 +110,50 @@ struct ConcurrencySection: View {
     }
 
     private func syncFromDraft() {
-        let desired = draft.concurrency.maxConcurrentSequences.map(String.init) ?? "1"
+        // Empty is the persisted "automatic" state. The stepper placeholder
+        // renders the same profile-resolved capacity BatchEngine receives
+        // without materializing that automatic value as an explicit override.
+        let desired = draft.concurrency.maxConcurrentSequences.map(String.init) ?? ""
         if maxConcurrentText != desired { maxConcurrentText = desired }
     }
 
     private func commitMaxConcurrent() {
         let trimmed = maxConcurrentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            // Empty is the documented Automatic state. Clearing an explicit
+            // override must therefore restore nil instead of silently leaving
+            // the prior engine ceiling active behind a blank field.
+            if draft.concurrency.maxConcurrentSequences != nil {
+                draft.concurrency.maxConcurrentSequences = nil
+            }
+            return
+        }
         guard let parsed = Int(trimmed), parsed > 0 else { return }
         let clamped = min(parsed, 32)
 
-        // `nil` is the persisted engine-default state and resolves to one
-        // session in this control. Merely materializing the lazily-rendered
-        // section must not turn that equivalent display value into an edit.
-        guard draft.concurrency.maxConcurrentSequences != nil || clamped != 1 else {
-            return
-        }
         if draft.concurrency.maxConcurrentSequences != clamped {
             draft.concurrency.maxConcurrentSequences = clamped
         }
+    }
+
+    private var effectiveBatchEngineSummary: String {
+        if !draft.concurrency.continuousBatching {
+            return
+                "Effective BatchEngine limit: 1 — Continuous Batching is off."
+        }
+        if draft.memorySafety.customMaxConcurrentSequences != nil {
+            return
+                "Effective BatchEngine limit: \(effectiveBatchEngineLimit) — overridden by Memory Safety → Max Concurrent Sequences."
+        }
+        if draft.concurrency.maxConcurrentSequences != nil {
+            return
+                "Effective BatchEngine limit: \(effectiveBatchEngineLimit) — explicit Concurrent Sessions override."
+        }
+        let mode =
+            draft.memorySafety.mode.rawValue
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized
+        return
+            "Effective BatchEngine limit: \(effectiveBatchEngineLimit) — automatic \(mode) Memory Safety profile."
     }
 }

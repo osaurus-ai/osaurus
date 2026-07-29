@@ -124,6 +124,48 @@ struct HTTPHandlerEndpointTests {
         }
     }
 
+    @Test @MainActor
+    func runtimeSettings_put_clearPersistsNullAndResolvedCapacity()
+        async throws
+    {
+        let dir = try makeTempDirectory()
+        try await withOverriddenRuntimeSettingsDirectory(dir) {
+            var initial = VMLXServerRuntimeSettings()
+            initial.concurrency.maxConcurrentSequences = 8
+            ServerRuntimeSettingsStore.save(initial)
+
+            let server = try await startServer()
+            defer { Task { await server.shutdown() } }
+
+            var automatic = initial
+            automatic.concurrency.maxConcurrentSequences = nil
+            let (data, resp) = try await putRuntimeSettings(
+                automatic,
+                server: server
+            )
+
+            #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+            let decoded = try JSONDecoder().decode(
+                RuntimeSettingsResponse.self,
+                from: data
+            )
+            #expect(
+                decoded.settings.concurrency.maxConcurrentSequences == nil
+            )
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let persisted = ServerRuntimeSettingsStore.snapshot()
+            #expect(
+                persisted.concurrency.maxConcurrentSequences == nil
+            )
+            #expect(
+                ServerRuntimeSettingsStore.resolvedBatchEngineMaxBatchSize(
+                    for: persisted
+                ) == 1
+            )
+        }
+    }
+
     @Test func runtimeSettings_put_performanceChange_refreshesLoadedModel() async throws {
         // Decode-performance levers (compiled decode + tied-head codec) are
         // applied at model LOAD, so toggling them must evict the resident model

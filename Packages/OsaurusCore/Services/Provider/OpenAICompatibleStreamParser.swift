@@ -538,9 +538,16 @@ struct OpenAICompatibleStreamParser {
                     let lenient = try? state.decoder.decode(
                         LenientChatCompletionChunk.self,
                         from: jsonData
-                    )
+                    ),
+                    lenient.hasMeaningfulPayload
                 else { throw error }
-                return processLenientChunk(lenient, options: options, state: &state, yield: yield)
+                return processLenientChunk(
+                    lenient,
+                    options: options,
+                    isStrictFallback: true,
+                    state: &state,
+                    yield: yield
+                )
             }
             // OpenAI emits usage on a dedicated final chunk (empty `choices`)
             // when `stream_options.include_usage` was set; on every other chunk
@@ -564,12 +571,28 @@ struct OpenAICompatibleStreamParser {
     private static func processLenientChunk(
         _ chunk: LenientChatCompletionChunk,
         options: Options,
+        isStrictFallback: Bool = false,
         state: inout RemoteProviderService.StreamingState,
         yield: (String) -> Void
     ) -> RemoteProviderService.StreamEventOutcome {
         state.captureProviderUsage(chunk.usage)
         let choice = chunk.choices?.first
         if let message = choice?.message {
+            // A strict streaming provider may use `message` instead of
+            // `delta` on an intermediate compatibility frame. Missing
+            // `finish_reason` is not a completion signal in that stream:
+            // consume the payload and wait for the provider's real terminal
+            // marker. Keep the long-standing lenient full-body behavior for
+            // router-compatible non-stream responses.
+            if isStrictFallback, choice?.finish_reason == nil {
+                return processChoice(
+                    delta: message,
+                    finishReason: nil,
+                    deferToolCallDispatchUntilUsage: options.deferToolCallDispatchUntilUsage,
+                    state: &state,
+                    yield: yield
+                )
+            }
             return processMessageCompletion(
                 message,
                 finishReason: choice?.finish_reason,
@@ -751,11 +774,43 @@ struct OpenAICompatibleStreamParser {
         let choices: [Choice]?
         let usage: Usage?
 
+        var hasMeaningfulPayload: Bool {
+            if usage != nil { return true }
+            return choices?.contains { $0.hasMeaningfulPayload } == true
+        }
+
         struct Choice: Decodable {
             let index: Int?
             let delta: DeltaContent?
             let message: DeltaContent?
             let finish_reason: String?
+
+            var hasMeaningfulPayload: Bool {
+                if let finishReason = finish_reason, !finishReason.isEmpty {
+                    return true
+                }
+                return Self.hasMeaningfulPayload(delta)
+                    || Self.hasMeaningfulPayload(message)
+            }
+
+            private static func hasMeaningfulPayload(_ content: DeltaContent?) -> Bool {
+                guard let content else { return false }
+                if content.role?.isEmpty == false
+                    || content.content?.isEmpty == false
+                    || content.refusal?.isEmpty == false
+                    || content.reasoning_content?.isEmpty == false
+                {
+                    return true
+                }
+                return content.tool_calls?.contains { call in
+                    if let id = call.id, !id.isEmpty { return true }
+                    if let name = call.function?.name, !name.isEmpty { return true }
+                    if let arguments = call.function?.arguments, !arguments.isEmpty {
+                        return true
+                    }
+                    return false
+                } == true
+            }
         }
     }
 }

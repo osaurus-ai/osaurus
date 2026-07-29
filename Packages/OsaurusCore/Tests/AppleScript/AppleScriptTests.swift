@@ -3183,9 +3183,10 @@ struct AppleScriptWarmResidencyCoordinatorTests {
             restore: { await restored.record($0) },
             sleep: parkedSleep
         )
-        await coord.endRun(lease: lease("chat-A"), model: "AS-16B", keepWarmSeconds: 90)
+        let held = lease("chat-A")
+        await coord.endRun(lease: held, model: "AS-16B", keepWarmSeconds: 90)
         await coord.flush()
-        #expect(await restored.all() == [lease("chat-A")])
+        #expect(await restored.all() == [held])
         #expect(await coord.heldModelForTesting() == nil)
     }
 
@@ -3196,8 +3197,9 @@ struct AppleScriptWarmResidencyCoordinatorTests {
             restore: { await restored.record($0) },
             sleep: parkedSleep
         )
-        await coord.endRun(lease: lease("chat-A"), model: "AS-16B", keepWarmSeconds: 0)
-        #expect(await restored.all() == [lease("chat-A")])
+        let held = lease("chat-A")
+        await coord.endRun(lease: held, model: "AS-16B", keepWarmSeconds: 0)
+        #expect(await restored.all() == [held])
         #expect(await coord.heldModelForTesting() == nil)
     }
 
@@ -3210,9 +3212,10 @@ struct AppleScriptWarmResidencyCoordinatorTests {
             restore: { await restored.record($0) },
             sleep: { _ in }
         )
-        await coord.endRun(lease: lease("chat-A"), model: "AS-16B", keepWarmSeconds: 90)
+        let held = lease("chat-A")
+        await coord.endRun(lease: held, model: "AS-16B", keepWarmSeconds: 90)
         let fired = await restored.waitForOne()
-        #expect(fired == lease("chat-A"))
+        #expect(fired == held)
     }
 }
 

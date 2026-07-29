@@ -355,7 +355,7 @@ extension OsaurusEvalsCLI {
 
             FLAGS:
                 --suite <dir>              Suite directory. May be repeated. Defaults to
-                                           AgentLoop and AgentLoopFrontier.
+                                           AgentLoop, AgentLoopFrontier, and Subagent.
                 --local-model <id>         Local/default model evidence lane.
                                            Default: foundation.
                 --frontier-model <id>      Frontier model evidence lane.
@@ -501,7 +501,8 @@ extension OsaurusEvalsCLI {
         }
 
         func suiteURLsForLiveRun() -> [URL] {
-            var selected = suites.isEmpty ? defaultEvalReviewSuiteURLs() : suites
+            var selected =
+                suites.isEmpty ? AgentLoopRegressionDefaults.suiteURLs() : suites
             if includeSandboxFrontier {
                 selected.append(defaultSandboxFrontierSuiteURL())
             }
@@ -564,13 +565,6 @@ extension OsaurusEvalsCLI {
     private static func defaultEvalReviewOutDir() -> URL {
         URL(fileURLWithPath: "build/evals/pr-report", isDirectory: true)
             .appendingPathComponent(timestampForEvalReviewPath(), isDirectory: true)
-    }
-
-    private static func defaultEvalReviewSuiteURLs() -> [URL] {
-        [
-            defaultSuiteURL(named: "AgentLoop"),
-            defaultSuiteURL(named: "AgentLoopFrontier"),
-        ]
     }
 
     private static func defaultSandboxFrontierSuiteURL() -> URL {

@@ -47,6 +47,25 @@ struct RemoteCompletionUsageTests {
         #expect(state.providerUsage?.prompt_tokens == 120)
     }
 
+    @Test func strictFallbackUsageOnlyChunk_capturedWithoutPrematureFinish() throws {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        let outcome = try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: Self.data(
+                #"{"usage":{"prompt_tokens":120,"completion_tokens":48,"total_tokens":168}}"#
+            ),
+            options: .strict,
+            state: &state,
+            yield: { _ in }
+        )
+
+        guard case .continue = outcome else {
+            Issue.record("fallback usage-only chunk should continue, got \(outcome)")
+            return
+        }
+        #expect(state.providerUsage?.completion_tokens == 48)
+        #expect(state.providerUsage?.prompt_tokens == 120)
+    }
+
     @Test func perChunkNullUsage_doesNotClobberCapturedTotals() throws {
         var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
         // Real total arrives, then a normal content chunk with usage:null — the

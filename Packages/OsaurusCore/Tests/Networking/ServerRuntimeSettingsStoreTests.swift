@@ -113,6 +113,45 @@ struct ServerRuntimeSettingsStoreTests {
         #expect(plan.displaySummary.contains("kv_cap=unlimited"))
     }
 
+    @Test func batchEngineCapacityMatchesResolvedMemorySafetyConcurrency() {
+        var settings = VMLXServerRuntimeSettings()
+        settings.memorySafety.mode = .performance
+        settings.concurrency.maxConcurrentSequences = nil
+
+        let performancePlan =
+            ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
+                for: settings
+            )
+        #expect(performancePlan.concurrency.maxConcurrentSequences == 2)
+        #expect(
+            ServerRuntimeSettingsStore.resolvedBatchEngineMaxBatchSize(
+                for: settings
+            ) == 2
+        )
+
+        settings.memorySafety.mode = .balanced
+        #expect(
+            ServerRuntimeSettingsStore.resolvedBatchEngineMaxBatchSize(
+                for: settings
+            ) == 2
+        )
+
+        settings.concurrency.maxConcurrentSequences = 7
+        settings.memorySafety.customMaxConcurrentSequences = 3
+        #expect(
+            ServerRuntimeSettingsStore.resolvedBatchEngineMaxBatchSize(
+                for: settings
+            ) == 3
+        )
+
+        settings.concurrency.continuousBatching = false
+        #expect(
+            ServerRuntimeSettingsStore.resolvedBatchEngineMaxBatchSize(
+                for: settings
+            ) == 1
+        )
+    }
+
     @Test func noAutomaticLimitsDisablesOsaurusOwnedPercentageGates() {
         var settings = VMLXServerRuntimeSettings()
         settings.memorySafety.mode = .diagnosticDangerous
@@ -586,6 +625,64 @@ struct ServerRuntimeSettingsStoreTests {
         )
 
         #expect(migrated.concurrency.maxConcurrentSequences == 6)
+    }
+
+    @Test func resetDefaults_doesNotResurrectLegacyConcurrency() async throws {
+        let defaults = throwawayDefaults()
+        defaults.set(6, forKey: "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize")
+
+        let migrated = ServerRuntimeSettingsStore.migratedFromLegacy(
+            serverConfiguration: .default,
+            userDefaults: defaults
+        )
+        let reset = ServerRuntimeSettingsStore.resetDefaults()
+
+        #expect(migrated.concurrency.maxConcurrentSequences == 6)
+        #expect(reset.concurrency.maxConcurrentSequences == nil)
+        #expect(
+            ServerRuntimeSettingsStore.resolvedBatchEngineMaxBatchSize(
+                for: reset
+            ) == 1
+        )
+    }
+
+    @Test @MainActor
+    func retiredLegacyConcurrencyDoesNotReturnAfterCanonicalFileLoss() async throws {
+        let dir = try makeTempDirectory()
+        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
+        let defaults = throwawayDefaults()
+
+        try await withOverriddenDirectory(dir) {
+            let previousLegacy = ServerConfigurationStore.overrideDirectory
+            ServerConfigurationStore.overrideDirectory = dir
+            defer { ServerConfigurationStore.overrideDirectory = previousLegacy }
+
+            var canonical = VMLXServerRuntimeSettings()
+            canonical.concurrency.maxConcurrentSequences = 3
+            ServerRuntimeSettingsStore.save(canonical)
+
+            defaults.set(6, forKey: key)
+            try FileManager.default.removeItem(
+                at: dir.appendingPathComponent("server-runtime.json")
+            )
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+
+            let recovered = ServerRuntimeSettingsStore.loadOrMigrate(
+                userDefaults: defaults
+            )
+            #expect(recovered.concurrency.maxConcurrentSequences == nil)
+
+            try Data("not-json".utf8).write(
+                to: dir.appendingPathComponent("server-runtime.json"),
+                options: [.atomic]
+            )
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+
+            let recoveredAfterCorruption = ServerRuntimeSettingsStore.loadOrMigrate(
+                userDefaults: defaults
+            )
+            #expect(recoveredAfterCorruption.concurrency.maxConcurrentSequences == nil)
+        }
     }
 
     @Test func projectIntoLegacy_mirrorsRuntimeChangesIntoServerConfiguration() async throws {

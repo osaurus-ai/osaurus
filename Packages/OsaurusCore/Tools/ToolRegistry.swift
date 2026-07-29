@@ -480,6 +480,21 @@ public final class ToolRegistry: ObservableObject {
         }
     }
 
+    /// Get only tools that have an audited spawned-operation cancellation
+    /// path. This keeps target-agent schemas honest: a child must not be
+    /// invited to call a tool that the owned dispatcher will reject before
+    /// execution. Argument-aware support is still checked at dispatch time
+    /// for tools such as `file_read` whose rich-document/sandbox variants
+    /// are not yet abortable.
+    func specsForSpawnedOperations(forTools toolNames: [String]) -> [Tool] {
+        toolNames.compactMap { name in
+            guard let tool = toolsByName[name], tool.canExposeToSpawnedOperation else {
+                return nil
+            }
+            return tool.asOpenAITool()
+        }
+    }
+
     // MARK: - External surface deny list
 
     /// Host-mutation tool classes that must never be invocable from EXTERNAL
@@ -771,7 +786,8 @@ public final class ToolRegistry: ObservableObject {
     func execute(
         name rawName: String,
         argumentsJSON: String,
-        permissionGateResolved: Bool = false
+        permissionGateResolved: Bool = false,
+        ownsExecutionUntilTermination: Bool = false
     ) async throws -> String {
         // The capabilities manifest lists deferred tools to the model as
         // `tool/<name>` (SystemPromptTemplates.enabledCapabilitiesManifest). Some
@@ -883,6 +899,18 @@ public final class ToolRegistry: ObservableObject {
             toolName: name
         ) {
             return invalidArguments
+        }
+        if ownsExecutionUntilTermination,
+            tool.spawnedOperationCancellationSupport(argumentsJSON: argumentsJSON) != .cooperative
+        {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message:
+                    "Tool '\(name)' cannot run inside a cancellable spawned worker because "
+                    + "this invocation does not expose cooperative abort-and-drain ownership.",
+                tool: name,
+                retryable: false
+            )
         }
         // Permission gating. Skipped when the caller already resolved the
         // gate via `resolvePermissionGate` (parallel batches resolve every
@@ -1008,7 +1036,15 @@ public final class ToolRegistry: ObservableObject {
                         try await ChatExecutionContext.$allowHostFolderWrites.withValue(policy.allowFolderWrites) {
                             try await ChatExecutionContext.$sandboxReadBridge.withValue(readBridge) {
                                 try await ChatExecutionContext.$sandboxAgentName.withValue(sandboxAgent) {
-                                    if tool.bypassRegistryTimeout {
+                                    if tool.bypassRegistryTimeout || ownsExecutionUntilTermination {
+                                        // Spawned runners pass
+                                        // `ownsExecutionUntilTermination`: their
+                                        // `OwnedSubagentOperation` supplies the
+                                        // deadline/interrupt signal and MUST
+                                        // drain this direct body before the
+                                        // child can finish. Using the generic
+                                        // timeout race here would return while
+                                        // its losing body task was still live.
                                         return Self.normalizeToolResult(
                                             try await Self.runToolBodyUntimed(
                                                 tool,

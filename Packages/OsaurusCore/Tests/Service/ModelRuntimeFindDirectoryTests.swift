@@ -208,6 +208,44 @@ struct ModelRuntimeFindDirectoryTests {
         #expect(uncapped == strictCap * 16)
     }
 
+    @Test("Nanbeige KV RAM preflight counts every loop-layer cache slot")
+    func nanbeigeKVHeadroomUsesLoopedCacheTopology() throws {
+        let oneLoop = try makeIsolatedDir()
+        let twoLoops = try makeIsolatedDir()
+        let base = """
+            {
+              "model_type": "nanbeige",
+              "num_hidden_layers": 22,
+              "num_attention_heads": 48,
+              "num_key_value_heads": 8,
+              "head_dim": 128,
+              "max_position_embeddings": 262144,
+              "torch_dtype": "bfloat16",
+              "num_loops": %d
+            }
+            """
+        try Data(String(format: base, 1).utf8)
+            .write(to: oneLoop.appendingPathComponent("config.json"))
+        try Data(String(format: base, 2).utf8)
+            .write(to: twoLoops.appendingPathComponent("config.json"))
+
+        let weights: Int64 = 8 * 1024 * 1024 * 1024
+        let single = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: weights,
+            modelDirectory: oneLoop,
+            kvRetentionCap: 65_536
+        )
+        let looped = ModelRuntime.estimatedKVHeadroomBytes(
+            forWeights: weights,
+            modelDirectory: twoLoops,
+            kvRetentionCap: 65_536
+        )
+
+        #expect(single == 7_381_975_040)
+        #expect(looped == 14_763_950_080)
+        #expect(looped == single * 2)
+    }
+
     @Test("Routed JANGTQ pre-load RAM gate uses MLXPress hot working set")
     func routedJANGTQLoadFootprintUsesCompressionHotSet() throws {
         let dir = try makeIsolatedDir()

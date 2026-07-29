@@ -20,6 +20,49 @@ struct ModelManagerTests {
         ModelManager.skipBackgroundOrgFetchForTests = true
     }
 
+    @Test("installed matcher prefers full ids and rejects ambiguous short aliases")
+    func installedMatcherUsesStableIdentity() {
+        let models = [
+            MLXModel(
+                id: "Org-A/Shared-Bundle",
+                name: "Shared A",
+                description: "",
+                downloadURL: "https://example.com/a"
+            ),
+            MLXModel(
+                id: "Org-B/Shared-Bundle",
+                name: "Shared B",
+                description: "",
+                downloadURL: "https://example.com/b"
+            ),
+        ]
+
+        #expect(
+            ModelManager.matchInstalledMLXModel(
+                named: "org-a/shared-bundle",
+                in: models
+            )?.id == "Org-A/Shared-Bundle"
+        )
+        #expect(
+            ModelManager.matchInstalledMLXModel(
+                named: "ORG-B/SHARED-BUNDLE",
+                in: models
+            )?.id == "Org-B/Shared-Bundle"
+        )
+        #expect(
+            ModelManager.matchInstalledMLXModel(
+                named: "Shared-Bundle",
+                in: [models[0]]
+            )?.id == "Org-A/Shared-Bundle"
+        )
+        #expect(
+            ModelManager.matchInstalledMLXModel(
+                named: "Shared-Bundle",
+                in: models
+            ) == nil
+        )
+    }
+
     @Test func loadAvailableModels_initializesStates() async throws {
         // `ModelManager.init` calls `loadAvailableModels()` synchronously, while
         // download-state probing is intentionally applied off-main so startup

@@ -454,6 +454,19 @@ public enum ToolEnvelope {
         return dict["result"]
     }
 
+    /// Extract a structured `result` payload from either a success envelope
+    /// or a failure envelope that intentionally carries partial/aggregate
+    /// result metadata. Unlike `successPayload`, this does not change the
+    /// caller's success classification; it only preserves useful child rows
+    /// for evaluation and UI surfaces when an aggregate operation fails.
+    public static func resultPayload(_ result: String) -> Any? {
+        guard (isSuccess(result) || isError(result)),
+            let data = result.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return dict["result"]
+    }
+
     /// Pull a short, model-readable failure message out of an error
     /// envelope. Falls back to the input string if parsing fails so the
     /// caller always has something to show.

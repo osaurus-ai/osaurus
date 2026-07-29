@@ -743,6 +743,15 @@ final class ChatWindowState: ObservableObject {
                 queue: .main
             ) { [weak self] _ in Task { @MainActor in self?.refreshAgents() } }
         )
+        // Conversation import saves sessions from outside any window;
+        // refresh so the new rows appear in every open sidebar.
+        notificationObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: .chatSessionsImported,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in Task { @MainActor in self?.refreshSessions() } }
+        )
         // Sandbox change tracking: refresh the toolbar count when the
         // tracker records/undoes changes for the session this window shows.
         notificationObservers.append(

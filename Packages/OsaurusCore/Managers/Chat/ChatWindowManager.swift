@@ -486,6 +486,15 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         )
     }
 
+    /// True only for the visible key chat while Osaurus is frontmost. Runtime
+    /// residency notifications use this stronger predicate instead of
+    /// `lastFocusedWindowId`, which can still refer to a hidden/background
+    /// window and must never authorize a speculative replacement warm-up.
+    func isChatWindowActive(id: UUID) -> Bool {
+        guard NSApp.isActive, let window = nsWindows[id] else { return false }
+        return window.isVisible && window.isKeyWindow
+    }
+
     /// Set a callback to be invoked when window is about to close (for session saving)
     public func setCloseCallback(for windowId: UUID, callback: @escaping () -> Void) {
         sessionCallbacks[windowId] = callback
@@ -729,6 +738,11 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     // Called by delegate when window becomes key
     fileprivate func windowDidBecomeKey(id: UUID) {
         lastFocusedWindowId = id
+        // Idle residency may have unloaded this window's selected model while
+        // the user was away. Re-arm the existing speculative warm-up when the
+        // user returns; its RAM and competing-residency gates still decide
+        // whether background loading is safe.
+        windowStates[id]?.session.notifySessionBecameActive()
         // Distinguishes "user was in a chat window" from a management tab when
         // localizing a layout-engine app hang (no first-party frame in stack).
         CrashReportingService.recordBreadcrumb(category: "navigation", message: "chat.window focused")

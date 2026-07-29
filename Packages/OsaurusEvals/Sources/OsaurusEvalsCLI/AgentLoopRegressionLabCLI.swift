@@ -64,7 +64,8 @@ extension OsaurusEvalsCLI {
 
     @MainActor
     private static func runAgentLoopLabSuites(options opts: AgentLoopLabOptions) async throws -> Int32 {
-        let suiteURLs = opts.suites.isEmpty ? defaultAgentLoopLabSuites() : opts.suites
+        let suiteURLs =
+            opts.suites.isEmpty ? AgentLoopRegressionDefaults.suiteURLs() : opts.suites
         var loaded: [(url: URL, suite: EvalSuite)] = []
         for suiteURL in suiteURLs {
             let suite = try EvalSuite.load(from: suiteURL)
@@ -190,18 +191,6 @@ extension OsaurusEvalsCLI {
         )
     }
 
-    private static func defaultAgentLoopLabSuites() -> [URL] {
-        let repoRootAgentLoop = URL(fileURLWithPath: "Packages/OsaurusEvals/Suites/AgentLoop", isDirectory: true)
-        let repoRootFrontier = URL(fileURLWithPath: "Packages/OsaurusEvals/Suites/AgentLoopFrontier", isDirectory: true)
-        if FileManager.default.fileExists(atPath: repoRootAgentLoop.path) {
-            return [repoRootAgentLoop, repoRootFrontier]
-        }
-        return [
-            URL(fileURLWithPath: "Suites/AgentLoop", isDirectory: true),
-            URL(fileURLWithPath: "Suites/AgentLoopFrontier", isDirectory: true),
-        ]
-    }
-
     private static func uniqueSuiteName(
         suiteURL: URL,
         usedNames: inout [String: Int]
@@ -229,8 +218,8 @@ extension OsaurusEvalsCLI {
                                         of per-suite JSON reports.
                 --current <path>        Compare-only mode. Reads current EvalReport JSON
                                         file or directory instead of running model evals.
-                --suite <dir>           Agent-loop suite to run. May be repeated. Defaults
-                                        to AgentLoop and AgentLoopFrontier.
+                --suite <dir>           Regression suite to run. May be repeated. Defaults
+                                        to AgentLoop, AgentLoopFrontier, and Subagent.
                 --model <id>            Same model grammar as `run`; default is auto.
                 --filter <substr>       Only run/compare cases whose id contains <substr>.
                 --out-dir <dir>         Artifact directory. Defaults to

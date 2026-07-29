@@ -57,12 +57,12 @@ struct ConfigurationView: View {
     /// thread each (auto-)save.
     @State private var loadedServerConfig: ServerConfiguration = .default
 
-    /// System runtime knobs for subagent helper jobs (local handoff, RAM-safety
-    /// preflight, image load policy). Backed by `SubagentConfigurationStore`;
-    /// the per-agent spawn/image config lives in each agent's Subagents tab.
-    /// Saved immediately on change (like the toast toggles), not through the
-    /// debounced `saveConfiguration` path.
+    /// Built-in/main-chat Spawn policy plus system runtime knobs for subagent
+    /// helper jobs. Backed by `SubagentConfigurationStore`; custom agents keep
+    /// their own policy in their Subagents tab. Saved immediately on change
+    /// (like the toast toggles), not through the debounced configuration path.
     @State private var subagentConfiguration = SubagentConfigurationStore.snapshot()
+    @State private var subagentConfigurationBaseline = SubagentConfigurationStore.snapshot()
 
     // Search (passed from sidebar)
     @Binding var searchText: String
@@ -306,8 +306,8 @@ struct ConfigurationView: View {
         }
     }
 
-    /// The relocated subagent runtime knobs (was the dedicated Spawn tab). The
-    /// component wraps itself in a `SettingsSection` card, so this only adds the
+    /// Main-chat Spawn policy and shared subagent runtime knobs. The component
+    /// wraps itself in a `SettingsSection` card, so this only adds the
     /// search-visibility gate.
     @ViewBuilder private var subagentSection: some View {
         if matchesSearch(Self.subagentKeywords) {
@@ -544,7 +544,9 @@ struct ConfigurationView: View {
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             loadConfiguration()
-            subagentConfiguration = SubagentConfigurationStore.snapshot()
+            let latest = SubagentConfigurationStore.snapshot()
+            subagentConfigurationBaseline = latest
+            subagentConfiguration = latest
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
@@ -556,13 +558,26 @@ struct ConfigurationView: View {
         // `saveConfiguration`). The re-snapshot on the change notification keeps
         // this in sync if an agent's Subagents tab edits the shared store.
         .onChange(of: subagentConfiguration) { _, newValue in
-            SubagentConfigurationStore.save(newValue)
+            let saved = SubagentConfigurationStore.saveEditorSnapshot(
+                newValue,
+                loadedBaseline: subagentConfigurationBaseline
+            )
+            subagentConfigurationBaseline = saved
+            if saved != newValue { subagentConfiguration = saved }
         }
         .onReceive(
             NotificationCenter.default.publisher(for: .subagentConfigurationChanged)
         ) { _ in
             let latest = SubagentConfigurationStore.snapshot()
-            if latest != subagentConfiguration { subagentConfiguration = latest }
+            let reconciled = SubagentConfiguration.mergingEditorSnapshot(
+                subagentConfiguration,
+                loadedBaseline: subagentConfigurationBaseline,
+                live: latest
+            )
+            subagentConfigurationBaseline = latest
+            if reconciled != subagentConfiguration {
+                subagentConfiguration = reconciled
+            }
         }
         // Any edit to a save-relevant field reschedules the debounced save.
         // `currentFormState` is the same snapshot the dirty check uses, so

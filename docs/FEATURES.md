@@ -199,7 +199,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 - **Window-scoped warm-up** — Models are loaded and prefix-cached when a chat window opens, not at app launch. Each window warms its own model independently, using the window's agent context (system prompt, memory, tools) for the prefix cache.
 - **Smart unloading** — The "Keep model loaded after use" setting controls whether a local model unloads immediately after use, stays warm for 5/15/30/60 minutes, or stays resident until an explicit unload/cleanup. Strict single-model switches still unload the replaced model immediately, and idle unload never deletes downloaded models or disk KV cache entries. The warm-up indicator (yellow dot) signals when a model is loading.
-- **Continuous batching** — `BatchEngine` shares a single forward pass across overlapping requests for the same model. The default `mlxBatchEngineMaxBatchSize` is `1` so vmlx compiled decode stays eligible for single-user chat; tune with `defaults write com.dinoki.osaurus ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize -int 8` for server-style concurrency. Takes effect on the next inference call — the registry hot-resizes the cached engine via vmlx's `BatchEngine.updateMaxBatchSize(_:)`.
+- **Continuous batching** — `BatchEngine` shares a single forward pass across overlapping requests for the same model. Server Settings resolves its capacity from the explicit Memory Safety sequence override, explicit Concurrent Sessions value, or Memory Safety profile, in that order. Performance/Balanced automatically resolve to `2`, Safe Auto/Strict to `1`, and Continuous Batching off pins `1`. The registry hot-resizes the cached engine via vmlx's `BatchEngine.updateMaxBatchSize(_:)`.
 - **Library-managed KV cache** — vmlx-swift's `CacheCoordinator` owns KV cache geometry (paged for global attention, rotating for sliding-window, SSM state for Mamba) sized per-model. Multi-turn KV reuse, mediaSalt for VLMs, and sliding-window correctness are all handled inside the engine — osaurus configures only `modelKey`, `diskCacheDir`, and a writability fallback.
 - **Model eviction policy** — Configurable in Settings > Local Inference > Model Management. "Strict (One Model)" keeps only one model loaded (default). "Flexible (Multi Model)" allows concurrent models for high-RAM systems. `/health` exposes additive `resident_models[]` diagnostics with in-flight counts and idle-unload timing for each loaded model.
 
@@ -209,7 +209,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 - Default port: `1337` (override with `OSU_PORT`)
 - KV cache disk storage: `~/.osaurus/cache/kv/`
 - Settings: Top P, eviction policy, model idle residency, allowed origins.
-- One advanced tunable, exposed via `defaults` only: `ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize` (default `1`, clamped to `[1, 32]`; hot-resized via `BatchEngine.updateMaxBatchSize(_:)` on the next inference call).
+- Runtime server settings persist in `~/.osaurus/config/server-runtime.json`, the sole live authority for BatchEngine concurrency. The old `ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize` UserDefaults key is import-only during first-run migration when that file is absent.
 
 See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architecture.
 

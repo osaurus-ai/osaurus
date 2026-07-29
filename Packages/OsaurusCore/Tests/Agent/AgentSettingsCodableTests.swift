@@ -19,10 +19,11 @@ struct AgentSettingsCodableTests {
 
     @Test("the per-agent image / permission / budget fields round-trip")
     func roundTripsNewFields() throws {
+        let coderID = UUID(uuidString: "10000000-0000-4000-8000-000000000001")!
         var settings = AgentSettings.defaultDisabled
         settings.imageEnabled = true
         settings.spawnDelegationEnabled = true
-        settings.spawnableAgentNames = ["Coder"]
+        settings.spawnableAgentIDs = [coderID]
         settings.imageGenerationModelId = "gen-model"
         settings.imageEditModelId = "edit-model"
         var perms = SubagentPermissionDefaults()
@@ -51,6 +52,7 @@ struct AgentSettingsCodableTests {
         #expect(decoded.subagentBudgets.maxDelegateTokens == 1024)
         #expect(decoded.subagentBudgets.maxDelegateTurns == 2)
         #expect(decoded.subagentBudgets.maxElapsedSeconds == 90)
+        #expect(decoded.spawnableAgentIDs == [coderID])
     }
 
     @Test("a nil image model survives the round-trip as nil (not an empty string)")
@@ -161,6 +163,60 @@ struct AgentSettingsCodableTests {
         #expect(decoded.spawnableModelNotes["openai/gpt-4o-mini"] == "Frontier reasoning")
     }
 
+    @Test("disabling Spawn preserves the custom agent's configured policy")
+    func disabledSpawnPreservesConfiguredPolicy() throws {
+        let researcherID = UUID(uuidString: "10000000-0000-4000-8000-000000000002")!
+        let workerID = UUID(uuidString: "10000000-0000-4000-8000-000000000003")!
+        var settings = AgentSettings.defaultDisabled
+        settings.spawnDelegationEnabled = false
+        settings.spawnableAgentIDs = [researcherID, workerID]
+        settings.spawnableModelNames = ["local/fast-helper", "openai/frontier-helper"]
+        settings.spawnableModelNotes = [
+            "local/fast-helper": "Fast local batches",
+            "openai/frontier-helper": "Difficult reasoning",
+        ]
+        settings.subagentModelOverrides = [
+            SubagentCapabilityRegistry.spawn.id: "local/override-helper"
+        ]
+        var permissions = SubagentPermissionDefaults()
+        permissions.setPolicy(.alwaysAllow, for: SubagentCapabilityRegistry.spawn.id)
+        settings.subagentPermissions = permissions
+        settings.subagentBudgets = SubagentBudgets(
+            maxDelegateTokens: 8192,
+            maxDelegateTurns: 5,
+            maxToolCalls: 8,
+            maxElapsedSeconds: 600,
+            maxParallelSpawns: 4
+        )
+        settings.spawnToolAccess = .readOnly
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AgentSettings.self, from: data)
+
+        #expect(decoded.spawnDelegationEnabled == false)
+        #expect(decoded.spawnableAgentIDs == [researcherID, workerID])
+        #expect(
+            decoded.spawnableModelNames
+                == ["local/fast-helper", "openai/frontier-helper"]
+        )
+        #expect(decoded.spawnableModelNotes["local/fast-helper"] == "Fast local batches")
+        #expect(decoded.spawnableModelNotes["openai/frontier-helper"] == "Difficult reasoning")
+        #expect(
+            decoded.subagentModelOverrides[SubagentCapabilityRegistry.spawn.id]
+                == "local/override-helper"
+        )
+        #expect(
+            decoded.subagentPermissions.policy(for: SubagentCapabilityRegistry.spawn.id)
+                == .alwaysAllow
+        )
+        #expect(decoded.subagentBudgets.maxDelegateTokens == 8192)
+        #expect(decoded.subagentBudgets.maxDelegateTurns == 5)
+        #expect(decoded.subagentBudgets.maxToolCalls == 8)
+        #expect(decoded.subagentBudgets.maxElapsedSeconds == 600)
+        #expect(decoded.subagentBudgets.maxParallelSpawns == 4)
+        #expect(decoded.spawnToolAccess == .readOnly)
+    }
+
     @Test("legacy JSON without the spawnable model pool decodes to empty")
     func backCompatSpawnableModelPoolEmpty() throws {
         // An older agent file that predates the per-agent spawn_model pool.
@@ -169,8 +225,66 @@ struct AgentSettingsCodableTests {
 
         #expect(decoded.spawnableModelNames.isEmpty)
         #expect(decoded.spawnableModelNotes.isEmpty)
-        // The agent-name pool still decodes (proves the model keys are additive).
-        #expect(decoded.spawnableAgentNames == ["Coder"])
+        // The legacy name pool is decode-only until the full catalog is
+        // available for deterministic UUID migration.
+        #expect(decoded.spawnableAgentIDs.isEmpty)
+        #expect(decoded.legacySpawnableAgentNames == ["Coder"])
+    }
+
+    @Test("legacy agent names migrate uniquely and ambiguous collisions fail closed")
+    func legacyAgentNameMigrationIsDeterministic() throws {
+        let helperID = UUID(uuidString: "10000000-0000-4000-8000-000000000004")!
+        let upperID = UUID(uuidString: "10000000-0000-4000-8000-000000000005")!
+        let lowerID = UUID(uuidString: "10000000-0000-4000-8000-000000000006")!
+        let json = #"{"dbEnabled":false,"spawnableAgentNames":["Coder","Helper","missing"]}"#
+        let decoded = try JSONDecoder().decode(AgentSettings.self, from: Data(json.utf8))
+        let migrated = decoded.migratingLegacySpawnableAgents(
+            using: [
+                Agent(id: helperID, name: "Coder"),
+                Agent(id: upperID, name: "Helper"),
+                Agent(id: lowerID, name: "helper"),
+            ]
+        )
+
+        #expect(migrated.spawnableAgentIDs == [helperID])
+        #expect(migrated.legacySpawnableAgentNames.isEmpty)
+        let encoded = try JSONEncoder().encode(migrated)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        #expect(object["spawnableAgentNames"] == nil)
+        #expect((object["spawnableAgentIDs"] as? [String]) == [helperID.uuidString])
+    }
+
+    @Test("case-colliding agents retain distinct models and tool grants by UUID")
+    func caseCollidingAgentIdentitySurvivesRoundTrip() throws {
+        let upperID = UUID(uuidString: "10000000-0000-4000-8000-000000000007")!
+        let lowerID = UUID(uuidString: "10000000-0000-4000-8000-000000000008")!
+        let upper = Agent(
+            id: upperID,
+            name: "Helper",
+            defaultModel: "local/helper-read",
+            toolSelectionMode: .manual,
+            manualToolNames: ["file_read"]
+        )
+        let lower = Agent(
+            id: lowerID,
+            name: "helper",
+            defaultModel: "local/helper-write",
+            toolSelectionMode: .manual,
+            manualToolNames: ["file_write"]
+        )
+
+        let data = try JSONEncoder().encode([upper, lower])
+        let decoded = try JSONDecoder().decode([Agent].self, from: data)
+        let byID = Dictionary(uniqueKeysWithValues: decoded.map { ($0.id, $0) })
+
+        #expect(byID[upperID]?.name == "Helper")
+        #expect(byID[upperID]?.defaultModel == "local/helper-read")
+        #expect(byID[upperID]?.manualToolNames == ["file_read"])
+        #expect(byID[lowerID]?.name == "helper")
+        #expect(byID[lowerID]?.defaultModel == "local/helper-write")
+        #expect(byID[lowerID]?.manualToolNames == ["file_write"])
     }
 
     @Test("legacy JSON without the new keys decodes to safe defaults")

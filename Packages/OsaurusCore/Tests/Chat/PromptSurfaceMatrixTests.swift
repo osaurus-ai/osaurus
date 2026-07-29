@@ -42,6 +42,42 @@ struct PromptSurfaceMatrixTests {
 
                 let manager = AgentManager.shared
                 let query = "Summarize the project status and identify next steps."
+                let workerModelID = "test/prompt-matrix-worker"
+                let previousScanOverride = ModelManager.scanLocalModelsOverrideForTests
+                let previousScanWait = ModelManager.localModelsScanWaitLimitOverrideForTests
+                let previousExternalRoots = ExternalModelLocator.testRootsOverride
+                ExternalModelLocator.testRootsOverride = []
+                ExternalModelLocator.invalidateInMemory()
+                _ = ExternalModelLocator.rescan()
+                ModelManager.localModelsScanWaitLimitOverrideForTests = 2
+                ModelManager.scanLocalModelsOverrideForTests = { _ in
+                    [
+                        MLXModel(
+                            id: workerModelID,
+                            name: "Prompt Matrix Worker",
+                            description: "Runnable spawn target fixture",
+                            downloadURL: "https://example.invalid/prompt-matrix-worker"
+                        )
+                    ]
+                }
+                ModelManager.invalidateLocalModelsCache()
+                _ = ModelManager.discoverLocalModels()
+                defer {
+                    ModelManager.scanLocalModelsOverrideForTests = previousScanOverride
+                    ModelManager.localModelsScanWaitLimitOverrideForTests = previousScanWait
+                    ExternalModelLocator.testRootsOverride = previousExternalRoots
+                    ExternalModelLocator.invalidateInMemory()
+                    ModelManager.invalidateLocalModelsCache()
+                }
+
+                let workerAgent = Agent(
+                    name: "PromptMatrix-Worker",
+                    description: "A deterministic runnable worker.",
+                    defaultModel: workerModelID,
+                    agentAddress: "test-prompt-matrix-worker-\(UUID().uuidString)",
+                    memoryEnabled: false
+                )
+                manager.add(workerAgent)
 
                 let defaultAgent = Agent(
                     name: "PromptMatrix-Default",
@@ -63,7 +99,9 @@ struct PromptSurfaceMatrixTests {
                 enabledAgent.settings.selfSchedulingEnabled = true
                 enabledAgent.settings.computerUseEnabled = true
                 enabledAgent.settings.spawnDelegationEnabled = true
-                enabledAgent.settings.spawnableAgentNames = ["Researcher"]
+                enabledAgent.settings.spawnableAgentIDs = [
+                    workerAgent.id
+                ]
                 manager.add(enabledAgent)
 
                 let sandboxConfig = AutonomousExecConfig(enabled: true, pluginCreate: false)
@@ -129,6 +167,12 @@ struct PromptSurfaceMatrixTests {
                     model: "google/gemma-4-4b-it",
                     query: query
                 )
+                let channelsAndSpawnContext = await SystemPromptComposer.composeChatContext(
+                    agentId: enabledAgent.id,
+                    executionMode: .none,
+                    model: "google/gemma-4-4b-it",
+                    query: query
+                )
 
                 let rows = [
                     Row(name: "tools-off", context: toolsOff),
@@ -137,6 +181,7 @@ struct PromptSurfaceMatrixTests {
                     Row(name: "features-on", context: enabledContext),
                     Row(name: "sandbox", context: sandboxContext),
                     Row(name: "channels-on", context: channelsContext),
+                    Row(name: "channels+spawn", context: channelsAndSpawnContext),
                 ]
                 print("[PromptSurfaceMatrix] scenario context cost")
                 print("  scenario          prompt   tools   total  schemas  sections")
@@ -201,10 +246,31 @@ struct PromptSurfaceMatrixTests {
                 #expect((rows[5].context.enabledManifest ?? "").contains("agent_channel_"))
                 #expect(!rows[5].sectionIds.contains("skillsGovern"))
 
+                #expect(rows[6].sectionIds.contains("spawn"))
+                #expect(rows[6].toolNames.contains("spawn_agent"))
+                #expect(rows[6].toolNames.contains("spawn_batch"))
+                #expect((rows[6].context.enabledManifest ?? "").contains("agent_channel_"))
+                #expect(rows[6].toolNames.count == rows[6].context.tools.count)
+                for spawnToolName in ["spawn_agent", "spawn_batch"] {
+                    let featureTool = rows[3].context.tools.first {
+                        $0.function.name == spawnToolName
+                    }
+                    let combinedTool = rows[6].context.tools.first {
+                        $0.function.name == spawnToolName
+                    }
+                    #expect(featureTool != nil)
+                    #expect(combinedTool != nil)
+                    #expect(
+                        featureTool?.canonicalHashPayload()
+                            == combinedTool?.canonicalHashPayload()
+                    )
+                }
+
                 ToolRegistry.shared.unregisterAllSandboxTools()
                 _ = await manager.delete(id: defaultAgent.id)
                 _ = await manager.delete(id: enabledAgent.id)
                 _ = await manager.delete(id: sandboxAgent.id)
+                _ = await manager.delete(id: workerAgent.id)
             }
         }
     }

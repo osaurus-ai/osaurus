@@ -150,6 +150,7 @@ private struct ImageGenerationSettingsTab: View {
     @Environment(\.theme) private var theme
 
     @State private var configuration = SubagentConfigurationStore.snapshot()
+    @State private var configurationBaseline = SubagentConfigurationStore.snapshot()
     @State private var pickerItems: [ModelPickerItem] = []
 
     /// Gates the persist-on-change save until the initial snapshot/re-snapshot
@@ -243,21 +244,34 @@ private struct ImageGenerationSettingsTab: View {
         // and the change-notification re-snapshot — never round-trip back
         // through `save()`.
         .onAppear {
-            configuration = SubagentConfigurationStore.snapshot()
+            let latest = SubagentConfigurationStore.snapshot()
+            configurationBaseline = latest
+            configuration = latest
             DispatchQueue.main.async { hasLoaded = true }
         }
         // Persist immediately on edit, mirroring the Settings → Subagents card.
         // Gated on `hasLoaded` so only real user edits write back.
         .onChange(of: configuration) { _, newValue in
             guard hasLoaded else { return }
-            SubagentConfigurationStore.save(newValue)
+            let saved = SubagentConfigurationStore.saveEditorSnapshot(
+                newValue,
+                loadedBaseline: configurationBaseline
+            )
+            configurationBaseline = saved
+            if saved != newValue { configuration = saved }
         }
         // Re-snapshot if another surface mutates the shared store.
         .onReceive(
             NotificationCenter.default.publisher(for: .subagentConfigurationChanged)
         ) { _ in
             let latest = SubagentConfigurationStore.snapshot()
-            if latest != configuration { configuration = latest }
+            let reconciled = SubagentConfiguration.mergingEditorSnapshot(
+                configuration,
+                loadedBaseline: configurationBaseline,
+                live: latest
+            )
+            configurationBaseline = latest
+            if reconciled != configuration { configuration = reconciled }
         }
     }
 

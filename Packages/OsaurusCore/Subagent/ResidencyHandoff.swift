@@ -80,9 +80,17 @@ struct ResidencyHandoff: SubagentHandoff {
         @Sendable (_ requiredBytes: Int64, _ enabled: Bool, _ onPhase: (String, String) -> Void) async throws -> Void
     /// Unload resident chat models; returns the lease to restore.
     typealias Unload =
-        @Sendable (_ maxElapsedSeconds: Int, _ onPhase: (String, String) -> Void) async throws -> ChatResidencyLease
-    /// Best-effort restore of an unload lease (logs, never throws).
-    typealias Restore = @Sendable (_ lease: ChatResidencyLease, _ onPhase: (String, String) -> Void) async -> [String]
+        @Sendable (
+            _ parentModelName: String?,
+            _ maxElapsedSeconds: Int,
+            _ onPhase: (String, String) -> Void
+        ) async throws -> ChatResidencyLease
+    /// Restore an unload lease. Unlike image-result preservation, text
+    /// delegation cannot report success while its orchestrator remains
+    /// unloaded, so restore failure is part of this handoff's outcome.
+    typealias Restore =
+        @Sendable (_ lease: ChatResidencyLease, _ onPhase: (String, String) -> Void) async throws
+            -> [String]
 
     let plan: PlanProvider
     let preflight: Preflight
@@ -112,14 +120,15 @@ struct ResidencyHandoff: SubagentHandoff {
                     onPhase: onPhase
                 )
             },
-            unload: { maxElapsedSeconds, onPhase in
+            unload: { parentModelName, maxElapsedSeconds, onPhase in
                 try await ChatResidencyHandoff.unloadResidentChatModels(
+                    parentModelName: parentModelName,
                     maxElapsedSeconds: maxElapsedSeconds,
                     onPhase: onPhase
                 )
             },
             restore: { lease, onPhase in
-                await ChatResidencyHandoff.restoreBestEffort(lease, onPhase: onPhase)
+                try await ChatResidencyHandoff.restore(lease, onPhase: onPhase)
             }
         )
     }
@@ -145,16 +154,117 @@ struct ResidencyHandoff: SubagentHandoff {
             return try await body()
         }
 
-        let lease = try await unload(plan.maxElapsedSeconds, emit)
+        let lease = try await unload(
+            scope.parentModelName,
+            plan.maxElapsedSeconds,
+            emit
+        )
+        let result: SubagentResult
         do {
-            let result = try await body()
-            _ = await restore(lease, emit)
-            return result
-        } catch {
+            result = try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(
+                lease.childOwnershipToken
+            ) {
+                try await body()
+            }
+        } catch let bodyError {
             // Restore on the failure path too so the orchestrator is never left
-            // unloaded with no diagnostic.
-            _ = await restore(lease, emit)
-            throw error
+            // unloaded with no diagnostic. This cleanup must not inherit the
+            // cancelled child task: model preload checks cancellation, so
+            // running restore inline after Stop can otherwise fail before the
+            // different-local orchestrator is resident again.
+            do {
+                _ = try await restoreOutsideCancelledRun(lease, feed: feed)
+            } catch let restoreError {
+                throw ResidencyHandoffFailure.bodyAndRestoreFailed(
+                    body: Self.errorContext(bodyError),
+                    restore: Self.errorContext(restoreError)
+                )
+            }
+            throw bodyError
+        }
+        _ = try await restoreOutsideCancelledRun(lease, feed: feed)
+        return result
+    }
+
+    /// Restore is owned cleanup, not child work. Run it in a fresh detached
+    /// task (no inherited cancellation) and await that task to completion
+    /// before the handoff returns. This is deliberately not fire-and-forget:
+    /// the caller cannot release admission or finish the tool card while the
+    /// original chat model is still absent.
+    private func restoreOutsideCancelledRun(
+        _ lease: ChatResidencyLease,
+        feed: SubagentFeed
+    ) async throws -> [String] {
+        let restore = self.restore
+        let operation = Task.detached(priority: .userInitiated) {
+            try await restore(lease) { phase, detail in
+                feed.emitPhase(phase, detail: detail.isEmpty ? nil : detail)
+            }
+        }
+        return try await operation.value
+    }
+
+    private static func errorContext(_ error: Error) -> String {
+        "\(String(reflecting: type(of: error))): \(error.localizedDescription)"
+    }
+}
+
+/// A child failure and a restore failure are both material. Swift can throw
+/// only one value, so preserve both typed contexts in one actionable error
+/// rather than replacing the child error with the cleanup error or silently
+/// returning the child result.
+enum ResidencyHandoffFailure: Error, LocalizedError, Sendable, Equatable {
+    case bodyAndRestoreFailed(body: String, restore: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .bodyAndRestoreFailed(let body, let restore):
+            return
+                "The subagent failed and its orchestrator could not be restored. "
+                + "Subagent failure: \(body). Restore failure: \(restore)."
+        }
+    }
+}
+
+/// Attach one exact ownership token to cold model loads performed by an
+/// otherwise non-evicting handoff. Batch sequences use this wrapper when there
+/// is no parent model to unload, or when children may coexist with the parent.
+///
+/// The runtime records the token only on a cold-published residency. Reusing a
+/// pre-existing local/API/plugin resident does not acquire ownership, so later
+/// transitions and final cleanup remain fail-closed for unrelated models.
+struct ResidencyOwnershipHandoff: SubagentHandoff {
+    let wrapped: any SubagentHandoff
+    let ownershipToken: ModelResidencyOwnershipToken
+
+    init(
+        wrapping wrapped: any SubagentHandoff,
+        ownershipToken: ModelResidencyOwnershipToken = ModelResidencyOwnershipToken()
+    ) {
+        self.wrapped = wrapped
+        self.ownershipToken = ownershipToken
+    }
+
+    func around(
+        scope: SubagentScope,
+        resolved: ResolvedModel,
+        feed: SubagentFeed,
+        run body: () async throws -> SubagentResult
+    ) async throws -> SubagentResult {
+        // A future nested fan-out must remain in the outer handoff's exact
+        // ownership domain. Replacing an inherited token would let the inner
+        // scope clear the outer owner's cleanup claim.
+        let scopedToken =
+            ModelResidencyOwnershipContext.childOwnershipToken ?? ownershipToken
+        return try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(
+            scopedToken
+        ) {
+            try await wrapped.around(
+                scope: scope,
+                resolved: resolved,
+                feed: feed,
+                run: body
+            )
         }
     }
 }

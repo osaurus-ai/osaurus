@@ -17,100 +17,88 @@ import Testing
 @Suite(.serialized)
 struct MLXBatchAdapterTests {
 
-    /// The default flipped from 4 → 1 so the vmlx compile path engages
-    /// (Stage 1B.3 promotion gates require `maxBatchSize == 1`). See the
-    /// `mlxBatchEngineMaxBatchSize` doc comment in InferenceFeatureFlags
-    /// for the full rationale + the pending Stage 1B.4 work that would
-    /// lift the constraint. If you change the default again, update both
-    /// this test AND the doc comment so they stay aligned.
-    @Test func maxBatchSize_defaultsToOne_forCompileEngagement() {
-        let defaults = isolatedDefaults()
-        #expect(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(in: defaults) == 1)
-    }
-
-    @Test func maxBatchSize_respectsUserDefaults() {
-        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
-        let defaults = isolatedDefaults()
-        defaults.set(8, forKey: key)
-        // Server deployments override to multi-slot at the cost of the
-        // compile path — same value the test pinned before; only the
-        // default changed.
-        #expect(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(in: defaults) == 8)
-    }
-
-    @Test func maxBatchSize_clampsAbsurdValues() {
-        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
-        let defaults = isolatedDefaults()
-        defaults.set(9999, forKey: key)
-        // Clamp to 32 so a typo doesn't blow out wired memory.
-        #expect(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(in: defaults) == 32)
-    }
-
-    @Test func maxBatchSize_zeroFallsBackToDefault_one() {
-        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
-        let defaults = isolatedDefaults()
-        defaults.set(0, forKey: key)
-        // Zero is treated as "unset" — falls back to the compile-friendly
-        // default of 1 (was 4 prior to fa694e9e).
-        #expect(InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(in: defaults) == 1)
-    }
-
-    @Test func maxBatchSize_runtimeSettingsOverrideUserDefaults() {
-        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
-        let defaults = isolatedDefaults()
-        defaults.set(2, forKey: key)
-        // The vmlx runtime contract trumps the legacy UserDefaults
-        // key; this is the path the Server → Settings panel uses to
-        // persist user choice.
-        var runtime = VMLXServerRuntimeSettings()
-        runtime.concurrency.maxConcurrentSequences = 6
+    @Test func maxBatchSize_safeAutoProfileResolvesToOne() {
+        let runtime = VMLXServerRuntimeSettings()
         #expect(
-            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
-                in: defaults,
-                runtime: runtime
-            ) == 6
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(runtime: runtime)
+                == 1
         )
     }
 
-    @Test func maxBatchSize_continuousBatchingTogglePinsSingleSlotWhenOff() {
-        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
-        let defaults = isolatedDefaults()
-        defaults.set(8, forKey: key)
+    @Test func maxBatchSize_performanceAndBalancedProfilesResolveToTwo() {
+        var runtime = VMLXServerRuntimeSettings()
+        runtime.memorySafety.mode = .performance
+        #expect(
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(runtime: runtime)
+                == 2
+        )
 
+        runtime.memorySafety.mode = .balanced
+        #expect(
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(runtime: runtime)
+                == 2
+        )
+    }
+
+    @Test func maxBatchSize_explicitServerConcurrencyOverridesProfile() {
         var runtime = VMLXServerRuntimeSettings()
         runtime.concurrency.maxConcurrentSequences = 6
+        runtime.memorySafety.mode = .safeAuto
+
+        #expect(
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(runtime: runtime)
+                == 6
+        )
+    }
+
+    @Test func maxBatchSize_continuousBatchingOffPinsOne() {
+        var runtime = VMLXServerRuntimeSettings()
+        runtime.memorySafety.mode = .performance
+        runtime.concurrency.maxConcurrentSequences = 6
         runtime.concurrency.continuousBatching = false
+
+        #expect(
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(runtime: runtime)
+                == 1
+        )
+    }
+
+    @Test func maxBatchSize_clampsExplicitValuesToEngineCeiling() {
+        var runtime = VMLXServerRuntimeSettings()
+        runtime.concurrency.maxConcurrentSequences = 200
+        #expect(
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(runtime: runtime)
+                == 32
+        )
+    }
+
+    @Test func maxBatchSize_usesExplicitMemorySafetySequenceOverride() {
+        var runtime = VMLXServerRuntimeSettings()
+        runtime.concurrency.continuousBatching = true
+        runtime.concurrency.maxConcurrentSequences = 8
+        runtime.memorySafety.customMaxConcurrentSequences = 3
+
+        #expect(
+            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(runtime: runtime)
+                == 3
+        )
+    }
+
+    @Test func maxBatchSize_ignoresStaleLegacyUserDefaultsAfterMigration() {
+        let defaults = isolatedDefaults()
+        defaults.set(
+            8,
+            forKey: "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
+        )
+        var runtime = VMLXServerRuntimeSettings()
+        runtime.memorySafety.mode = .safeAuto
+        runtime.concurrency.maxConcurrentSequences = nil
 
         #expect(
             InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
                 in: defaults,
                 runtime: runtime
             ) == 1
-        )
-    }
-
-    @Test func maxBatchSize_runtimeSettingsClampsAndFallsBackOnNil() {
-        let key = "ai.osaurus.scheduler.mlxBatchEngineMaxBatchSize"
-        let defaults = isolatedDefaults()
-        defaults.set(4, forKey: key)
-        var runtime = VMLXServerRuntimeSettings()
-        runtime.concurrency.maxConcurrentSequences = 200
-        // Clamp to 32 just like the legacy path.
-        #expect(
-            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
-                in: defaults,
-                runtime: runtime
-            ) == 32
-        )
-
-        // Absent runtime value defers to UserDefaults so users who
-        // never opened the panel keep their existing override.
-        runtime.concurrency.maxConcurrentSequences = nil
-        #expect(
-            InferenceFeatureFlags.mlxBatchEngineMaxBatchSize(
-                in: defaults,
-                runtime: runtime
-            ) == 4
         )
     }
 
@@ -314,6 +302,52 @@ struct MLXBatchAdapterTests {
         #expect(effective.topK == 32)
         #expect(effective.minP == 0.01)
         #expect(effective.repetitionPenalty == 1.02)
+    }
+
+    @Test func effectiveGenerationSettings_explicitTopKWinsAfterLagunaXS21BundleRepair() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("osaurus-laguna-xs-effective-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try #"{"model_type":"laguna"}"#.write(
+            to: tmp.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"temperature":1.0,"top_p":1.0,"top_k":64}"#.write(
+            to: tmp.appendingPathComponent("generation_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"source_model":{"name":"Laguna-XS-2.1"},"chat":{"sampling_defaults":{"top_k":64}}}"#
+            .write(
+                to: tmp.appendingPathComponent("jang_config.json"),
+                atomically: true,
+                encoding: .utf8
+            )
+
+        _ = try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+            at: tmp,
+            modelName: "Laguna XS 2.1 JANG 4M"
+        )
+        let repairedDefaults = LocalGenerationDefaults.load(fromDirectory: tmp)
+        #expect(repairedDefaults.topK == 20)
+
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "Laguna XS 2.1 JANG 4M",
+            generation: GenerationParameters(
+                temperature: nil,
+                maxTokens: 128,
+                maxTokensExplicit: true,
+                topKOverride: 32
+            ),
+            runtimeDefaults: VMLXServerGenerationDefaults(topP: 1.0),
+            maxBatchSize: 1,
+            modelDefaults: repairedDefaults
+        )
+
+        #expect(effective.topK == 32)
     }
 
     @Test func effectiveGenerationSettings_nativeMTPPreservesBundleDefaultsWhenRequestIsOmitted() {

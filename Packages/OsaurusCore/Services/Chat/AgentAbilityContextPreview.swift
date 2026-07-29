@@ -126,9 +126,11 @@ struct AgentAbilityContextPreview: Equatable {
             spawnDelegationEnabled: base.spawnDelegationEnabled,
             imageEnabled: base.imageEnabled,
             appleScriptEnabled: base.appleScriptEnabled,
-            spawnableAgentNames: base.spawnableAgentNames,
+            spawnableAgentIDs: base.spawnableAgentIDs,
+            spawnableAgentNames: base.legacySpawnableAgentNames,
             spawnableModelNames: base.spawnableModelNames,
             spawnableModelNotes: base.spawnableModelNotes,
+            spawnConfiguration: base.spawnConfiguration,
             // Fold the draft flags with the persisted grant list the way
             // `capture` pre-folds them: no grants means no knowledge tools
             // or manifest regardless of the toggle.

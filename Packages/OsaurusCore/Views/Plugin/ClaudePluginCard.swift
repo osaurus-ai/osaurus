@@ -122,11 +122,13 @@ struct ClaudePluginCard: View {
                 .font(.system(size: 8.5, weight: .semibold))
             Text("Imported", bundle: .module)
                 .font(.system(size: 9.5, weight: .semibold))
+                .lineLimit(1)
         }
         .foregroundColor(theme.accentColor)
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .background(Capsule().fill(theme.accentColor.opacity(0.14)))
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     @ViewBuilder

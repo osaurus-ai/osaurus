@@ -87,7 +87,7 @@ struct SystemPromptComposerToolResolutionTests {
         browserUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
-        spawnableAgentNames: [String] = [],
+        spawnableAgentIDs: [UUID] = [],
         spawnableModelNames: [String] = []
     ) -> AgentConfigSnapshot {
         AgentConfigSnapshot(
@@ -104,8 +104,25 @@ struct SystemPromptComposerToolResolutionTests {
             browserUseEnabled: browserUseEnabled,
             spawnDelegationEnabled: spawnDelegationEnabled,
             imageEnabled: imageEnabled,
-            spawnableAgentNames: spawnableAgentNames,
+            spawnableAgentIDs: spawnableAgentIDs,
             spawnableModelNames: spawnableModelNames
+        )
+    }
+
+    /// Minimal Default/main-chat snapshot. Its delegation pools and budgets
+    /// intentionally come from `SubagentConfigurationStore`, matching the
+    /// production Default-agent contract.
+    private func makeSnapshotForDefaultAgent() -> AgentConfigSnapshot {
+        AgentConfigSnapshot(
+            agentId: Agent.defaultId,
+            toolsDisabled: false,
+            memoryDisabled: true,
+            autonomousConfig: nil,
+            toolMode: .auto,
+            model: nil,
+            manualToolNames: nil,
+            systemPrompt: "",
+            dbEnabled: false
         )
     }
 
@@ -163,6 +180,35 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
+    /// Exact union of agent names and model ids published in
+    /// `spawn_batch.jobs.items.properties.target.enum`.
+    private func spawnBatchTargetEnum(_ tools: [Tool]) -> [String] {
+        guard let spawn = tools.first(where: { $0.function.name == "spawn_batch" }),
+            case .object(let root)? = spawn.function.parameters,
+            case .object(let properties)? = root["properties"],
+            case .object(let jobs)? = properties["jobs"],
+            case .object(let items)? = jobs["items"],
+            case .object(let jobProperties)? = items["properties"],
+            case .object(let target)? = jobProperties["target"],
+            case .array(let values)? = target["enum"]
+        else { return [] }
+        return values.compactMap {
+            if case .string(let value) = $0 { return value }
+            return nil
+        }
+    }
+
+    /// Request-local batch cap published in `spawn_batch.jobs.maxItems`.
+    private func spawnBatchMaxItems(_ tools: [Tool]) -> Int? {
+        guard let spawn = tools.first(where: { $0.function.name == "spawn_batch" }),
+            case .object(let root)? = spawn.function.parameters,
+            case .object(let properties)? = root["properties"],
+            case .object(let jobs)? = properties["jobs"],
+            case .number(let value)? = jobs["maxItems"]
+        else { return nil }
+        return Int(value)
+    }
+
     // MARK: - Auto mode
 
     @Test
@@ -183,51 +229,55 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
-    @Test("session schema freeze preserves canonical payload across async provider discovery")
-    func sessionSchemaFreeze_preservesComputedWebSearchPayload() async {
-        let originalCategories = SearchToolSchemaState.availableCategories()
-        defer { SearchToolSchemaState.update(categories: originalCategories) }
-
+    @Test("baseline tool payloads are canonically stable across repeated resolves")
+    func baselineToolPayloads_areStableAcrossRepeatedResolves() async {
         await withSandboxAgent(autonomous: false) { agentId in
-            SearchToolSchemaState.update(categories: ["web"])
+            // Turn 1: the payloads captured here become the session's frozen
+            // baseline in production.
             let first = SystemPromptComposer.resolveTools(
                 agentId: agentId,
                 executionMode: .none
             )
-            let firstWeb = first.first { $0.function.name == "web_search" }
-            #expect(firstWeb != nil)
-            guard let firstWeb else { return }
+            #expect(first.contains { $0.function.name == "web_search" })
 
-            // Simulate the asynchronous keychain/provider refresh that used
-            // to mutate the same named tool after turn one.
-            SearchToolSchemaState.update(categories: ["web", "news", "images"])
-            let liveSecond = SystemPromptComposer.resolveTools(
-                agentId: agentId,
-                executionMode: .none,
-                frozenAlwaysLoadedNames: Set(first.map(\.function.name))
-            )
-            let liveWeb = liveSecond.first { $0.function.name == "web_search" }
-            #expect(liveWeb != nil)
-            guard let liveWeb else { return }
-            #expect(liveWeb.canonicalHashPayload() != firstWeb.canonicalHashPayload())
-
-            let frozenSecond = SystemPromptComposer.resolveTools(
+            // Turn 2 (frozen fields echoed like ChatView / PluginHostAPI do):
+            // every baseline tool must resolve to the exact same canonical
+            // payload, in the same canonical order, so the tokenizer prefix —
+            // and with it the KV cache — survives the turn boundary.
+            let second = SystemPromptComposer.resolveTools(
                 agentId: agentId,
                 executionMode: .none,
                 frozenAlwaysLoadedNames: Set(first.map(\.function.name)),
                 frozenToolSpecs: first
             )
-            let frozenWeb = frozenSecond.first { $0.function.name == "web_search" }
-            #expect(frozenWeb != nil)
-            guard let frozenWeb else { return }
-            #expect(frozenWeb.canonicalHashPayload() == firstWeb.canonicalHashPayload())
+            #expect(first.map(\.function.name) == second.map(\.function.name))
+            for (a, b) in zip(first, second) {
+                #expect(
+                    a.canonicalHashPayload() == b.canonicalHashPayload(),
+                    "baseline payload drifted for \(a.function.name)"
+                )
+            }
             #expect(
-                PromptPrefixHasher.hash(systemContent: "prefix", tools: frozenSecond)
+                PromptPrefixHasher.hash(systemContent: "prefix", tools: second)
                     == PromptPrefixHasher.hash(systemContent: "prefix", tools: first)
             )
 
-            // Explicit loading remains an intentional schema upgrade: it may
-            // replace the compact baseline with the current full contract.
+            // A fresh un-frozen resolve must ALSO be identical: baseline
+            // schemas are immutable by contract, so the freeze is a backstop
+            // for dynamically registered tools, not a crutch that hides
+            // mutable built-in schemas.
+            let fresh = SystemPromptComposer.resolveTools(
+                agentId: agentId,
+                executionMode: .none
+            )
+            #expect(
+                PromptPrefixHasher.hash(systemContent: "prefix", tools: fresh)
+                    == PromptPrefixHasher.hash(systemContent: "prefix", tools: first)
+            )
+
+            // Explicit loading remains an intentional schema upgrade: it
+            // replaces the compact bootstrap baseline with the full contract.
+            let firstWeb = first.first { $0.function.name == "web_search" }
             let explicitlyLoaded = SystemPromptComposer.resolveTools(
                 agentId: agentId,
                 executionMode: .none,
@@ -237,8 +287,9 @@ struct SystemPromptComposerToolResolutionTests {
             )
             let loadedWeb = explicitlyLoaded.first { $0.function.name == "web_search" }
             #expect(loadedWeb != nil)
-            guard let loadedWeb else { return }
-            #expect(loadedWeb.canonicalHashPayload() != firstWeb.canonicalHashPayload())
+            if let firstWeb, let loadedWeb {
+                #expect(loadedWeb.canonicalHashPayload() != firstWeb.canonicalHashPayload())
+            }
         }
     }
 
@@ -1033,12 +1084,13 @@ struct SystemPromptComposerToolResolutionTests {
     @Test
     func autoMode_customAgentSurfacesSpawnOnlyWithToggleAndTargets() async {
         await withSubagentSandbox {
+            let helperID = UUID(uuidString: "40000000-0000-4000-8000-000000000001")!
             // Agent pool only → spawn_agent, not spawn_model.
             let withAgents = Set(
                 SystemPromptComposer.resolveTools(
                     snapshot: makeSnapshot(
                         spawnDelegationEnabled: true,
-                        spawnableAgentNames: ["Helper"]
+                        spawnableAgentIDs: [helperID]
                     ),
                     executionMode: .none
                 ).map { $0.function.name }
@@ -1071,7 +1123,7 @@ struct SystemPromptComposerToolResolutionTests {
                 SystemPromptComposer.resolveTools(
                     snapshot: makeSnapshot(
                         spawnDelegationEnabled: true,
-                        spawnableAgentNames: []
+                        spawnableAgentIDs: []
                     ),
                     executionMode: .none
                 ).map { $0.function.name }
@@ -1079,6 +1131,143 @@ struct SystemPromptComposerToolResolutionTests {
             #expect(!noTargets.contains("spawn_agent"))
             #expect(!noTargets.contains("spawn_model"))
             #expect(!noTargets.contains("spawn_batch"))
+        }
+    }
+
+    @Test("UUID-backed remote spawn targets stay distinct in single and batch schemas")
+    func canonicalRemoteTargetsStayDistinctInSchemas() async {
+        await withSubagentSandbox {
+            let first = SpawnRemoteModelIdentity.make(
+                providerId: UUID(uuidString: "C9412118-D6C8-4BC0-90D9-5C686C5A54C8")!,
+                modelId: "vendor/shared-model"
+            )!
+            let second = SpawnRemoteModelIdentity.make(
+                providerId: UUID(uuidString: "E25C477F-E30D-4D8F-9D91-3400F16401D8")!,
+                modelId: "vendor/shared-model"
+            )
+            #expect(second != nil)
+            guard let second else { return }
+            let tools = SystemPromptComposer.resolveTools(
+                snapshot: makeSnapshot(
+                    spawnDelegationEnabled: true,
+                    spawnableModelNames: [first, second]
+                ),
+                executionMode: .none
+            )
+
+            #expect(spawnModelEnum(tools) == [first, second])
+            #expect(spawnBatchTargetEnum(tools) == [first, second])
+        }
+    }
+
+    @Test("frozen delegation schema stays byte-stable while launcher settings are unchanged")
+    func frozenDelegationSchemaIsStableForUnchangedSettings() async {
+        await withSubagentSandbox {
+            let researcherID = Agent.builtInAgents.first!.id
+            let config = SubagentConfiguration(
+                spawnableAgentIDs: [researcherID],
+                budgets: SubagentBudgets(maxParallelSpawns: 4),
+                spawnableModelNames: [
+                    "anthropic/claude-opus-4-8",
+                    "local/ornith-9b",
+                ]
+            )
+            SubagentConfigurationStore.save(config)
+
+            let snapshot = makeSnapshotForDefaultAgent()
+            let first = SystemPromptComposer.resolveTools(
+                snapshot: snapshot,
+                executionMode: .none
+            )
+            let frozenFollowup = SystemPromptComposer.resolveTools(
+                snapshot: snapshot,
+                executionMode: .none,
+                frozenAlwaysLoadedNames: Set(first.map(\.function.name)),
+                frozenToolSpecs: first
+            )
+
+            #expect(spawnModelEnum(first) == spawnModelEnum(frozenFollowup))
+            #expect(spawnBatchTargetEnum(first) == spawnBatchTargetEnum(frozenFollowup))
+            #expect(spawnBatchMaxItems(first) == 4)
+            #expect(spawnBatchMaxItems(frozenFollowup) == 4)
+            #expect(
+                PromptPrefixHasher.hash(systemContent: "prefix", tools: first)
+                    == PromptPrefixHasher.hash(
+                        systemContent: "prefix",
+                        tools: frozenFollowup
+                    )
+            )
+        }
+    }
+
+    @Test("current delegation constraints override stale frozen spawn schemas")
+    func currentDelegationConstraintsOverrideFrozenSpecs() async {
+        await withSubagentSandbox {
+            let manager = AgentManager.shared
+            let oldAgent = Agent(
+                name: "Stale delegation target",
+                defaultModel: "local/old-agent-model"
+            )
+            let newAgent = Agent(
+                name: "Fresh delegation target",
+                defaultModel: "local/new-agent-model"
+            )
+            manager.add(oldAgent)
+            manager.add(newAgent)
+            let original = SubagentConfiguration(
+                spawnableAgentIDs: [oldAgent.id],
+                budgets: SubagentBudgets(maxParallelSpawns: 2),
+                spawnableModelNames: ["local/old-model"]
+            )
+            SubagentConfigurationStore.save(original)
+
+            let snapshot = makeSnapshotForDefaultAgent()
+            let frozen = SystemPromptComposer.resolveTools(
+                snapshot: snapshot,
+                executionMode: .none
+            )
+            #expect(spawnModelEnum(frozen) == ["local/old-model"])
+            #expect(spawnBatchTargetEnum(frozen) == [oldAgent.id.uuidString, "local/old-model"])
+            #expect(spawnBatchMaxItems(frozen) == 2)
+
+            let updated = SubagentConfiguration(
+                spawnableAgentIDs: [newAgent.id],
+                budgets: SubagentBudgets(maxParallelSpawns: 6),
+                spawnableModelNames: [
+                    "anthropic/claude-opus-4-8",
+                    "local/new-model",
+                ]
+            )
+            SubagentConfigurationStore.save(updated)
+
+            let refreshed = SystemPromptComposer.resolveTools(
+                snapshot: snapshot,
+                executionMode: .none,
+                frozenAlwaysLoadedNames: Set(frozen.map(\.function.name)),
+                frozenToolSpecs: frozen
+            )
+
+            #expect(
+                spawnModelEnum(refreshed)
+                    == ["anthropic/claude-opus-4-8", "local/new-model"]
+            )
+            #expect(
+                spawnBatchTargetEnum(refreshed)
+                    == [
+                        newAgent.id.uuidString,
+                        "anthropic/claude-opus-4-8",
+                        "local/new-model",
+                    ]
+            )
+            #expect(spawnBatchMaxItems(refreshed) == 6)
+            #expect(!spawnBatchTargetEnum(refreshed).contains(oldAgent.id.uuidString))
+            #expect(!spawnBatchTargetEnum(refreshed).contains("local/old-model"))
+            #expect(
+                PromptPrefixHasher.hash(systemContent: "prefix", tools: refreshed)
+                    != PromptPrefixHasher.hash(systemContent: "prefix", tools: frozen)
+            )
+            _ = await manager.delete(id: oldAgent.id)
+            _ = await manager.delete(id: newAgent.id)
         }
     }
 
@@ -1091,14 +1280,14 @@ struct SystemPromptComposerToolResolutionTests {
         let lease = await acquireSubagentStoreSandbox("composer-no-optin")
         defer { lease.release() }
         SubagentConfigurationStore.save(
-            SubagentConfiguration(spawnableAgentNames: ["Helper"], imageDelegationEnabled: true)
+            SubagentConfiguration(spawnableAgentIDs: [UUID()], imageDelegationEnabled: true)
         )
         let names = Set(
             SystemPromptComposer.resolveTools(
                 snapshot: makeSnapshot(
                     spawnDelegationEnabled: false,
                     imageEnabled: false,
-                    spawnableAgentNames: []
+                    spawnableAgentIDs: []
                 ),
                 executionMode: .none
             ).map { $0.function.name }

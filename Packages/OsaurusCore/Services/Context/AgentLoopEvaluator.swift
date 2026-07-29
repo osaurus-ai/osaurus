@@ -18,6 +18,119 @@ import Foundation
 
 /// Decode-friendly record of one agent-loop eval run.
 public struct AgentLoopTranscript: Sendable, Codable {
+    /// Structured observation extracted from a successful `spawn_batch`
+    /// result. Keeping this alongside the bounded result preview lets evals
+    /// score every child row without retaining arbitrarily large tool output.
+    public struct SpawnBatchObservation: Sendable, Codable, Equatable {
+        public struct ChildRow: Sendable, Codable, Equatable {
+            public let id: String?
+            public let targetType: String?
+            public let target: String?
+            public let ok: Bool?
+            public let model: String?
+            public let summary: String?
+
+            public init(
+                id: String?,
+                targetType: String?,
+                target: String?,
+                ok: Bool?,
+                model: String?,
+                summary: String?
+            ) {
+                self.id = id
+                self.targetType = targetType
+                self.target = target
+                self.ok = ok
+                self.model = model
+                self.summary = summary
+            }
+        }
+
+        public struct ExecutionWave: Sendable, Codable, Equatable {
+            public let wave: Int?
+            public let remoteJobs: Int?
+            public let effectiveLocalSlots: Int?
+            public let localSubwaves: [Int]?
+            public let limitingFactors: [String]?
+
+            public init(
+                wave: Int?,
+                remoteJobs: Int?,
+                effectiveLocalSlots: Int?,
+                localSubwaves: [Int]?,
+                limitingFactors: [String]?
+            ) {
+                self.wave = wave
+                self.remoteJobs = remoteJobs
+                self.effectiveLocalSlots = effectiveLocalSlots
+                self.localSubwaves = localSubwaves
+                self.limitingFactors = limitingFactors
+            }
+
+            public var isWellFormed: Bool {
+                wave != nil
+                    && remoteJobs != nil
+                    && effectiveLocalSlots != nil
+                    && localSubwaves != nil
+                    && limitingFactors != nil
+            }
+        }
+
+        public let resultKind: String
+        public let maxParallel: Int?
+        public let reportedSucceeded: Int?
+        public let reportedFailed: Int?
+        public let observedSucceeded: Int
+        public let observedFailed: Int
+        public let orderedJobIds: [String]
+        /// Ordered, structured child truth retained from the production
+        /// aggregate. Unlike the parent final text, these fields prove which
+        /// target actually ran, which model resolved, and what that child
+        /// returned.
+        public let childRows: [ChildRow]
+        public let aggregateStatus: String?
+        /// nil means the result predates execution diagnostics or omitted
+        /// them. An empty array means an execution object was present but
+        /// reported no parseable waves.
+        public let executionWaves: [ExecutionWave]?
+        public let everyExecutionWaveWellFormed: Bool?
+        public let cacheAvailable: Bool?
+        /// True only when every result row has a non-empty id, an `ok` value,
+        /// and a nested tool envelope whose `ok` agrees with the row.
+        public let everyRowSettled: Bool
+
+        public init(
+            resultKind: String,
+            maxParallel: Int?,
+            reportedSucceeded: Int?,
+            reportedFailed: Int?,
+            observedSucceeded: Int,
+            observedFailed: Int,
+            orderedJobIds: [String],
+            childRows: [ChildRow] = [],
+            everyRowSettled: Bool,
+            aggregateStatus: String? = nil,
+            executionWaves: [ExecutionWave]? = nil,
+            everyExecutionWaveWellFormed: Bool? = nil,
+            cacheAvailable: Bool? = nil
+        ) {
+            self.resultKind = resultKind
+            self.maxParallel = maxParallel
+            self.reportedSucceeded = reportedSucceeded
+            self.reportedFailed = reportedFailed
+            self.observedSucceeded = observedSucceeded
+            self.observedFailed = observedFailed
+            self.orderedJobIds = orderedJobIds
+            self.childRows = childRows
+            self.everyRowSettled = everyRowSettled
+            self.aggregateStatus = aggregateStatus
+            self.executionWaves = executionWaves
+            self.everyExecutionWaveWellFormed = everyExecutionWaveWellFormed
+            self.cacheAvailable = cacheAvailable
+        }
+    }
+
     /// One processed tool call, in model order across all iterations.
     public struct ToolInvocation: Sendable, Codable {
         public let name: String
@@ -30,20 +143,129 @@ public struct AgentLoopTranscript: Sendable, Codable {
         /// True when the result was an error envelope — drives the opt-in
         /// `noToolErrors` scoring assertion without parsing previews.
         public let wasError: Bool
+        /// Parsed only for successful `spawn_batch` results.
+        public let spawnBatch: SpawnBatchObservation?
 
         public init(
             name: String,
             arguments: String,
             resultPreview: String,
             wasDeduped: Bool,
-            wasError: Bool = false
+            wasError: Bool = false,
+            spawnBatch: SpawnBatchObservation? = nil
         ) {
             self.name = name
             self.arguments = arguments
             self.resultPreview = resultPreview
             self.wasDeduped = wasDeduped
             self.wasError = wasError
+            self.spawnBatch = spawnBatch
         }
+    }
+
+    /// Parse the stable aggregate fields and ordered child rows from a
+    /// production `spawn_batch` envelope. Failed all-child aggregates retain
+    /// their structured result payload so evals can inspect settled rows and
+    /// terminal status instead of losing them behind the outer failure.
+    public static func spawnBatchObservation(
+        from result: String
+    ) -> SpawnBatchObservation? {
+        guard
+            let payload = ToolEnvelope.resultPayload(result) as? [String: Any],
+            payload["kind"] as? String == "spawn_batch_result",
+            let rows = payload["results"] as? [[String: Any]]
+        else { return nil }
+
+        var ids: [String] = []
+        var observedSucceeded = 0
+        var observedFailed = 0
+        var everyRowSettled = true
+        var childRows: [SpawnBatchObservation.ChildRow] = []
+        for row in rows {
+            let nested = row["envelope"] as? [String: Any]
+            let nestedResult = nested?["result"] as? [String: Any]
+            childRows.append(
+                .init(
+                    id: row["id"] as? String,
+                    targetType: row["target_type"] as? String,
+                    target: row["target"] as? String,
+                    ok: row["ok"] as? Bool,
+                    model: nestedResult?["model"] as? String,
+                    summary: nestedResult?["summary"] as? String
+                )
+            )
+            guard let id = row["id"] as? String, !id.isEmpty,
+                let ok = row["ok"] as? Bool,
+                let nested,
+                let nestedOK = nested["ok"] as? Bool,
+                nestedOK == ok
+            else {
+                everyRowSettled = false
+                continue
+            }
+            ids.append(id)
+            if ok {
+                observedSucceeded += 1
+            } else {
+                observedFailed += 1
+            }
+        }
+        if ids.count != rows.count {
+            everyRowSettled = false
+        }
+
+        var executionWaves: [SpawnBatchObservation.ExecutionWave]?
+        var everyExecutionWaveWellFormed: Bool?
+        var cacheAvailable: Bool?
+        if let execution = payload["execution"] as? [String: Any] {
+            if let rawWaves = execution["waves"] as? [Any] {
+                var parsedWaves: [SpawnBatchObservation.ExecutionWave] = []
+                var allWavesWellFormed = true
+                for rawWave in rawWaves {
+                    guard let wave = rawWave as? [String: Any] else {
+                        allWavesWellFormed = false
+                        continue
+                    }
+                    let parsed = SpawnBatchObservation.ExecutionWave(
+                        wave: wave["wave"] as? Int,
+                        remoteJobs: wave["remote_jobs"] as? Int,
+                        effectiveLocalSlots: wave["effective_local_slots"] as? Int,
+                        localSubwaves: wave["local_subwaves"] as? [Int],
+                        limitingFactors: wave["limited_by"] as? [String]
+                    )
+                    allWavesWellFormed = allWavesWellFormed && parsed.isWellFormed
+                    parsedWaves.append(parsed)
+                }
+                executionWaves = parsedWaves
+                everyExecutionWaveWellFormed =
+                    allWavesWellFormed && parsedWaves.count == rawWaves.count
+            } else {
+                executionWaves = []
+                everyExecutionWaveWellFormed = false
+            }
+            if let cache = execution["cache"] as? [String: Any] {
+                cacheAvailable = cache["available"] as? Bool
+            }
+        } else if payload["execution"] != nil {
+            executionWaves = []
+            everyExecutionWaveWellFormed = false
+        }
+
+        return SpawnBatchObservation(
+            resultKind: "spawn_batch_result",
+            maxParallel: payload["max_parallel"] as? Int,
+            reportedSucceeded: payload["succeeded"] as? Int,
+            reportedFailed: payload["failed"] as? Int,
+            observedSucceeded: observedSucceeded,
+            observedFailed: observedFailed,
+            orderedJobIds: ids,
+            childRows: childRows,
+            everyRowSettled: everyRowSettled,
+            aggregateStatus: payload["aggregate_status"] as? String,
+            executionWaves: executionWaves,
+            everyExecutionWaveWellFormed: everyExecutionWaveWellFormed,
+            cacheAvailable: cacheAvailable
+        )
     }
 
     public let toolCalls: [ToolInvocation]
@@ -559,7 +781,8 @@ public enum AgentLoopEvaluator {
                     arguments: inv.jsonArguments,
                     resultPreview: String(result.prefix(300)),
                     wasDeduped: false,
-                    wasError: isError
+                    wasError: isError,
+                    spawnBatch: AgentLoopTranscript.spawnBatchObservation(from: result)
                 )
             )
             // Agent-loop intercepts, mirroring the chat surface: a
@@ -758,7 +981,8 @@ public enum AgentLoopEvaluator {
                         name: inv.toolName,
                         arguments: inv.jsonArguments,
                         resultPreview: String(held.prefix(300)),
-                        wasDeduped: true
+                        wasDeduped: true,
+                        spawnBatch: AgentLoopTranscript.spawnBatchObservation(from: held)
                     )
                 )
             },

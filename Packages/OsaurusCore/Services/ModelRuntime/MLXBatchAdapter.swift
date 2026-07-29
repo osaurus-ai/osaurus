@@ -44,6 +44,20 @@ struct MLXBatchAdapter {
         await Registry.shared.snapshotDiagnostics()
     }
 
+    /// Exact per-model engine capacity for subagent scheduling diagnostics.
+    /// The returned values come from one vMLX actor turn; callers must not
+    /// treat `nominalAvailableCount` as a reservation because another request
+    /// may submit immediately after this observation.
+    static func capacitySnapshot(
+        for modelName: String,
+        reconcilingTo configuredMaximum: Int? = nil
+    ) async -> ModelBatchCapacitySnapshot? {
+        await Registry.shared.capacitySnapshot(
+            for: modelName,
+            reconcilingTo: configuredMaximum
+        )
+    }
+
     /// Exact live cache-class transitions keyed by the model name used to
     /// create each BatchEngine. Unlike the aggregate compression counter,
     /// these snapshots prove how many layers converted and which mixed-cache
@@ -472,17 +486,73 @@ struct MLXBatchAdapter {
             return result
         }
 
+        /// Read one resolved engine's atomic capacity state. Registry keys are
+        /// canonical installed-model names; matching is case-insensitive only
+        /// to tolerate filesystem/product-name casing, never by a potentially
+        /// ambiguous repository tail.
+        func capacitySnapshot(
+            for requestedModelName: String,
+            reconcilingTo requestedMaximum: Int? = nil
+        ) async -> ModelBatchCapacitySnapshot? {
+            let entries = await coalescer.resolvedEntries()
+            guard
+                let entry = entries.first(where: {
+                    $0.0.caseInsensitiveCompare(requestedModelName) == .orderedSame
+                })
+            else {
+                return nil
+            }
+            if let requestedMaximum {
+                let current = await entry.1.maxBatchSize
+                if current != requestedMaximum {
+                    do {
+                        try await entry.1.updateMaxBatchSize(requestedMaximum)
+                    } catch BatchEngineConfigurationError.engineShutdown {
+                        await coalescer.remove(entry.0) { engine in
+                            await engine.shutdown()
+                        }
+                        return nil
+                    } catch {
+                        let detail =
+                            "capacity reconcile: \(entry.0) could not apply "
+                            + "maxBatchSize=\(requestedMaximum): \(String(describing: error))"
+                        batchAdapterLog.error("\(detail, privacy: .public)")
+                    }
+                }
+            }
+            let snapshot = await entry.1.capacitySnapshot
+            if snapshot.isShutdown {
+                await coalescer.remove(entry.0) { engine in
+                    await engine.shutdown()
+                }
+                return nil
+            }
+            return ModelBatchCapacitySnapshot(
+                modelName: entry.0,
+                configuredMaximum: snapshot.configuredMaximum,
+                activeCount: snapshot.activeCount,
+                pendingCount: snapshot.pendingCount,
+                nominalAvailableCount: snapshot.nominalAvailableCount,
+                activeHighWatermark: snapshot.activeCountHighWatermark,
+                isAcceptingRequests: snapshot.isAcceptingRequests,
+                isShutdown: snapshot.isShutdown
+            )
+        }
+
         /// Aggregate live BatchEngine diagnostics across every resolved
         /// engine in the registry. Used by the Server → Settings panel
         /// to render the "Live Diagnostics" subsection. Returns `nil`
         /// when no engine has been created yet.
         func snapshotDiagnostics() async -> BatchDiagnosticsSnapshot? {
-            let engines = await coalescer.resolvedValues()
-            guard !engines.isEmpty else { return nil }
+            let entries = await coalescer.resolvedEntries()
+            guard !entries.isEmpty else { return nil }
 
             var pending = 0
             var active = 0
             var highWatermark = 0
+            var configuredCapacity = 0
+            var nominalAvailableCapacity = 0
+            var capacityRows: [String] = []
             var decodeSplit = 0
             var turbo = 0
             var accepting = true
@@ -522,14 +592,20 @@ struct MLXBatchAdapter {
                 ssmMisses += stats.ssmStats.misses
                 ssmReDerives += stats.ssmStats.reDerives
             }
-            for engine in engines {
-                pending += await engine.pendingCount
-                active += await engine.activeCount
-                let watermark = await engine.activeCountHighWatermarkForDiagnostics
-                highWatermark = max(highWatermark, watermark)
+            for (modelName, engine) in entries {
+                let capacity = await engine.capacitySnapshot
+                pending += capacity.pendingCount
+                active += capacity.activeCount
+                highWatermark = max(
+                    highWatermark,
+                    capacity.activeCountHighWatermark
+                )
+                configuredCapacity += capacity.configuredMaximum
+                nominalAvailableCapacity += capacity.nominalAvailableCount
+                capacityRows.append("\(modelName): \(capacity.configuredMaximum)")
                 decodeSplit += await engine.decodeCompatibilitySplitCountForDiagnostics
                 turbo += await engine.turboQuantCompressionCountForDiagnostics
-                if !(await engine.isAcceptingRequests) {
+                if !capacity.isAcceptingRequests {
                     accepting = false
                 }
             }
@@ -537,6 +613,9 @@ struct MLXBatchAdapter {
                 pendingCount: pending,
                 activeCount: active,
                 activeHighWatermark: highWatermark,
+                configuredEngineCapacity: configuredCapacity,
+                nominalAvailableCapacity: nominalAvailableCapacity,
+                engineCapacitySummary: capacityRows.sorted().joined(separator: ", "),
                 decodeSplitCount: decodeSplit,
                 turboQuantCompressions: turbo,
                 isAcceptingRequests: accepting,

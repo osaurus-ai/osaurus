@@ -4,7 +4,7 @@
 //
 //  Rich, render-ready descriptions of an agent's spawnable targets, used to
 //  build the dynamic `spawn` system-prompt block. The composer resolves the
-//  launching agent's spawnable AGENT names + MODEL ids (from
+//  launching agent's spawnable AGENT UUIDs + MODEL ids (from
 //  `SubagentToolVisibility`) into these descriptors so the prompt can enumerate
 //  what `spawn_agent` / `spawn_model` can actually reach — with locality
 //  (local/remote), provider, size/quant, vision, the agent's description, and
@@ -27,54 +27,28 @@ enum SpawnInputContract {
         + "or infer what an opaque label means. Never refer to a previous/earlier message, content "
         + "above, or prior conversation; copy the exact required information into this input."
 
-    /// Reject an input that explicitly delegates unresolved parent-chat state.
+    /// Enforce only the structural part of the standalone-input contract.
     ///
-    /// A text worker intentionally receives no parent transcript. Silently
-    /// running phrases such as “the value from the previous message” can only
-    /// produce a hallucination or an avoidable child failure. This validation
-    /// does not guess or inject context: it asks the parent model to retry with
-    /// the exact standalone value before any model load or residency handoff.
+    /// Whether prose depends on parent-chat state cannot be decided safely by
+    /// substring matching: quoted text, translation work, and source code may
+    /// legitimately contain phrases such as “previous message”. The schema
+    /// description remains the model-facing guidance; execution rejects only a
+    /// task that is structurally empty.
     static func validationFailure(
         input: String,
         field: String = "input",
         tool: String
     ) -> String? {
-        let normalized =
-            input
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            .lowercased()
-        let parentContextReferences = [
-            "previous message",
-            "prior message",
-            "earlier message",
-            "message above",
-            "above message",
-            "previous instruction",
-            "prior instruction",
-            "earlier instruction",
-            "as discussed above",
-            "as discussed earlier",
-            "same as before",
-            "предыдущего сообщения",
-            "предыдущем сообщении",
-            "предыдущей инструкции",
-            "как обсуждалось выше",
-            "上一条消息",
-            "上面的消息",
-            "이전 메시지",
-            "vorherigen nachricht",
-        ]
-        guard let reference = parentContextReferences.first(where: normalized.contains) else {
+        guard input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
         return ToolEnvelope.failure(
             kind: .invalidArgs,
             message:
-                "The worker input depends on parent-chat context (`\(reference)`), but spawned "
-                + "workers cannot see the parent transcript. Retry this tool call with the exact "
-                + "value, text, constraints, and output format copied into `\(field)`.",
+                "The worker task in `\(field)` cannot be blank. Provide the complete standalone "
+                + "instructions, input values, constraints, and required output format.",
             field: field,
-            expected: "a complete standalone worker task with no parent-chat references",
+            expected: "a non-empty standalone worker task",
             tool: tool,
             retryable: true
         )
@@ -83,6 +57,8 @@ enum SpawnInputContract {
 
 /// One spawnable agent (`spawn_agent` target), resolved for the prompt.
 public struct SpawnAgentDescriptor: Sendable, Equatable {
+    /// Stable execution/authorization identity.
+    public let id: UUID
     public let name: String
     /// The agent's own description (trimmed; nil when blank).
     public let description: String?
@@ -95,12 +71,14 @@ public struct SpawnAgentDescriptor: Sendable, Equatable {
     public let providerName: String?
 
     public init(
+        id: UUID,
         name: String,
         description: String?,
         modelId: String?,
         isLocal: Bool?,
         providerName: String?
     ) {
+        self.id = id
         self.name = name
         self.description = description
         self.modelId = modelId
@@ -143,105 +121,401 @@ public struct SpawnModelDescriptor: Sendable, Equatable {
     }
 }
 
-/// Resolves spawnable names → prompt-ready descriptors against the live agent
-/// roster + model picker cache. MainActor-bound because it reads
-/// `AgentManager` / `ModelPickerItemCache` / `ModelManager`.
+/// Request-local execution truth for one configured spawn target. Durable
+/// configuration remains untouched so unavailable rows can still be repaired
+/// or removed in Settings.
+enum SpawnTargetState: Sendable, Equatable {
+    case runnable
+    case checking
+    case disconnected
+    case missing
+}
+
+struct SpawnAgentTarget: Sendable, Equatable {
+    let descriptor: SpawnAgentDescriptor
+    let state: SpawnTargetState
+}
+
+struct SpawnModelTarget: Sendable, Equatable {
+    let descriptor: SpawnModelDescriptor
+    let state: SpawnTargetState
+}
+
+/// One immutable target view shared by prompt prose and every spawn schema for
+/// a request. This prevents provider/model changes between composition phases
+/// from producing zombie options or prompt/schema drift.
+struct SpawnTargetAvailabilitySnapshot: Sendable, Equatable {
+    static let empty = SpawnTargetAvailabilitySnapshot(agentTargets: [], modelTargets: [])
+
+    let agentTargets: [SpawnAgentTarget]
+    let modelTargets: [SpawnModelTarget]
+
+    var agents: [SpawnAgentDescriptor] {
+        agentTargets.compactMap { $0.state == .runnable ? $0.descriptor : nil }
+    }
+
+    var models: [SpawnModelDescriptor] {
+        modelTargets.compactMap { $0.state == .runnable ? $0.descriptor : nil }
+    }
+
+    var runnableAgentIDs: [UUID] { agents.map(\.id) }
+    var runnableModelIds: [String] { models.map(\.id) }
+}
+
+/// Resolves configured spawn pools against current execution truth.
 public enum SpawnDescriptors {
-    /// Resolve the launching agent's spawnable pools into descriptors, preserving
-    /// pool order. Agent names that no longer match a known agent are still listed
-    /// by name (so the prompt reflects the user's configured pool) but carry no
-    /// description/model. Model ids absent from the picker cache fall back to a
-    /// minimal descriptor (id + best-effort locality + note).
+    struct AgentSource: Sendable, Equatable {
+        let id: UUID
+        let name: String
+        let description: String
+        let modelId: String?
+    }
+
+    /// Resolve a real request against authoritative local installation truth.
+    /// Cold discovery suspends off-main instead of blocking the UI or treating
+    /// a valid bundle as removed.
+    @MainActor
+    static func resolveForRequest(
+        agentIDs: [UUID],
+        modelNames: [String],
+        modelNotes: [String: String],
+        launcherModelOverride: String?
+    ) async -> SpawnTargetAvailabilitySnapshot {
+        let shouldDiscoverLocalModels = requiresLocalDiscovery(
+            agentIDs: agentIDs,
+            modelNames: modelNames,
+            launcherModelOverride: launcherModelOverride
+        )
+        let localModels =
+            shouldDiscoverLocalModels
+            ? await ModelManager.discoverLocalModelsOffMain()
+            : []
+        return resolve(
+            agentIDs: agentIDs,
+            modelNames: modelNames,
+            modelNotes: modelNotes,
+            agentSources: liveAgentSources(),
+            localModels: localModels,
+            localCatalogIsAuthoritative: !shouldDiscoverLocalModels
+                || ModelManager.isLocalModelsCacheWarm,
+            pickerItems: ModelPickerItemCache.shared.items,
+            connectedRemoteTargets:
+                RemoteProviderManager.shared.connectedSpawnModelTargetIndex(),
+            remoteProviderNames: Dictionary(
+                uniqueKeysWithValues:
+                    RemoteProviderManager.shared.configuration.providers.map {
+                        ($0.id, $0.name)
+                    }
+            ),
+            foundationAvailable: AppConfiguration.shared.foundationModelAvailable,
+            launcherModelOverride: launcherModelOverride
+        )
+    }
+
+    /// Whether request composition needs authoritative local-install truth.
+    /// Agent-only pools still need discovery because each target agent's own
+    /// effective model can be local; a launcher override needs the same check
+    /// even when no bare-model targets are configured.
+    static func requiresLocalDiscovery(
+        agentIDs: [UUID],
+        modelNames: [String],
+        launcherModelOverride: String?
+    ) -> Bool {
+        !agentIDs.isEmpty
+            || !modelNames.isEmpty
+            || !(launcherModelOverride?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty ?? true)
+    }
+
+    /// Synchronous context-budget preview. Cold misses remain `checking` and
+    /// are not advertised; the real request above completes discovery.
+    @MainActor
+    static func resolveForPreview(
+        agentIDs: [UUID],
+        modelNames: [String],
+        modelNotes: [String: String],
+        launcherModelOverride: String?
+    ) -> SpawnTargetAvailabilitySnapshot {
+        let authoritative = ModelManager.isLocalModelsCacheWarm
+        return resolve(
+            agentIDs: agentIDs,
+            modelNames: modelNames,
+            modelNotes: modelNotes,
+            agentSources: liveAgentSources(),
+            localModels: ModelManager.localModelsSnapshotNonBlocking(),
+            localCatalogIsAuthoritative: authoritative,
+            pickerItems: ModelPickerItemCache.shared.items,
+            connectedRemoteTargets:
+                RemoteProviderManager.shared.connectedSpawnModelTargetIndex(),
+            remoteProviderNames: Dictionary(
+                uniqueKeysWithValues:
+                    RemoteProviderManager.shared.configuration.providers.map {
+                        ($0.id, $0.name)
+                    }
+            ),
+            foundationAvailable: AppConfiguration.shared.foundationModelAvailable,
+            launcherModelOverride: launcherModelOverride
+        )
+    }
+
+    /// Compatibility view for callers that only need currently runnable
+    /// descriptors. Production request composition uses `resolveForRequest`
+    /// so cold local discovery is completed before the schema is frozen.
     @MainActor
     public static func resolve(
-        agentNames: [String],
+        agentIDs: [UUID],
         modelNames: [String],
         modelNotes: [String: String]
     ) -> (agents: [SpawnAgentDescriptor], models: [SpawnModelDescriptor]) {
-        let agents = agentNames.map { resolveAgent($0) }
-        let models = modelNames.map { resolveModel($0, note: noteFor($0, in: modelNotes)) }
-        return (agents, models)
+        let snapshot = resolveForPreview(
+            agentIDs: agentIDs,
+            modelNames: modelNames,
+            modelNotes: modelNotes,
+            launcherModelOverride: nil
+        )
+        return (
+            snapshot.agents,
+            snapshot.models
+        )
     }
 
+    /// Pure classification seam used by focused lifecycle tests.
     @MainActor
-    private static func resolveAgent(_ name: String) -> SpawnAgentDescriptor {
-        let agent = AgentManager.shared.agents.first {
-            $0.name.caseInsensitiveCompare(name) == .orderedSame
-        }
-        guard let agent else {
-            return SpawnAgentDescriptor(
-                name: name,
-                description: nil,
-                modelId: nil,
-                isLocal: nil,
-                providerName: nil
+    static func resolve(
+        agentIDs: [UUID],
+        modelNames: [String],
+        modelNotes: [String: String],
+        agentSources: [AgentSource],
+        localModels: [MLXModel],
+        localCatalogIsAuthoritative: Bool,
+        pickerItems: [ModelPickerItem],
+        connectedRemoteTargets: RemoteProviderManager.ConnectedSpawnModelTargetIndex,
+        remoteProviderNames: [UUID: String],
+        foundationAvailable: Bool,
+        launcherModelOverride: String? = nil
+    ) -> SpawnTargetAvailabilitySnapshot {
+        let agentTargets = agentIDs.map { configuredID -> SpawnAgentTarget in
+            guard
+                let source = agentSources.first(where: { $0.id == configuredID })
+            else {
+                return SpawnAgentTarget(
+                    descriptor: SpawnAgentDescriptor(
+                        id: configuredID,
+                        name: configuredID.uuidString,
+                        description: nil,
+                        modelId: nil,
+                        isLocal: nil,
+                        providerName: nil
+                    ),
+                    state: .missing
+                )
+            }
+            let effectiveModel = launcherModelOverride ?? source.modelId
+            let effectiveTarget = effectiveModel.map {
+                resolveModelTarget(
+                    id: $0,
+                    note: nil,
+                    localModels: localModels,
+                    localCatalogIsAuthoritative: localCatalogIsAuthoritative,
+                    pickerItems: pickerItems,
+                    connectedRemoteTargets: connectedRemoteTargets,
+                    remoteProviderNames: remoteProviderNames,
+                    foundationAvailable: foundationAvailable
+                )
+            }
+            let locality = classify(
+                modelId: effectiveModel,
+                localModels: localModels,
+                pickerItems: pickerItems,
+                connectedRemoteTargets: connectedRemoteTargets,
+                remoteProviderNames: remoteProviderNames,
+                foundationAvailable: foundationAvailable
+            )
+            let description = source.description.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            return SpawnAgentTarget(
+                descriptor: SpawnAgentDescriptor(
+                    id: source.id,
+                    name: source.name,
+                    description: description.isEmpty ? nil : description,
+                    modelId: locality.normalizedId,
+                    isLocal: locality.isLocal,
+                    providerName: locality.providerName
+                ),
+                state: effectiveTarget?.state ?? .missing
             )
         }
-        let modelId = AgentManager.shared.effectiveModel(for: agent.id)
-        let locality = classify(modelId: modelId)
-        let description = agent.description.trimmingCharacters(in: .whitespacesAndNewlines)
-        return SpawnAgentDescriptor(
-            name: agent.name,
-            description: description.isEmpty ? nil : description,
-            modelId: locality.normalizedId,
-            isLocal: locality.isLocal,
-            providerName: locality.providerName
+
+        let modelTargets = modelNames.map { configuredId -> SpawnModelTarget in
+            resolveModelTarget(
+                id: configuredId,
+                note: noteFor(configuredId, in: modelNotes),
+                localModels: localModels,
+                localCatalogIsAuthoritative: localCatalogIsAuthoritative,
+                pickerItems: pickerItems,
+                connectedRemoteTargets: connectedRemoteTargets,
+                remoteProviderNames: remoteProviderNames,
+                foundationAvailable: foundationAvailable
+            )
+        }
+
+        return SpawnTargetAvailabilitySnapshot(
+            agentTargets: agentTargets,
+            modelTargets: modelTargets
+        )
+    }
+
+    private static func resolveModelTarget(
+        id: String,
+        note: String?,
+        localModels: [MLXModel],
+        localCatalogIsAuthoritative: Bool,
+        pickerItems: [ModelPickerItem],
+        connectedRemoteTargets: RemoteProviderManager.ConnectedSpawnModelTargetIndex,
+        remoteProviderNames: [UUID: String],
+        foundationAvailable: Bool
+    ) -> SpawnModelTarget {
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == ModelPickerItem.foundation().id {
+            return SpawnModelTarget(
+                descriptor: descriptor(id: trimmed, item: .foundation(), note: note),
+                state: foundationAvailable ? .runnable : .missing
+            )
+        }
+
+        // Match execution order: an installed local id wins before a legacy
+        // remote picker id with the same spelling.
+        if let local = ModelManager.matchInstalledMLXModel(named: trimmed, in: localModels) {
+            return SpawnModelTarget(
+                descriptor: descriptor(id: trimmed, item: .fromMLXModel(local), note: note),
+                state: .runnable
+            )
+        }
+
+        if let remote = connectedRemoteTargets.target(forStoredId: trimmed) {
+            let item = pickerItems.first { candidate in
+                guard case .remote(_, let providerId) = candidate.source else { return false }
+                return providerId == remote.providerId
+                    && candidate.id == remote.pickerModelId
+            }
+            return SpawnModelTarget(
+                // Preserve the configured id: allow-list authorization is
+                // exact, and execution normalizes a connected legacy id only
+                // after that check succeeds.
+                descriptor: SpawnModelDescriptor(
+                    id: trimmed,
+                    displayName: item?.displayName ?? shortName(fromModelId: remote.modelId),
+                    isLocal: false,
+                    providerName: remote.providerName,
+                    parameterCount: item?.parameterCount,
+                    quantization: item?.quantization,
+                    isVLM: item?.isVLM ?? false,
+                    note: note
+                ),
+                state: .runnable
+            )
+        }
+
+        if let parsed = SpawnRemoteModelIdentity.parse(trimmed) {
+            let providerName = remoteProviderNames[parsed.providerId]
+            return SpawnModelTarget(
+                descriptor: SpawnModelDescriptor(
+                    id: trimmed,
+                    displayName: shortName(fromModelId: parsed.modelId),
+                    isLocal: false,
+                    providerName: providerName,
+                    parameterCount: nil,
+                    quantization: nil,
+                    isVLM: false,
+                    note: note
+                ),
+                state: providerName == nil ? .missing : .disconnected
+            )
+        }
+
+        // Legacy remote ids used the provider's picker prefix. Preserve them
+        // while disconnected, but never advertise them as runnable.
+        let legacyProviders = remoteProviderNames.filter { _, name in
+            trimmed.hasPrefix(RemoteProviderManager.pickerPrefix(for: name) + "/")
+        }
+        let state: SpawnTargetState =
+            !legacyProviders.isEmpty
+            ? .disconnected
+            : (localCatalogIsAuthoritative ? .missing : .checking)
+        return SpawnModelTarget(
+            descriptor: SpawnModelDescriptor(
+                id: trimmed,
+                displayName: shortName(fromModelId: trimmed),
+                isLocal: nil,
+                providerName: legacyProviders.count == 1
+                    ? legacyProviders.first?.value : nil,
+                parameterCount: nil,
+                quantization: nil,
+                isVLM: false,
+                note: note
+            ),
+            state: state
         )
     }
 
     @MainActor
-    private static func resolveModel(_ id: String, note: String?) -> SpawnModelDescriptor {
-        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let item = ModelPickerItemCache.shared.items.first(where: { $0.id == trimmed }) {
-            let locality = classify(item: item)
-            return SpawnModelDescriptor(
-                id: trimmed,
-                displayName: item.displayName,
-                isLocal: locality.isLocal,
-                providerName: locality.providerName,
-                parameterCount: item.parameterCount,
-                quantization: item.quantization,
-                isVLM: item.isVLM,
-                note: note
+    private static func liveAgentSources() -> [AgentSource] {
+        AgentManager.shared.agents.map { agent in
+            AgentSource(
+                id: agent.id,
+                name: agent.name,
+                description: agent.description,
+                modelId: AgentManager.shared.effectiveModel(for: agent.id)
             )
         }
-        // Not in the picker cache (cold cache or removed): minimal descriptor.
-        let locality = classify(modelId: trimmed)
+    }
+
+    private static func descriptor(
+        id: String,
+        item: ModelPickerItem,
+        note: String?
+    ) -> SpawnModelDescriptor {
+        let locality = classify(item: item)
         return SpawnModelDescriptor(
-            id: trimmed,
-            displayName: shortName(fromModelId: trimmed),
+            id: id,
+            displayName: item.displayName,
             isLocal: locality.isLocal,
             providerName: locality.providerName,
-            parameterCount: nil,
-            quantization: nil,
-            isVLM: false,
+            parameterCount: item.parameterCount,
+            quantization: item.quantization,
+            isVLM: item.isVLM,
             note: note
         )
     }
 
-    // MARK: - Locality
-
-    /// Classify a model id by source: the picker cache is authoritative for
-    /// remote/local + provider; a local install confirms local; otherwise
-    /// locality is unknown (nil) so the prompt omits the badge rather than guess.
-    @MainActor
     private static func classify(
-        modelId: String?
+        modelId: String?,
+        localModels: [MLXModel],
+        pickerItems: [ModelPickerItem],
+        connectedRemoteTargets: RemoteProviderManager.ConnectedSpawnModelTargetIndex,
+        remoteProviderNames: [UUID: String],
+        foundationAvailable: Bool
     ) -> (isLocal: Bool?, providerName: String?, normalizedId: String?) {
         guard let trimmed = modelId?.trimmingCharacters(in: .whitespacesAndNewlines),
             !trimmed.isEmpty
         else { return (nil, nil, nil) }
-        if let item = ModelPickerItemCache.shared.items.first(where: { $0.id == trimmed }) {
+        if trimmed == ModelPickerItem.foundation().id {
+            return (foundationAvailable ? true : nil, nil, trimmed)
+        }
+        if ModelManager.matchInstalledMLXModel(named: trimmed, in: localModels) != nil {
+            return (true, nil, trimmed)
+        }
+        if let remote = connectedRemoteTargets.target(forStoredId: trimmed) {
+            return (false, remote.providerName, remote.id)
+        }
+        if let parsed = SpawnRemoteModelIdentity.parse(trimmed) {
+            return (false, remoteProviderNames[parsed.providerId], trimmed)
+        }
+        if let item = pickerItems.first(where: { $0.id == trimmed }) {
             let locality = classify(item: item)
             return (locality.isLocal, locality.providerName, trimmed)
-        }
-        // Cache-backed lookup only: this runs on the MainActor from view-body
-        // paths (ChatView's context-token estimate → system-prompt preview),
-        // and `findInstalledModel` parks on the local-models scan condition
-        // for up to ~10s on a cold cache. A cold cache just means the
-        // locality badge is omitted for this render.
-        if ModelManager.findInstalledMLXModelFromCache(named: trimmed) != nil {
-            return (true, nil, trimmed)
         }
         return (nil, nil, trimmed)
     }

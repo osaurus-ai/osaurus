@@ -299,6 +299,8 @@ struct SubagentFeedView: View {
         case .blocked, .denied, .error: return theme.errorColor
         case .confirmRequested: return theme.warningColor
         case .confirmed: return theme.successColor
+        case .reasoning: return theme.tertiaryText
+        case .response: return theme.primaryText
         default: return theme.accentColor
         }
     }

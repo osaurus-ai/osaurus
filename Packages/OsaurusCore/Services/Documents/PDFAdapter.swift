@@ -22,16 +22,19 @@ public struct PDFAdapter: DocumentFormatAdapter {
     }
 
     public func parse(url: URL, sizeLimit: Int64) async throws -> StructuredDocument {
+        try Task.checkCancellation()
         let fileSize = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
         if sizeLimit > 0, fileSize > sizeLimit {
             throw DocumentAdapterError.sizeLimitExceeded(actual: fileSize, limit: sizeLimit)
         }
 
+        try Task.checkCancellation()
         guard let document = PDFDocument(url: url) else {
             throw DocumentAdapterError.readFailed(underlying: "PDFKit could not open document")
         }
+        try Task.checkCancellation()
 
-        let pages = Self.extractPages(from: document)
+        let pages = try Self.extractPages(from: document)
         let extracted = pages.map(\.text).joined(separator: "\n\n")
         guard !extracted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             // No text layer — let the shim fall through to the legacy image-
@@ -39,17 +42,20 @@ public struct PDFAdapter: DocumentFormatAdapter {
             throw DocumentAdapterError.emptyContent
         }
 
+        try Task.checkCancellation()
         let truncated = PlainTextAdapter.applyCharacterCap(extracted)
-        let pdfPages = Self.pageRepresentations(
+        let pdfPages = try Self.pageRepresentations(
             pages: pages,
             extractedText: extracted,
             textFallback: truncated
         )
+        try Task.checkCancellation()
         let structure = Self.structureForPDFPages(
             filename: url.lastPathComponent,
             pages: pdfPages,
             textFallback: truncated
         )
+        try Task.checkCancellation()
         let securitySignals = Self.securitySignals(for: document)
         let securityFindings =
             securitySignals.findings
@@ -63,6 +69,7 @@ public struct PDFAdapter: DocumentFormatAdapter {
             activeContentTypes: securitySignals.activeContentTypes
         )
 
+        try Task.checkCancellation()
         return StructuredDocument(
             formatId: formatId,
             filename: url.lastPathComponent,
@@ -77,20 +84,25 @@ public struct PDFAdapter: DocumentFormatAdapter {
         )
     }
 
-    private static func extractPages(from document: PDFDocument) -> [ExtractedPDFPage] {
+    private static func extractPages(from document: PDFDocument) throws -> [ExtractedPDFPage] {
         var pages: [ExtractedPDFPage] = []
         for index in 0 ..< document.pageCount {
+            try Task.checkCancellation()
             guard let page = document.page(at: index),
                 let text = page.string,
                 !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { continue }
-            let glyphs = Self.glyphs(from: page, pageIndex: index, text: text)
+            let glyphs = try Self.glyphs(from: page, pageIndex: index, text: text)
+            try Task.checkCancellation()
             pages.append(
                 ExtractedPDFPage(
                     pageIndex: index,
                     text: text,
                     bounds: page.bounds(for: .cropBox),
-                    tables: PDFTableDetector.detectTables(glyphs: glyphs, pageText: text)
+                    tables: try PDFTableDetector.detectTables(
+                        glyphs: glyphs,
+                        pageText: text
+                    )
                 )
             )
         }
@@ -101,29 +113,35 @@ public struct PDFAdapter: DocumentFormatAdapter {
         from page: PDFPage,
         pageIndex: Int,
         text: String
-    ) -> [PDFTableDetector.Glyph] {
+    ) throws -> [PDFTableDetector.Glyph] {
         let nsText = text as NSString
         let count = min(page.numberOfCharacters, nsText.length)
         guard count > 0 else { return [] }
 
-        return (0 ..< count).compactMap { index in
+        var glyphs: [PDFTableDetector.Glyph] = []
+        glyphs.reserveCapacity(count)
+        for index in 0 ..< count {
+            try Task.checkCancellation()
             let character = nsText.substring(with: NSRange(location: index, length: 1))
             let bounds = page.characterBounds(at: index)
-            guard bounds.width.isFinite, bounds.height.isFinite else { return nil }
-            return PDFTableDetector.Glyph(
-                pageIndex: pageIndex,
-                characterIndex: index,
-                text: character,
-                bounds: bounds
+            guard bounds.width.isFinite, bounds.height.isFinite else { continue }
+            glyphs.append(
+                PDFTableDetector.Glyph(
+                    pageIndex: pageIndex,
+                    characterIndex: index,
+                    text: character,
+                    bounds: bounds
+                )
             )
         }
+        return glyphs
     }
 
     private static func pageRepresentations(
         pages: [ExtractedPDFPage],
         extractedText: String,
         textFallback: String
-    ) -> [PDFPageRepresentation] {
+    ) throws -> [PDFPageRepresentation] {
         let visiblePrefixLength = Self.visibleExtractedPrefixUTF16Length(
             extractedText: extractedText,
             textFallback: textFallback
@@ -132,6 +150,7 @@ public struct PDFAdapter: DocumentFormatAdapter {
         var representations: [PDFPageRepresentation] = []
 
         for (order, page) in pages.enumerated() {
+            try Task.checkCancellation()
             if order > 0 {
                 extractedOffset += Self.pageSeparatorUTF16Length
             }

@@ -104,9 +104,12 @@ let package = Package(
         // SSD checkpoint because distinct revisions tokenize identically.
         // vmlx-swift#192 adds Nanbeige 4.2's looped-transformer runtime with
         // 44 loop-layer KV slots and fail-closed runtime-contract validation.
+        // The atomic BatchEngine-capacity revision exposes one actor-consistent
+        // configured/active/pending snapshot so Osaurus can report and plan
+        // subagent waves against the engine that actually owns admission.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "7300afaa764f50743b11d8f7f8ececf0100731a2"
+            revision: "84612e143d2e51da865316dbc49167530a1717ad"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

@@ -21,7 +21,22 @@ import os
 /// Models unloaded by a handoff, to be reloaded when the job finishes.
 struct ChatResidencyLease: Sendable, Equatable {
     var unloadedModelNames: [String]
-    static let empty = ChatResidencyLease(unloadedModelNames: [])
+    var unloadedParentIdentity: ModelResidencyIdentity?
+    let childOwnershipToken: ModelResidencyOwnershipToken
+
+    init(
+        unloadedModelNames: [String],
+        unloadedParentIdentity: ModelResidencyIdentity? = nil,
+        childOwnershipToken: ModelResidencyOwnershipToken = ModelResidencyOwnershipToken()
+    ) {
+        self.unloadedModelNames = unloadedModelNames
+        self.unloadedParentIdentity = unloadedParentIdentity
+        self.childOwnershipToken = childOwnershipToken
+    }
+
+    static var empty: ChatResidencyLease {
+        ChatResidencyLease(unloadedModelNames: [])
+    }
     var isEmpty: Bool { unloadedModelNames.isEmpty }
 }
 
@@ -54,6 +69,9 @@ enum ChatResidencyHandoff {
         case chatBusy
         case insufficientMemory(neededGB: Double, availableGB: Double)
         case restoreFailed(models: [String])
+        case parentNotReclaimable(String)
+        case restoreBlocked(parent: String, protectedResidents: [String])
+        case ownedChildCleanupFailed(models: [String])
         var description: String {
             switch self {
             case .chatBusy:
@@ -68,6 +86,20 @@ enum ChatResidencyHandoff {
             case let .restoreFailed(models):
                 return
                     "failed to reload the chat model(s) after the subagent job (the orchestrator may need to be re-selected): "
+                    + models.joined(separator: ", ")
+            case let .parentNotReclaimable(model):
+                return
+                    "the exact invoking parent model '\(model)' was no longer owned by "
+                    + "the current turn's inference surface, so the handoff refused to "
+                    + "unload another process resident"
+            case let .restoreBlocked(parent, protectedResidents):
+                return
+                    "restore of invoking parent '\(parent)' was blocked because unrelated "
+                    + "resident model(s) are protected: "
+                    + protectedResidents.joined(separator: ", ")
+            case let .ownedChildCleanupFailed(models):
+                return
+                    "the handoff could not safely release its owned child model(s): "
                     + models.joined(separator: ", ")
             }
         }
@@ -119,7 +151,7 @@ enum ChatResidencyHandoff {
         let inflation = 1.3
         let headroom: Int64 = 3 * 1024 * 1024 * 1024  // keep 3 GB for the OS/app
         let needed = Int64(Double(requiredBytes) * inflation) + headroom
-        let residentChatBytes = await ModelRuntime.shared.cachedModelSummaries()
+        let residentChatBytes = await ModelRuntime.shared.chatOwnedCachedModelSummaries()
             .reduce(Int64(0)) { $0 + $1.bytes }
         let projected = availableMemoryBytes() + residentChatBytes
         if projected < needed {
@@ -167,6 +199,7 @@ enum ChatResidencyHandoff {
     /// lease of unloaded names (empty when nothing was resident — e.g. a cloud
     /// orchestrator).
     static func unloadResidentChatModels(
+        parentModelName: String? = nil,
         maxElapsedSeconds: Int,
         onPhase: (_ phase: String, _ detail: String) -> Void = { _, _ in }
     ) async throws -> ChatResidencyLease {
@@ -175,16 +208,51 @@ enum ChatResidencyHandoff {
         let wentIdle = await InferenceLoadCoordinator.shared.waitForChatIdle(timeoutMs: waitMs)
         guard wentIdle else { throw HandoffError.chatBusy }
 
-        let resident = await ModelRuntime.shared.cachedModelSummaries()
-            .map(\.name)
-            .sorted()
-        guard !resident.isEmpty else { return .empty }
-
-        onPhase("unloading_chat_models", resident.joined(separator: ", "))
-        for name in resident {
-            await ModelRuntime.shared.unload(name: name)
+        let requestedParent =
+            parentModelName ?? ChatExecutionContext.currentModelName
+        guard let requestedParent,
+            !requestedParent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return .empty
         }
-        return ChatResidencyLease(unloadedModelNames: resident)
+        let currentInferenceSource =
+            ChatExecutionContext.currentSessionSource?.inferenceSource
+        let parentIsOwned: Bool
+        if let currentInferenceSource {
+            parentIsOwned = await ModelRuntime.shared.isResident(
+                named: requestedParent,
+                ownedBy: currentInferenceSource
+            )
+        } else {
+            // Bare/direct callers predate typed session provenance. Preserve
+            // their legacy chat-owned behavior without widening it.
+            parentIsOwned = await ModelRuntime.shared.isChatOwnedResident(
+                named: requestedParent
+            )
+        }
+        guard
+            let identity = await ModelRuntime.shared.residencyIdentity(
+                named: requestedParent
+            ),
+            parentIsOwned
+        else {
+            throw HandoffError.parentNotReclaimable(requestedParent)
+        }
+
+        let token = ModelResidencyOwnershipToken()
+        onPhase("unloading_chat_models", identity.modelName)
+        let result = await ModelRuntime.shared.unloadExact(
+            identity,
+            leaseDrainTimeoutSeconds: Double(max(15, min(maxElapsedSeconds, 300)))
+        )
+        guard result == .unloaded else {
+            throw HandoffError.parentNotReclaimable(requestedParent)
+        }
+        return ChatResidencyLease(
+            unloadedModelNames: [identity.modelName],
+            unloadedParentIdentity: identity,
+            childOwnershipToken: token
+        )
     }
 
     /// Reload the models that `unloadResidentChatModels` unloaded. Safe to call
@@ -195,6 +263,24 @@ enum ChatResidencyHandoff {
         _ lease: ChatResidencyLease,
         onPhase: (_ phase: String, _ detail: String) -> Void = { _, _ in }
     ) async throws -> [String] {
+        let ownedChildren = await ModelRuntime.shared.childOwnedResidentNames(
+            by: lease.childOwnershipToken
+        )
+        var cleanupFailures: [String] = []
+        for child in ownedChildren {
+            let result = await ModelRuntime.shared.unloadChildOwned(
+                name: child,
+                by: lease.childOwnershipToken,
+                leaseDrainTimeoutSeconds: 5
+            )
+            if result != .unloaded && result != .notResident {
+                cleanupFailures.append(child)
+            }
+        }
+        guard cleanupFailures.isEmpty else {
+            throw HandoffError.ownedChildCleanupFailed(models: cleanupFailures)
+        }
+
         guard !lease.isEmpty else { return [] }
         onPhase("restoring_chat_models", lease.unloadedModelNames.joined(separator: ", "))
 
@@ -209,18 +295,34 @@ enum ChatResidencyHandoff {
         var restored: [String] = []
         var failures: [String] = []
         for name in lease.unloadedModelNames {
-            if await reloadAndVerify(name) {
+            do {
+                try await reloadAndVerify(name, ownershipToken: lease.childOwnershipToken)
                 restored.append(name)
                 continue
+            } catch let error as ModelRuntime.HandoffRestoreBlockedError {
+                throw HandoffError.restoreBlocked(
+                    parent: name,
+                    protectedResidents: [error.protectedResident]
+                )
+            } catch {
+                logger.error(
+                    "Orchestrator restore: preload threw for \(name, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                )
             }
             // One retry before giving up: a transient reload failure (the GPU
             // still settling behind the just-released image/teardown lane, or a
             // racing evict) must not strand the orchestrator unloaded with no
             // resident model and only a log to show for it.
             onPhase("restoring_chat_models_retry", name)
-            if await reloadAndVerify(name) {
+            do {
+                try await reloadAndVerify(name, ownershipToken: lease.childOwnershipToken)
                 restored.append(name)
-            } else {
+            } catch let error as ModelRuntime.HandoffRestoreBlockedError {
+                throw HandoffError.restoreBlocked(
+                    parent: name,
+                    protectedResidents: [error.protectedResident]
+                )
+            } catch {
                 failures.append(name)
             }
         }
@@ -237,8 +339,11 @@ enum ChatResidencyHandoff {
     /// reported as a successful restore while the chat window has no model
     /// loaded. Returns `true` only when the model is in the live runtime cache
     /// after the load. Never throws: callers branch on the Bool and retry.
-    private static func reloadAndVerify(_ name: String) async -> Bool {
-        do {
+    private static func reloadAndVerify(
+        _ name: String,
+        ownershipToken: ModelResidencyOwnershipToken
+    ) async throws {
+        try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(nil) {
             // This decision must be made atomically inside ModelRuntime.
             // `hasLoadInFlight() + preload()` is explicitly diagnostics-only:
             // the observation is stale after the actor hop. The restore intent
@@ -246,15 +351,15 @@ enum ChatResidencyHandoff {
             // then regains the orchestrator in actor order.
             try await ModelRuntime.shared.preload(
                 name: name,
-                intent: .handoffRestore
+                intent: .handoffRestore,
+                restoreOwnershipToken: ownershipToken
             )
-        } catch {
-            logger.error(
-                "Orchestrator restore: preload threw for \(name, privacy: .public): \(error.localizedDescription, privacy: .public)"
-            )
-            return false
         }
         let resident = await ModelRuntime.shared.cachedModelSummaries().map(\.name)
-        return resident.contains(name)
+        guard resident.contains(where: {
+            $0.caseInsensitiveCompare(name) == .orderedSame
+        }) else {
+            throw HandoffError.restoreFailed(models: [name])
+        }
     }
 }

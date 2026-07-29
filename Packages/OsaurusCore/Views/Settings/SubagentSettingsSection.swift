@@ -2,30 +2,65 @@
 //  SubagentSettingsSection.swift
 //  osaurus
 //
-//  System runtime knobs for bounded local helper jobs (spawn / image): the
-//  local-handoff / RAM-safety behavior. There is no global master switch — each
-//  agent (including the built-in main chat) opts into spawn / image and picks
-//  its own models, permissions, and budgets from its Subagents tab. The global
-//  image-generation settings (default models, permission, image load policy)
-//  live in the dedicated Image Generation tab. This card hosts only the shared
-//  GPU-residency / RAM knobs and lives inside the general Settings tab.
+//  Spawn policy for the built-in main chat plus system runtime knobs for local
+//  helper jobs. Custom agents edit the same Spawn controls in their Subagents
+//  tab; the built-in chat has no AgentDetailView, so its persisted
+//  SubagentConfiguration must remain reachable here.
 //
 
 import SwiftUI
 
 struct SubagentSettingsSection: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
     @Binding var configuration: SubagentConfiguration
 
     var body: some View {
-        // System runtime knobs only. Per-agent spawn/image config (targets,
-        // models, permissions, budgets) — including the built-in main chat —
-        // lives in each agent's Subagents tab, not here.
         systemSection
     }
 
     private var systemSection: some View {
         SettingsSection(title: "Subagents", icon: "wand.and.stars") {
             VStack(alignment: .leading, spacing: 16) {
+                SettingsSubsection(label: "Main Chat Spawn") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(
+                            "Choose the agents and local or cloud models the built-in chat may delegate to. The agent selects among this allow-list for each job; an empty allow-list keeps Spawn unavailable.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(themeManager.currentTheme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                        SpawnConfigurationEditor(
+                            excludedAgentID: nil,
+                            localHandoffEnabled: configuration.localTextDelegationEnabled,
+                            modelOverride: mainChatSpawnModelOverride,
+                            spawnableAgentIDs: $configuration.spawnableAgentIDs,
+                            spawnableModelNames: $configuration.spawnableModelNames,
+                            spawnableModelNotes: $configuration.spawnableModelNotes,
+                            permissionDefaults: $configuration.permissionDefaults,
+                            budgets: $configuration.budgets,
+                            toolAccess: $configuration.spawnToolAccess,
+                            onChange: {}
+                        )
+                        .padding(12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(themeManager.currentTheme.tertiaryBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(
+                                            themeManager.currentTheme.inputBorder,
+                                            lineWidth: 1
+                                        )
+                                )
+                        )
+                    }
+                }
+
+                Divider()
+                    .overlay(themeManager.currentTheme.inputBorder)
+
                 SettingsSubsection(label: "Local Handoff & RAM Safety") {
                     VStack(alignment: .leading, spacing: 12) {
                         SettingsToggle(
@@ -38,7 +73,7 @@ struct SubagentSettingsSection: View {
                         SettingsToggle(
                             title: "RAM-Safety Preflight",
                             description:
-                                "Before a spawned image or text job, verify the helper model fits in memory once the chat model is freed. If it won't fit, refuse the job instead of unloading the chat model and failing to load the helper.",
+                                "Before spawned image or text work, budget one target-model weight footprint plus architecture-aware KV, SSM, and activation headroom for every active child. Same-model batches are split into smaller waves when needed; if even one child cannot fit, refuse before unloading the chat model.",
                             isOn: $configuration.ramSafetyPreflightEnabled
                         )
 
@@ -52,5 +87,28 @@ struct SubagentSettingsSection: View {
                 }
             }
         }
+    }
+
+    /// Default/main-chat model override for Spawn. The shared editor stores nil
+    /// as "Use the agent's model" and trims any explicit local/remote model id.
+    private var mainChatSpawnModelOverride: Binding<String?> {
+        Binding(
+            get: {
+                configuration.subagentModelOverrides[
+                    SubagentCapabilityRegistry.spawn.id
+                ]
+            },
+            set: { newValue in
+                var overrides = configuration.subagentModelOverrides
+                let trimmed = newValue?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if let trimmed, !trimmed.isEmpty {
+                    overrides[SubagentCapabilityRegistry.spawn.id] = trimmed
+                } else {
+                    overrides.removeValue(forKey: SubagentCapabilityRegistry.spawn.id)
+                }
+                configuration.subagentModelOverrides = overrides
+            }
+        )
     }
 }

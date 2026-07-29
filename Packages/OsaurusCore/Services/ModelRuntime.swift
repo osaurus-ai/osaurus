@@ -22,8 +22,69 @@ private let genLog = Logger(subsystem: "com.dinoki.osaurus", category: "Generati
 
 extension Notification.Name {
     /// Posted after the set of resident local model containers changes.
-    /// The object is the complete `[String]` resident-name snapshot.
+    /// The object is a revisioned `ModelRuntimeResidencySnapshot`.
     static let modelRuntimeResidencyChanged = Notification.Name("modelRuntimeResidencyChanged")
+}
+
+/// Owning-layer cause for a model-residency change. UI lifecycle recovery must
+/// never infer intent from an empty resident-name list: only an exact
+/// `.idlePolicy` decision associated with the current activation is recoverable.
+enum ModelRuntimeResidencyChangeReason: String, Sendable, Equatable {
+    case initial
+    case load
+    case idlePolicy
+    case memoryPressure
+    case handoff
+    case modelSwitch
+    case explicit
+    case settingsClear
+    case shutdown
+}
+
+/// Immutable, ordered runtime-residency event/query result.
+struct ModelRuntimeResidencySnapshot: Sendable, Equatable {
+    let names: [String]
+    let revision: UInt64
+    let reason: ModelRuntimeResidencyChangeReason
+    let idleDecisionID: UInt64?
+}
+
+/// Atomic result used when a visible chat becomes active. The runtime cancels
+/// the currently pending idle decision before returning. If that exact
+/// decision had already crossed into unload, its identity is returned so the
+/// controller may recover only the matching removal event.
+struct ModelRuntimeChatActivationResidencySnapshot: Sendable, Equatable {
+    let residency: ModelRuntimeResidencySnapshot
+    let recoverableIdleDecisionID: UInt64?
+}
+
+/// Small value-type ledger shared by runtime publication and deterministic
+/// tests. Keeping revision/reason/decision in one mutation prevents a
+/// notification from pairing a new resident-name set with stale metadata.
+struct ModelRuntimeResidencyLedger: Sendable {
+    private(set) var revision: UInt64 = 0
+    private var lastReason: ModelRuntimeResidencyChangeReason = .initial
+    private var lastIdleDecisionID: UInt64?
+
+    func snapshot(names: [String]) -> ModelRuntimeResidencySnapshot {
+        ModelRuntimeResidencySnapshot(
+            names: names.sorted(),
+            revision: revision,
+            reason: lastReason,
+            idleDecisionID: lastIdleDecisionID
+        )
+    }
+
+    mutating func record(
+        names: [String],
+        reason: ModelRuntimeResidencyChangeReason,
+        idleDecisionID: UInt64? = nil
+    ) -> ModelRuntimeResidencySnapshot {
+        revision &+= 1
+        lastReason = reason
+        lastIdleDecisionID = idleDecisionID
+        return snapshot(names: names)
+    }
 }
 
 // Force-link both trampolines so ModelFactoryRegistry discovers them at runtime.
@@ -63,6 +124,34 @@ public enum ModelLoadIntent: Sendable, Equatable {
     case handoffRestore
 }
 
+/// Exact identity of one published local-model residency. The generation
+/// changes every time a cold load is published, so an old handoff lease cannot
+/// accidentally unload a later reload of the same model name (the ABA case).
+struct ModelResidencyIdentity: Sendable, Equatable, Hashable {
+    let modelName: String
+    let generation: UUID
+}
+
+/// One handoff's exclusive claim over models it cold-loaded. This is separate
+/// from the coarse request-source marker used by chat-close policy: a child
+/// that merely reuses an API/plugin/local resident must never acquire this
+/// token and therefore cannot unload that resident during transition/cleanup.
+struct ModelResidencyOwnershipToken: Sendable, Equatable, Hashable {
+    let id: UUID
+
+    init(id: UUID = UUID()) {
+        self.id = id
+    }
+}
+
+/// Bound by `ResidencyHandoff` only while its child body is running. Actor
+/// calls inherit TaskLocal values, so the runtime can attach the token to the
+/// loading-task record that actually creates a cold resident. Cache hits and
+/// coalescing onto someone else's load never acquire it.
+enum ModelResidencyOwnershipContext {
+    @TaskLocal static var childOwnershipToken: ModelResidencyOwnershipToken?
+}
+
 public actor ModelRuntime {
     // MARK: - Types
 
@@ -89,6 +178,47 @@ public actor ModelRuntime {
                 return
                     "Skipped background load of '\(requestedModel)': it would cancel the in-flight load of '\(loading)'"
             }
+        }
+    }
+
+    struct HandoffRestoreBlockedError: Error, LocalizedError, Sendable, Equatable {
+        let requestedModel: String
+        let protectedResident: String
+
+        var errorDescription: String? {
+            "Restore of '\(requestedModel)' was blocked because resident model "
+                + "'\(protectedResident)' is not owned by this handoff."
+        }
+    }
+
+    /// Short-lived claim held while a request resolves or loads a model and
+    /// publishes its ordinary `ModelLease`. Deletion closes the matching
+    /// identity gate before waiting for these claims to drain, which closes
+    /// the load-between-unload-and-unlink race without changing residency
+    /// ownership semantics.
+    struct ModelDeletionAccessLease: Sendable {
+        fileprivate let id: UUID
+    }
+
+    struct ModelDeletionProtectionSnapshot: Sendable, Equatable {
+        let isDeleting: Bool
+        let activeModelUses: Int
+        let blockedModelUses: Int
+        let blockedDeletionRequests: Int
+        let drainingDeletionRequests: Int
+
+        init(
+            isDeleting: Bool,
+            activeModelUses: Int,
+            blockedModelUses: Int,
+            blockedDeletionRequests: Int = 0,
+            drainingDeletionRequests: Int = 0
+        ) {
+            self.isDeleting = isDeleting
+            self.activeModelUses = activeModelUses
+            self.blockedModelUses = blockedModelUses
+            self.blockedDeletionRequests = blockedDeletionRequests
+            self.drainingDeletionRequests = drainingDeletionRequests
         }
     }
 
@@ -212,11 +342,72 @@ public actor ModelRuntime {
     private struct LoadingTaskRecord {
         let id: UInt64
         let task: Task<SessionHolder, Error>
+        /// Captured only by the caller that registered this cold load. Written
+        /// to resident metadata only after `finishLoadedContainer` publishes
+        /// the holder successfully.
+        let childOwnershipToken: ModelResidencyOwnershipToken?
     }
 
     private var loadingTasks: [String: LoadingTaskRecord] = [:]
     private var supersededLoadingTaskIDs = Set<UInt64>()
     private var nextLoadingTaskID: UInt64 = 0
+
+    private struct ResidentMetadata: Sendable, Equatable {
+        let identity: ModelResidencyIdentity
+        var childOwnershipToken: ModelResidencyOwnershipToken?
+    }
+    private var residentMetadata: [String: ResidentMetadata] = [:]
+    /// Serializes teardown of one exact published generation. Without this,
+    /// two actor-reentrant unload calls can both pass an identity check, then
+    /// one can remove/reload the name while the other is suspended draining a
+    /// lease and the stale caller can tear down the replacement (ABA).
+    private var residencyUnloadClaims: [String: UUID] = [:]
+    /// Callers that arrive while the same exact teardown is already active
+    /// join it. Returning immediately would let destructive consumers unlink
+    /// weights while the first caller was still draining the resident model.
+    private var residencyUnloadWaiters:
+        [String: [CheckedContinuation<Void, Never>]] = [:]
+
+    /// Canonical model deletion quarantine. Each lease is indexed by both the
+    /// stable model id and picker/runtime name (plus their final path
+    /// components), so the download catalog and generation APIs converge on
+    /// the same identity even when one surface carries a full repo id.
+    private var modelDeletionClaims: [String: UUID] = [:]
+    private var modelDeletionLeaseKeys: [UUID: Set<String>] = [:]
+    private var modelDeletionAccessLeases: [UUID: [String]] = [:]
+    private var modelDeletionAccessCounts: [String: Int] = [:]
+
+    private enum ModelDeletionWaitSignal: Sendable, Equatable {
+        case released
+        case cancelled
+    }
+
+    private enum ModelDeletionWaitKind: Sendable {
+        case access(UUID)
+        case lease(UUID)
+        case drain(UUID)
+    }
+
+    private struct ModelDeletionWaiter {
+        let id: UUID
+        let continuation: CheckedContinuation<ModelDeletionWaitSignal, Never>
+    }
+
+    private enum ModelDeletionWaiterState {
+        case registering(ModelDeletionWaitKind)
+        case registered(ModelDeletionWaitKind)
+        case cancelledBeforeRegistration(ModelDeletionWaitKind)
+        case resolved
+    }
+
+    private var modelDeletionAccessWaiters:
+        [UUID: [ModelDeletionWaiter]] = [:]
+    private var modelDeletionLeaseWaiters:
+        [UUID: [ModelDeletionWaiter]] = [:]
+    private var modelDeletionDrainWaiters:
+        [UUID: [ModelDeletionWaiter]] = [:]
+    private var modelDeletionWaiterStates:
+        [UUID: ModelDeletionWaiterState] = [:]
 
     /// On-disk weight bytes reserved by loads that are past the pre-load gate
     /// but not yet resident in `modelCache`, keyed by model name. The
@@ -242,6 +433,29 @@ public actor ModelRuntime {
     private var coldLoadWaiters: [CheckedContinuation<Void, Never>] = []
     private var currentModelName: String?
     private var cachedConfig: RuntimeConfig?
+    /// Monotonic sequence for every published residency-set mutation. Direct
+    /// queries return the latest value, allowing MainActor consumers to reject
+    /// delayed/duplicate NotificationCenter delivery deterministically.
+    private var residencyLedger = ModelRuntimeResidencyLedger()
+
+    /// Runtime-owned idle-policy identities. `pending` means the residency
+    /// manager may still fire; `inFlight` means the decision already won the
+    /// actor race and entered teardown. A focus activation invalidates the
+    /// former and captures the latter atomically.
+    private var nextIdleResidencyDecisionID: UInt64 = 0
+    private var pendingIdleResidencyDecisions: [String: UInt64] = [:]
+    private var inFlightIdleResidencyDecisions: [String: UInt64] = [:]
+    /// Once an idle teardown passes its final pre-destructive decision check,
+    /// new use waits for that exact teardown to finish and then reloads. Before
+    /// this point, new use cancels the in-flight decision and the teardown
+    /// exits without touching the engine or container.
+    private struct IdleResidencyTeardown {
+        let decisionID: UInt64
+        let task: Task<Void, Never>
+    }
+    private var committedIdleResidencyDecisions: [String: UInt64] = [:]
+    private var idleResidencyTeardowns: [String: IdleResidencyTeardown] = [:]
+    private var isClearingAllResidency = false
 
     /// Result of the most recent pre-load RAM feasibility check. Surfaced via
     /// `lastRAMFeasibilitySnapshot()` so `/health` and the model picker can
@@ -298,13 +512,513 @@ public actor ModelRuntime {
     /// already in memory instead of an arbitrary installed model, which under the
     /// strict single-model policy would evict whatever the user is chatting with.
     func residentModelNames() -> [String] {
-        Array(modelCache.keys)
+        modelCache.keys.sorted()
+    }
+
+    /// Current typed snapshot without changing residency.
+    func residencySnapshot() -> ModelRuntimeResidencySnapshot {
+        currentResidencySnapshot()
+    }
+
+    /// Atomically reconcile a visible-chat activation against an idle-policy
+    /// decision. A pending decision is invalidated before the actor yields;
+    /// an already-running decision is returned by identity for one-shot UI
+    /// recovery. Conditional manager cancellation cannot erase a newer timer.
+    func chatActivationResidencySnapshot(
+        selectedModel: String?
+    ) async -> ModelRuntimeChatActivationResidencySnapshot {
+        guard let selectedModel, !selectedModel.isEmpty else {
+            return ModelRuntimeChatActivationResidencySnapshot(
+                residency: currentResidencySnapshot(),
+                recoverableIdleDecisionID: nil
+            )
+        }
+
+        let matchingName = matchingRuntimeModelName(selectedModel)
+        let cancelledDecision = matchingName.flatMap {
+            pendingIdleResidencyDecisions.removeValue(forKey: $0)
+        }
+        let recoverableDecision = matchingName.flatMap {
+            inFlightIdleResidencyDecisions[$0]
+        }
+
+        if let matchingName, let cancelledDecision {
+            await ModelResidencyManager.shared.cancel(
+                modelName: matchingName,
+                ownerDecisionID: cancelledDecision
+            )
+        }
+
+        return ModelRuntimeChatActivationResidencySnapshot(
+            residency: currentResidencySnapshot(),
+            recoverableIdleDecisionID: recoverableDecision
+        )
+    }
+
+    /// Hold an exclusive quarantine for one canonical model identity while a
+    /// destructive catalog operation runs. New loads and generation setup
+    /// wait behind the quarantine; setup that won the actor race first drains
+    /// before `operation` starts. The actor-isolated `defer` is the single
+    /// release path, including thrown filesystem/catalog failures.
+    func withModelDeletionLease<T: Sendable>(
+        modelID: String,
+        modelName: String,
+        operation: @Sendable () async throws -> T
+    ) async throws -> T {
+        let lease = try await beginModelDeletionLease(
+            modelID: modelID,
+            modelName: modelName
+        )
+        defer { finishModelDeletionLease(lease) }
+        try Task.checkCancellation()
+        return try await operation()
+    }
+
+    /// Acquire the non-destructive side of the deletion quarantine. Callers
+    /// must release this after either failing setup or publishing the normal
+    /// model-use lease that protects the full generation lifetime.
+    func beginModelDeletionProtectedAccess(
+        modelID: String,
+        modelName: String
+    ) async throws -> ModelDeletionAccessLease {
+        let keys = Self.modelDeletionIdentityKeys(
+            modelID: modelID,
+            modelName: modelName
+        )
+        while let deletion = activeModelDeletion(in: keys) {
+            try Task.checkCancellation()
+            let signal = await waitForModelDeletion(
+                kind: .access(deletion)
+            )
+            guard signal == .released else {
+                throw CancellationError()
+            }
+            try Task.checkCancellation()
+        }
+        try Task.checkCancellation()
+        for key in keys {
+            modelDeletionAccessCounts[key, default: 0] += 1
+        }
+        let lease = ModelDeletionAccessLease(id: UUID())
+        modelDeletionAccessLeases[lease.id] = keys
+        return lease
+    }
+
+    func finishModelDeletionProtectedAccess(
+        _ lease: ModelDeletionAccessLease
+    ) {
+        guard let identityKeys = modelDeletionAccessLeases.removeValue(forKey: lease.id) else {
+            return
+        }
+        for key in identityKeys {
+            guard let count = modelDeletionAccessCounts[key] else { continue }
+            if count <= 1 {
+                modelDeletionAccessCounts.removeValue(forKey: key)
+            } else {
+                modelDeletionAccessCounts[key] = count - 1
+            }
+        }
+        resumeReadyModelDeletionDrains()
+    }
+
+    func modelDeletionProtectionSnapshot(
+        modelID: String,
+        modelName: String
+    ) -> ModelDeletionProtectionSnapshot {
+        let keys = Self.modelDeletionIdentityKeys(
+            modelID: modelID,
+            modelName: modelName
+        )
+        let deletion = activeModelDeletion(in: keys)
+        return ModelDeletionProtectionSnapshot(
+            isDeleting: deletion != nil,
+            activeModelUses: keys.compactMap { modelDeletionAccessCounts[$0] }.max() ?? 0,
+            blockedModelUses: deletion.flatMap {
+                modelDeletionAccessWaiters[$0]?.count
+            } ?? 0,
+            blockedDeletionRequests: deletion.flatMap {
+                modelDeletionLeaseWaiters[$0]?.count
+            } ?? 0,
+            drainingDeletionRequests: deletion.flatMap {
+                modelDeletionDrainWaiters[$0]?.count
+            } ?? 0
+        )
+    }
+
+    private struct ModelDeletionLease {
+        let id: UUID
+        let identityKeys: [String]
+    }
+
+    private static func modelDeletionIdentityKeys(
+        modelID: String,
+        modelName: String
+    ) -> [String] {
+        var identities = Set<String>()
+        for raw in [modelID, modelName] {
+            let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalized.isEmpty else { continue }
+            identities.insert(normalized)
+            if let tail = normalized.split(separator: "/").last, !tail.isEmpty {
+                identities.insert(String(tail))
+            }
+        }
+        // Production callers always provide at least one identity. Keeping an
+        // explicit empty sentinel makes the API fail closed for malformed
+        // internal callers instead of silently bypassing the quarantine.
+        if identities.isEmpty {
+            identities.insert("<empty-model-identity>")
+        }
+        return identities.sorted()
+    }
+
+    private func activeModelDeletion(in identityKeys: [String]) -> UUID? {
+        identityKeys.lazy.compactMap { self.modelDeletionClaims[$0] }.first
+    }
+
+    private func beginModelDeletionLease(
+        modelID: String,
+        modelName: String
+    ) async throws -> ModelDeletionLease {
+        let keys = Self.modelDeletionIdentityKeys(
+            modelID: modelID,
+            modelName: modelName
+        )
+        while let activeDeletion = activeModelDeletion(in: keys) {
+            try Task.checkCancellation()
+            let signal = await waitForModelDeletion(
+                kind: .lease(activeDeletion)
+            )
+            guard signal == .released else {
+                throw CancellationError()
+            }
+            try Task.checkCancellation()
+        }
+        try Task.checkCancellation()
+
+        let lease = ModelDeletionLease(id: UUID(), identityKeys: keys)
+        modelDeletionLeaseKeys[lease.id] = Set(keys)
+        for key in keys {
+            modelDeletionClaims[key] = lease.id
+        }
+
+        do {
+            while keys.contains(where: { (modelDeletionAccessCounts[$0] ?? 0) > 0 }) {
+                try Task.checkCancellation()
+                let signal = await waitForModelDeletion(
+                    kind: .drain(lease.id)
+                )
+                guard signal == .released else {
+                    throw CancellationError()
+                }
+                try Task.checkCancellation()
+            }
+            try Task.checkCancellation()
+            return lease
+        } catch {
+            finishModelDeletionLease(lease)
+            throw error
+        }
+    }
+
+    private func finishModelDeletionLease(_ lease: ModelDeletionLease) {
+        guard modelDeletionLeaseKeys.removeValue(forKey: lease.id) != nil else {
+            return
+        }
+        for key in lease.identityKeys where modelDeletionClaims[key] == lease.id {
+            modelDeletionClaims.removeValue(forKey: key)
+        }
+        resolveModelDeletionWaiters(
+            kind: .access(lease.id),
+            signal: .released
+        )
+        resolveModelDeletionWaiters(
+            kind: .lease(lease.id),
+            signal: .released
+        )
+        // A drain waiter belongs to the lease being released. If one remains
+        // here, that lease can no longer authorize a destructive operation.
+        resolveModelDeletionWaiters(
+            kind: .drain(lease.id),
+            signal: .cancelled
+        )
+    }
+
+    private func resumeReadyModelDeletionDrains() {
+        let ready = modelDeletionLeaseKeys.compactMap { leaseID, keys -> UUID? in
+            keys.allSatisfy { (modelDeletionAccessCounts[$0] ?? 0) == 0 }
+                ? leaseID
+                : nil
+        }
+        for leaseID in ready {
+            resolveModelDeletionWaiters(
+                kind: .drain(leaseID),
+                signal: .released
+            )
+        }
+    }
+
+    private func waitForModelDeletion(
+        kind: ModelDeletionWaitKind
+    ) async -> ModelDeletionWaitSignal {
+        let waiterID = UUID()
+        modelDeletionWaiterStates[waiterID] = .registering(kind)
+        if Task.isCancelled {
+            modelDeletionWaiterStates[waiterID] =
+                .cancelledBeforeRegistration(kind)
+        }
+
+        let signal = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                registerModelDeletionWaiter(
+                    id: waiterID,
+                    kind: kind,
+                    continuation: continuation
+                )
+            }
+        } onCancel: {
+            Task {
+                await self.cancelModelDeletionWaiter(id: waiterID)
+            }
+        }
+        modelDeletionWaiterStates.removeValue(forKey: waiterID)
+        return signal
+    }
+
+    private func registerModelDeletionWaiter(
+        id: UUID,
+        kind: ModelDeletionWaitKind,
+        continuation: CheckedContinuation<ModelDeletionWaitSignal, Never>
+    ) {
+        switch modelDeletionWaiterStates[id] {
+        case .registering:
+            let waiter = ModelDeletionWaiter(
+                id: id,
+                continuation: continuation
+            )
+            appendModelDeletionWaiter(waiter, kind: kind)
+            modelDeletionWaiterStates[id] = .registered(kind)
+        case .cancelledBeforeRegistration:
+            modelDeletionWaiterStates[id] = .resolved
+            continuation.resume(returning: .cancelled)
+        case .registered, .resolved, .none:
+            // Registration is single-shot. If an unexpected state reaches
+            // this branch, fail closed rather than park an unowned waiter.
+            modelDeletionWaiterStates[id] = .resolved
+            continuation.resume(returning: .cancelled)
+        }
+    }
+
+    private func cancelModelDeletionWaiter(id: UUID) {
+        switch modelDeletionWaiterStates[id] {
+        case .registering(let kind):
+            modelDeletionWaiterStates[id] =
+                .cancelledBeforeRegistration(kind)
+        case .registered(let kind):
+            guard let waiter = removeModelDeletionWaiter(id: id, kind: kind) else {
+                modelDeletionWaiterStates[id] = .resolved
+                return
+            }
+            modelDeletionWaiterStates[id] = .resolved
+            waiter.continuation.resume(returning: .cancelled)
+        case .cancelledBeforeRegistration, .resolved, .none:
+            return
+        }
+    }
+
+    private func appendModelDeletionWaiter(
+        _ waiter: ModelDeletionWaiter,
+        kind: ModelDeletionWaitKind
+    ) {
+        switch kind {
+        case .access(let owner):
+            modelDeletionAccessWaiters[owner, default: []].append(waiter)
+        case .lease(let owner):
+            modelDeletionLeaseWaiters[owner, default: []].append(waiter)
+        case .drain(let owner):
+            modelDeletionDrainWaiters[owner, default: []].append(waiter)
+        }
+    }
+
+    private func removeModelDeletionWaiter(
+        id: UUID,
+        kind: ModelDeletionWaitKind
+    ) -> ModelDeletionWaiter? {
+        switch kind {
+        case .access(let owner):
+            return removeModelDeletionWaiter(
+                id: id,
+                owner: owner,
+                from: &modelDeletionAccessWaiters
+            )
+        case .lease(let owner):
+            return removeModelDeletionWaiter(
+                id: id,
+                owner: owner,
+                from: &modelDeletionLeaseWaiters
+            )
+        case .drain(let owner):
+            return removeModelDeletionWaiter(
+                id: id,
+                owner: owner,
+                from: &modelDeletionDrainWaiters
+            )
+        }
+    }
+
+    private func removeModelDeletionWaiter(
+        id: UUID,
+        owner: UUID,
+        from queues: inout [UUID: [ModelDeletionWaiter]]
+    ) -> ModelDeletionWaiter? {
+        guard var waiters = queues[owner],
+            let index = waiters.firstIndex(where: { $0.id == id })
+        else {
+            return nil
+        }
+        let waiter = waiters.remove(at: index)
+        if waiters.isEmpty {
+            queues.removeValue(forKey: owner)
+        } else {
+            queues[owner] = waiters
+        }
+        return waiter
+    }
+
+    private func resolveModelDeletionWaiters(
+        kind: ModelDeletionWaitKind,
+        signal: ModelDeletionWaitSignal
+    ) {
+        let waiters: [ModelDeletionWaiter]
+        switch kind {
+        case .access(let owner):
+            waiters = modelDeletionAccessWaiters.removeValue(forKey: owner) ?? []
+        case .lease(let owner):
+            waiters = modelDeletionLeaseWaiters.removeValue(forKey: owner) ?? []
+        case .drain(let owner):
+            waiters = modelDeletionDrainWaiters.removeValue(forKey: owner) ?? []
+        }
+        for waiter in waiters {
+            guard case .registered? = modelDeletionWaiterStates[waiter.id] else {
+                continue
+            }
+            modelDeletionWaiterStates[waiter.id] = .resolved
+            waiter.continuation.resume(returning: signal)
+        }
+    }
+
+    /// Exact live identity for `name`, accepting the same full-id/short-name
+    /// aliases as model selection. Nil means that exact resident does not
+    /// currently exist.
+    func residencyIdentity(named name: String) -> ModelResidencyIdentity? {
+        guard let key = residentKey(matching: name) else { return nil }
+        return residentMetadata[key]?.identity
+    }
+
+    func isChatOwnedResident(named name: String) -> Bool {
+        guard let key = residentKey(matching: name) else { return false }
+        return Self.isChatOwnedResidencySource(lastUseSource[key])
+    }
+
+    /// True only when the exact resident currently belongs to the request
+    /// surface driving the invoking turn. A spawned handoff uses this to
+    /// reclaim its own scheduled/API/plugin parent without treating another
+    /// resident from that broad source class as reclaimable.
+    func isResident(named name: String, ownedBy source: RequestSource) -> Bool {
+        guard let key = residentKey(matching: name) else { return false }
+        if source == .chatUI {
+            return Self.isChatOwnedResidencySource(lastUseSource[key])
+        }
+        return lastUseSource[key] == source
+    }
+
+    /// Models whose currently published residency was cold-loaded by this
+    /// handoff. Sorted for deterministic cleanup and tests.
+    func childOwnedResidentNames(
+        by token: ModelResidencyOwnershipToken
+    ) -> [String] {
+        residentMetadata.compactMap { name, metadata in
+            metadata.childOwnershipToken == token ? name : nil
+        }.sorted()
+    }
+
+    enum ExactUnloadResult: Sendable, Equatable {
+        case unloaded
+        case notResident
+        case identityChanged
+        case notOwned
+        case drainTimedOut
+    }
+
+    /// Unload only the exact published residency named by a parent lease.
+    /// A same-name reload is protected by the generation comparison.
+    func unloadExact(
+        _ identity: ModelResidencyIdentity,
+        leaseDrainTimeoutSeconds: Double? = nil
+    ) async -> ExactUnloadResult {
+        guard let key = residentKey(matching: identity.modelName) else {
+            return .notResident
+        }
+        guard residentMetadata[key]?.identity == identity else {
+            return .identityChanged
+        }
+        let unloaded = await unloadClaimed(
+            name: key,
+            leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds,
+            expectedIdentity: identity,
+            expectedOwnershipToken: nil
+        )
+        return unloaded ? .unloaded : .drainTimedOut
+    }
+
+    /// Unload a child model only when the currently published residency still
+    /// carries this handoff's ownership token. Preexisting residents, loads
+    /// initiated by another surface, and same-name reloads all fail closed.
+    func unloadChildOwned(
+        name: String,
+        by token: ModelResidencyOwnershipToken,
+        leaseDrainTimeoutSeconds: Double? = nil
+    ) async -> ExactUnloadResult {
+        guard let key = residentKey(matching: name) else {
+            return .notResident
+        }
+        guard residentMetadata[key]?.childOwnershipToken == token else {
+            return .notOwned
+        }
+        guard let identity = residentMetadata[key]?.identity else {
+            return .notOwned
+        }
+        let unloaded = await unloadClaimed(
+            name: key,
+            leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds,
+            expectedIdentity: identity,
+            expectedOwnershipToken: token
+        )
+        guard unloaded else { return .drainTimedOut }
+        return .unloaded
+    }
+
+    private func residentKey(matching requested: String) -> String? {
+        if modelCache[requested] != nil { return requested }
+        let installed = ModelManager.findInstalledModel(named: requested)
+        if let canonical = installed?.name, modelCache[canonical] != nil {
+            return canonical
+        }
+        let tail = requested.split(separator: "/").last.map(String.init) ?? requested
+        return modelCache.keys.first {
+            $0.caseInsensitiveCompare(requested) == .orderedSame
+                || $0.caseInsensitiveCompare(tail) == .orderedSame
+        }
     }
 
     /// Warm-load an installed local model without starting generation. Used by
     /// delegated jobs that temporarily evict chat models for unified-memory
     /// headroom, then restore the prior resident set after the helper job.
-    func preload(name: String, intent: ModelLoadIntent = .interactive) async throws {
+    func preload(
+        name: String,
+        intent: ModelLoadIntent = .interactive,
+        restoreOwnershipToken: ModelResidencyOwnershipToken? = nil
+    ) async throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw NSError(
@@ -313,6 +1027,11 @@ public actor ModelRuntime {
                 userInfo: [NSLocalizedDescriptionKey: "Cannot preload an empty model name"]
             )
         }
+        let deletionAccess = try await beginModelDeletionProtectedAccess(
+            modelID: "",
+            modelName: trimmed
+        )
+        defer { finishModelDeletionProtectedAccess(deletionAccess) }
         if modelCache[trimmed] != nil { return }
         guard let found = ModelManager.findInstalledModel(named: trimmed) else {
             throw NSError(
@@ -322,7 +1041,12 @@ public actor ModelRuntime {
             )
         }
         if modelCache[found.name] != nil { return }
-        _ = try await loadContainer(id: found.id, name: found.name, intent: intent)
+        _ = try await loadContainer(
+            id: found.id,
+            name: found.name,
+            intent: intent,
+            restoreOwnershipToken: restoreOwnershipToken
+        )
         // A preload never acquires a generation lease, so without arming the
         // idle timer here the model would stay resident FOREVER if no
         // generation ever follows (the timer is otherwise only scheduled on
@@ -372,7 +1096,7 @@ public actor ModelRuntime {
             genLog.info(
                 "memory pressure: unloading idle model \(name, privacy: .public)"
             )
-            await unload(name: name)
+            await unload(name: name, reason: .memoryPressure)
             unloaded.append(name)
         }
         return unloaded
@@ -407,10 +1131,17 @@ public actor ModelRuntime {
         for name in modelCache.keys where !activeNames.contains(name) {
             if let source = lastUseSource[name], source != .chatUI { continue }
             guard await ModelLease.shared.count(for: name) == 0 else { continue }
+            guard let idleDecisionID = pendingIdleResidencyDecisions[name] else { continue }
             await ModelResidencyManager.shared.accelerateIdleUnload(
                 modelName: name,
                 grace: grace,
-                unload: { name in await ModelRuntime.shared.unload(name: name) },
+                ownerDecisionID: idleDecisionID,
+                unload: { name in
+                    await ModelRuntime.shared.performIdleUnloadIfCurrent(
+                        name: name,
+                        decisionID: idleDecisionID
+                    )
+                },
                 leaseCount: { name in await ModelLease.shared.count(for: name) },
                 isResident: { name in await ModelRuntime.shared.isResident(name: name) },
                 shouldStillUnload: { name in
@@ -456,6 +1187,48 @@ public actor ModelRuntime {
         }
     }
 
+    /// Resolve the canonical installed identity before asking the vMLX
+    /// registry for one model's actor-consistent capacity. A preloaded model
+    /// can legitimately return nil until its first generation creates the
+    /// shared BatchEngine.
+    func batchEngineCapacitySnapshot(
+        for requestedModelName: String,
+        reconcilingTo configuredMaximum: Int? = nil
+    ) async -> ModelBatchCapacitySnapshot? {
+        let canonical =
+            ModelManager.findInstalledModel(named: requestedModelName)?.name
+            ?? requestedModelName
+        return await MLXBatchAdapter.capacitySnapshot(
+            for: canonical,
+            reconcilingTo: configuredMaximum
+        )
+    }
+
+    /// The resident set a chat-owned handoff may reclaim. A nil source is a
+    /// legacy/preload resident and remains chat-owned for backwards
+    /// compatibility; explicit API/plugin/P2P/scheduled owners are protected.
+    func chatOwnedCachedModelSummaries(
+        refreshTopology: Bool = false
+    ) async -> [ModelCacheSummary] {
+        let summaries = await cachedModelSummaries(refreshTopology: refreshTopology)
+        return summaries.filter { Self.isChatOwnedResidencySource(lastUseSource[$0.name]) }
+    }
+
+    nonisolated static func isChatOwnedResidencySource(_ source: RequestSource?) -> Bool {
+        source == nil || source == .chatUI
+    }
+
+    /// Nested subagents may reuse a model resident for another surface. They
+    /// must not steal its ownership marker merely by generating on it.
+    nonisolated static func resolvedResidencySource(
+        existing: RequestSource?,
+        incoming: RequestSource,
+        preserveExisting: Bool
+    ) -> RequestSource {
+        if preserveExisting, let existing { return existing }
+        return incoming
+    }
+
     func preencodeLiveVoiceAudioIfResident(
         modelName: String,
         attachmentId: UUID,
@@ -482,6 +1255,23 @@ public actor ModelRuntime {
             )
         }
 
+        let deletionAccess: ModelDeletionAccessLease
+        do {
+            deletionAccess = try await beginModelDeletionProtectedAccess(
+                modelID: "",
+                modelName: modelName
+            )
+        } catch {
+            return LiveVoiceAudioPreencodeResult(
+                status: .failed,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: "Cancelled while waiting for model deletion to finish"
+            )
+        }
+        defer { finishModelDeletionProtectedAccess(deletionAccess) }
+
         guard
             let holder = modelCache[modelName]
                 ?? modelCache.values.first(where: {
@@ -497,7 +1287,15 @@ public actor ModelRuntime {
             )
         }
 
-        await ModelResidencyManager.shared.markActive(modelName: holder.name)
+        guard await markModelActiveForResidency(holder.name) else {
+            return LiveVoiceAudioPreencodeResult(
+                status: .skippedModelNotResident,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: nil
+            )
+        }
         // Live voice runs inside the chat UI, so its residency is chat-scoped.
         lastUseSource[holder.name] = .chatUI
         await ModelLease.shared.acquire(holder.name)
@@ -769,7 +1567,8 @@ public actor ModelRuntime {
             return cached
         }
 
-        guard loadingTasks[name]?.id == loadID,
+        guard let loadingRecord = loadingTasks[name],
+            loadingRecord.id == loadID,
             !supersededLoadingTaskIDs.contains(loadID)
         else {
             holder.container.disableCaching()
@@ -777,9 +1576,22 @@ public actor ModelRuntime {
         }
 
         modelCache[name] = holder
+        residentMetadata[name] = ResidentMetadata(
+            identity: ModelResidencyIdentity(modelName: name, generation: UUID()),
+            childOwnershipToken: loadingRecord.childOwnershipToken
+        )
         loadingTasks.removeValue(forKey: name)
         currentModelName = name
         Memory.cacheLimit = mlxCacheLimit()
+
+        // Publish the cache mutation before the native-MTP warm-up suspends
+        // this actor. An unload/model switch may win while that warm-up is
+        // running; publishing afterwards would create a newer, stale `.load`
+        // revision for a model that is no longer resident.
+        genLog.info(
+            "loadContainer: loaded \(name, privacy: .public) isVLM=\(holder.isVLM, privacy: .public)"
+        )
+        publishResidencyChange(reason: .load)
 
         // Native-MTP bundles historically ran their FIRST request in plain
         // autoregressive mode (the registry's cold-warmup rule), so the one
@@ -795,79 +1607,246 @@ public actor ModelRuntime {
             runtime: getConfig(),
             maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
         )
-
-        genLog.info(
-            "loadContainer: loaded \(name, privacy: .public) isVLM=\(holder.isVLM, privacy: .public)"
-        )
-        publishResidencyChange()
         return holder
     }
 
     /// Unload `name`, blocking until any in-flight generation against this
-    /// model has fully released its lease. The lease is held for the entire
-    /// stream lifetime (see `generateEventStream`), so this guarantees we
-    /// never free buffers that an active Metal command buffer still references.
-    func unload(name: String) async {
-        await ModelResidencyManager.shared.cancel(modelName: name)
+    /// model has fully released its lease. Idle-policy teardown carries its
+    /// exact decision identity; handoff callers may also bound the drain. A
+    /// timeout always fails closed with the container and lease intact.
+    @discardableResult
+    func unload(
+        name: String,
+        reason: ModelRuntimeResidencyChangeReason = .explicit,
+        idleDecisionID: UInt64? = nil,
+        leaseDrainTimeoutSeconds: Double? = nil
+    ) async -> Bool {
+        guard (reason == .idlePolicy) == (idleDecisionID != nil) else {
+            assertionFailure("idlePolicy unloads require one exact decision ID; other unloads require none")
+            return false
+        }
 
-        // Shut the BatchEngine first so its scheduling loop stops issuing
-        // new model forward passes; then wait for any in-flight per-request
-        // leases to drain before we touch the container.
-        await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)
-        await ModelLease.shared.waitForZero(name)
-        // Defensive: cancel the latest tracked wrapper task. The lease drain
-        // above already covers in-flight requests; this only catches the
-        // rare case where a task was cancelled mid-setup before acquiring.
+        if reason != .idlePolicy,
+            let teardown = idleResidencyTeardowns[name],
+            committedIdleResidencyDecisions[name] == teardown.decisionID
+        {
+            await teardown.task.value
+        }
+
+        guard let key = residentKey(matching: name) else {
+            if reason == .idlePolicy, let idleDecisionID {
+                guard inFlightIdleResidencyDecisions[name] == idleDecisionID else { return false }
+                await ModelResidencyManager.shared.cancel(
+                    modelName: name,
+                    ownerDecisionID: idleDecisionID
+                )
+            } else {
+                pendingIdleResidencyDecisions.removeValue(forKey: name)
+                inFlightIdleResidencyDecisions.removeValue(forKey: name)
+                await ModelResidencyManager.shared.cancel(modelName: name)
+            }
+            await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)
+            if let leaseDrainTimeoutSeconds {
+                let drained = await ModelLease.shared.waitForZero(
+                    name,
+                    timeoutSeconds: leaseDrainTimeoutSeconds
+                )
+                guard drained else {
+                    genLog.error(
+                        "unload: timed out waiting for lease drain for non-resident \(name, privacy: .public)"
+                    )
+                    return false
+                }
+            } else {
+                await ModelLease.shared.waitForZero(name)
+            }
+            if let record = loadingTasks[name] {
+                await cancelAndDrainLoadingTasks([(name, record)])
+            }
+            return true
+        }
+
+        return await unloadClaimed(
+            name: key,
+            leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds,
+            expectedIdentity: residentMetadata[key]?.identity,
+            expectedOwnershipToken: nil,
+            reason: reason,
+            idleDecisionID: idleDecisionID
+        )
+    }
+
+    private func unloadClaimed(
+        name: String,
+        leaseDrainTimeoutSeconds: Double?,
+        expectedIdentity: ModelResidencyIdentity?,
+        expectedOwnershipToken: ModelResidencyOwnershipToken?,
+        reason: ModelRuntimeResidencyChangeReason = .handoff,
+        idleDecisionID: UInt64? = nil
+    ) async -> Bool {
+        guard (reason == .idlePolicy) == (idleDecisionID != nil) else { return false }
+
+        if reason != .idlePolicy,
+            let teardown = idleResidencyTeardowns[name],
+            committedIdleResidencyDecisions[name] == teardown.decisionID
+        {
+            await teardown.task.value
+            guard modelCache[name] != nil else { return true }
+        }
+
+        if residencyUnloadClaims[name] != nil {
+            await withCheckedContinuation { continuation in
+                residencyUnloadWaiters[name, default: []].append(continuation)
+            }
+            guard modelCache[name] != nil else { return true }
+            return await unloadClaimed(
+                name: name,
+                leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds,
+                expectedIdentity: expectedIdentity,
+                expectedOwnershipToken: expectedOwnershipToken,
+                reason: reason,
+                idleDecisionID: idleDecisionID
+            )
+        }
+        if let expectedIdentity,
+            residentMetadata[name]?.identity != expectedIdentity
+        {
+            return false
+        }
+        if let expectedOwnershipToken,
+            residentMetadata[name]?.childOwnershipToken != expectedOwnershipToken
+        {
+            return false
+        }
+
+        let claim = UUID()
+        residencyUnloadClaims[name] = claim
+        defer { finishResidencyUnloadClaim(name: name, claim: claim) }
+
+        if reason == .idlePolicy, let idleDecisionID {
+            await ModelResidencyManager.shared.cancel(
+                modelName: name,
+                ownerDecisionID: idleDecisionID
+            )
+            if let leaseDrainTimeoutSeconds {
+                let drained = await ModelLease.shared.waitForZero(
+                    name,
+                    timeoutSeconds: leaseDrainTimeoutSeconds
+                )
+                guard drained else { return false }
+            } else {
+                await ModelLease.shared.waitForZero(name)
+            }
+            guard inFlightIdleResidencyDecisions[name] == idleDecisionID else { return false }
+            if let expectedIdentity,
+                residentMetadata[name]?.identity != expectedIdentity
+            {
+                return false
+            }
+            if let expectedOwnershipToken,
+                residentMetadata[name]?.childOwnershipToken != expectedOwnershipToken
+            {
+                return false
+            }
+            await MetalGate.shared.enterModelTeardown(model: name)
+            guard inFlightIdleResidencyDecisions[name] == idleDecisionID else {
+                await MetalGate.shared.exitModelTeardown(model: name)
+                return false
+            }
+            committedIdleResidencyDecisions[name] = idleDecisionID
+            await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)
+        } else {
+            pendingIdleResidencyDecisions.removeValue(forKey: name)
+            inFlightIdleResidencyDecisions.removeValue(forKey: name)
+            await ModelResidencyManager.shared.cancel(modelName: name)
+            await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)
+            if let leaseDrainTimeoutSeconds {
+                let drained = await ModelLease.shared.waitForZero(
+                    name,
+                    timeoutSeconds: leaseDrainTimeoutSeconds
+                )
+                guard drained else {
+                    genLog.error(
+                        "unload: timed out waiting for lease drain for \(name, privacy: .public); model remains resident"
+                    )
+                    return false
+                }
+            } else {
+                await ModelLease.shared.waitForZero(name)
+            }
+            if let expectedIdentity,
+                residentMetadata[name]?.identity != expectedIdentity
+            {
+                return false
+            }
+            if let expectedOwnershipToken,
+                residentMetadata[name]?.childOwnershipToken != expectedOwnershipToken
+            {
+                return false
+            }
+            await MetalGate.shared.enterModelTeardown(model: name)
+        }
+
+        guard residencyUnloadClaims[name] == claim else {
+            await MetalGate.shared.exitModelTeardown(model: name)
+            return false
+        }
+        if let expectedIdentity,
+            residentMetadata[name]?.identity != expectedIdentity
+        {
+            await MetalGate.shared.exitModelTeardown(model: name)
+            return false
+        }
+        if let expectedOwnershipToken,
+            residentMetadata[name]?.childOwnershipToken != expectedOwnershipToken
+        {
+            await MetalGate.shared.exitModelTeardown(model: name)
+            return false
+        }
+
         await cancelActiveGeneration(for: name)
-
         if let record = loadingTasks[name] {
             await cancelAndDrainLoadingTasks([(name, record)])
         }
-
-        // Serialize the GPU teardown against every other Metal producer via the
-        // exclusive teardown gate. Acquired here — AFTER the lease/idle drains
-        // above, so we never hold the gate while waiting for in-flight requests
-        // — and released only after the final synchronize below, so "teardown
-        // gate released" provably means "this model's GPU work is idle",
-        // symmetric with the load and image lanes. Without it the next admitted
-        // producer (a model load, image job, or embedder) starts the moment this
-        // function returns and races the async buffer frees/fences the weight
-        // release enqueues — the chat→image handoff `Gather::eval_gpu` abort.
-        await MetalGate.shared.enterModelTeardown(model: name)
         modelCache[name]?.container.disableCaching()
 
-        // Drain the GPU BEFORE releasing the weight arrays. The lease/idle
-        // drains above stop new work and wait for request leases, but a chat
-        // turn's last compute command buffer (e.g. `Gemma4.prepare`) can still
-        // be queued on the shared Metal stream. Freeing the weights first and
-        // synchronizing only afterwards (below) lets that queued buffer execute
-        // against already-freed weights — observed SIGSEGV in
-        // `Gemma4.prepare → metal::Device::end_encoding` when the OCR/spawn
-        // residency handoff loads the subagent model on top of it. Draining
-        // here forces the buffer to complete while its weights are still valid.
         Stream.gpu.synchronize()
-
         let didRemove = autoreleasepool {
             modelCache.removeValue(forKey: name) != nil
         }
+        residentMetadata.removeValue(forKey: name)
         lastUseSource.removeValue(forKey: name)
         if currentModelName == name { currentModelName = nil }
-        if didRemove { publishResidencyChange() }
+        if didRemove {
+            publishResidencyChange(reason: reason, idleDecisionID: idleDecisionID)
+        }
 
         Memory.cacheLimit = mlxCacheLimit()
-        // Fully settle the teardown before returning so the NEXT GPU producer
-        // (a model load, image generation, embedding) never overlaps this
-        // model's async buffer frees on the shared Metal device — releasing the
-        // weight arrays above enqueues allocator frees + fences that escape a
-        // single `synchronize` and otherwise race the next producer (observed:
-        // a slow model's unload dealloc colliding with vMLXFlux's weight load,
-        // SIGSEGV in `Fence::wait` vs `MetalAllocator::free`). Drain, return the
-        // freed buffers, then drain again to flush the frees `clearCache` itself
-        // triggers.
         Stream.gpu.synchronize()
         Memory.clearCache()
         Stream.gpu.synchronize()
         await MetalGate.shared.exitModelTeardown(model: name)
+        return true
+    }
+
+    /// Remove only the claim generation owned by this caller, then release all
+    /// joiners in the same actor turn.
+    private func finishResidencyUnloadClaim(name: String, claim: UUID) {
+        guard residencyUnloadClaims[name] == claim else { return }
+        residencyUnloadClaims.removeValue(forKey: name)
+        let waiters = residencyUnloadWaiters.removeValue(forKey: name) ?? []
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    private func finishAllResidencyUnloadClaims() {
+        residencyUnloadClaims.removeAll()
+        let waiters = residencyUnloadWaiters.values.flatMap { $0 }
+        residencyUnloadWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 
     /// Evict `other` for the strict-single-model policy WITHOUT cancelling an
@@ -891,7 +1870,7 @@ public actor ModelRuntime {
             _ = await ModelLease.shared.waitForZero(other, timeoutSeconds: 300)
         }
         genLog.info("loadContainer: strict eviction of \(other, privacy: .public)")
-        await unload(name: other)
+        await unload(name: other, reason: .modelSwitch)
     }
 
     /// Unloads any loaded model whose name is not in `activeNames`.
@@ -922,7 +1901,7 @@ public actor ModelRuntime {
         let toUnload = modelCache.keys.filter { !keep.contains($0) }
         for name in toUnload {
             print("[ModelRuntime] GC: Unloading unused model \(name)")
-            await unload(name: name)
+            await unload(name: name, reason: .modelSwitch)
         }
     }
 
@@ -935,12 +1914,22 @@ public actor ModelRuntime {
     ///   normal (settings-change / GC) path leave this `false` for the full,
     ///   correctness-first teardown.
     func clearAll(quit: Bool = false) async {
+        isClearingAllResidency = true
+        defer { isClearingAllResidency = false }
         await ModelResidencyManager.shared.cancelAll()
 
-        // Shut down every BatchEngine so they stop scheduling new forward
-        // passes and cancel ALL tracked generation wrapper tasks, then wait
-        // for every leased model to drain before we touch any container.
+        // A pre-commit idle teardown may be waiting for the active model lease
+        // to drain. Cancel generation wrappers first so that lease can release;
+        // awaiting idle teardown tasks before this point can wedge settings
+        // clear and app termination behind the very generation they must stop.
         await cancelAllGenerations()
+        let idleTeardownTasks = idleResidencyTeardowns.values.map(\.task)
+        for task in idleTeardownTasks {
+            await task.value
+        }
+
+        // With idle teardown serialization settled, wait for every leased
+        // model to drain before touching any remaining container.
         var hasStuckLease = false
         for name in modelCache.keys {
             if quit {
@@ -985,6 +1974,12 @@ public actor ModelRuntime {
             loadingTasks.removeAll()
             supersededLoadingTaskIDs.removeAll()
             lastUseSource.removeAll()
+            pendingIdleResidencyDecisions.removeAll()
+            inFlightIdleResidencyDecisions.removeAll()
+            committedIdleResidencyDecisions.removeAll()
+            idleResidencyTeardowns.removeAll()
+            residentMetadata.removeAll()
+            finishAllResidencyUnloadClaims()
             currentModelName = nil
             cachedConfig = nil
             return
@@ -1004,11 +1999,17 @@ public actor ModelRuntime {
             modelCache.removeAll()
         }
         lastUseSource.removeAll()
+        pendingIdleResidencyDecisions.removeAll()
+        inFlightIdleResidencyDecisions.removeAll()
+        committedIdleResidencyDecisions.removeAll()
+        idleResidencyTeardowns.removeAll()
+        residentMetadata.removeAll()
+        finishAllResidencyUnloadClaims()
         loadingTasks.removeAll()
         supersededLoadingTaskIDs.removeAll()
         currentModelName = nil
         cachedConfig = nil
-        publishResidencyChange()
+        publishResidencyChange(reason: quit ? .shutdown : .settingsClear)
 
         // `clearAll` empties `modelCache`, so `mlxCacheLimit()` returns 0
         // anyway — but route through the shared helper so the policy stays
@@ -1023,11 +2024,51 @@ public actor ModelRuntime {
     /// Broadcast a value snapshot rather than the actor-owned dictionary so
     /// UI observers can invalidate stale warm indicators without crossing
     /// actor isolation or polling the runtime.
-    private func publishResidencyChange() {
+    private func publishResidencyChange(
+        reason: ModelRuntimeResidencyChangeReason,
+        idleDecisionID: UInt64? = nil
+    ) {
+        let snapshot = residencyLedger.record(
+            names: Array(modelCache.keys),
+            reason: reason,
+            idleDecisionID: idleDecisionID
+        )
         NotificationCenter.default.post(
             name: .modelRuntimeResidencyChanged,
-            object: Array(modelCache.keys)
+            object: snapshot
         )
+    }
+
+    private func currentResidencySnapshot() -> ModelRuntimeResidencySnapshot {
+        residencyLedger.snapshot(names: Array(modelCache.keys))
+    }
+
+    private func matchingRuntimeModelName(_ selectedModel: String) -> String? {
+        let candidates = Set(modelCache.keys)
+            .union(pendingIdleResidencyDecisions.keys)
+            .union(inFlightIdleResidencyDecisions.keys)
+        if let exact = candidates.first(where: {
+            $0.caseInsensitiveCompare(selectedModel) == .orderedSame
+        }) {
+            return exact
+        }
+        if let installedName = ModelManager.findInstalledModel(named: selectedModel)?.name,
+            let exactInstalled = candidates.first(where: {
+                $0.caseInsensitiveCompare(installedName) == .orderedSame
+            })
+        {
+            return exactInstalled
+        }
+
+        let selectedTail = selectedModel.split(separator: "/").last.map(String.init) ?? selectedModel
+        let tailMatches = candidates.filter { candidate in
+            let candidateTail = candidate.split(separator: "/").last.map(String.init) ?? candidate
+            return candidate.caseInsensitiveCompare(selectedTail) == .orderedSame
+                || candidateTail.caseInsensitiveCompare(selectedTail) == .orderedSame
+        }
+        // A basename is only safe when it identifies one runtime owner. If
+        // multiple installed repos share it, do not cancel either idle timer.
+        return tailMatches.count == 1 ? tailMatches.first : nil
     }
 
     /// Invalidates the cached RuntimeConfig so the next request reads fresh values.
@@ -1045,17 +2086,96 @@ public actor ModelRuntime {
     }
 
     private func scheduleIdleResidency(for modelName: String) async {
+        guard !isClearingAllResidency else { return }
         let policy =
             await ServerConfigurationStore.load()?.modelIdleResidencyPolicy
             ?? ServerConfiguration.default.modelIdleResidencyPolicy
+        if case .never = policy {
+            pendingIdleResidencyDecisions.removeValue(forKey: modelName)
+            await ModelResidencyManager.shared.scheduleIdleUnload(
+                modelName: modelName,
+                policy: policy,
+                unload: { _ in },
+                leaseCount: { name in await ModelLease.shared.count(for: name) },
+                isResident: { name in await ModelRuntime.shared.isResident(name: name) }
+            )
+            return
+        }
 
+        nextIdleResidencyDecisionID &+= 1
+        let idleDecisionID = nextIdleResidencyDecisionID
+        pendingIdleResidencyDecisions[modelName] = idleDecisionID
         await ModelResidencyManager.shared.scheduleIdleUnload(
             modelName: modelName,
             policy: policy,
-            unload: { name in await ModelRuntime.shared.unload(name: name) },
+            ownerDecisionID: idleDecisionID,
+            unload: { name in
+                await ModelRuntime.shared.performIdleUnloadIfCurrent(
+                    name: name,
+                    decisionID: idleDecisionID
+                )
+            },
             leaseCount: { name in await ModelLease.shared.count(for: name) },
             isResident: { name in await ModelRuntime.shared.isResident(name: name) }
         )
+
+        // `ModelRuntime` is reentrant across the manager actor hop. If a new
+        // generation/focus/schedule replaced this decision meanwhile, remove
+        // only the stale manager entry that this call may just have installed.
+        if pendingIdleResidencyDecisions[modelName] != idleDecisionID {
+            await ModelResidencyManager.shared.cancel(
+                modelName: modelName,
+                ownerDecisionID: idleDecisionID
+            )
+        }
+    }
+
+    /// Cancel a pre-commit idle decision, or wait for an already-committed
+    /// teardown before allowing the caller to touch/load the model again.
+    /// Returns whether the old container is still resident after that gate.
+    @discardableResult
+    private func markModelActiveForResidency(_ modelName: String) async -> Bool {
+        pendingIdleResidencyDecisions.removeValue(forKey: modelName)
+        if let teardown = idleResidencyTeardowns[modelName],
+            committedIdleResidencyDecisions[modelName] == teardown.decisionID
+        {
+            await teardown.task.value
+        } else {
+            inFlightIdleResidencyDecisions.removeValue(forKey: modelName)
+        }
+        await ModelResidencyManager.shared.markActive(modelName: modelName)
+        return modelCache[modelName] != nil
+    }
+
+    fileprivate func performIdleUnloadIfCurrent(
+        name: String,
+        decisionID: UInt64
+    ) async {
+        guard pendingIdleResidencyDecisions[name] == decisionID else { return }
+        pendingIdleResidencyDecisions.removeValue(forKey: name)
+        inFlightIdleResidencyDecisions[name] = decisionID
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.unload(name: name, reason: .idlePolicy, idleDecisionID: decisionID)
+            await self.finishIdleResidencyTeardown(name: name, decisionID: decisionID)
+        }
+        idleResidencyTeardowns[name] = IdleResidencyTeardown(
+            decisionID: decisionID,
+            task: task
+        )
+        await task.value
+    }
+
+    private func finishIdleResidencyTeardown(name: String, decisionID: UInt64) {
+        if inFlightIdleResidencyDecisions[name] == decisionID {
+            inFlightIdleResidencyDecisions.removeValue(forKey: name)
+        }
+        if committedIdleResidencyDecisions[name] == decisionID {
+            committedIdleResidencyDecisions.removeValue(forKey: name)
+        }
+        if idleResidencyTeardowns[name]?.decisionID == decisionID {
+            idleResidencyTeardowns.removeValue(forKey: name)
+        }
     }
 
     /// MLX freed-buffer cache limit sized for intermediate activation reuse.
@@ -1349,15 +2469,36 @@ public actor ModelRuntime {
     }
 
     private static func attentionLayerCount(in config: [String: Any]) -> Int {
+        let physicalLayers: Int
         if let blocks = config["layers_block_type"] as? [Any] {
-            return blocks.compactMap { stringValue($0)?.lowercased() }
+            physicalLayers = blocks.compactMap { stringValue($0)?.lowercased() }
                 .filter { $0 == "attention" || $0 == "attn" || $0 == "*" }
                 .count
+        } else if let pattern = stringValue(config["hybrid_override_pattern"]), !pattern.isEmpty {
+            physicalLayers = pattern.filter { $0 == "*" || $0 == "A" || $0 == "a" }.count
+        } else {
+            physicalLayers = intValue(config["num_hidden_layers"]) ?? 0
         }
-        if let pattern = stringValue(config["hybrid_override_pattern"]), !pattern.isEmpty {
-            return pattern.filter { $0 == "*" || $0 == "A" || $0 == "a" }.count
+
+        // Nanbeige 4.2 executes one physical attention stack repeatedly while
+        // retaining independent KV state for every (loop, layer) pair. Its
+        // runtime therefore creates `physicalLayers * totalLoops` cache slots,
+        // not one slot per weight-bearing layer. Keep this architecture-scoped:
+        // `num_loops` has unrelated meanings in other model configurations.
+        guard stringValue(config["model_type"])?.lowercased() == "nanbeige",
+            physicalLayers > 0
+        else {
+            return physicalLayers
         }
-        return intValue(config["num_hidden_layers"]) ?? 0
+
+        let loopLossWeights = config["loop_loss_weights"] as? [Any]
+        let totalLoops =
+            if let loopLossWeights, !loopLossWeights.isEmpty {
+                loopLossWeights.count + 1
+            } else {
+                max(1, intValue(config["num_loops"]) ?? 1)
+            }
+        return physicalLayers * totalLoops
     }
 
     private static func effectiveKVPositionBudget(config: [String: Any]) -> Int? {
@@ -1693,6 +2834,165 @@ public actor ModelRuntime {
         )
     }
 
+    /// Resolve the live, authoritative memory facts used to admit one
+    /// same-local-model subagent batch.
+    ///
+    /// This deliberately shares the normal model-load policy instead of
+    /// teaching `SpawnBatchTool` another weight/JANG/materialization formula:
+    /// the target footprint follows the same preliminary Memory Safety plan as
+    /// `loadContainer`, while per-child cache/state comes from the existing
+    /// architecture-aware KV/SSM/activation estimator. Resident parent bytes
+    /// are counted as releasable only when the already-resolved handoff plan
+    /// will actually unload them.
+    private struct SubagentMemoryProfile {
+        let canonicalName: String
+        let summaries: [ModelCacheSummary]
+        let targetAlreadyResident: Bool
+        let targetLoadFootprintBytes: Int64?
+        let perActiveChildHeadroomBytes: Int64?
+        let resolvedLoadBudgetBytes: UInt64?
+        let memorySafetyAllowsLoad: Bool
+    }
+
+    private func subagentMemoryProfile(
+        for modelName: String
+    ) async -> SubagentMemoryProfile? {
+        let trimmed = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+            let found = ModelManager.findInstalledModel(named: trimmed),
+            let localURL = Self.findLocalDirectory(forModelId: found.id)
+        else {
+            return nil
+        }
+
+        let canonicalName = found.name
+        let summaries = await cachedModelSummaries()
+        let targetAlreadyResident = summaries.contains { summary in
+            let residentName =
+                ModelManager.findInstalledModel(named: summary.name)?.name
+                ?? summary.name
+            return residentName.caseInsensitiveCompare(canonicalName) == .orderedSame
+        }
+        let settings = ServerRuntimeSettingsStore.snapshot()
+        let preliminaryPlan = Self.resolveMemorySafetyLoadPlan(
+            modelName: canonicalName,
+            modelDirectory: localURL,
+            settings: settings,
+            baseLoadConfiguration: .osaurusProduction,
+            inspectBundleFacts: true
+        )
+        let rawWeightsBytes = candidateWeightsSizeBytes(
+            modelName: canonicalName,
+            directory: localURL
+        )
+        let targetLoadFootprintBytes: Int64? =
+            rawWeightsBytes > 0
+            ? (
+                preliminaryPlan.loadConfiguration.useMmapSafetensors
+                ? Self.effectiveLoadFootprintBytes(
+                    rawWeightsBytes: rawWeightsBytes,
+                    modelDirectory: localURL,
+                    modelName: canonicalName
+                )
+                : rawWeightsBytes
+            )
+            : nil
+        let perActiveChildHeadroomBytes = targetLoadFootprintBytes.map {
+            Self.estimatedKVHeadroomBytes(
+                forWeights: $0,
+                modelDirectory: localURL,
+                modelName: canonicalName,
+                kvRetentionCap: preliminaryPlan.cache.defaultMaxKVSize
+            )
+        }
+        let estimatedWorkingSetBytes = targetLoadFootprintBytes.flatMap {
+            Self.estimatedMemorySafetyWorkingSetBytes(
+                loadFootprintBytes: $0,
+                physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory
+            )
+        }
+        let admissionPlan = Self.resolveMemorySafetyLoadPlan(
+            modelName: canonicalName,
+            modelDirectory: localURL,
+            settings: settings,
+            baseLoadConfiguration: .osaurusProduction,
+            inspectBundleFacts: true,
+            request: VMLXMemoryRequestEstimate(
+                workingSetBytes: estimatedWorkingSetBytes
+            )
+        )
+        return SubagentMemoryProfile(
+            canonicalName: canonicalName,
+            summaries: summaries,
+            targetAlreadyResident: targetAlreadyResident,
+            targetLoadFootprintBytes: targetLoadFootprintBytes,
+            perActiveChildHeadroomBytes: perActiveChildHeadroomBytes,
+            resolvedLoadBudgetBytes: admissionPlan.resolvedLoadBudgetBytes,
+            memorySafetyAllowsLoad: admissionPlan.blockingIssues.isEmpty
+        )
+    }
+
+    /// Exact pre-side-effect Memory Safety verdict for the coexistence route.
+    /// The separate flexible-resident budget remains authoritative for
+    /// eviction; this answers only whether the normal loader admits the target
+    /// bundle under the current Memory Safety request budget.
+    func subagentCoexistenceMemorySafetyAllowsLoad(
+        for modelName: String
+    ) async -> Bool {
+        await subagentMemoryProfile(for: modelName)?.memorySafetyAllowsLoad ?? false
+    }
+
+    func subagentBatchMemoryFacts(
+        for modelName: String,
+        residencyPlan: ResidencyPlan
+    ) async -> SubagentBatchMemoryFacts? {
+        guard let profile = await subagentMemoryProfile(for: modelName) else {
+            return nil
+        }
+        let releasableParentBytes: Int64 =
+            residencyPlan.shouldUnload
+            ? profile.summaries.reduce(Int64(0)) { partial, summary in
+                let residentName =
+                    ModelManager.findInstalledModel(named: summary.name)?.name
+                    ?? summary.name
+                guard
+                    residentName.caseInsensitiveCompare(profile.canonicalName)
+                        != .orderedSame
+                else {
+                    return partial
+                }
+                let (sum, overflow) = partial.addingReportingOverflow(summary.bytes)
+                return overflow ? Int64.max : sum
+            }
+            : 0
+
+        return SubagentBatchMemoryFacts(
+            canonicalModelKey: profile.canonicalName,
+            targetAlreadyResident: profile.targetAlreadyResident,
+            targetLoadFootprintBytes: profile.targetLoadFootprintBytes.flatMap(
+                Self.nonnegativeUInt64
+            ),
+            perActiveChildHeadroomBytes: profile.perActiveChildHeadroomBytes.flatMap(
+                Self.nonnegativeUInt64
+            ),
+            // Match the existing subagent handoff preflight exactly. The
+            // broader model-load estimator also counts speculative pages,
+            // which are not part of the conservative handoff admission
+            // contract and could over-admit a batch.
+            reclaimableBytes: Self.nonnegativeUInt64(
+                ChatResidencyHandoff.availableMemoryBytes()
+            ),
+            releasableParentBytes: Self.nonnegativeUInt64(releasableParentBytes) ?? 0,
+            resolvedLoadBudgetBytes: profile.resolvedLoadBudgetBytes,
+            osHeadroomBytes: Self.nonnegativeUInt64(SubagentCoexistence.headroomBytes) ?? 0
+        )
+    }
+
+    private nonisolated static func nonnegativeUInt64(_ value: Int64) -> UInt64? {
+        guard value >= 0 else { return nil }
+        return UInt64(value)
+    }
+
     /// Memoized bundle-size lookup for `projectedLoadFeasibility`: the UI
     /// re-polls every ~2s while a banner is up, and `computeWeightsSizeBytes`
     /// re-reads directory metadata / index JSON on every call. Keyed by model
@@ -1833,6 +3133,7 @@ public actor ModelRuntime {
         otherRecord: LoadingTaskRecord,
         policy: ModelEvictionPolicy,
         intent: ModelLoadIntent,
+        restoreOwnershipToken: ModelResidencyOwnershipToken?,
         afterColdLoadWait: Bool
     ) async throws {
         let suffix = afterColdLoadWait ? " after cold-load wait" : ""
@@ -1850,6 +3151,14 @@ public actor ModelRuntime {
         }
 
         if policy == .strictSingleModel {
+            guard let restoreOwnershipToken,
+                otherRecord.childOwnershipToken == restoreOwnershipToken
+            else {
+                throw HandoffRestoreBlockedError(
+                    requestedModel: requestedName,
+                    protectedResident: otherName
+                )
+            }
             genLog.info(
                 "loadContainer: handoff restore waiting for in-flight load \(otherName, privacy: .public)\(suffix, privacy: .public)"
             )
@@ -1891,7 +3200,8 @@ public actor ModelRuntime {
     private func unloadForFlexibleResidentBudget(
         targetName: String,
         incomingWeightsSizeBytes: Int64,
-        intent: ModelLoadIntent = .interactive
+        intent: ModelLoadIntent = .interactive,
+        restoreOwnershipToken: ModelResidencyOwnershipToken? = nil
     ) async throws {
         let limit = Self.flexibleResidentBudgetBytes()
         guard limit > 0 else { return }
@@ -1915,17 +3225,29 @@ public actor ModelRuntime {
                 requested: targetName,
                 conflict: .wouldEvictResident(candidate.key)
             )
+            if intent == .handoffRestore {
+                guard let restoreOwnershipToken,
+                    residentMetadata[candidate.key]?.childOwnershipToken
+                        == restoreOwnershipToken
+                else {
+                    throw HandoffRestoreBlockedError(
+                        requestedModel: targetName,
+                        protectedResident: candidate.key
+                    )
+                }
+            }
             genLog.info(
                 "loadContainer: flexible budget eviction of \(candidate.key, privacy: .public) before loading \(targetName, privacy: .public) residentBytes=\(self.residentWeightBytes(excluding: targetName), privacy: .public) incomingBytes=\(incomingWeightsSizeBytes, privacy: .public) limitBytes=\(limit, privacy: .public)"
             )
-            await unload(name: candidate.key)
+            await unload(name: candidate.key, reason: .modelSwitch)
         }
     }
 
     private func loadContainer(
         id: String,
         name: String,
-        intent: ModelLoadIntent = .interactive
+        intent: ModelLoadIntent = .interactive,
+        restoreOwnershipToken: ModelResidencyOwnershipToken? = nil
     ) async throws -> SessionHolder {
         try Task.checkCancellation()
         let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
@@ -1977,6 +3299,7 @@ public actor ModelRuntime {
                     otherRecord: otherLoading.value,
                     policy: policy,
                     intent: intent,
+                    restoreOwnershipToken: restoreOwnershipToken,
                     afterColdLoadWait: false
                 )
                 continue
@@ -1985,16 +3308,38 @@ public actor ModelRuntime {
             if policy == .strictSingleModel,
                 let other = modelCache.keys.first(where: { $0 != name })
             {
-                // `strictEvict` suspends (it waits on the `ModelLease` actor)
-                // before it unloads, so a check placed *inside* it would not be
-                // atomic with the eviction. Refuse here, in the same segment
-                // that read `modelCache`.
-                try refuseBackgroundLoadIfItWouldDisturb(
-                    intent: intent,
-                    requested: name,
-                    conflict: .wouldEvictResident(other)
-                )
-                await strictEvict(other)
+                if intent == .handoffRestore {
+                    guard let restoreOwnershipToken,
+                        residentMetadata[other]?.childOwnershipToken
+                            == restoreOwnershipToken
+                    else {
+                        throw HandoffRestoreBlockedError(
+                            requestedModel: name,
+                            protectedResident: other
+                        )
+                    }
+                    let result = await unloadChildOwned(
+                        name: other,
+                        by: restoreOwnershipToken
+                    )
+                    guard result == .unloaded || result == .notResident else {
+                        throw HandoffRestoreBlockedError(
+                            requestedModel: name,
+                            protectedResident: other
+                        )
+                    }
+                } else {
+                    // `strictEvict` suspends (it waits on the `ModelLease`
+                    // actor) before it unloads. Keep the synchronous refusal
+                    // immediately before that suspension in the same actor
+                    // segment that read `modelCache`.
+                    try refuseBackgroundLoadIfItWouldDisturb(
+                        intent: intent,
+                        requested: name,
+                        conflict: .wouldEvictResident(other)
+                    )
+                    await strictEvict(other)
+                }
                 continue
             }
 
@@ -2047,6 +3392,7 @@ public actor ModelRuntime {
                     otherRecord: otherLoading.value,
                     policy: policy,
                     intent: intent,
+                    restoreOwnershipToken: restoreOwnershipToken,
                     afterColdLoadWait: true
                 )
                 continue
@@ -2055,16 +3401,37 @@ public actor ModelRuntime {
             if policy == .strictSingleModel,
                 let other = modelCache.keys.first(where: { $0 != name })
             {
-                // `strictEvict` suspends (it waits on the `ModelLease` actor)
-                // before it unloads, so a check placed *inside* it would not be
-                // atomic with the eviction. Refuse here, in the same segment
-                // that read `modelCache`.
-                try refuseBackgroundLoadIfItWouldDisturb(
-                    intent: intent,
-                    requested: name,
-                    conflict: .wouldEvictResident(other)
-                )
-                await strictEvict(other)
+                if intent == .handoffRestore {
+                    guard let restoreOwnershipToken,
+                        residentMetadata[other]?.childOwnershipToken
+                            == restoreOwnershipToken
+                    else {
+                        throw HandoffRestoreBlockedError(
+                            requestedModel: name,
+                            protectedResident: other
+                        )
+                    }
+                    let result = await unloadChildOwned(
+                        name: other,
+                        by: restoreOwnershipToken
+                    )
+                    guard result == .unloaded || result == .notResident else {
+                        throw HandoffRestoreBlockedError(
+                            requestedModel: name,
+                            protectedResident: other
+                        )
+                    }
+                } else {
+                    // Re-establish the same no-suspension refusal/eviction
+                    // sequence after `acquireColdLoadSlot()` as in the first
+                    // residency loop.
+                    try refuseBackgroundLoadIfItWouldDisturb(
+                        intent: intent,
+                        requested: name,
+                        conflict: .wouldEvictResident(other)
+                    )
+                    await strictEvict(other)
+                }
                 continue
             }
 
@@ -2082,6 +3449,37 @@ public actor ModelRuntime {
         genLog.info(
             "loadContainer: local directory model=\(name, privacy: .public) path=\(localURL.path, privacy: .public)"
         )
+
+        // One-time, idempotent bundle-metadata repair for the Laguna XS 2.1
+        // release that shipped an incorrect/missing top_k in some artifacts.
+        // This happens before both compatibility inspection and
+        // `loadModelContainer`, so Osaurus and vMLX read the same corrected
+        // files. It is intentionally not an in-memory/global sampler override:
+        // explicit request top_k retains precedence after this migration.
+        do {
+            let repairedFiles =
+                try LocalGenerationDefaults.repairLagunaXS21TopKIfNeeded(
+                    at: localURL,
+                    modelName: name
+                )
+            if !repairedFiles.isEmpty {
+                genLog.info(
+                    "repaired Laguna XS 2.1 sampling metadata model=\(name, privacy: .public) files=\(repairedFiles.joined(separator: ","), privacy: .public) topK=20"
+                )
+            }
+        } catch {
+            genLog.error(
+                "failed to repair Laguna XS 2.1 sampling metadata model=\(name, privacy: .public): \(String(describing: error), privacy: .public)"
+            )
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 422,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Laguna XS 2.1 requires top_k 20, but Osaurus could not update its generation metadata. \(error.localizedDescription)"
+                ]
+            )
+        }
 
         let installedModel =
             ModelManager.findInstalledMLXModel(named: id)
@@ -2246,7 +3644,8 @@ public actor ModelRuntime {
             try await unloadForFlexibleResidentBudget(
                 targetName: name,
                 incomingWeightsSizeBytes: loadFootprintBytes,
-                intent: intent
+                intent: intent,
+                restoreOwnershipToken: restoreOwnershipToken
             )
         }
         try Task.checkCancellation()
@@ -2370,7 +3769,11 @@ public actor ModelRuntime {
             return holder
         }
 
-        loadingTasks[name] = LoadingTaskRecord(id: loadID, task: task)
+        loadingTasks[name] = LoadingTaskRecord(
+            id: loadID,
+            task: task,
+            childOwnershipToken: ModelResidencyOwnershipContext.childOwnershipToken
+        )
 
         do {
             let holder = try await withTaskCancellationHandler {
@@ -3072,9 +4475,31 @@ public actor ModelRuntime {
         // work).
         if Task.isCancelled { throw CancellationError() }
 
+        let deletionAccess = try await beginModelDeletionProtectedAccess(
+            modelID: modelId,
+            modelName: modelName
+        )
+        defer { finishModelDeletionProtectedAccess(deletionAccess) }
+
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
-        await ModelResidencyManager.shared.markActive(modelName: modelName)
-        lastUseSource[modelName] = parameters.requestSource
+        await markModelActiveForResidency(modelName)
+        // Ownership belongs only to the handoff that cold-published this
+        // generation. If another surface later reuses it, that surface has
+        // made the residency shared and the original handoff must no longer
+        // be able to remove it during transition/final cleanup.
+        if let key = residentKey(matching: modelName),
+            var metadata = residentMetadata[key],
+            let owner = metadata.childOwnershipToken,
+            owner != ModelResidencyOwnershipContext.childOwnershipToken
+        {
+            metadata.childOwnershipToken = nil
+            residentMetadata[key] = metadata
+        }
+        lastUseSource[modelName] = Self.resolvedResidencySource(
+            existing: lastUseSource[modelName],
+            incoming: parameters.requestSource,
+            preserveExisting: parameters.preserveExistingResidencyOwner
+        )
 
         // Scoped start/finish around ONLY a cold container load. Hot
         // resident turns still call `loadContainer` to get the holder, but

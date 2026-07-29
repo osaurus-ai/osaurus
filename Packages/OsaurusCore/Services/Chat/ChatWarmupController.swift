@@ -79,6 +79,24 @@ final class ChatWarmupController: ObservableObject {
         await ModelRuntime.shared.hasResidentModelOther(than: model)
     }
 
+    /// Typed runtime snapshots make activation and notification delivery use
+    /// the same monotonic residency timeline. Tests replace these seams to
+    /// hold the exact focus/idle-unload race without wall-clock sleeps.
+    var runtimeResidencySnapshot: @MainActor () async -> ModelRuntimeResidencySnapshot = {
+        await ModelRuntime.shared.residencySnapshot()
+    }
+    var chatActivationResidencySnapshot:
+        @MainActor (String?) async -> ModelRuntimeChatActivationResidencySnapshot = { model in
+            await ModelRuntime.shared.chatActivationResidencySnapshot(selectedModel: model)
+    }
+
+    /// Debounce suspension seam. Production uses the real clock; lifecycle
+    /// tests can hold this boundary so residency changes that occur after the
+    /// activation snapshot are exercised without timing sleeps.
+    var scheduleDebounceSleep: @MainActor (Duration) async -> Void = { duration in
+        try? await Task.sleep(for: duration)
+    }
+
     @Published private(set) var state: WarmState = .cold
 
     /// True when the UI should render the green "warm" dot.
@@ -86,6 +104,11 @@ final class ChatWarmupController: ObservableObject {
 
     private var warmedFingerprint: String?
     private var scheduleTask: Task<Void, Never>?
+    private var scheduleTaskID: UUID?
+    /// Non-nil only when `scheduleTask` was created by a window-focus
+    /// activation. A newer non-recoverable eviction may cancel that exact
+    /// speculative task without disturbing model-switch or user-intent work.
+    private var scheduledActivationID: UUID?
     private var inFlightWarmup: Task<Void, Never>?
     private var inFlightWarmupID: UUID?
     /// A prompt-shape change is different from an idle speculative warm-up:
@@ -111,6 +134,25 @@ final class ChatWarmupController: ObservableObject {
     /// scheduled, but runtime-touching paths drain it before proceeding.
     private var retiringWork: Task<Void, Never>?
     private var retiringWorkID: UUID?
+    /// Runtime-residency reconciliation launched when a chat becomes active.
+    /// This is controller-owned (rather than an untracked Task in ChatSession)
+    /// so reset, Stop, shutdown, and model selection can invalidate a
+    /// suspended residency snapshot before it schedules hidden warm-up work.
+    private var sessionActivation: Task<Void, Never>?
+    private var sessionActivationID: UUID?
+    /// One-shot identity for the *exact* idle decision that crossed into
+    /// teardown while this chat was being activated. A later idle timer,
+    /// memory-pressure eviction, handoff, explicit unload, or model switch can
+    /// never match this token and therefore can never create unload/rewarm
+    /// ping-pong merely because the window remains key.
+    private struct ActivationRecovery: Equatable {
+        let model: String
+        let idleDecisionID: UInt64
+    }
+    private var activationRecovery: ActivationRecovery?
+    /// Highest runtime residency revision consumed by this controller. This
+    /// rejects delayed and duplicate NotificationCenter delivery.
+    private var lastResidencyRevision: UInt64?
     /// Monotonic counter bumped by every switch-affecting entry point
     /// (selection change, reset). Handlers that suspend re-check it
     /// afterwards so a stale resume can't cancel or restore state installed
@@ -121,6 +163,7 @@ final class ChatWarmupController: ObservableObject {
         /// Deterministic lifecycle tests retain the outgoing scheduled task
         /// across reset so they can await its actual cancellation unwind.
         var scheduledWarmupTaskForTests: Task<Void, Never>? { scheduleTask }
+        var sessionActivationTaskForTests: Task<Void, Never>? { sessionActivation }
     #endif
 
     /// True once the owning window began teardown. `session.stop()` during
@@ -135,6 +178,7 @@ final class ChatWarmupController: ObservableObject {
         inFlightWarmup?.cancel()
         requiredContextWarmup?.cancel()
         retiringWork?.cancel()
+        sessionActivation?.cancel()
     }
 
     /// Permanently stop this controller: cancel pending and in-flight warm-up
@@ -151,6 +195,7 @@ final class ChatWarmupController: ObservableObject {
         activeModelSwitch?.cancel()
         inFlightWarmup?.cancel()
         requiredContextWarmup?.cancel()
+        cancelSessionActivation()
 
         let previousRetiringWork = retiringWork
         let retiringSwitch = activeModelSwitch
@@ -169,6 +214,8 @@ final class ChatWarmupController: ObservableObject {
         }
 
         scheduleTask = nil
+        scheduleTaskID = nil
+        scheduledActivationID = nil
         activeModelSwitch = nil
         activeModelSwitchID = nil
         inFlightWarmup = nil
@@ -270,6 +317,10 @@ final class ChatWarmupController: ObservableObject {
         to newModel: String?,
         performSwitch: @escaping @MainActor (_ evictOthers: Bool) async -> Void
     ) {
+        // Invalidate an activation snapshot immediately, before the deferred
+        // switch task runs. Otherwise a slow runtime actor response can resume
+        // in this gap and schedule a warm-up for the outgoing selection.
+        cancelSessionActivation()
         Task { @MainActor in
             self.performModelSelectionChange(
                 session: session,
@@ -379,7 +430,9 @@ final class ChatWarmupController: ObservableObject {
 
     func scheduleWarmup(
         session: ChatWarmupSessionContext,
-        debounce: Duration = scheduleDebounce
+        debounce: Duration = scheduleDebounce,
+        revalidateResidencyAfterDebounce: Bool = false,
+        activationID: UUID? = nil
     ) {
         guard shouldAttemptWarmup(session: session) else {
             if !ChatConfigurationStore.load().warmModelsOnLoad {
@@ -391,13 +444,175 @@ final class ChatWarmupController: ObservableObject {
         if state == .cold { state = .warming }
 
         scheduleTask?.cancel()
+        scheduledActivationID = activationID
+        let taskID = UUID()
+        scheduleTaskID = taskID
         scheduleTask = Task { @MainActor in
+            defer {
+                if self.scheduleTaskID == taskID {
+                    self.scheduleTask = nil
+                    self.scheduleTaskID = nil
+                    self.scheduledActivationID = nil
+                }
+            }
             if debounce > .zero {
-                try? await Task.sleep(for: debounce)
+                await scheduleDebounceSleep(debounce)
+            }
+            guard !Task.isCancelled else { return }
+
+            // A focus activation takes an initial snapshot before scheduling,
+            // but an idle unload can remove the selected model during this
+            // debounce. Reconcile again at the last boundary before payload
+            // fingerprint coalescing; otherwise the stale warm fingerprint can
+            // turn the required replacement warm-up into a no-op.
+            if revalidateResidencyAfterDebounce {
+                let snapshot = await runtimeResidencySnapshot()
+                guard !Task.isCancelled else { return }
+                let selectedModel = session.selectedModel
+                if acceptResidencySnapshot(snapshot, selectedModel: selectedModel),
+                    let selectedModel,
+                    !Self.isSelectedModelResident(selectedModel, in: snapshot.names)
+                {
+                    activationRecovery = nil
+                }
             }
             guard !Task.isCancelled else { return }
             await performWarmup(session: session)
         }
+    }
+
+    /// Re-arm speculative warm-up when a chat window becomes active.
+    ///
+    /// Runtime residency is checked first because the idle-unload notification
+    /// and the AppKit focus event are delivered independently. Without this
+    /// ordering, focus can observe a stale `warmedFingerprint` and coalesce
+    /// away the exact warm-up needed after eviction.
+    func handleSessionBecameActive(
+        session: ChatWarmupSessionContext,
+        debounce: Duration = scheduleDebounce
+    ) {
+        guard !isShutDown else { return }
+        cancelSessionActivation()
+
+        let selectedModel = session.selectedModel
+        let epoch = switchEpoch
+        let id = UUID()
+        sessionActivationID = id
+        sessionActivation = Task { @MainActor [weak self, weak session] in
+            guard let self, let session else { return }
+            defer {
+                if self.sessionActivationID == id {
+                    self.sessionActivation = nil
+                    self.sessionActivationID = nil
+                }
+            }
+
+            let activation = await self.chatActivationResidencySnapshot(selectedModel)
+            guard
+                !Task.isCancelled,
+                !self.isShutDown,
+                self.sessionActivationID == id,
+                self.switchEpoch == epoch,
+                session.selectedModel == selectedModel
+            else { return }
+
+            guard self.acceptResidencySnapshot(
+                activation.residency,
+                selectedModel: selectedModel,
+                allowDuplicateRevision: true
+            ) else { return }
+
+            if let selectedModel,
+                Self.isSelectedModelResident(selectedModel, in: activation.residency.names),
+                let idleDecisionID = activation.recoverableIdleDecisionID
+            {
+                self.activationRecovery = ActivationRecovery(
+                    model: selectedModel,
+                    idleDecisionID: idleDecisionID
+                )
+            } else {
+                self.activationRecovery = nil
+            }
+            self.scheduleWarmup(
+                session: session,
+                debounce: debounce,
+                revalidateResidencyAfterDebounce: true,
+                activationID: id
+            )
+        }
+    }
+
+    /// Await the currently active focus reconciliation. Production send paths
+    /// cancel this before dispatch; this await primarily makes lifecycle tests
+    /// deterministic without sleeping through the debounce interval.
+    func awaitSessionActivation() async {
+        await sessionActivation?.value
+    }
+
+    /// Reconcile a runtime removal and recover the one activation race that
+    /// cannot be closed by a second snapshot alone.
+    ///
+    /// Recovery is allowed only when this exact selected model was armed by a
+    /// recent focus activation, that activation already coalesced to `.warm`,
+    /// and this window is still the visible key chat. The token is consumed
+    /// before scheduling, so later idle expiry cannot create a periodic
+    /// unload/rewarm loop. `performWarmup` still applies RAM and competing-
+    /// residency gates, so the retry cannot displace another surface's model.
+    func handleRuntimeResidencyChanged(
+        session: ChatWarmupSessionContext,
+        snapshot: ModelRuntimeResidencySnapshot,
+        isSessionActive: Bool,
+        debounce: Duration = .zero
+    ) {
+        let selectedModel = session.selectedModel
+        let wasWarm = state == .warm
+        guard acceptResidencySnapshot(snapshot, selectedModel: selectedModel) else { return }
+
+        guard let selectedModel,
+            !Self.isSelectedModelResident(selectedModel, in: snapshot.names)
+        else { return }
+
+        let recovery = activationRecovery
+        activationRecovery = nil
+        let matchesActivationIdleDecision = isSessionActive
+            && snapshot.reason == .idlePolicy
+            && snapshot.idleDecisionID != nil
+            && recovery?.idleDecisionID == snapshot.idleDecisionID
+            && recovery.map({ Self.isSelectedModelResident(selectedModel, in: [$0.model]) }) == true
+
+        // When focus begins from `.cold`, `scheduleWarmup` immediately moves
+        // the UI to `.warming`. If the exact idle removal lands during that
+        // debounce, the activation-owned task is already the required
+        // replacement. Preserve it instead of cancelling it and reproducing
+        // the stuck yellow/no-warmup state.
+        if matchesActivationIdleDecision,
+            state == .warming,
+            scheduledActivationID != nil
+        {
+            return
+        }
+
+        let mayRecover = wasWarm
+            && state == .cold
+            && matchesActivationIdleDecision
+
+        if !mayRecover, scheduledActivationID != nil {
+            scheduleTask?.cancel()
+            scheduleTask = nil
+            scheduleTaskID = nil
+            scheduledActivationID = nil
+            state = .cold
+        }
+
+        guard mayRecover,
+            snapshot.idleDecisionID != nil
+        else { return }
+
+        scheduleWarmup(
+            session: session,
+            debounce: debounce,
+            revalidateResidencyAfterDebounce: true
+        )
     }
 
     /// Re-warm the completed transcript only after a natural, successful
@@ -439,6 +654,9 @@ final class ChatWarmupController: ObservableObject {
     func cancelScheduledWarmup() {
         scheduleTask?.cancel()
         scheduleTask = nil
+        scheduleTaskID = nil
+        scheduledActivationID = nil
+        cancelSessionActivation()
     }
 
     /// Cancel speculative work owned by a user-stopped pre-send handshake.
@@ -454,14 +672,18 @@ final class ChatWarmupController: ObservableObject {
             || activeModelSwitch != nil
             || inFlightWarmup != nil
             || requiredContextWarmup != nil
+            || sessionActivation != nil
         guard hadPendingWork else { return }
 
         switchEpoch &+= 1
         scheduleTask?.cancel()
         scheduleTask = nil
+        scheduleTaskID = nil
+        scheduledActivationID = nil
         activeModelSwitch?.cancel()
         inFlightWarmup?.cancel()
         requiredContextWarmup?.cancel()
+        cancelSessionActivation()
         userIntentWarmupModel = nil
         warmedFingerprint = nil
         state = .cold
@@ -494,6 +716,35 @@ final class ChatWarmupController: ObservableObject {
         guard !session.isStreaming else { return false }
         guard !session.isImageGenerationModel(model) else { return false }
         if ChatWindowManager.shared.isAnyWindowStreamingLocalModel { return false }
+        return true
+    }
+
+    private func cancelSessionActivation() {
+        sessionActivationID = nil
+        sessionActivation?.cancel()
+        sessionActivation = nil
+        activationRecovery = nil
+    }
+
+    /// Apply a typed residency snapshot if it is not older than the newest
+    /// state already observed. Activation is allowed to consume an equal
+    /// revision because its atomic runtime reply may additionally carry the
+    /// exact in-flight idle-decision identity absent from the notification.
+    @discardableResult
+    private func acceptResidencySnapshot(
+        _ snapshot: ModelRuntimeResidencySnapshot,
+        selectedModel: String?,
+        allowDuplicateRevision: Bool = false
+    ) -> Bool {
+        if let lastResidencyRevision {
+            if snapshot.revision < lastResidencyRevision { return false }
+            if snapshot.revision == lastResidencyRevision, !allowDuplicateRevision { return false }
+        }
+        lastResidencyRevision = max(lastResidencyRevision ?? 0, snapshot.revision)
+        reconcileRuntimeResidency(
+            selectedModel: selectedModel,
+            residentModelNames: snapshot.names
+        )
         return true
     }
 

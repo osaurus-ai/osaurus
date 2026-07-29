@@ -13,8 +13,17 @@ import SwiftUI
 enum ToolPermissionPromptService {
     private static var permissionWindow: NSPanel?
     private static var localKeyMonitor: Any?
-    private static var globalKeyMonitor: Any?
     private static var closeObserver: NSObjectProtocol?
+    /// Identity + cancellation hook for the currently presented policy prompt.
+    /// The id prevents a delayed task-cancellation callback from dismissing a
+    /// newer prompt that happened to open after the cancelled one completed.
+    private static var pendingPolicyPrompt: (id: UUID, cancel: () -> Void)?
+
+    enum PolicyApprovalOutcome: Sendable, Equatable {
+        case denied
+        case allowOnce
+        case alwaysAllow
+    }
 
     static func requestApproval(
         toolName: String,
@@ -47,7 +56,6 @@ enum ToolPermissionPromptService {
                 continuation.resume(returning: true)
             }
 
-            // Create the SwiftUI view
             let themeManager = ThemeManager.shared
             let permissionView = ToolPermissionView(
                 toolName: toolName,
@@ -60,103 +68,74 @@ enum ToolPermissionPromptService {
                 onAlwaysAllow: onAlwaysAllow
             )
             .environment(\.theme, themeManager.currentTheme)
+            presentPanel(view: permissionView, onAllow: onAllow, onDeny: onDeny)
+        }
+    }
 
-            let hostingController = NSHostingController(rootView: permissionView)
+    /// Approval prompt for a caller-owned policy. Unlike `requestApproval`,
+    /// choosing "Always Allow" does NOT mutate `ToolRegistry`: the caller owns
+    /// the policy namespace and persists that outcome in its own store.
+    ///
+    /// Cancellation is terminal and denial-shaped. This is required by spawn
+    /// preparation, where the feed's Stop control can fire while the panel is
+    /// open; the continuation must be resumed and the modal dismissed rather
+    /// than stranding the tool call.
+    static func requestPolicyApproval(
+        toolName: String,
+        description: String,
+        argumentsJSON: String
+    ) async -> PolicyApprovalOutcome {
+        if Task.isCancelled { return .denied }
 
-            // Create custom panel with a temporary rect (will be repositioned after content is set)
-            let panel = NSPanel(
-                contentRect: NSRect(x: 0, y: 0, width: 480, height: 300),
-                styleMask: [.fullSizeContentView],
-                backing: .buffered,
-                defer: false
-            )
-            panel.isOpaque = false
-            panel.backgroundColor = .clear
-            panel.hasShadow = true
-            panel.level = .modalPanel
-            panel.hidesOnDeactivate = false
-            panel.isMovableByWindowBackground = true
-            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            panel.animationBehavior = .alertPanel
-            panel.contentViewController = hostingController
+        let requestID = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                var hasResumed = false
 
-            // Layout the view to get accurate sizing
-            hostingController.view.layoutSubtreeIfNeeded()
+                let finish: (PolicyApprovalOutcome) -> Void = { outcome in
+                    guard !hasResumed else { return }
+                    hasResumed = true
+                    if pendingPolicyPrompt?.id == requestID {
+                        pendingPolicyPrompt = nil
+                    }
+                    dismissWindow()
+                    continuation.resume(returning: outcome)
+                }
+                let onAllow = { finish(.allowOnce) }
+                let onDeny = { finish(.denied) }
+                let onAlwaysAllow = { finish(.alwaysAllow) }
 
-            // Calculate window size based on actual content
-            let fittingSize = hostingController.view.fittingSize
-            let windowSize = NSSize(
-                width: max(fittingSize.width, 480),
-                height: max(fittingSize.height, 300)
-            )
+                pendingPolicyPrompt = (id: requestID, cancel: onDeny)
 
-            // Find the screen where the mouse is located (for multi-monitor support)
-            let mouse = NSEvent.mouseLocation
-            let targetScreen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+                let themeManager = ThemeManager.shared
+                let permissionView = ToolPermissionView(
+                    toolName: toolName,
+                    description:
+                        description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? "This action requires your approval."
+                        : description,
+                    argumentsJSON: argumentsJSON,
+                    onAllow: onAllow,
+                    onDeny: onDeny,
+                    onAlwaysAllow: onAlwaysAllow
+                )
+                .environment(\.theme, themeManager.currentTheme)
 
-            // Center the window on the target screen
-            if let screen = targetScreen {
-                let visibleFrame = screen.visibleFrame
-                let x = visibleFrame.origin.x + (visibleFrame.width - windowSize.width) / 2
-                let y = visibleFrame.origin.y + (visibleFrame.height - windowSize.height) / 2
-                let centeredFrame = NSRect(x: x, y: y, width: windowSize.width, height: windowSize.height)
-                panel.setFrame(centeredFrame, display: false)
-            } else {
-                panel.setContentSize(windowSize)
-                panel.center()
-            }
+                presentPanel(
+                    view: permissionView,
+                    onAllow: onAllow,
+                    onDeny: onDeny
+                )
 
-            permissionWindow = panel
-
-            // Safety net: if the panel is closed externally (system, force-quit, etc.)
-            // without the user clicking a button, resume the continuation with deny.
-            // The observer runs on .main queue, matching the @MainActor isolation of this type.
-            nonisolated(unsafe) let onDenyForClose = onDeny
-            closeObserver = NotificationCenter.default.addObserver(
-                forName: NSWindow.willCloseNotification,
-                object: panel,
-                queue: .main
-            ) { _ in
-                onDenyForClose()
-            }
-
-            // Handler for keyboard shortcuts
-            let handleKeyEvent: (NSEvent) -> Bool = { event in
-                if event.keyCode == 36 {  // Enter key
-                    onAllow()
-                    return true
-                } else if event.keyCode == 53 {  // Escape key
+                // Cancellation can race the MainActor hop into this
+                // continuation. Re-check after the cancellation hook exists.
+                if Task.isCancelled {
                     onDeny()
-                    return true
                 }
-                return false
             }
-
-            // Local monitor for when app is active and window has focus
-            localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                if handleKeyEvent(event) {
-                    return nil
-                }
-                return event
-            }
-
-            // Global monitor as fallback when window might not have focus
-            globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
-                // Only handle if our permission window is visible
-                guard permissionWindow?.isVisible == true else { return }
-                _ = handleKeyEvent(event)
-            }
-
-            // Activate app and ensure window becomes key
-            NSApp.activate(ignoringOtherApps: true)
-            panel.makeKeyAndOrderFront(nil)
-
-            // Ensure panel becomes first responder after a brief delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                panel.makeKey()
-                if let contentView = panel.contentView {
-                    panel.makeFirstResponder(contentView)
-                }
+        } onCancel: {
+            Task { @MainActor in
+                cancelPolicyPrompt(id: requestID)
             }
         }
     }
@@ -229,10 +208,16 @@ enum ToolPermissionPromptService {
         let hostingController = NSHostingController(rootView: view)
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 480, height: 300),
-            styleMask: [.fullSizeContentView],
+            styleMask: [.titled, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
+        panel.title = L("Tool Permission")
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
@@ -250,8 +235,18 @@ enum ToolPermissionPromptService {
             height: max(fittingSize.height, 300)
         )
         let mouse = NSEvent.mouseLocation
-        let targetScreen =
-            NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        let mouseScreen = NSScreen.screens.first {
+            NSMouseInRect(mouse, $0.frame, false)
+        }
+        // Keep the decision on the launching app window's display. Falling
+        // back to the mouse display can make a security prompt appear on a
+        // different monitor than the chat that is visibly blocked on it.
+        let targetScreen = preferredPresentationCandidate(
+            keyWindow: NSApp.keyWindow?.screen,
+            mainWindow: NSApp.mainWindow?.screen,
+            mouse: mouseScreen,
+            fallback: NSScreen.main
+        )
         if let screen = targetScreen {
             let vf = screen.visibleFrame
             panel.setFrame(
@@ -282,11 +277,14 @@ enum ToolPermissionPromptService {
             return false
         }
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            handleKeyEvent(event) ? nil : event
-        }
-        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
-            guard permissionWindow?.isVisible == true else { return }
-            _ = handleKeyEvent(event)
+            guard shouldAcceptKeyboardShortcut(
+                isVisible: permissionWindow?.isVisible == true,
+                isKeyWindow: permissionWindow?.isKeyWindow == true,
+                isAppActive: NSApp.isActive
+            ) else {
+                return event
+            }
+            return handleKeyEvent(event) ? nil : event
         }
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
@@ -294,6 +292,25 @@ enum ToolPermissionPromptService {
             panel.makeKey()
             if let contentView = panel.contentView { panel.makeFirstResponder(contentView) }
         }
+    }
+
+    /// Pure seams keep the security-sensitive screen and key-event policy
+    /// deterministic in tests without constructing AppKit windows.
+    nonisolated static func preferredPresentationCandidate<T>(
+        keyWindow: T?,
+        mainWindow: T?,
+        mouse: T?,
+        fallback: T?
+    ) -> T? {
+        keyWindow ?? mainWindow ?? mouse ?? fallback
+    }
+
+    nonisolated static func shouldAcceptKeyboardShortcut(
+        isVisible: Bool,
+        isKeyWindow: Bool,
+        isAppActive: Bool
+    ) -> Bool {
+        isVisible && isKeyWindow && isAppActive
     }
 
     private static func dismissWindow() {
@@ -305,11 +322,12 @@ enum ToolPermissionPromptService {
             NSEvent.removeMonitor(monitor)
             localKeyMonitor = nil
         }
-        if let monitor = globalKeyMonitor {
-            NSEvent.removeMonitor(monitor)
-            globalKeyMonitor = nil
-        }
         permissionWindow?.orderOut(nil)
         permissionWindow = nil
+    }
+
+    private static func cancelPolicyPrompt(id: UUID) {
+        guard pendingPolicyPrompt?.id == id else { return }
+        pendingPolicyPrompt?.cancel()
     }
 }

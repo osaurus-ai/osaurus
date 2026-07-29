@@ -31,6 +31,9 @@ public struct SubagentScope: Sendable, Equatable {
     public let toolCallId: String
     /// The agent whose model/settings scope the run.
     public let agentId: UUID
+    /// Exact model selected by the parent turn. Nil on surfaces that do not
+    /// publish a local parent (remote/API/eval calls).
+    public let parentModelName: String?
     /// Explicit parent-turn Thinking choice. Nil preserves the nested model's
     /// own bundle default; true/false must survive every reconstructed step.
     public let enableThinking: Bool?
@@ -39,11 +42,13 @@ public struct SubagentScope: Sendable, Equatable {
         sessionId: String,
         toolCallId: String,
         agentId: UUID,
+        parentModelName: String? = nil,
         enableThinking: Bool? = nil
     ) {
         self.sessionId = sessionId
         self.toolCallId = toolCallId
         self.agentId = agentId
+        self.parentModelName = parentModelName
         self.enableThinking = enableThinking
     }
 
@@ -56,6 +61,7 @@ public struct SubagentScope: Sendable, Equatable {
             sessionId: ChatExecutionContext.currentSessionId ?? UUID().uuidString,
             toolCallId: ChatExecutionContext.currentToolCallId ?? UUID().uuidString,
             agentId: ChatExecutionContext.currentAgentId ?? Agent.defaultId,
+            parentModelName: ChatExecutionContext.currentModelName,
             enableThinking: ChatExecutionContext.currentEnableThinking
         )
     }

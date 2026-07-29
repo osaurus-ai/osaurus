@@ -201,7 +201,7 @@ extension ChatSession: ChatWarmupSessionContext {
     }
 
     func notifySessionBecameActive() {
-        warmupController.scheduleWarmup(session: self)
+        warmupController.handleSessionBecameActive(session: self)
     }
 
     func handleWarmupAfterRunCompleted(wasCancelled: Bool, hadError: Bool) {

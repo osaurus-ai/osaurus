@@ -683,12 +683,16 @@ final class ChatSession: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] note in
-            let residentModelNames = note.object as? [String] ?? []
+            guard let snapshot = note.object as? ModelRuntimeResidencySnapshot else { return }
             Task { @MainActor in
                 guard let self else { return }
-                self.warmupController.reconcileRuntimeResidency(
-                    selectedModel: self.selectedModel,
-                    residentModelNames: residentModelNames
+                let isSessionActive = self.windowState.map {
+                    ChatWindowManager.shared.isChatWindowActive(id: $0.windowId)
+                } ?? false
+                self.warmupController.handleRuntimeResidencyChanged(
+                    session: self,
+                    snapshot: snapshot,
+                    isSessionActive: isSessionActive
                 )
             }
         }
@@ -4546,6 +4550,9 @@ final class ChatSession: ObservableObject {
             await ChatExecutionContext.$currentUserRequest.withValue(
                 trimmed.isEmpty ? nil : trimmed
             ) { [self] in
+            await ChatExecutionContext.$currentModelName.withValue(
+                self.selectedModel
+            ) { [self] in
             await ChatExecutionContext.$currentEnableThinking.withValue(
                 turnGenerationControls.enableThinking
             ) { [self] in
@@ -6195,6 +6202,7 @@ final class ChatSession: ObservableObject {
                     noteInsufficientFundsIfNeeded(error: error, blockedTurn: assistantTurn)
                 }
             }  // ChatExecutionContext.$currentEnableThinking.withValue
+            }  // ChatExecutionContext.$currentModelName.withValue
             }  // ChatExecutionContext.$currentUserRequest.withValue
             }  // ChatExecutionContext.$currentAgentId.withValue
             }  // ChatExecutionContext.$currentSessionSource.withValue

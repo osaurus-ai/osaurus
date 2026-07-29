@@ -806,6 +806,15 @@ struct ChatCompletionRequest: Codable, Sendable {
     ///
     /// Not decoded from OpenAI JSON, not sent to providers.
     var backgroundModelLoad: Bool = false
+    /// Local-only: a nested subagent may reuse a model that another surface
+    /// already owns (for example an HTTP API model under manual multi-model
+    /// residency). In that case the child request must not relabel the
+    /// resident as Chat UI-owned, because the surrounding chat handoff would
+    /// then be allowed to unload unrelated API/plugin work. New child-loaded
+    /// models still acquire the normal Chat UI ownership marker.
+    ///
+    /// Not decoded from OpenAI JSON, not sent to providers.
+    var preserveExistingResidencyOwner: Bool = false
 
     /// Resolved max tokens, preferring max_tokens then max_completion_tokens.
     var resolvedMaxTokens: Int? { max_tokens ?? max_completion_tokens }
@@ -860,6 +869,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         // promotes a background request back to interactive — and an interactive
         // request is allowed to evict the model someone is using.
         copy.backgroundModelLoad = backgroundModelLoad
+        copy.preserveExistingResidencyOwner = preserveExistingResidencyOwner
         copy.logprobs = logprobs
         copy.top_logprobs = top_logprobs
         return copy
@@ -909,6 +919,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         // promotes a background request back to interactive — and an interactive
         // request is allowed to evict the model someone is using.
         copy.backgroundModelLoad = backgroundModelLoad
+        copy.preserveExistingResidencyOwner = preserveExistingResidencyOwner
         copy.logprobs = logprobs
         copy.top_logprobs = top_logprobs
         return copy

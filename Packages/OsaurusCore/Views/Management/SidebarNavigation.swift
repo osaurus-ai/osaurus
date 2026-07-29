@@ -175,7 +175,13 @@ private extension SidebarNavigation {
     var itemList: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(
+                // The settings inventory is small and bounded. Keeping every
+                // row materialized gives off-screen destinations stable
+                // accessibility frames while ScrollViewReader moves the
+                // selection. A LazyVStack can repeatedly invalidate layout
+                // when Accessibility inspects a row during the animated
+                // scroll, leaving Settings in a 100% CPU AttributeGraph loop.
+                VStack(
                     alignment: isCollapsed ? .center : .leading,
                     spacing: isCollapsed ? SidebarLayout.collapsedItemSpacing : SidebarLayout.expandedItemSpacing
                 ) {
@@ -401,7 +407,7 @@ private struct SidebarItemView: View {
     }
 
     private var expandedBackground: some View {
-        // Every `SidebarItemView` lives inside a parent `LazyVStack` + `ForEach`
+        // Every `SidebarItemView` lives inside a parent `VStack` + `ForEach`
         // and was previously registering `.matchedGeometryEffect(id:"sidebar_selection",
         // in: namespace)` inside the `isSelected` branch. SwiftUI requires that
         // exactly one view own a given (id, namespace) pair at a time, but during

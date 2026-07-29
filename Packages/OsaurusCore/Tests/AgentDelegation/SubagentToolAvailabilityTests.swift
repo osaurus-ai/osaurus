@@ -76,7 +76,8 @@ struct SubagentToolAvailabilityTests {
     func spawnAgentRejectsNonSpawnableAgentExecution() async throws {
         try await withDelegationSandboxAsync(configuration: .default) {
             let result = try await SpawnAgentTool().execute(
-                argumentsJSON: #"{"agent":"Helper","input":"Summarize this small function."}"#
+                argumentsJSON:
+                    #"{"agent":"00000000-0000-4000-8000-000000000099","input":"Summarize this small function."}"#
             )
 
             #expect(ToolEnvelope.isError(result))

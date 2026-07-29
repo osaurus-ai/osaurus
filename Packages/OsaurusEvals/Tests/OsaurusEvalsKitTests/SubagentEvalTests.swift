@@ -164,10 +164,10 @@ struct SubagentEvalTests {
 
     // MARK: - Parallel batch (batch-race + remote fan-out lanes)
 
-    /// Two concurrent LOCAL-HANDOFF runs in one batch must serialize through
-    /// the process-wide admission gate (peak overlap 1) and BOTH complete —
-    /// the batch-race guard, scored end-to-end through the runner.
-    @Test func parallelExclusiveBatchSerializesAndCompletes() async {
+    /// Two children targeting the SAME local model share one residency
+    /// handoff and batch concurrently. Different local identities serialize
+    /// in the heterogeneous fixture below.
+    @Test func parallelSameModelBatchFansOutAndCompletes() async {
         let report = await scoreScripted(
             Sub(
                 lane: "scripted",
@@ -176,9 +176,13 @@ struct SubagentEvalTests {
                 phases: ["running"],
                 parallel: 2,
                 runDelayMs: 120,
+                rendezvous: true,
                 expectSuccess: true,
-                expectMaxConcurrent: 1,
-                expectRunsCompleted: 2
+                expectMaxConcurrent: 2,
+                expectRunsCompleted: 2,
+                expectRunsSettled: 2,
+                expectRunEnvelopeKinds: ["success", "success"],
+                expectBatchAggregateStatus: "succeeded"
             )
         )
         #expect(report.outcome == .passed, "notes: \(report.notes)")
@@ -199,6 +203,144 @@ struct SubagentEvalTests {
                 expectSuccess: true,
                 expectMaxConcurrent: 2,
                 expectRunsCompleted: 2
+            )
+        )
+        #expect(report.outcome == .passed, "notes: \(report.notes)")
+    }
+
+    @Test func scriptedBatchUsesProductionAggregationAndOrderedPayloads() async {
+        let report = await scoreScripted(
+            Sub(
+                lane: "scripted",
+                decision: "allow",
+                scriptedBatch: [
+                    .init(
+                        id: "a",
+                        target: "scripted-remote",
+                        remote: true,
+                        runDelayMs: 40,
+                        rendezvousArrivals: 2,
+                        summary: "A complete",
+                        resultKind: "a_result"
+                    ),
+                    .init(
+                        id: "b",
+                        target: "scripted-remote",
+                        remote: true,
+                        runDelayMs: 40,
+                        rendezvousArrivals: 2,
+                        summary: "B complete",
+                        resultKind: "b_result"
+                    ),
+                ],
+                expectSuccess: true,
+                expectEnvelopeKind: "success",
+                expectResultKind: "spawn_batch_result",
+                expectMaxConcurrent: 2,
+                expectRunsCompleted: 2,
+                expectRunsSettled: 2,
+                expectRunEnvelopeKinds: ["success", "success"],
+                expectBatchAggregateStatus: "succeeded",
+                expectBatchJobIDs: ["a", "b"],
+                expectBatchSummaries: ["A complete", "B complete"],
+                expectBatchPayloadFields: [
+                    [
+                        "kind": "a_result",
+                        "model": "scripted-remote",
+                        "summary": "A complete",
+                    ],
+                    [
+                        "kind": "b_result",
+                        "model": "scripted-remote",
+                        "summary": "B complete",
+                    ],
+                ]
+            )
+        )
+        #expect(report.outcome == .passed, "notes: \(report.notes)")
+    }
+
+    @Test func scriptedBatchFailureSettlesSiblingsInCallerOrder() async {
+        let report = await scoreScripted(
+            Sub(
+                lane: "scripted",
+                decision: "allow",
+                scriptedBatch: [
+                    .init(
+                        id: "ok-a",
+                        target: "scripted-remote",
+                        remote: true,
+                        runDelayMs: 40,
+                        rendezvousArrivals: 3,
+                        summary: "A complete"
+                    ),
+                    .init(
+                        id: "failed",
+                        target: "scripted-remote",
+                        remote: true,
+                        runFailure: "executionFailed",
+                        runDelayMs: 40,
+                        rendezvousArrivals: 3
+                    ),
+                    .init(
+                        id: "ok-b",
+                        target: "scripted-remote",
+                        remote: true,
+                        runDelayMs: 40,
+                        rendezvousArrivals: 3,
+                        summary: "B complete"
+                    ),
+                ],
+                expectSuccess: true,
+                expectEnvelopeKind: "success",
+                expectResultKind: "spawn_batch_result",
+                expectRunsCompleted: 2,
+                expectRunsSettled: 3,
+                expectRunEnvelopeKinds: [
+                    "success", "execution_error", "success"
+                ],
+                expectBatchAggregateStatus: "partial_failure",
+                expectBatchJobIDs: ["ok-a", "failed", "ok-b"],
+                expectBatchSummaries: [
+                    "A complete",
+                    "scripted execution failure (run)",
+                    "B complete",
+                ]
+            )
+        )
+        #expect(report.outcome == .passed, "notes: \(report.notes)")
+    }
+
+    @Test func scriptedBatchUserStopAfterRunEntrySettlesEveryRow() async {
+        let report = await scoreScripted(
+            Sub(
+                lane: "scripted",
+                decision: "allow",
+                scriptedBatch: [
+                    .init(
+                        id: "slow-a",
+                        target: "scripted-remote",
+                        remote: true,
+                        runDelayMs: 5_000,
+                        rendezvousArrivals: 2
+                    ),
+                    .init(
+                        id: "slow-b",
+                        target: "scripted-remote",
+                        remote: true,
+                        runDelayMs: 5_000,
+                        rendezvousArrivals: 2
+                    ),
+                ],
+                interruptAfterMs: 100,
+                expectSuccess: false,
+                expectEnvelopeKind: "user_denied",
+                expectResultKind: "spawn_batch_result",
+                expectRunsCompleted: 0,
+                expectRunsSettled: 2,
+                expectRunEnvelopeKinds: ["user_denied", "user_denied"],
+                expectBatchAggregateStatus: "all_cancelled",
+                expectBatchJobIDs: ["slow-a", "slow-b"]
             )
         )
         #expect(report.outcome == .passed, "notes: \(report.notes)")
@@ -349,14 +491,85 @@ struct SubagentEvalTests {
         #expect(t.handoffWrapped == true)
     }
 
-    @Test func facadeParallelBatchTranscriptShape() async {
+    @Test func facadeSameModelLocalBatchFansOutAndAggregates() async {
         let t = await SubagentJobEvaluator.runScriptedParallelBatch(
-            ScriptedSubagentSpec(needsHandoff: true, runDelayMs: 80),
+            ScriptedSubagentSpec(
+                needsHandoff: true,
+                runDelayMs: 80,
+                rendezvousArrivals: 2
+            ),
             count: 2
         )
         #expect(t.succeeded)
-        #expect(t.maxConcurrent == 1)
+        #expect(t.maxConcurrent == 2)
         #expect(t.runsCompleted == 2)
+        #expect(t.runsSettled == 2)
+        #expect(t.runEnvelopeKinds == ["success", "success"])
+        #expect(t.batchAggregateStatus == "succeeded")
+    }
+
+    @Test func facadeMixedBatchUsesLocalSerializationAndRemoteOverlap() async {
+        let t = await SubagentJobEvaluator.runScriptedParallelBatch([
+            ScriptedSubagentSpec(
+                kindId: "local-a",
+                needsHandoff: true,
+                modelName: "scripted-local-a",
+                runDelayMs: 80,
+                rendezvousArrivals: 2
+            ),
+            ScriptedSubagentSpec(
+                kindId: "local-b",
+                needsHandoff: true,
+                modelName: "scripted-local-b",
+                runDelayMs: 80
+            ),
+            ScriptedSubagentSpec(
+                kindId: "remote-c",
+                remote: true,
+                runDelayMs: 80,
+                rendezvousArrivals: 2
+            ),
+        ])
+        #expect(t.succeeded)
+        #expect(t.maxConcurrent == 2)
+        #expect(t.runsCompleted == 3)
+        #expect(t.runsSettled == 3)
+        #expect(t.runEnvelopeKinds == ["success", "success", "success"])
+        #expect(t.batchAggregateStatus == "succeeded")
+    }
+
+    @Test func facadeFailedChildStillSettlesSiblingsAndReturnsAggregate() async {
+        let t = await SubagentJobEvaluator.runScriptedParallelBatch([
+            ScriptedSubagentSpec(
+                kindId: "ok-a",
+                remote: true,
+                runDelayMs: 60,
+                rendezvousArrivals: 3
+            ),
+            ScriptedSubagentSpec(
+                kindId: "failed",
+                runFailure: .executionFailed,
+                remote: true,
+                runDelayMs: 60,
+                rendezvousArrivals: 3
+            ),
+            ScriptedSubagentSpec(
+                kindId: "ok-b",
+                remote: true,
+                runDelayMs: 60,
+                rendezvousArrivals: 3
+            ),
+        ])
+        // Reaching this aggregate is the deterministic parent-continuation
+        // seam: one child failure did not strand either sibling or the caller.
+        #expect(t.succeeded)
+        #expect(t.envelopeKind == "success")
+        #expect(t.resultKind == "spawn_batch_result")
+        #expect(t.maxConcurrent == 3)
+        #expect(t.runsCompleted == 2)
+        #expect(t.runsSettled == 3)
+        #expect(t.runEnvelopeKinds == ["success", "execution_error", "success"])
+        #expect(t.batchAggregateStatus == "partial_failure")
     }
 
     @Test func facadeUsageAccountingTranscript() async {
@@ -458,6 +671,12 @@ struct SubagentEvalTests {
         #expect(
             suite.cases.count >= 12,
             "Expected the full Subagent suite; got \(suite.cases.count)"
+        )
+        #expect(
+            suite.cases.contains {
+                $0.id == "subagent.scripted-batch-user-stop-all-cancelled"
+            },
+            "Missing deterministic all-cancelled batch fixture"
         )
 
         // Every model-free scenario must pass deterministically: the `scripted`

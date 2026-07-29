@@ -542,7 +542,9 @@ public final class SearchProviderManager: ObservableObject {
         // this used to run inside the singleton's init on the main thread
         // and showed up in hang reports. Probe off-main and publish back;
         // `configuredProviderIds` keeps its last value (empty on first
-        // launch) until the probe lands.
+        // launch) until the probe lands. Nothing schema-visible depends on
+        // this probe: the `web_search` tool schema is immutable by design,
+        // and execute-time category validation reads the live provider set.
         let definitions = rankedProviders.map(\.definition)
         Task.detached(priority: .userInitiated) { [weak self] in
             var configured = Set<String>()
@@ -550,25 +552,8 @@ public final class SearchProviderManager: ObservableObject {
                 configured.insert(def.id)
             }
             await MainActor.run { [weak self] in
-                guard let self else { return }
-                self.configuredProviderIds = configured
-                SearchToolSchemaState.update(
-                    categories: self.availableCategoriesForSchema(configured: configured))
+                self?.configuredProviderIds = configured
             }
-        }
-    }
-
-    /// Same as `availableCategories()` but with an explicit configured set so
-    /// it can run before the published property lands.
-    private func availableCategoriesForSchema(configured: Set<String>) -> [String] {
-        var out: Set<String> = []
-        for (provider, def) in rankedProviders where provider.enabled {
-            guard def.isKeyless || configured.contains(def.id) else { continue }
-            out.formUnion(def.supportedCategories)
-        }
-        return out.sorted {
-            let (a, b) = (SearchCategory.sortIndex($0), SearchCategory.sortIndex($1))
-            return a == b ? $0 < $1 : a < b
         }
     }
 
@@ -655,27 +640,4 @@ public struct HostedFirstSearchResult: Sendable {
     /// Diagnostic token when a hosted attempt was made but the cascade served
     /// the results ("insufficient_funds", "empty", "unavailable", …).
     public var hostedFallbackReason: String?
-}
-
-// MARK: - Schema state bridge
-
-/// Lock-protected snapshot of the categories available to `web_search`,
-/// readable from nonisolated tool-schema getters (tool `parameters` are
-/// computed off the MainActor). Updated by `SearchProviderManager` whenever
-/// configuration or secrets change.
-enum SearchToolSchemaState {
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var categories: [String] = [SearchCategory.web]
-
-    static func update(categories new: [String]) {
-        lock.lock()
-        categories = new.isEmpty ? [SearchCategory.web] : new
-        lock.unlock()
-    }
-
-    static func availableCategories() -> [String] {
-        lock.lock()
-        defer { lock.unlock() }
-        return categories
-    }
 }

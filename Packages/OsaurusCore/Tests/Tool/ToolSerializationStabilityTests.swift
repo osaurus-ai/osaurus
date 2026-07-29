@@ -209,6 +209,38 @@ struct ToolSerializationStabilityTests {
         #expect((nestedProperties["x-osaurus-original-type"] as? [String]) == ["description", "type"])
     }
 
+    /// The complete ordered baseline payload — every always-loaded tool's
+    /// canonical tokenizer spec, in registry order — must be byte-identical
+    /// across invocations. This is the actual unit the chat template renders
+    /// into the static `<tools>` prefix: a single tool whose schema reads
+    /// mutable state (the old provider-derived `web_search` category enum),
+    /// or a nondeterministic ordering, silently invalidates KV-cache reuse
+    /// for every conversation.
+    @Test
+    @MainActor
+    func alwaysLoadedTokenizerToolPayload_isByteStableAcrossInvocations() throws {
+        func orderedPayload() throws -> (names: [String], bytes: Data) {
+            let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
+            var joined = Data()
+            for tool in specs {
+                joined.append(
+                    try JSONSerialization.data(
+                        withJSONObject: tool.toTokenizerToolSpec(),
+                        options: [.sortedKeys]
+                    )
+                )
+                // Separator so ("ab","c") never collides with ("a","bc").
+                joined.append(0x1F)
+            }
+            return (specs.map(\.function.name), joined)
+        }
+
+        let first = try orderedPayload()
+        let second = try orderedPayload()
+        #expect(first.names == second.names)
+        #expect(first.bytes == second.bytes)
+    }
+
     @Test
     @MainActor
     func alwaysLoadedTokenizerToolSpecsExposeOnlyStringTypeFields() throws {
