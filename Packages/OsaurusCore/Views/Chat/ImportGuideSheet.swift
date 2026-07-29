@@ -35,6 +35,8 @@ struct ImportGuideSheet: View {
 
     @Environment(\.theme) private var theme
     @ObservedObject private var pref = ImportGuidePreference.shared
+    /// Accordion state: the one provider whose export recipe is expanded.
+    @State private var expandedProviderId: String?
 
     private let contentWidth: CGFloat = 420
 
@@ -92,7 +94,7 @@ struct ImportGuideSheet: View {
             .frame(maxWidth: .infinity)
             .padding(.bottom, 12)
 
-            VStack(spacing: 8) {
+            VStack(spacing: 6) {
                 ForEach(providers) { provider in
                     providerRow(provider)
                 }
@@ -143,39 +145,64 @@ struct ImportGuideSheet: View {
     }
 
     private func providerRow(_ provider: Provider) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text(provider.name)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .frame(width: 88, alignment: .leading)
-
-            Text(provider.recipe, bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            if let url = provider.exportURL {
-                Button {
-                    NSWorkspace.shared.open(url)
-                } label: {
-                    Image(systemName: "arrow.up.right.square")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.accentColor)
+        let isExpanded = expandedProviderId == provider.id
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    expandedProviderId = isExpanded ? nil : provider.id
                 }
-                .buttonStyle(PlainButtonStyle())
-                .localizedHelp("Open export page")
+            } label: {
+                HStack(spacing: 10) {
+                    Text(provider.name)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PlainButtonStyle())
+
+            if isExpanded {
+                HStack(alignment: .top, spacing: 10) {
+                    Text(provider.recipe, bundle: .module)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if let url = provider.exportURL {
+                        Button {
+                            NSWorkspace.shared.open(url)
+                        } label: {
+                            Image(systemName: "arrow.up.right.square")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(theme.accentColor)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .localizedHelp("Open export page")
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(theme.tertiaryBackground.opacity(0.4))
+                .fill(theme.tertiaryBackground.opacity(isExpanded ? 0.55 : 0.4))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(theme.cardBorder, lineWidth: 1)
+                .stroke(isExpanded ? theme.accentColor.opacity(0.35) : theme.cardBorder, lineWidth: 1)
         )
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
