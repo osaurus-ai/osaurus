@@ -2953,6 +2953,20 @@ struct RuntimePolicySourceTests {
         #expect(reuseWindow.contains("replacement.sizingOptions = []"))
     }
 
+    @Test("Settings sidebar keeps bounded navigation rows accessibility-stable")
+    func settingsSidebarUsesEagerRowsForAccessibility() throws {
+        let sidebar = try Self.source("Views/Management/SidebarNavigation.swift")
+        let start = try #require(sidebar.range(of: "var itemList: some View"))
+        let end = try #require(
+            sidebar.range(of: "func sectionHeader(", range: start.upperBound ..< sidebar.endIndex)
+        )
+        let itemList = String(sidebar[start.lowerBound ..< end.lowerBound])
+
+        #expect(itemList.contains("VStack("))
+        #expect(!itemList.contains("LazyVStack("))
+        #expect(itemList.contains("proxy.scrollTo(newValue, anchor: .center)"))
+    }
+
     @Test("Local bundle config readers preserve discovered bundle paths")
     func localBundleConfigReadersPreserveDiscoveredBundlePaths() throws {
         let defaults = try Self.source("Services/LocalGenerationDefaults.swift")
