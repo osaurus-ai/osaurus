@@ -65,6 +65,31 @@ struct SpawnBatchConcurrencyContractTests {
         #expect(updated.maxParallelSpawns == 5)
     }
 
+    @Test("runtime application uses the canonical Server value over a stale UI mirror")
+    func runtimeLimitOverridesStaleSubagentMirror() {
+        var staleMirror = SubagentConfiguration()
+        staleMirror.budgets.maxParallelSpawns = 3
+        let custom = SubagentBudgets(
+            maxDelegateTokens: 1_024,
+            maxDelegateTurns: 4,
+            maxToolCalls: 6,
+            maxElapsedSeconds: 75,
+            maxParallelSpawns: staleMirror.budgets.maxParallelSpawns
+        )
+
+        let updated = SpawnBatchConcurrencyContract.applyingLimit(
+            2,
+            to: custom
+        )
+
+        #expect(updated.maxDelegateTokens == 1_024)
+        #expect(updated.maxDelegateTurns == 4)
+        #expect(updated.maxToolCalls == 6)
+        #expect(updated.maxElapsedSeconds == 75)
+        #expect(updated.maxParallelSpawns == 2)
+        #expect(staleMirror.budgets.maxParallelSpawns == 3)
+    }
+
     @Test("automatic Server mode mirrors its safe resolved capacity")
     func automaticServerModeUsesResolvedCapacity() {
         var settings = VMLXServerRuntimeSettings()

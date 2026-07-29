@@ -151,6 +151,11 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
 
     struct BatchAuthorityFingerprint: Sendable, Equatable {
         let configurationRevision: SpawnConfigurationAuthorityRevision
+        /// Canonical Server-owned Spawn/BatchEngine ceiling. Kept beside the
+        /// scoped Subagent-store generations so a headless/API settings change
+        /// during approval cannot escape the final authority comparison merely
+        /// because no UI controller was present to update the persisted mirror.
+        let maxParallelSpawns: Int
         let launcher: SpawnLauncherAuthority
         let launcherAgentRevisions: SpawnAgentAuthorityRevisions
         let targets: [BatchTargetAuthority]
@@ -967,6 +972,9 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                     ? storeSnapshot.spawnDefaultRevision
                     : nil
             ),
+            maxParallelSpawns: SpawnBatchConcurrencyContract.configuredLimit(
+                for: ServerRuntimeSettingsStore.snapshot()
+            ),
             launcher: SpawnLauncherAuthority(
                 id: parentScope.agentId,
                 isDefault: isDefaultLauncher,
@@ -989,6 +997,7 @@ public final class SpawnBatchTool: OsaurusTool, @unchecked Sendable {
                 == current.launcherAgentRevisions.launcher,
             approved.targets == current.targets,
             approved.isDefaultLauncher == current.isDefaultLauncher,
+            approved.maxParallelSpawns == current.maxParallelSpawns,
             approved.configurationRevision.shared
                 == current.configurationRevision.shared
         else { return false }

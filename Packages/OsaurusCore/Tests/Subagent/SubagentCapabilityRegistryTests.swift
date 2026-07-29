@@ -552,12 +552,14 @@ struct SubagentCapabilityRegistryTests {
             maxElapsedSeconds: 60,
             maxParallelSpawns: 2
         )
+        let sharedParallelLimit = 7
 
         // Default / main chat → global budgets.
         let def = SubagentToolVisibility.effectiveBudgets(
             isDefault: true,
             config: config,
-            settings: custom
+            settings: custom,
+            sharedParallelLimit: sharedParallelLimit
         )
         #expect(def.maxDelegateTokens == 4096)
         #expect(def.maxDelegateTurns == 3)
@@ -568,7 +570,8 @@ struct SubagentCapabilityRegistryTests {
         let cus = SubagentToolVisibility.effectiveBudgets(
             isDefault: false,
             config: config,
-            settings: custom
+            settings: custom,
+            sharedParallelLimit: sharedParallelLimit
         )
         #expect(cus.maxDelegateTokens == 1024)
         #expect(cus.maxDelegateTurns == 2)
@@ -580,7 +583,8 @@ struct SubagentCapabilityRegistryTests {
         let missing = SubagentToolVisibility.effectiveBudgets(
             isDefault: false,
             config: config,
-            settings: nil
+            settings: nil,
+            sharedParallelLimit: sharedParallelLimit
         )
         #expect(missing.maxDelegateTokens == SubagentBudgets().maxDelegateTokens)
         #expect(missing.maxParallelSpawns == 7)
