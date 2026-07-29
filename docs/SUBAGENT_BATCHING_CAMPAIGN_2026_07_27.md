@@ -2,20 +2,18 @@
 
 ## Status
 
-`PARTIAL` — the current dirty campaign source passes the fresh six-suite
-focused Core lifecycle gate. The full token-free eval package and broad Core
-matrix remain historical until rerun on the frozen source, and the fresh
-isolated Release-app UI matrix has not run yet. Authenticated remote-provider
-proof is also expected to remain blocked until a credentialed provider is
-available.
+`PARTIAL` — the source is rebased onto merged PR #2216 and passes the fresh
+focused, broad, and full token-free eval gates. The fresh isolated Release-app
+UI/model matrix has not run yet, so settings effectiveness, real batching,
+RAM behavior, cancellation, and terminal chat lifecycle are not promoted.
+Authenticated remote-provider execution also remains conditional on a
+credentialed provider being available in the isolated proof app.
 
-- Osaurus campaign HEAD: `a283c8a84b79df0807cf66ebb5a241bb6cb8adc9`
+- Osaurus campaign code HEAD: `de0ac40e`.
 - Current rebased upstream base:
-  `d6216d23b3577c7819c196ead25855bf144aefdd`.
-- Current upstream target after PR #2216:
   `33f455e4ce7fac1e2ee130db4c951081907a926e`.
-- Post-rebase automated reruns and the Release-app UI matrix are still
-  pending.
+- Post-rebase automated reruns are current; the Release-app UI/model matrix is
+  still pending.
 - vMLX Swift pin: `84612e143d2e51da865316dbc49167530a1717ad`
 - Worktree: `/private/tmp/osaurus-subagent-batching-complete-20260727`
 - Branch: `codex/subagent-batching-complete-20260727`
@@ -154,6 +152,7 @@ remain out of scope until their runtime consumers exist.
 | BATCH-24 | A second concurrent `TaskCoalescer.remove` can return while the first remover still owns a BatchEngine/Metal drain, allowing reentrant unload to continue before teardown completes. | BROKEN | Runtime teardown ownership |
 | BATCH-25 | Laguna XS 2.1 requires bundle-driven `top_k=20`. Current local 2L/4M/6M bundles contain 20, but older/mis-shipped bundles and effective chat/spawn request plumbing still need a truthful migration and live proof. | PARTIAL | Bundle metadata/defaults |
 | BATCH-26 | Custom-agent launcher and target authority used final-value equality only, so an edit followed by a value-identical restore during approval or post-admission validation could escape ABA detection. | BROKEN | Per-agent Spawn authority |
+| BATCH-27 | The PR #2216 rebase split idle-decision ownership from the exact handoff unload claim and initially omitted post-drain identity/ownership rechecks on the combined path. | FIXED IN SOURCE / LIVE PENDING | Runtime teardown ownership |
 
 ## Historical evidence — not current-head proof
 
@@ -420,6 +419,26 @@ failures/skips, across `SubagentAdmissionTests`,
 `SubagentOperationCancellationTests`. Result bundle:
 `/private/tmp/osaurus-subagent-focused-20260729-0112.xcresult`.
 
+After rebasing onto merged PR #2216, the fresh focused gate passed **115/115**
+again in
+`/private/tmp/osaurus-subagent-focused-20260729-postrebase-1.xcresult`.
+The first combined #2216/handoff source-contract run then correctly found
+BATCH-27. The owning teardown now preserves the exact idle-decision commit
+gate, generation/child-ownership claims, bounded fail-closed drains, and
+identity/ownership rechecks after each suspension boundary. The corrected
+focused source-contract rerun passed **107/107** in
+`/private/tmp/osaurus-subagent-pr2216-fix-20260729.xcresult`.
+
+The current broad affected Core matrix passed **597/597**, zero failures and
+zero skips, in
+`/private/tmp/osaurus-subagent-broad-current-20260729.xcresult`. It contains
+the previous 489 batching/channel/prompt/lifecycle cases plus the merged
+selected-chat warmup, idle-residency, runtime-policy, and exact handoff rows.
+The full fresh-scratch `OsaurusEvals` package passed **299/299 across 36
+suites**; raw log:
+`/private/tmp/osaurus-subagent-evals-current-20260729.log`. This adds the
+selected-chat idle-eviction lifecycle suite to the previous 296/35 baseline.
+
 ## Current-head live Release-app matrix
 
 Use a dedicated bundle identifier and test root. For every turn inspect the
@@ -517,3 +536,9 @@ whole lifecycle through final unlock and a follow-up.
 | 2026-07-28 final upstream rebase | `a283c8a8` on `d6216d23` | Five campaign commits rebased over current Osaurus main | PASS (source ancestry only) | Conflict-free rebase; all four vMLX pins resolve to `d7483a88668bb3ec70e0ea7f8423a5f684084c28`; post-rebase automated and live rows remain pending |
 | 2026-07-29 per-agent Spawn authority audit | `a283c8a8` + campaign diff | Custom launcher/permission/target ABA generations | FIXED IN SOURCE / LIVE PENDING | `SpawnPermissionGateTests` 20/20, zero failures/skips; `/private/tmp/osaurus-subagent-authority-aba-20260729.xcresult`; full frozen-source and Release-app reruns remain pending |
 | 2026-07-29 fresh focused lifecycle gate | `a283c8a8` + campaign diff | Admission, post-wait residency, permission/authority, server migration, cancellation | PASS (automated only) | 115/115, zero failures/skips; `/private/tmp/osaurus-subagent-focused-20260729-0112.xcresult`; broad/eval/live rows remain pending |
+| 2026-07-29 PR #2216 rebase | `1cef485d` on `33f455e4` | Six campaign commits rebased over merged selected-chat idle warmup recovery | PASS (source ancestry only) | One semantic ModelRuntime conflict required combined idle-decision plus exact-claim teardown; automated proof follows |
+| 2026-07-29 post-rebase focused gate | `1cef485d` | Admission, session admission, residency, authority, server migration, cancellation | PASS (automated only) | 115/115, zero failures/skips; `/private/tmp/osaurus-subagent-focused-20260729-postrebase-1.xcresult` |
+| 2026-07-29 merged teardown audit | `1cef485d` + fix | PR #2216 idle-decision ownership plus handoff identity/ownership claims | FAIL THEN FIXED IN SOURCE | Initial 138/140 source-contract run found BATCH-27; no pass claimed for that run |
+| 2026-07-29 merged teardown focused rerun | `de0ac40e` | Runtime policy and exact handoff ABA guards | PASS (automated only) | 107/107, zero failures/skips; `/private/tmp/osaurus-subagent-pr2216-fix-20260729.xcresult` |
+| 2026-07-29 broad affected Core matrix | `de0ac40e` | Batching, channels, prompts, settings, warmup, idle residency, exact handoff, cancellation | PASS (automated only) | 597/597, zero failures/skips; `/private/tmp/osaurus-subagent-broad-current-20260729.xcresult` |
+| 2026-07-29 full token-free eval package | `de0ac40e` | All deterministic OsaurusEvals including AgentLoop spawn batch, parent continuation, Stop, and selected-chat warmup lifecycle | PASS (automated only) | 299/299 across 36 suites; `/private/tmp/osaurus-subagent-evals-current-20260729.log`; model-backed/live rows remain pending |
