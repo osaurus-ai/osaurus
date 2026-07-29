@@ -1611,6 +1611,9 @@ extension ModelManager {
 extension ModelManager {
     /// HF org whose entire repo listing is auto-discovered into the Recommended tab.
     fileprivate static let osaurusOrgAuthor = "OsaurusAI"
+    /// Keep this above the org's current repository count so low-download and
+    /// newly published models are not truncated from the downloads-sorted API.
+    fileprivate static let osaurusOrgFetchLimit = 200
 
     /// True if `id` is `"<osaurusOrgAuthor>/<repo>"` (case-insensitive).
     fileprivate static func isOsaurusOrgRepo(_ id: String) -> Bool {
@@ -1647,7 +1650,7 @@ extension ModelManager {
             let url = Self.makeHFModelsURL(
                 author: Self.osaurusOrgAuthor,
                 search: "",
-                limit: 100
+                limit: Self.osaurusOrgFetchLimit
             )
         else { return }
 
