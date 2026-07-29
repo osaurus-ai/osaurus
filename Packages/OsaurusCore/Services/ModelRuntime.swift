@@ -1738,6 +1738,16 @@ public actor ModelRuntime {
                 await ModelLease.shared.waitForZero(name)
             }
             guard inFlightIdleResidencyDecisions[name] == idleDecisionID else { return false }
+            if let expectedIdentity,
+                residentMetadata[name]?.identity != expectedIdentity
+            {
+                return false
+            }
+            if let expectedOwnershipToken,
+                residentMetadata[name]?.childOwnershipToken != expectedOwnershipToken
+            {
+                return false
+            }
             await MetalGate.shared.enterModelTeardown(model: name)
             guard inFlightIdleResidencyDecisions[name] == idleDecisionID else {
                 await MetalGate.shared.exitModelTeardown(model: name)
@@ -1763,6 +1773,16 @@ public actor ModelRuntime {
                 }
             } else {
                 await ModelLease.shared.waitForZero(name)
+            }
+            if let expectedIdentity,
+                residentMetadata[name]?.identity != expectedIdentity
+            {
+                return false
+            }
+            if let expectedOwnershipToken,
+                residentMetadata[name]?.childOwnershipToken != expectedOwnershipToken
+            {
+                return false
             }
             await MetalGate.shared.enterModelTeardown(model: name)
         }

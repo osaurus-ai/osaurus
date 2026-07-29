@@ -2754,7 +2754,9 @@ struct RuntimePolicySourceTests {
         #expect(manager.contains("guard await leaseCount(modelName) == 0"))
         #expect(manager.contains("guard await isResident(modelName)"))
 
-        let unloadBody = try Self.functionBody("func unload(", in: runtime)
+        // Exact/owned teardown lives in the claimed helper so handoff ABA
+        // guards and idle-decision commit ordering share one destructive path.
+        let unloadBody = try Self.functionBody("private func unloadClaimed(", in: runtime)
         let idleBranch = try #require(unloadBody.range(of: "if reason == .idlePolicy, let idleDecisionID"))
         let finalDecisionGate = try #require(
             unloadBody.range(
