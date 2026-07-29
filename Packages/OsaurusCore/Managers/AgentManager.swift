@@ -513,7 +513,11 @@ public final class AgentManager: ObservableObject {
     /// main actor before detaching so two rapid creations can't collide, and
     /// the write-back re-loads the agent and only fills a still-empty address,
     /// so a concurrent `update`/`rotateAddress` can't be clobbered.
-    private func assignAddressInBackground(to agent: Agent) {
+    /// Schedule best-effort address assignment without synchronously touching
+    /// Keychain on the main actor. Automatic UI/runtime callers must use this
+    /// path; `assignAddress(to:)` remains for explicit flows that need a
+    /// synchronous result before continuing.
+    func assignAddressInBackground(to agent: Agent) {
         guard !agent.isBuiltIn, agent.agentAddress == nil else { return }
         let index = nextUnusedAgentIndex()
         // Park the reservation immediately (address comes later) so another

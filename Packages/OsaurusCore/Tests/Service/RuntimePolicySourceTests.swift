@@ -351,6 +351,20 @@ struct RuntimePolicySourceTests {
         #expect(serverView.contains("reloadAccessKeys(readKeychain: true)"))
     }
 
+    @Test("automatic relay identity assignment keeps Keychain work off the main actor")
+    func automaticRelayIdentityAssignmentKeepsKeychainWorkOffMainActor() throws {
+        let agentManager = try Self.source("Managers/AgentManager.swift")
+        let serverView = try Self.source("Views/Settings/ServerView.swift")
+        let relayManager = try Self.source("Networking/RelayTunnelManager.swift")
+
+        #expect(agentManager.contains("func assignAddressInBackground(to agent: Agent)"))
+        #expect(agentManager.contains("Task.detached(priority: .userInitiated)"))
+        #expect(serverView.contains("agentManager.assignAddressInBackground(to: agent)"))
+        #expect(!serverView.contains("try? agentManager.assignAddress(to: agent)"))
+        #expect(relayManager.contains("AgentManager.shared.assignAddressInBackground(to: agent)"))
+        #expect(!relayManager.contains("try? AgentManager.shared.assignAddress(to: agent)"))
+    }
+
     @Test("plugin host inference carries agent memory like HTTP chat")
     func pluginHostInferenceInjectsAgentMemoryPrefix() throws {
         let source = try Self.source("Services/Plugin/PluginHostAPI.swift")
