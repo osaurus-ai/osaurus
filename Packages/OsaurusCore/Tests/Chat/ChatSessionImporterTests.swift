@@ -129,6 +129,64 @@ struct ChatSessionImporterTests {
         #expect(session.turns[1].content == "Sure — here's a 3-day plan.")
     }
 
+    // MARK: - Gemini (Takeout MyActivity.json)
+
+    private let geminiExport = """
+        [
+          {
+            "header": "Gemini Apps",
+            "title": "Prompted explain monads simply",
+            "time": "2026-06-01T10:00:00.000Z",
+            "products": ["Gemini Apps"],
+            "activityControls": ["Gemini Apps Activity"],
+            "safeHtmlItem": [
+              {"html": "<p>A monad is a &quot;box&quot;.</p><ul><li>wrap</li><li>chain</li></ul>"}
+            ]
+          },
+          {
+            "header": "Gemini Apps",
+            "title": "Used Gemini Apps",
+            "time": "2026-06-01T09:00:00.000Z",
+            "products": ["Gemini Apps"]
+          },
+          {
+            "header": "Gemini Apps",
+            "title": "Prompted what's 2+2",
+            "time": "2026-06-02T08:30:00.000Z",
+            "products": ["Gemini Apps"]
+          }
+        ]
+        """
+
+    @Test func geminiActivityEntriesBecomeIndividualSessions() throws {
+        let imported = try ChatSessionImporter.parse(data: Data(geminiExport.utf8))
+
+        // The "Used Gemini Apps" row has no prompt and is dropped.
+        #expect(imported.count == 2)
+        #expect(imported.allSatisfy { $0.format == .gemini })
+
+        let first = try #require(imported.first).session
+        #expect(first.turns.count == 2)
+        #expect(first.turns[0].role == .user)
+        #expect(first.turns[0].content == "explain monads simply")
+        #expect(first.turns[1].role == .assistant)
+        #expect(first.turns[1].content == "A monad is a \"box\".\n- wrap\n- chain")
+        #expect(first.externalSessionKey == "gemini:2026-06-01T10:00:00.000Z")
+        #expect(
+            first.createdAt == ISO8601DateFormatter().date(from: "2026-06-01T10:00:00Z")
+        )
+    }
+
+    @Test func geminiPromptWithoutResponseImportsAsUserOnlySession() throws {
+        let imported = try ChatSessionImporter.parse(data: Data(geminiExport.utf8))
+        let promptOnly = try #require(
+            imported.first(where: { $0.session.turns[0].content == "what's 2+2" })
+        ).session
+
+        #expect(promptOnly.turns.count == 1)
+        #expect(promptOnly.turns[0].role == .user)
+    }
+
     // MARK: - Generic schema
 
     @Test func genericSchemaParsesAndTitlesFromFirstUserTurn() throws {

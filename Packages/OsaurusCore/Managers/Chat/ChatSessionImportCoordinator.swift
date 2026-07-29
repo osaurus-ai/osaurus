@@ -30,7 +30,7 @@ enum ChatSessionImportCoordinator {
         panel.allowedContentTypes = [.json]
         panel.title = L("Import Conversations")
         panel.message = L(
-            "Choose a ChatGPT conversations.json, Claude export, or Osaurus import JSON file."
+            "Choose a ChatGPT conversations.json, Claude export, Gemini Takeout MyActivity.json, or Osaurus import JSON file."
         )
 
         Task { @MainActor in

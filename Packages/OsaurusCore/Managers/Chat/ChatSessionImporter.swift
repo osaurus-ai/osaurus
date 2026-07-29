@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Parses conversation exports from other assistants (ChatGPT, Claude,
-//  or a generic JSON schema) into `ChatSessionData` so they can be
+//  Gemini, or a generic JSON schema) into `ChatSessionData` so they can be
 //  continued as native sessions. Pure data transformation — no I/O,
 //  no persistence; the coordinator owns file access and saving.
 //
@@ -17,6 +17,7 @@ public enum ChatSessionImporter {
     public enum SourceFormat: String, Sendable {
         case chatGPT = "chatgpt"
         case claude = "claude"
+        case gemini = "gemini"
         case generic = "import"
     }
 
@@ -36,7 +37,7 @@ public enum ChatSessionImporter {
                 return L("The file is not valid JSON.")
             case .unrecognizedFormat:
                 return L(
-                    "Unrecognized export format. Supported: ChatGPT conversations.json, Claude export JSON, or Osaurus generic import JSON."
+                    "Unrecognized export format. Supported: ChatGPT conversations.json, Claude export JSON, Gemini Takeout MyActivity.json, or Osaurus generic import JSON."
                 )
             case .noConversations:
                 return L("No importable conversations were found in the file.")
@@ -60,6 +61,8 @@ public enum ChatSessionImporter {
                 conversations = array.compactMap { parseChatGPT($0) }
             } else if array.contains(where: { $0["chat_messages"] is [Any] }) {
                 conversations = array.compactMap { parseClaude($0) }
+            } else if array.contains(where: isGeminiActivityEntry) {
+                conversations = array.compactMap { parseGeminiActivity($0) }
             } else {
                 throw ImportError.unrecognizedFormat
             }
@@ -236,6 +239,84 @@ public enum ChatSessionImporter {
             if !joined.isEmpty { return joined }
         }
         return message["text"] as? String ?? ""
+    }
+
+    // MARK: - Gemini (Google Takeout MyActivity.json)
+
+    /// Google Takeout exports Gemini history as a flat My Activity log:
+    /// an array of entries with `"header": "Gemini Apps"`, the prompt in
+    /// `title` behind a `"Prompted "` prefix, the response as HTML in
+    /// `safeHtmlItem`, and an ISO-8601 `time`. There is no conversation
+    /// grouping in the export, so each entry becomes its own session.
+    private static func isGeminiActivityEntry(_ entry: [String: Any]) -> Bool {
+        guard entry["title"] is String, entry["time"] is String else { return false }
+        let header = entry["header"] as? String ?? ""
+        let products = entry["products"] as? [String] ?? []
+        return header.contains("Gemini") || header.contains("Bard")
+            || products.contains(where: { $0.contains("Gemini") || $0.contains("Bard") })
+    }
+
+    private static func parseGeminiActivity(_ entry: [String: Any]) -> ImportedConversation? {
+        guard isGeminiActivityEntry(entry), let title = entry["title"] as? String else {
+            return nil
+        }
+        // Non-prompt activity rows ("Used Gemini Apps", …) carry no
+        // conversation content.
+        let prefix = "Prompted "
+        guard title.hasPrefix(prefix) else { return nil }
+        let prompt = String(title.dropFirst(prefix.count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return nil }
+
+        let time = isoDate(entry["time"] as? String)
+        var turns = [ChatTurnData(role: .user, content: prompt, createdAt: time)]
+
+        let response = (entry["safeHtmlItem"] as? [[String: Any]] ?? [])
+            .compactMap { $0["html"] as? String }
+            .map(plainText(fromHTML:))
+            .joined(separator: "\n\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !response.isEmpty {
+            turns.append(ChatTurnData(role: .assistant, content: response, createdAt: time))
+        }
+
+        return assemble(
+            format: .gemini,
+            // No per-conversation title in the activity log; derive from
+            // the prompt like a fresh chat would.
+            title: nil,
+            // `time` is the only stable per-entry identifier Takeout gives us.
+            externalId: entry["time"] as? String,
+            createdAt: time,
+            updatedAt: time,
+            turns: turns
+        )
+    }
+
+    /// Minimal HTML → text for Takeout's `safeHtmlItem` responses: block
+    /// tags become newlines, list items become dashes, remaining tags are
+    /// stripped and common entities decoded. Not a general HTML renderer —
+    /// just enough to keep Gemini answers readable as markdown-ish text.
+    private static func plainText(fromHTML html: String) -> String {
+        var text = html
+        for tag in ["<br>", "<br/>", "<br />", "</p>", "</div>", "</li>", "</ul>", "</ol>"] {
+            text = text.replacingOccurrences(of: tag, with: "\n", options: .caseInsensitive)
+        }
+        text = text.replacingOccurrences(of: "<li>", with: "- ", options: .caseInsensitive)
+        text = text.replacingOccurrences(
+            of: "<[^>]+>", with: "", options: [.regularExpression, .caseInsensitive]
+        )
+        for (entity, character) in [
+            ("&nbsp;", " "), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"),
+            ("&lt;", "<"), ("&gt;", ">"), ("&amp;", "&"),
+        ] {
+            text = text.replacingOccurrences(of: entity, with: character)
+        }
+        // Collapse the blank-line runs left by adjacent block tags.
+        text = text.replacingOccurrences(
+            of: "\n{3,}", with: "\n\n", options: .regularExpression
+        )
+        return text
     }
 
     // MARK: - Generic Osaurus import schema

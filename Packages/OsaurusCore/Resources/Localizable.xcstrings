@@ -4080,6 +4080,7 @@
       }
     },
     "%lld conversations imported" : {
+
     },
     "%lld conversations will be removed permanently. This can't be undone." : {
       "localizations" : {
@@ -9723,8 +9724,6 @@
       },
       "shouldTranslate" : false
     },
-    "1 conversation imported" : {
-    },
     "1 agent" : {
       "localizations" : {
         "de" : {
@@ -9860,6 +9859,9 @@
           }
         }
       }
+    },
+    "1 conversation imported" : {
+
     },
     "1 day" : {
       "localizations" : {
@@ -21643,6 +21645,9 @@
           }
         }
       }
+    },
+    "Already using Osaurus on another Mac? With iCloud Keychain enabled on both, your identity restores here automatically — it can take a few minutes to sync." : {
+
     },
     "Also selected: %@ — referenced by %@." : {
       "localizations" : {
@@ -38544,6 +38549,9 @@
         }
       }
     },
+    "Check again" : {
+
+    },
     "Check available disk space manually before cold provisioning." : {
       "localizations" : {
         "de" : {
@@ -39465,7 +39473,7 @@
         }
       }
     },
-    "Choose a ChatGPT conversations.json, Claude export, or Osaurus import JSON file." : {
+    "Choose a ChatGPT conversations.json, Claude export, Gemini Takeout MyActivity.json, or Osaurus import JSON file." : {
 
     },
     "Choose a CSV, TSV, JSON, or JSONL file to import." : {
@@ -55317,6 +55325,9 @@
           }
         }
       }
+    },
+    "Current identity" : {
+
     },
     "Currently Active" : {
       "localizations" : {
@@ -71308,6 +71319,9 @@
           }
         }
       }
+    },
+    "Enter a valid phrase" : {
+
     },
     "Enter an executable path or command before testing." : {
       "localizations" : {
@@ -88104,6 +88118,9 @@
         }
       }
     },
+    "I understand: agents get new addresses, existing access keys are revoked, and the current identity's recovery phrase will no longer restore this Mac unless I saved it." : {
+
+    },
     "I've saved it" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -96801,40 +96818,6 @@
         }
       }
     },
-    "Last Used" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Zuletzt verwendet"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "마지막 사용"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Последнее использование"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "上次使用"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "上次使用"
-          }
-        }
-      }
-    },
     "Last used" : {
       "localizations" : {
         "de" : {
@@ -96852,6 +96835,40 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
+            "value" : "Последнее использование"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上次使用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上次使用"
+          }
+        }
+      }
+    },
+    "Last Used" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zuletzt verwendet"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "마지막 사용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
             "value" : "Последнее использование"
           }
         },
@@ -112993,40 +113010,6 @@
         }
       }
     },
-    "New Chat" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Neuer Chat"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "새 채팅"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Новый чат"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "新建聊天"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "新建聊天"
-          }
-        }
-      }
-    },
     "New chat" : {
       "localizations" : {
         "de" : {
@@ -113057,6 +113040,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "新增聊天"
+          }
+        }
+      }
+    },
+    "New Chat" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neuer Chat"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "새 채팅"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый чат"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新建聊天"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新建聊天"
           }
         }
       }
@@ -116136,6 +116153,7 @@
       }
     },
     "No importable conversations were found in the file." : {
+
     },
     "No incoming Discord messages yet this session. Send the test message and press “Verify incoming message”." : {
       "comment" : "A hint text that appears when there are no incoming messages to verify in the current session. It instructs the user to send a test message and press the \"Verify incoming message\" button.",
@@ -131930,6 +131948,12 @@
           }
         }
       }
+    },
+    "Paste the 24-word recovery phrase from your other Mac to restore your identity here. If iCloud Keychain is enabled on both Macs, the identity usually syncs on its own — the phrase is only needed when it doesn't." : {
+
+    },
+    "Paste the 24-word recovery phrase of the identity you want to switch to. This replaces the identity currently on this Mac." : {
+
     },
     "Paste the 24-word recovery phrase you saved during onboarding. We'll restore the original master key and your existing agents and access keys will start working again." : {
       "comment" : "A description of the purpose of the recovery phrase field.",
@@ -154522,6 +154546,9 @@
         }
       }
     },
+    "Replace Identity" : {
+
+    },
     "Replace Image" : {
       "localizations" : {
         "de" : {
@@ -154623,6 +154650,9 @@
           }
         }
       }
+    },
+    "Replaces the identity on this Mac with one restored from a 24-word phrase. Agents get new addresses and existing access keys are revoked." : {
+
     },
     "Replacing key for %@. Cancel keeps the existing key." : {
       "comment" : "Note displayed in the footer of the sheet, explaining that replacing the API key will clear the existing one. The argument is the name of the provider.",
@@ -158535,6 +158565,12 @@
         }
       }
     },
+    "Restore from recovery phrase" : {
+
+    },
+    "Restore Identity" : {
+
+    },
     "Restore View Defaults" : {
       "localizations" : {
         "de" : {
@@ -158638,6 +158674,9 @@
         }
       }
     },
+    "Restore…" : {
+
+    },
     "Restored" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -158672,6 +158711,9 @@
           }
         }
       }
+    },
+    "Restored identity" : {
+
     },
     "Restored the database" : {
       "localizations" : {
@@ -165372,6 +165414,40 @@
         }
       }
     },
+    "Save (Return)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sichern (Return)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "저장 (Return)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сохранить (Return)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存（回车）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "儲存（Return）"
+          }
+        }
+      }
+    },
     "Save & Regenerate" : {
       "localizations" : {
         "de" : {
@@ -165436,40 +165512,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保存並重試"
-          }
-        }
-      }
-    },
-    "Save (Return)" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Sichern (Return)"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "저장 (Return)"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Сохранить (Return)"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保存（回车）"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "儲存（Return）"
           }
         }
       }
@@ -191037,8 +191079,6 @@
         }
       }
     },
-    "The file is not valid JSON." : {
-    },
     "The event stopped at this stage before the wait expired; check the recent events list above." : {
       "comment" : "Additional text provided in the status view when a Slack verification test times out before receiving a response.",
       "isCommentAutoGenerated" : true,
@@ -191110,6 +191150,9 @@
           }
         }
       }
+    },
+    "The file is not valid JSON." : {
+
     },
     "The file isn't a readable database (corruption or a key mismatch). Reset to recreate it; the original is quarantined." : {
       "extractionState" : "manual",
@@ -203669,7 +203712,7 @@
         }
       }
     },
-    "Unrecognized export format. Supported: ChatGPT conversations.json, Claude export JSON, or Osaurus generic import JSON." : {
+    "Unrecognized export format. Supported: ChatGPT conversations.json, Claude export JSON, Gemini Takeout MyActivity.json, or Osaurus generic import JSON." : {
 
     },
     "Unsaved changes" : {
