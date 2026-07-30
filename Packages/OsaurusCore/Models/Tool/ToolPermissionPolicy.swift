@@ -21,6 +21,19 @@ enum ToolPermissionPolicy: String, Codable, Sendable {
     }
 }
 
+/// Global "auto-allow all tool calls" chat setting (default off). When on,
+/// tools whose effective policy is `.ask` run without showing the interactive
+/// approval card. It only replaces the interactive prompt: `.deny` policies,
+/// external-surface / headless denials, and non-tool security confirmations
+/// (e.g. provider credential moves, spawn first-use prompts) are unaffected.
+enum ToolApprovalSettings {
+    static let autoAllowAllDefaultsKey = "chatAutoAllowAllTools"
+
+    static var autoAllowAll: Bool {
+        UserDefaults.standard.bool(forKey: autoAllowAllDefaultsKey)
+    }
+}
+
 extension ToolPermissionPolicy {
     /// Strictness rank for strictest-wins composition: `deny` > `ask` > `auto`.
     var strictnessRank: Int {

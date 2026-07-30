@@ -54,6 +54,13 @@ struct ChatSettingsView: View {
     /// immediately, so it's excluded from the debounced save baseline.
     @AppStorage("chatExpandThinkingWhileStreamingEnabled")
     private var expandThinkingWhileStreamingEnabled: Bool = false
+    /// Auto-allow all tool calls without showing the approval card. Default
+    /// off. Bound to `UserDefaults` key `ToolApprovalSettings
+    /// .autoAllowAllDefaultsKey`, read by `ToolRegistry` at each `.ask`-policy
+    /// tool invocation. Applied immediately, so it's excluded from the
+    /// debounced save baseline.
+    @AppStorage(ToolApprovalSettings.autoAllowAllDefaultsKey)
+    private var autoAllowAllToolsEnabled: Bool = false
     /// Roll up runs of consecutive thinking / tool-call rows into a single
     /// expandable "Worked for …" row so agent loops don't push the
     /// conversation out of view. Default off. Bound to `UserDefaults` key
@@ -297,6 +304,13 @@ struct ChatSettingsView: View {
                         object: nil
                     )
                 }
+
+                SettingsToggle(
+                    title: L("Auto-Allow All Tool Calls"),
+                    description:
+                        "Run every tool call without asking for approval, including tools that would normally show a confirmation card. Convenient for multi-step agent workflows, but tools can execute code and modify files — enable only if you trust the tools you have installed. Per-tool Deny policies still apply.",
+                    isOn: $autoAllowAllToolsEnabled
+                )
 
                 SettingsToggle(
                     title: L("Clipboard Monitoring"),
