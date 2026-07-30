@@ -696,6 +696,10 @@ final class ChatSession: ObservableObject {
                 )
             }
         }
+        // Seed the residency-backed model dot before any runtime change
+        // fires — a freshly opened chat must show whether the selected
+        // model is already loaded, not a hardcoded default.
+        warmupController.seedRuntimeResidency(session: self)
 
         // Re-derive visible blocks when the activity-rollup toggle flips in
         // Chat settings; the memoizer's display pass re-reads the flag, so a

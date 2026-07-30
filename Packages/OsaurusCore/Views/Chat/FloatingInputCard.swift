@@ -2516,14 +2516,20 @@ extension FloatingInputCard {
     }
 
     private var modelWarmupDotColor: Color {
-        if warmModelsOnLoadEnabled, isSelectedModelLocal, !isRemoteAgentRun {
+        // Remote models and remote agent runs execute elsewhere — there is
+        // no local load/warm state to report.
+        guard isSelectedModelLocal, !isRemoteAgentRun else { return .green }
+        if warmModelsOnLoadEnabled {
             switch warmupController.state {
             case .cold: return .gray
             case .warming: return .yellow
             case .warm: return .green
             }
         }
-        return .green
+        // Warm-on-load off: no warm-up pass exists, so readiness is
+        // residency. Green only while the model is actually loaded — never a
+        // hardcoded green that survives an idle unload.
+        return warmupController.selectedModelResident ? .green : .gray
     }
 
     /// Warm-up tooltip for the model chip, applied as a modifier so the
@@ -2533,6 +2539,9 @@ extension FloatingInputCard {
         let isDeprecated: Bool
         /// `warmModelsOnLoadEnabled && isSelectedModelLocal && !isRemoteAgentRun`
         let warmupApplies: Bool
+        /// `isSelectedModelLocal && !isRemoteAgentRun` — a local model whose
+        /// load state is knowable even when warm-on-load is off.
+        let isLocalModelRun: Bool
         let selectedModel: String?
         @ObservedObject var warmupController: ChatWarmupController
         @ObservedObject private var warmupProgressHub = WarmupProgressHub.shared
@@ -2549,17 +2558,29 @@ extension FloatingInputCard {
 
         private var helpText: String {
             guard warmupApplies else {
-                return String(localized: "Model ready", bundle: .module)
+                guard isLocalModelRun else {
+                    return String(localized: "Model ready", bundle: .module)
+                }
+                return warmupController.selectedModelResident
+                    ? String(localized: "Model loaded — ready to respond", bundle: .module)
+                    : String(
+                        localized: "Model not loaded — your next message loads it first",
+                        bundle: .module)
             }
             switch warmupController.state {
             case .warm:
                 return String(
                     localized: "Chat prefix warm — ready for a fast next response", bundle: .module)
             case .cold:
-                return String(
-                    localized:
-                        "Chat prefix not pre-warmed — the next response may restore cache or prefill",
-                    bundle: .module)
+                return warmupController.selectedModelResident
+                    ? String(
+                        localized:
+                            "Chat prefix not pre-warmed — the next response may restore cache or prefill",
+                        bundle: .module)
+                    : String(
+                        localized:
+                            "Model not loaded — the next response loads the model first",
+                        bundle: .module)
             case .warming:
                 guard let model = selectedModel, let phase = warmupProgressHub.phases[model] else {
                     return String(localized: "Warming up…", bundle: .module)
@@ -2707,6 +2728,7 @@ extension FloatingInputCard {
             ModelWarmupHelp(
                 isDeprecated: isSelectedModelDeprecated,
                 warmupApplies: warmModelsOnLoadEnabled && isSelectedModelLocal && !isRemoteAgentRun,
+                isLocalModelRun: isSelectedModelLocal && !isRemoteAgentRun,
                 selectedModel: selectedModel,
                 warmupController: warmupController
             )

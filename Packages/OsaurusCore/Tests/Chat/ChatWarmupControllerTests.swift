@@ -1377,6 +1377,130 @@ struct ChatWarmupControllerShutdownTests {
     }
 }
 
+@Suite("ChatWarmupController residency-backed dot state")
+@MainActor
+struct ChatWarmupControllerResidencyDotTests {
+
+    @Test("residency snapshots drive selectedModelResident for the selected model")
+    func residencySnapshotsDriveSelectedModelResident() {
+        let session = WarmupTestSession()
+        let controller = ChatWarmupController()
+        #expect(!controller.selectedModelResident)
+
+        controller.handleRuntimeResidencyChanged(
+            session: session,
+            snapshot: residencySnapshot(names: ["test-model"], revision: 1),
+            isSessionActive: false
+        )
+        #expect(controller.selectedModelResident)
+
+        // An idle unload removes the model; the dot claim must drop with it —
+        // this is the exact "green while nothing is loaded" report.
+        controller.handleRuntimeResidencyChanged(
+            session: session,
+            snapshot: residencySnapshot(names: [], revision: 2, reason: .idlePolicy),
+            isSessionActive: false
+        )
+        #expect(!controller.selectedModelResident)
+    }
+
+    @Test("a stale lower-revision snapshot cannot resurrect residency")
+    func staleSnapshotCannotResurrectResidency() {
+        let session = WarmupTestSession()
+        let controller = ChatWarmupController()
+
+        controller.handleRuntimeResidencyChanged(
+            session: session,
+            snapshot: residencySnapshot(names: [], revision: 5, reason: .idlePolicy),
+            isSessionActive: false
+        )
+        // Delayed NotificationCenter delivery of an older load event.
+        controller.handleRuntimeResidencyChanged(
+            session: session,
+            snapshot: residencySnapshot(names: ["test-model"], revision: 3),
+            isSessionActive: false
+        )
+        #expect(!controller.selectedModelResident)
+    }
+
+    @Test("org-prefixed resident names match a bare selected model id")
+    func fuzzyTailMatchingCountsAsResident() {
+        let session = WarmupTestSession()
+        let controller = ChatWarmupController()
+
+        controller.handleRuntimeResidencyChanged(
+            session: session,
+            snapshot: residencySnapshot(names: ["OsaurusAI/test-model"], revision: 1),
+            isSessionActive: false
+        )
+        #expect(controller.selectedModelResident)
+    }
+
+    @Test("selection change re-evaluates residency immediately from last known names")
+    func selectionChangeReevaluatesResidencyImmediately() async {
+        let session = WarmupTestSession()
+        let controller = ChatWarmupController()
+
+        controller.handleRuntimeResidencyChanged(
+            session: session,
+            snapshot: residencySnapshot(names: ["other-model"], revision: 1),
+            isSessionActive: false
+        )
+        #expect(!controller.selectedModelResident)
+
+        session.selectedModel = "other-model"
+        controller.handleModelSelectionChange(
+            session: session,
+            to: "other-model",
+            performSwitch: { _ in }
+        )
+        for _ in 0 ..< 100 {
+            if controller.selectedModelResident { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(controller.selectedModelResident)
+    }
+
+    @Test("seedRuntimeResidency populates the dot state before any notification")
+    func seedPopulatesResidency() async {
+        let session = WarmupTestSession()
+        let controller = ChatWarmupController()
+        controller.runtimeResidencySnapshot = {
+            residencySnapshot(names: ["test-model"], revision: 1)
+        }
+
+        controller.seedRuntimeResidency(session: session)
+        for _ in 0 ..< 100 {
+            if controller.selectedModelResident { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(controller.selectedModelResident)
+    }
+
+    @Test("image model selection does not leave the dot stuck on warming")
+    func imageModelSelectionDoesNotStickWarming() async {
+        let session = WarmupTestSession()
+        session.imageGenerationModelIDs = ["image-model"]
+        let controller = ChatWarmupController()
+
+        session.selectedModel = "image-model"
+        controller.handleModelSelectionChange(
+            session: session,
+            to: "image-model",
+            performSwitch: { _ in }
+        )
+        // The switch sets a provisional `.warming`; the follow-up warm-up
+        // must clear it (image models never take a KV warm-up) instead of
+        // leaving a permanent yellow dot.
+        await controller.awaitActiveModelSwitch()
+        for _ in 0 ..< 100 {
+            if controller.state == .cold { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(controller.state == .cold)
+    }
+}
+
 @MainActor
 private final class WarmupTestSession: ChatWarmupSessionContext {
     var selectedModel: String? = "test-model"
@@ -1385,8 +1509,11 @@ private final class WarmupTestSession: ChatWarmupSessionContext {
     var isStreaming: Bool = false
     var payload: ChatWarmupPayload?
     var engine: ChatEngineProtocol = WarmupTestEngine()
+    var imageGenerationModelIDs: Set<String> = []
 
-    func isImageGenerationModel(_ id: String?) -> Bool { false }
+    func isImageGenerationModel(_ id: String?) -> Bool {
+        id.map { imageGenerationModelIDs.contains($0) } ?? false
+    }
 
     func makeWarmupPayload() async -> ChatWarmupPayload? { payload }
 

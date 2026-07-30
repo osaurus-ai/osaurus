@@ -198,346 +198,6 @@
         }
       }
     },
-    "Bring conversations from other AI apps into Osaurus and continue them with any model. Export your chats first:" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Holen Sie Unterhaltungen aus anderen KI-Apps in Osaurus und setzen Sie sie mit jedem Modell fort. Exportieren Sie zuerst Ihre Chats:"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "다른 AI 앱의 대화를 Osaurus로 가져와 어떤 모델로든 이어갈 수 있습니다. 먼저 채팅을 내보내세요:"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Перенесите беседы из других ИИ-приложений в Osaurus и продолжайте их с любой моделью. Сначала экспортируйте свои чаты:"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "将其他 AI 应用中的对话导入 Osaurus，并可使用任意模型继续。请先导出您的聊天记录："
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "將其他 AI 應用中的對話導入 Osaurus，並可使用任意模型繼續。請先導出您的聊天記錄："
-          }
-        }
-      }
-    },
-    "Choose File…" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Datei auswählen …"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "파일 선택…"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выбрать файл…"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "选择文件…"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "選擇檔案…"
-          }
-        }
-      }
-    },
-    "Don't show this again" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nicht mehr anzeigen"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "다시 표시하지 않음"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Больше не показывать"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "不再显示"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "不再顯示"
-          }
-        }
-      }
-    },
-    "In Google Takeout, select My Activity → Gemini Apps and create the export. The zip contains MyActivity.json." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wählen Sie in Google Takeout „Meine Aktivitäten“ → „Gemini Apps“ und erstellen Sie den Export. Die Zip-Datei enthält MyActivity.json."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Google Takeout에서 내 활동 → Gemini Apps를 선택해 내보내기를 생성하세요. zip 안에 MyActivity.json이 들어 있습니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "В Google Takeout выберите «Мои действия» → «Gemini Apps» и создайте экспорт. В zip-архиве находится MyActivity.json."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在 Google Takeout 中选择“我的活动”→“Gemini 应用”并创建导出。zip 中包含 MyActivity.json。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在 Google Takeout 中選擇「我的活動」→「Gemini 應用程式」並建立導出。zip 中包含 MyActivity.json。"
-          }
-        }
-      }
-    },
-    "Open export page" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Exportseite öffnen"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "내보내기 페이지 열기"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Открыть страницу экспорта"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "打开导出页面"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "打開導出頁面"
-          }
-        }
-      }
-    },
-    "Settings → Data controls → Export account data. The download link arrives by email." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Einstellungen → Datenkontrollen → Kontodaten exportieren. Der Download-Link kommt per E-Mail."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "설정 → 데이터 제어 → 계정 데이터 내보내기. 다운로드 링크가 이메일로 전송됩니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Настройки → Управление данными → Экспорт данных аккаунта. Ссылка для скачивания придёт по электронной почте."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "设置 → 数据控制 → 导出账户数据。下载链接将通过电子邮件发送。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "設定 → 資料控制 → 導出帳戶資料。下載連結將透過電子郵件傳送。"
-          }
-        }
-      }
-    },
-    "Settings → Data Controls → Export Chats downloads a JSON file right away. A single chat can also be exported from its own menu via Download → Export as JSON." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Einstellungen → Datenkontrollen → Chats exportieren lädt sofort eine JSON-Datei herunter. Einzelne Chats lassen sich auch über das Chat-Menü mit Herunterladen → Als JSON exportieren sichern."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "설정 → 데이터 제어 → 채팅 내보내기를 선택하면 JSON 파일이 바로 다운로드됩니다. 개별 채팅은 해당 채팅 메뉴의 다운로드 → JSON으로 내보내기로도 내보낼 수 있습니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Настройки → Управление данными → Экспорт чатов сразу скачивает JSON-файл. Отдельный чат также можно экспортировать через его меню: Скачать → Экспорт в JSON."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "设置 → 数据控制 → 导出聊天会立即下载一个 JSON 文件。单个聊天也可通过其菜单中的 下载 → 导出为 JSON 导出。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "設定 → 資料控制 → 導出聊天會立即下載一個 JSON 檔案。單個聊天也可透過其選單中的 下載 → 導出為 JSON 導出。"
-          }
-        }
-      }
-    },
-    "Settings → Data controls → Export data. The download link arrives by email as a zip file." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Einstellungen → Datenkontrollen → Daten exportieren. Der Download-Link kommt per E-Mail als Zip-Datei."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "설정 → 데이터 제어 → 데이터 내보내기. 다운로드 링크가 zip 파일로 이메일로 전송됩니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Настройки → Управление данными → Экспорт данных. Ссылка для скачивания придёт по электронной почте в виде zip-файла."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "设置 → 数据控制 → 导出数据。下载链接将以 zip 文件形式通过电子邮件发送。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "設定 → 資料控制 → 導出資料。下載連結將以 zip 檔案形式透過電子郵件傳送。"
-          }
-        }
-      }
-    },
-    "Settings → Privacy → Export data. The download link arrives by email as a zip file." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Einstellungen → Datenschutz → Daten exportieren. Der Download-Link kommt per E-Mail als Zip-Datei."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "설정 → 개인정보 보호 → 데이터 내보내기. 다운로드 링크가 zip 파일로 이메일로 전송됩니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Настройки → Конфиденциальность → Экспорт данных. Ссылка для скачивания придёт по электронной почте в виде zip-файла."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "设置 → 隐私 → 导出数据。下载链接将以 zip 文件形式通过电子邮件发送。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "設定 → 隱私 → 導出資料。下載連結將以 zip 檔案形式透過電子郵件傳送。"
-          }
-        }
-      }
-    },
-    "Then choose the downloaded file below. You can select several files at once." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wählen Sie dann unten die heruntergeladene Datei aus. Sie können mehrere Dateien gleichzeitig auswählen."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "그다음 아래에서 다운로드한 파일을 선택하세요. 여러 파일을 한 번에 선택할 수 있습니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Затем выберите скачанный файл ниже. Можно выбрать несколько файлов сразу."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "然后在下方选择已下载的文件。可以一次选择多个文件。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "然後在下方選擇已下載的檔案。可以一次選擇多個檔案。"
-          }
-        }
-      }
-    },
     "—" : {
       "comment" : "A placeholder text to indicate missing data.",
       "isCommentAutoGenerated" : true,
@@ -18451,6 +18111,14 @@
         }
       }
     },
+    "Agent tools + read-only files" : {
+      "comment" : "A description of the option to allow a worker to read files from the host.",
+      "isCommentAutoGenerated" : true
+    },
+    "Agent tools only" : {
+      "comment" : "A label for the \"Agent tools only\" option in the",
+      "isCommentAutoGenerated" : true
+    },
     "Agent traffic is protected by the Osaurus Secure Channel: forward-secret, mutually authenticated end-to-end encryption." : {
       "localizations" : {
         "de" : {
@@ -18519,6 +18187,10 @@
           }
         }
       }
+    },
+    "Agent-target model override" : {
+      "comment" : "A label for the override of an agent's target model.",
+      "isCommentAutoGenerated" : true
     },
     "Agent-to-agent verify" : {
       "extractionState" : "stale",
@@ -19404,6 +19076,10 @@
           }
         }
       }
+    },
+    "All available models are already allowed." : {
+      "comment" : "A hint displayed when all available models are already allowed.",
+      "isCommentAutoGenerated" : true
     },
     "All buffered turns have been distilled (or purged). The pipeline is healthy when episodes are growing." : {
       "extractionState" : "manual",
@@ -30260,6 +29936,7 @@
       }
     },
     "BatchEngine max batch size. 1 keeps the compile fast-path engaged; >1 enables continuous batching." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -32648,6 +32325,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "簡短描述（可選）"
+          }
+        }
+      }
+    },
+    "Bring conversations from other AI apps into Osaurus and continue them with any model. Export your chats first:" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Holen Sie Unterhaltungen aus anderen KI-Apps in Osaurus und setzen Sie sie mit jedem Modell fort. Exportieren Sie zuerst Ihre Chats:"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다른 AI 앱의 대화를 Osaurus로 가져와 어떤 모델로든 이어갈 수 있습니다. 먼저 채팅을 내보내세요:"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенесите беседы из других ИИ-приложений в Osaurus и продолжайте их с любой моделью. Сначала экспортируйте свои чаты:"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将其他 AI 应用中的对话导入 Osaurus，并可使用任意模型继续。请先导出您的聊天记录："
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將其他 AI 應用中的對話導入 Osaurus，並可使用任意模型繼續。請先導出您的聊天記錄："
           }
         }
       }
@@ -39937,40 +39648,6 @@
         }
       }
     },
-    "Choose an export from ChatGPT, Claude, Grok, Gemini, or Open WebUI (.zip or .json), or an Osaurus import JSON file." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wählen Sie einen Export von ChatGPT, Claude, Grok, Gemini oder Open WebUI (.zip oder .json) oder eine Osaurus-Import-JSON-Datei."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ChatGPT, Claude, Grok, Gemini 또는 Open WebUI 내보내기 파일(.zip 또는 .json)이나 Osaurus 가져오기 JSON 파일을 선택하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выберите экспорт из ChatGPT, Claude, Grok, Gemini или Open WebUI (.zip или .json) либо JSON-файл импорта Osaurus."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "选择来自 ChatGPT、Claude、Grok、Gemini 或 Open WebUI 的导出文件（.zip 或 .json），或 Osaurus 导入 JSON 文件。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "選擇來自 ChatGPT、Claude、Grok、Gemini 或 Open WebUI 的導出文件（.zip 或 .json），或 Osaurus 導入 JSON 文件。"
-          }
-        }
-      }
-    },
     "Choose a CSV, TSV, JSON, or JSONL file to import." : {
       "localizations" : {
         "de" : {
@@ -40399,6 +40076,40 @@
         }
       }
     },
+    "Choose an export from ChatGPT, Claude, Grok, Gemini, or Open WebUI (.zip or .json), or an Osaurus import JSON file." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wählen Sie einen Export von ChatGPT, Claude, Grok, Gemini oder Open WebUI (.zip oder .json) oder eine Osaurus-Import-JSON-Datei."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT, Claude, Grok, Gemini 또는 Open WebUI 내보내기 파일(.zip 또는 .json)이나 Osaurus 가져오기 JSON 파일을 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите экспорт из ChatGPT, Claude, Grok, Gemini или Open WebUI (.zip или .json) либо JSON-файл импорта Osaurus."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择来自 ChatGPT、Claude、Grok、Gemini 或 Open WebUI 的导出文件（.zip 或 .json），或 Osaurus 导入 JSON 文件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇來自 ChatGPT、Claude、Grok、Gemini 或 Open WebUI 的導出文件（.zip 或 .json），或 Osaurus 導入 JSON 文件。"
+          }
+        }
+      }
+    },
     "Choose automatically" : {
       "localizations" : {
         "de" : {
@@ -40657,6 +40368,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "選擇文件"
+          }
+        }
+      }
+    },
+    "Choose File…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datei auswählen …"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일 선택…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбрать файл…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择文件…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇檔案…"
           }
         }
       }
@@ -40984,6 +40729,10 @@
           }
         }
       }
+    },
+    "Choose the agents and local or cloud models the built-in chat may delegate to. The agent selects among this allow-list for each job; an empty allow-list keeps Spawn unavailable." : {
+      "comment" : "A description of the system section of the settings.",
+      "isCommentAutoGenerated" : true
     },
     "Choose the on-device model that powers AI detection. Pattern rules in the Rules tab work without any model." : {
       "localizations" : {
@@ -46233,6 +45982,18 @@
           }
         }
       }
+    },
+    "Configured agents marked unavailable can still be removed." : {
+      "comment" : "A hint displayed when an agent is marked unavailable.",
+      "isCommentAutoGenerated" : true
+    },
+    "Configured agents receive the cancellation-audited subset of their enabled tools. Optionally add host read-only file tools so workers can inspect files without copying them into the parent context." : {
+      "comment" : "Tool access options for a spawn capability.",
+      "isCommentAutoGenerated" : true
+    },
+    "Configured same-model local ceiling" : {
+      "comment" : "A label for the configured same-model local ceiling.",
+      "isCommentAutoGenerated" : true
     },
     "Configuring sandbox" : {
       "localizations" : {
@@ -64750,6 +64511,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "不掃描圍欄式（```）或行內（`）代碼片段。"
+          }
+        }
+      }
+    },
+    "Don't show this again" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht mehr anzeigen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다시 표시하지 않음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Больше не показывать"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不再显示"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不再顯示"
           }
         }
       }
@@ -86695,6 +86490,7 @@
       }
     },
     "High-water active" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -87637,6 +87433,7 @@
       }
     },
     "How many requests the engine can decode at once. Higher = more throughput, more wired memory." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -91526,6 +91323,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在聊天中，傳送任何內容前都會顯示核准卡片。對於排程執行，發文會在寄件匣中等待您的核准。"
+          }
+        }
+      }
+    },
+    "In Google Takeout, select My Activity → Gemini Apps and create the export. The zip contains MyActivity.json." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wählen Sie in Google Takeout „Meine Aktivitäten“ → „Gemini Apps“ und erstellen Sie den Export. Die Zip-Datei enthält MyActivity.json."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google Takeout에서 내 활동 → Gemini Apps를 선택해 내보내기를 생성하세요. zip 안에 MyActivity.json이 들어 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В Google Takeout выберите «Мои действия» → «Gemini Apps» и создайте экспорт. В zip-архиве находится MyActivity.json."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Google Takeout 中选择“我的活动”→“Gemini 应用”并创建导出。zip 中包含 MyActivity.json。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Google Takeout 中選擇「我的活動」→「Gemini 應用程式」並建立導出。zip 中包含 MyActivity.json。"
           }
         }
       }
@@ -98701,6 +98532,7 @@
     },
     "Let spawned workers read files themselves (file_read / file_search) so bulk reading stays out of this agent's context." : {
       "comment" : "Tooltip text for the \"Worker tools\" row in the agent detail view, explaining that allowing spawned workers to read files themselves allows bulk reading to happen outside of this agent's context.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -103086,6 +102918,7 @@
       }
     },
     "Local Orchestrator Handoff is off (Settings → Subagents). Spawning a local agent or model whose model differs from the current chat model will be refused — only remote targets and the loaded model run." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -103118,6 +102951,9 @@
           }
         }
       }
+    },
+    "Local Orchestrator Handoff is off. A local target with a different model will be refused; remote targets and the already-loaded local model can still run." : {
+
     },
     "Local rows" : {
       "localizations" : {
@@ -106161,6 +105997,10 @@
           }
         }
       }
+    },
+    "Max child tool calls (0 = default 8)" : {
+      "comment" : "A label for a slider that determines the maximum number of times a subagent can call a tool.",
+      "isCommentAutoGenerated" : true
     },
     "Max Concurrent Sequences" : {
       "extractionState" : "manual",
@@ -110472,6 +110312,10 @@
         }
       }
     },
+    "Model loaded — ready to respond" : {
+      "comment" : "A tooltip for the model chip that appears when the model is loaded.",
+      "isCommentAutoGenerated" : true
+    },
     "Model maximum" : {
       "localizations" : {
         "de" : {
@@ -110575,6 +110419,14 @@
           }
         }
       }
+    },
+    "Model not loaded — the next response loads the model first" : {
+      "comment" : "A tooltip for the model chip, when the model is not loaded.",
+      "isCommentAutoGenerated" : true
+    },
+    "Model not loaded — your next message loads it first" : {
+      "comment" : "A tooltip for the model chip, when the model is not loaded.",
+      "isCommentAutoGenerated" : true
     },
     "Model not runnable" : {
       "localizations" : {
@@ -117500,6 +117352,10 @@
           }
         }
       }
+    },
+    "No local or connected cloud models are available." : {
+      "comment" : "A hint displayed when there are no models available.",
+      "isCommentAutoGenerated" : true
     },
     "No local proof" : {
       "localizations" : {
@@ -126494,6 +126350,40 @@
         }
       }
     },
+    "Open export page" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exportseite öffnen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "내보내기 페이지 열기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть страницу экспорта"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开导出页面"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打開導出頁面"
+          }
+        }
+      }
+    },
     "Open file" : {
       "localizations" : {
         "de" : {
@@ -128797,6 +128687,10 @@
           }
         }
       }
+    },
+    "Optional. Replaces the selected target agent's own model for agent jobs only. Bare model jobs always use the exact allowed model selected by the orchestrator." : {
+      "comment" : "Tooltip for the agent-target model override field.",
+      "isCommentAutoGenerated" : true
     },
     "Optional. Shown as a system message for all chats." : {
       "extractionState" : "stale",
@@ -148557,6 +148451,7 @@
     },
     "Read-only files" : {
       "comment" : "A description of the option to have spawned workers read files themselves.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -151857,6 +151752,10 @@
           }
         }
       }
+    },
+    "Refreshing local and connected cloud models…" : {
+      "comment" : "A message displayed when the list of available models is being refreshed.",
+      "isCommentAutoGenerated" : true
     },
     "Refreshing..." : {
       "localizations" : {
@@ -164780,6 +164679,10 @@
         }
       }
     },
+    "Same-model local jobs may be submitted together up to this configured engine ceiling. Existing engine work and RAM-Safety can queue or split them into smaller waves at run time. Different local models run in serial model waves; remote jobs can overlap." : {
+      "comment" : "Tooltip for the same-model local ceiling.",
+      "isCommentAutoGenerated" : true
+    },
     "Sampling Defaults" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -174975,6 +174878,142 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "設置"
+          }
+        }
+      }
+    },
+    "Settings → Data controls → Export account data. The download link arrives by email." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einstellungen → Datenkontrollen → Kontodaten exportieren. Der Download-Link kommt per E-Mail."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 → 데이터 제어 → 계정 데이터 내보내기. 다운로드 링크가 이메일로 전송됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройки → Управление данными → Экспорт данных аккаунта. Ссылка для скачивания придёт по электронной почте."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置 → 数据控制 → 导出账户数据。下载链接将通过电子邮件发送。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定 → 資料控制 → 導出帳戶資料。下載連結將透過電子郵件傳送。"
+          }
+        }
+      }
+    },
+    "Settings → Data Controls → Export Chats downloads a JSON file right away. A single chat can also be exported from its own menu via Download → Export as JSON." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einstellungen → Datenkontrollen → Chats exportieren lädt sofort eine JSON-Datei herunter. Einzelne Chats lassen sich auch über das Chat-Menü mit Herunterladen → Als JSON exportieren sichern."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 → 데이터 제어 → 채팅 내보내기를 선택하면 JSON 파일이 바로 다운로드됩니다. 개별 채팅은 해당 채팅 메뉴의 다운로드 → JSON으로 내보내기로도 내보낼 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройки → Управление данными → Экспорт чатов сразу скачивает JSON-файл. Отдельный чат также можно экспортировать через его меню: Скачать → Экспорт в JSON."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置 → 数据控制 → 导出聊天会立即下载一个 JSON 文件。单个聊天也可通过其菜单中的 下载 → 导出为 JSON 导出。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定 → 資料控制 → 導出聊天會立即下載一個 JSON 檔案。單個聊天也可透過其選單中的 下載 → 導出為 JSON 導出。"
+          }
+        }
+      }
+    },
+    "Settings → Data controls → Export data. The download link arrives by email as a zip file." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einstellungen → Datenkontrollen → Daten exportieren. Der Download-Link kommt per E-Mail als Zip-Datei."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 → 데이터 제어 → 데이터 내보내기. 다운로드 링크가 zip 파일로 이메일로 전송됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройки → Управление данными → Экспорт данных. Ссылка для скачивания придёт по электронной почте в виде zip-файла."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置 → 数据控制 → 导出数据。下载链接将以 zip 文件形式通过电子邮件发送。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定 → 資料控制 → 導出資料。下載連結將以 zip 檔案形式透過電子郵件傳送。"
+          }
+        }
+      }
+    },
+    "Settings → Privacy → Export data. The download link arrives by email as a zip file." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einstellungen → Datenschutz → Daten exportieren. Der Download-Link kommt per E-Mail als Zip-Datei."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 → 개인정보 보호 → 데이터 내보내기. 다운로드 링크가 zip 파일로 이메일로 전송됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройки → Конфиденциальность → Экспорт данных. Ссылка для скачивания придёт по электронной почте в виде zip-файла."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置 → 隐私 → 导出数据。下载链接将以 zip 文件形式通过电子邮件发送。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定 → 隱私 → 導出資料。下載連結將以 zip 檔案形式透過電子郵件傳送。"
           }
         }
       }
@@ -190004,6 +190043,7 @@
     },
     "Text-only" : {
       "comment" : "A choice in the \"Worker tools\" picker for a subagent.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -191801,40 +191841,6 @@
         }
       }
     },
-    "The file is not valid JSON." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Die Datei ist kein gültiges JSON."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "파일이 올바른 JSON이 아닙니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Файл не является корректным JSON."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "该文件不是有效的 JSON。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "該文件不是有效的 JSON。"
-          }
-        }
-      }
-    },
     "The file is not a zip archive." : {
       "localizations" : {
         "de" : {
@@ -191869,70 +191875,36 @@
         }
       }
     },
-    "The zip archive is damaged and can't be read." : {
+    "The file is not valid JSON." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Das Zip-Archiv ist beschädigt und kann nicht gelesen werden."
+            "value" : "Die Datei ist kein gültiges JSON."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "zip 아카이브가 손상되어 읽을 수 없습니다."
+            "value" : "파일이 올바른 JSON이 아닙니다."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Zip-архив поврежден и не может быть прочитан."
+            "value" : "Файл не является корректным JSON."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "zip 压缩包已损坏，无法读取。"
+            "value" : "该文件不是有效的 JSON。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "zip 壓縮包已損壞，無法讀取。"
-          }
-        }
-      }
-    },
-    "The zip entry \"%@\" uses an unsupported format." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Der Zip-Eintrag „%@“ verwendet ein nicht unterstütztes Format."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "zip 항목 \"%@\"이(가) 지원되지 않는 형식을 사용합니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Элемент zip-архива «%@» использует неподдерживаемый формат."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "zip 条目“%@”使用了不受支持的格式。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "zip 條目「%@」使用了不受支持的格式。"
+            "value" : "該文件不是有效的 JSON。"
           }
         }
       }
@@ -194187,6 +194159,74 @@
         }
       }
     },
+    "The zip archive is damaged and can't be read." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Zip-Archiv ist beschädigt und kann nicht gelesen werden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "zip 아카이브가 손상되어 읽을 수 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zip-архив поврежден и не может быть прочитан."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "zip 压缩包已损坏，无法读取。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "zip 壓縮包已損壞，無法讀取。"
+          }
+        }
+      }
+    },
+    "The zip entry \"%@\" uses an unsupported format." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Zip-Eintrag „%@“ verwendet ein nicht unterstütztes Format."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "zip 항목 \"%@\"이(가) 지원되지 않는 형식을 사용합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Элемент zip-архива «%@» использует неподдерживаемый формат."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "zip 条目“%@”使用了不受支持的格式。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "zip 條目「%@」使用了不受支持的格式。"
+          }
+        }
+      }
+    },
     "Theme" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -194569,6 +194609,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "需要審核的主題"
+          }
+        }
+      }
+    },
+    "Then choose the downloaded file below. You can select several files at once." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wählen Sie dann unten die heruntergeladene Datei aus. Sie können mehrere Dateien gleichzeitig auswählen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "그다음 아래에서 다운로드한 파일을 선택하세요. 여러 파일을 한 번에 선택할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Затем выберите скачанный файл ниже. Можно выбрать несколько файлов сразу."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "然后在下方选择已下载的文件。可以一次选择多个文件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "然後在下方選擇已下載的檔案。可以一次選擇多個檔案。"
           }
         }
       }
@@ -204956,6 +205030,10 @@
         }
       }
     },
+    "up to %lld" : {
+      "comment" : "A label displaying the configured maximum number of subagents that can be run in parallel on the same-model local engine.",
+      "isCommentAutoGenerated" : true
+    },
     "Up to 4 runs/day · at most once an hour · quiet 10pm–7am." : {
       "localizations" : {
         "de" : {
@@ -206710,6 +206788,10 @@
           }
         }
       }
+    },
+    "Use each target agent's model" : {
+      "comment" : "A description of the model override option.",
+      "isCommentAutoGenerated" : true
     },
     "Use MLX models from ~/.cache/huggingface (and HF_HOME / HF_HUB_CACHE)." : {
       "extractionState" : "manual",
@@ -213179,6 +213261,7 @@
       }
     },
     "When off, Osaurus pins the BatchEngine to one active slot even if Concurrent Sessions is higher." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
