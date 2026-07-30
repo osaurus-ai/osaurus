@@ -84,12 +84,25 @@ struct SpawnConfigurationUISourceTests {
     func mainChatBatchEditsUpdateServerWithoutNotificationEchoes() throws {
         let settings = try Self.source("Views/Settings/ConfigurationView.swift")
         let controller = try Self.source("Networking/ServerController.swift")
+        let composer = try Self.source("Services/Chat/SystemPromptComposer.swift")
 
         #expect(settings.contains("server.applyMainChatBatchLimit(from: saved)"))
+        #expect(settings.contains("let batchLimitWasExplicitlyEdited ="))
+        #expect(settings.contains("if batchLimitWasExplicitlyEdited"))
         #expect(controller.contains("func applyMainChatBatchLimit("))
         #expect(controller.contains("synchronizeSpawnBatchLimit(from: latest)"))
         #expect(controller.contains("static func applyAgentSpawnBatchLimit("))
         #expect(controller.contains("func applySpawnBatchLimit("))
+        #expect(
+            controller.contains(
+                "runtimeSettings.concurrency.maxConcurrentSequences != requested"
+            )
+        )
+        #expect(
+            composer.components(
+                separatedBy: "for: ServerRuntimeSettingsStore.snapshot()"
+            ).count - 1 == 2
+        )
         #expect(!controller.contains("subagentConfigurationCancellable"))
     }
 

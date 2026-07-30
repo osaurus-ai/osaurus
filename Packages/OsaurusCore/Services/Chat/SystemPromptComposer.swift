@@ -1082,7 +1082,7 @@ public struct SystemPromptComposer: Sendable {
                         config: fallbackConfig,
                         settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings,
                         sharedParallelLimit: SpawnBatchConcurrencyContract.configuredLimit(
-                            for: fallbackConfig
+                            for: ServerRuntimeSettingsStore.snapshot()
                         )
                     ).normalized.maxParallelSpawns
                 composer.append(
@@ -2749,7 +2749,7 @@ public struct SystemPromptComposer: Sendable {
                         config: config,
                         settings: AgentManager.shared.agent(for: snapshot.agentId)?.settings,
                         sharedParallelLimit: SpawnBatchConcurrencyContract.configuredLimit(
-                            for: config
+                            for: ServerRuntimeSettingsStore.snapshot()
                         )
                     ).normalized.maxParallelSpawns
                 byName[SubagentCapabilityRegistry.spawnBatchToolName] =

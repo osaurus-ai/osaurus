@@ -994,9 +994,23 @@ struct SystemPromptComposerToolResolutionTests {
     /// config stays stable while we read the delegation-gated schema.
     private func withSubagentSandbox(_ body: @MainActor @Sendable () async -> Void) async {
         let lease = await acquireSubagentStoreSandbox("composer-delegation")
-        defer { lease.release() }
+        let previousRuntimeDirectory = ServerRuntimeSettingsStore.overrideDirectory
+        ServerRuntimeSettingsStore.overrideDirectory = lease.sandbox
+        ServerRuntimeSettingsStore.invalidateSnapshot()
+        defer {
+            ServerRuntimeSettingsStore.overrideDirectory = previousRuntimeDirectory
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            lease.release()
+        }
+        saveServerBatchLimit(3)
         SubagentConfigurationStore.save(SubagentConfiguration())
         await body()
+    }
+
+    private func saveServerBatchLimit(_ value: Int) {
+        var settings = ServerRuntimeSettingsStore.snapshot()
+        settings.concurrency.maxConcurrentSequences = value
+        ServerRuntimeSettingsStore.save(settings)
     }
 
     /// A custom agent surfaces `image` purely on its OWN `imageEnabled` toggle,
@@ -1172,6 +1186,7 @@ struct SystemPromptComposerToolResolutionTests {
                     "local/ornith-9b",
                 ]
             )
+            saveServerBatchLimit(4)
             SubagentConfigurationStore.save(config)
 
             let snapshot = makeSnapshotForDefaultAgent()
@@ -1219,6 +1234,7 @@ struct SystemPromptComposerToolResolutionTests {
                 budgets: SubagentBudgets(maxParallelSpawns: 2),
                 spawnableModelNames: ["local/old-model"]
             )
+            saveServerBatchLimit(2)
             SubagentConfigurationStore.save(original)
 
             let snapshot = makeSnapshotForDefaultAgent()
@@ -1238,6 +1254,7 @@ struct SystemPromptComposerToolResolutionTests {
                     "local/new-model",
                 ]
             )
+            saveServerBatchLimit(6)
             SubagentConfigurationStore.save(updated)
 
             let refreshed = SystemPromptComposer.resolveTools(
@@ -1268,6 +1285,46 @@ struct SystemPromptComposerToolResolutionTests {
             )
             _ = await manager.delete(id: oldAgent.id)
             _ = await manager.delete(id: newAgent.id)
+        }
+    }
+
+    @Test("legacy snapshots use Server concurrency instead of a stale Spawn mirror")
+    func legacySnapshotFallbackUsesCanonicalServerBatchLimit() async {
+        await withSubagentSandbox {
+            let researcherID = Agent.builtInAgents.first!.id
+            saveServerBatchLimit(2)
+            SubagentConfigurationStore.save(
+                SubagentConfiguration(
+                    spawnableAgentIDs: [researcherID],
+                    budgets: SubagentBudgets(maxParallelSpawns: 7)
+                )
+            )
+            #expect(
+                SubagentConfigurationStore.snapshot().budgets
+                    .maxParallelSpawns == 7
+            )
+
+            // Hand-built snapshots intentionally omit spawnConfiguration,
+            // exercising the source-compatible fallback used by older tests
+            // and legacy callers rather than production capture(...).
+            let tools = SystemPromptComposer.resolveTools(
+                snapshot: makeSnapshot(
+                    spawnDelegationEnabled: true,
+                    spawnableAgentIDs: [researcherID]
+                ),
+                executionMode: .none
+            )
+            let resolvedLimit = spawnBatchMaxItems(tools)
+            let guidance = SystemPromptTemplates.spawnGuidance(
+                agents: [],
+                models: [],
+                availableToolNames: [SubagentCapabilityRegistry.spawnBatchToolName],
+                maxParallel: resolvedLimit ?? -1
+            )
+
+            #expect(resolvedLimit == 2)
+            #expect(guidance.contains("at most 2 jobs in one batch"))
+            #expect(!guidance.contains("at most 7 jobs in one batch"))
         }
     }
 

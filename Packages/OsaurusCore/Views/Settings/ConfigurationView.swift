@@ -559,14 +559,26 @@ struct ConfigurationView: View {
         // `saveConfiguration`). The re-snapshot on the change notification keeps
         // this in sync if an agent's Subagents tab edits the shared store.
         .onChange(of: subagentConfiguration) { _, newValue in
+            // Only a direct edit of this form's batch limit may turn Server
+            // Concurrent Sessions from Automatic into an explicit number.
+            // Store notifications update the baseline before they update the
+            // form, so their mirrored value compares equal here and cannot
+            // echo back as a new user-authored Server override.
+            let batchLimitWasExplicitlyEdited =
+                SpawnBatchConcurrencyContract.configuredLimit(for: newValue)
+                != SpawnBatchConcurrencyContract.configuredLimit(
+                    for: subagentConfigurationBaseline
+                )
             let saved = SubagentConfigurationStore.saveEditorSnapshot(
                 newValue,
                 loadedBaseline: subagentConfigurationBaseline
             )
             subagentConfigurationBaseline = saved
             if saved != newValue { subagentConfiguration = saved }
-            Task { @MainActor in
-                await server.applyMainChatBatchLimit(from: saved)
+            if batchLimitWasExplicitlyEdited {
+                Task { @MainActor in
+                    await server.applyMainChatBatchLimit(from: saved)
+                }
             }
         }
         .onReceive(

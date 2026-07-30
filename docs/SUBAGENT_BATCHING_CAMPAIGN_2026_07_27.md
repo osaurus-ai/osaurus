@@ -879,6 +879,22 @@ runtime:
   engine with `.chatUI`, and publishes the exact parent model and explicit
   Thinking value. Residency ownership remains fail-closed for real unrelated
   API/plugin/scheduled work.
+- **BATCH-31 — equal-value Spawn edits could leave Server concurrency in
+  Automatic.** The Server controller compared an explicit Spawn-editor request
+  against the *resolved* Automatic capacity. If both displayed the same number,
+  it treated the edit as a no-op and left `maxConcurrentSequences` nil, despite
+  the UI contract that an explicit Spawn edit owns and persists that number.
+  The controller now compares the raw optional override. General-settings
+  notification mirrors are separately gated against their loaded baseline, so
+  Server -> Spawn synchronization cannot accidentally materialize Automatic.
+- **BATCH-32 — legacy prompt/schema fallback read the stale Spawn mirror.** A
+  production `AgentConfigSnapshot.capture(...)` already freezes the canonical
+  Server-owned limit, but hand-built or legacy snapshots without
+  `spawnConfiguration` recomputed `spawn_batch` guidance and `maxItems` from
+  `SubagentConfiguration`. Both fallback sites now resolve the shared limit
+  from `ServerRuntimeSettingsStore`; a regression test holds the mirror at
+  seven and the Server at two and requires both prompt and schema to advertise
+  two.
 
 Fresh evidence at this checkpoint:
 

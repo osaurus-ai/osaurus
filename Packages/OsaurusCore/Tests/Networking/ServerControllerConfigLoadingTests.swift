@@ -200,6 +200,44 @@ struct ServerControllerConfigLoadingTests {
             SubagentConfigurationStore.snapshot().budgets
                 .maxParallelSpawns == 3
         )
+
+        // Clearing Server back to Automatic mirrors the resolved safe value
+        // into Spawn without creating an explicit override. A later explicit
+        // Spawn edit to that SAME visible value must still materialize it.
+        var automatic = controller.runtimeSettings
+        automatic.concurrency.maxConcurrentSequences = nil
+        let automaticResolved =
+            SpawnBatchConcurrencyContract.configuredLimit(for: automatic)
+        ServerRuntimeSettingsStore.save(automatic)
+        for _ in 0 ..< 100 {
+            await Self.drainMainQueue()
+            if controller.runtimeSettings.concurrency
+                .maxConcurrentSequences == nil,
+                SubagentConfigurationStore.snapshot().budgets
+                    .maxParallelSpawns == automaticResolved
+            {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(
+            controller.runtimeSettings.concurrency
+                .maxConcurrentSequences == nil
+        )
+        #expect(
+            SubagentConfigurationStore.snapshot().budgets
+                .maxParallelSpawns == automaticResolved
+        )
+
+        await controller.applySpawnBatchLimit(automaticResolved)
+        #expect(
+            controller.runtimeSettings.concurrency
+                .maxConcurrentSequences == automaticResolved
+        )
+        #expect(
+            ServerRuntimeSettingsStore.snapshot().concurrency
+                .maxConcurrentSequences == automaticResolved
+        )
     }
 
     private static func drainMainQueue() async {

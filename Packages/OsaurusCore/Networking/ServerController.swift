@@ -356,11 +356,12 @@ final class ServerController: ObservableObject {
     /// execute a smaller wave, but no second configured fan-out value remains.
     func applySpawnBatchLimit(_ value: Int) async {
         let requested = SpawnBatchConcurrencyContract.normalized(value)
-        guard
-            SpawnBatchConcurrencyContract.configuredLimit(
-                for: runtimeSettings
-            ) != requested
-        else {
+        // An explicit Spawn-editor action owns the value even when Automatic
+        // currently resolves to the same number. Compare the persisted raw
+        // override, not the resolved effective capacity, so nil -> requested
+        // materializes the user's edit while an existing identical explicit
+        // value remains a true no-op.
+        guard runtimeSettings.concurrency.maxConcurrentSequences != requested else {
             synchronizeSpawnBatchLimit(from: runtimeSettings)
             return
         }
