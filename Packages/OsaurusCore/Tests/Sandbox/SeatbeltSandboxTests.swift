@@ -28,6 +28,20 @@ struct SeatbeltSandboxTests {
         }
     }
 
+    @Test("first sandbox operation resolves the actor-local availability cache")
+    func firstOperationResolvesAvailability() async {
+        let manager = SandboxManager()
+        let expected = SandboxManager.resolveAvailability().isAvailable
+        let accepted: Bool
+        do {
+            try await manager.requireAvailabilityForOperation()
+            accepted = true
+        } catch {
+            accepted = false
+        }
+        #expect(accepted == expected)
+    }
+
     // MARK: - Backend-branched prompt / flag surface
 
     @Test("system prompt sandbox framing matches the active backend")
@@ -41,7 +55,8 @@ struct SeatbeltSandboxTests {
                 // The model must not be told it's on Alpine, or offered
                 // a package manager that doesn't exist on this backend.
                 #expect(!prompt.contains("Alpine"))
-                #expect(!prompt.contains("`apk`"))
+                #expect(!prompt.contains("`apk add`"))
+                #expect(!prompt.contains("Alpine packages"))
                 #expect(prompt.contains("macOS"))
             }
         } else {

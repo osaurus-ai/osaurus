@@ -238,6 +238,19 @@
             return await refreshAvailability()
         }
 
+        /// Resolve the backend before an operation gates on availability.
+        ///
+        /// `State.shared.availability` is seeded synchronously for the UI,
+        /// while the actor-local cache starts empty. A first-run Setup action
+        /// can therefore reach `provision()` before another subsystem has
+        /// called `checkAvailability()`. Gating directly on `_availability`
+        /// rejects that legitimate first action even on a supported host.
+        func requireAvailabilityForOperation() async throws {
+            guard (await checkAvailability()).isAvailable else {
+                throw SandboxError.unavailable
+            }
+        }
+
         public func refreshAvailability() async -> SandboxAvailability {
             _availability = nil
 
@@ -795,9 +808,7 @@
         }
 
         public func provision() async throws {
-            guard _availability?.isAvailable == true else {
-                throw SandboxError.unavailable
-            }
+            try await requireAvailabilityForOperation()
             _removedByUser = false
 
             if SandboxBackend.current == .seatbelt {
@@ -1246,7 +1257,7 @@
                 prefetchTask = nil
                 Task { @MainActor in State.shared.isPrefetchingRuntime = false }
             }
-            guard _availability?.isAvailable == true else { return }
+            guard (await checkAvailability()).isAvailable else { return }
             await MainActor.run { State.shared.isPrefetchingRuntime = true }
 
             invalidateStaleRuntimeArtifacts()
@@ -1324,9 +1335,7 @@
         }
 
         private func _performStartContainer() async throws {
-            guard _availability?.isAvailable == true else {
-                throw SandboxError.unavailable
-            }
+            try await requireAvailabilityForOperation()
             guard !_removedByUser else { return }
 
             switch await refreshStatus() {
