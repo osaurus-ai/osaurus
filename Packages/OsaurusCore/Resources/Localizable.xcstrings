@@ -198,6 +198,142 @@
         }
       }
     },
+    "Auto-Allow All" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alle automatisch erlauben"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모두 자동 허용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Разрешать все"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "全部自动允许"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "全部自動允許"
+          }
+        }
+      }
+    },
+    "Auto-Allow All Tool Calls" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alle Tool-Aufrufe automatisch erlauben"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모든 도구 호출 자동 허용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Автоматически разрешать все вызовы инструментов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "自动允许所有工具调用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "自動允許所有工具呼叫"
+          }
+        }
+      }
+    },
+    "Auto-Allow All Tool Calls?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alle Tool-Aufrufe automatisch erlauben?"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모든 도구 호출을 자동 허용하시겠습니까?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Автоматически разрешать все вызовы инструментов?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "自动允许所有工具调用？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "自動允許所有工具呼叫？"
+          }
+        }
+      }
+    },
+    "Every tool call will run immediately without asking for approval, including tools that can execute code, modify files, or send data. You can turn this off at any time in Chat settings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Jeder Tool-Aufruf wird sofort und ohne Nachfrage ausgeführt, einschließlich Tools, die Code ausführen, Dateien ändern oder Daten senden können. Sie können dies jederzeit in den Chat-Einstellungen deaktivieren."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모든 도구 호출이 승인 요청 없이 즉시 실행됩니다. 코드를 실행하거나 파일을 수정하거나 데이터를 전송할 수 있는 도구도 포함됩니다. 채팅 설정에서 언제든지 끌 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Каждый вызов инструмента будет выполняться сразу, без запроса подтверждения, включая инструменты, которые могут выполнять код, изменять файлы или отправлять данные. Вы можете отключить это в любой момент в настройках чата."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "所有工具调用都将立即执行而无需请求批准，包括可以执行代码、修改文件或发送数据的工具。您可以随时在聊天设置中关闭此选项。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "所有工具呼叫都將立即執行而無需請求核准，包括可以執行程式碼、修改檔案或傳送資料的工具。您可以隨時在聊天設定中關閉此選項。"
+          }
+        }
+      }
+    },
     "No response for a while — this run may be stuck." : {
       "localizations" : {
         "de" : {
@@ -222,6 +358,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "长时间没有响应 — 本次运行可能已卡住。"
+          }
+        }
+      }
+    },
+    "Run every tool call without asking for approval, including tools that would normally show a confirmation card. Convenient for multi-step agent workflows, but tools can execute code and modify files. Enable only if you trust the tools you have installed. Per-tool Deny policies still apply." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Jeden Tool-Aufruf ohne Nachfrage ausführen, einschließlich Tools, die normalerweise eine Bestätigungskarte anzeigen. Praktisch für mehrstufige Agenten-Workflows, aber Tools können Code ausführen und Dateien ändern. Nur aktivieren, wenn Sie den installierten Tools vertrauen. Deny-Richtlinien einzelner Tools gelten weiterhin."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "확인 카드가 표시되는 도구를 포함하여 모든 도구 호출을 승인 요청 없이 실행합니다. 여러 단계의 에이전트 워크플로에 편리하지만 도구는 코드를 실행하고 파일을 수정할 수 있습니다. 설치된 도구를 신뢰하는 경우에만 켜세요. 도구별 거부 정책은 계속 적용됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Выполнять каждый вызов инструмента без запроса подтверждения, включая инструменты, которые обычно показывают карточку подтверждения. Удобно для многошаговых агентных сценариев, но инструменты могут выполнять код и изменять файлы. Включайте, только если доверяете установленным инструментам. Политики запрета для отдельных инструментов продолжают действовать."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "运行所有工具调用而无需请求批准，包括通常会显示确认卡片的工具。适合多步骤代理工作流，但工具可以执行代码并修改文件。请仅在信任已安装的工具时启用。单个工具的拒绝策略仍然有效。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "執行所有工具呼叫而無需請求核准，包括通常會顯示確認卡片的工具。適合多步驟代理工作流程，但工具可以執行程式碼並修改檔案。請僅在信任已安裝的工具時啟用。單一工具的拒絕策略仍然有效。"
           }
         }
       }
