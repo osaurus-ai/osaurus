@@ -707,6 +707,11 @@ public final class ToolRegistry: ObservableObject {
                     // moves into the outbox rather than blocking the run on a
                     // card nobody can answer.
                     approved = true
+                } else if ToolApprovalSettings.autoAllowAll {
+                    // User opted into the global auto-allow chat setting: skip
+                    // the interactive card. Only reachable where a card would
+                    // have been shown, so external/headless denials above win.
+                    approved = true
                 } else {
                     approved = await ToolPermissionPromptService.requestApproval(
                         toolName: name,
@@ -755,6 +760,8 @@ public final class ToolRegistry: ObservableObject {
                     // Headless eval with no UI: deny instead of hanging on an
                     // approval card nobody can click (see task-local doc).
                     approved = false
+                } else if ToolApprovalSettings.autoAllowAll {
+                    approved = true
                 } else {
                     approved = await ToolPermissionPromptService.requestApproval(
                         toolName: name,

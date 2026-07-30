@@ -448,12 +448,14 @@ final class TelegramConnectionService: @unchecked Sendable {
                 "The token was empty or Keychain storage was unavailable."
             )
         }
+        AgentChannelCredentialAvailability.shared.invalidate(.telegram)
         return saved
     }
 
     @discardableResult
     func deleteBotToken() -> Bool {
         clearCachedBotIdentity()
+        defer { AgentChannelCredentialAvailability.shared.invalidate(.telegram) }
         return credentialStore.deleteBotToken()
     }
 
@@ -470,6 +472,7 @@ final class TelegramConnectionService: @unchecked Sendable {
         clearCachedBotIdentity()
         let store = credentialStore
         let saved = await Keychain.perform { store.saveBotToken(token) }
+        AgentChannelCredentialAvailability.shared.invalidate(.telegram)
         if !saved {
             throw TelegramConnectionServiceError.configurationSaveFailed(
                 "The token was empty or Keychain storage was unavailable."
@@ -481,6 +484,7 @@ final class TelegramConnectionService: @unchecked Sendable {
     func deleteBotTokenOffMain() async -> Bool {
         clearCachedBotIdentity()
         let store = credentialStore
+        defer { AgentChannelCredentialAvailability.shared.invalidate(.telegram) }
         return await Keychain.perform { store.deleteBotToken() }
     }
 

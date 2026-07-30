@@ -515,8 +515,13 @@ struct AgentChannelAgentRepliesSection: View {
     }
 
     private func reload() {
+        // Credential presence comes from the non-blocking availability cache
+        // (seeded at launch, refreshed on credential mutation) — the direct
+        // `hasBotToken()` / `helperAvailable()` probes are synchronous
+        // Keychain / bundle-digest I/O and this runs on the main thread.
+        let availability = AgentChannelCredentialAvailability.shared
         var next: [Row] = []
-        if DiscordConnectionService.shared.hasBotToken(),
+        if availability.hasCredential(.discord),
             let detail = AgentChannelAgentReplySummary.detail(
                 for: agentId,
                 dispatch: DiscordConnectionService.shared.configuration().inboundDispatch
@@ -524,7 +529,7 @@ struct AgentChannelAgentRepliesSection: View {
         {
             next.append(Row(kind: .discord, detail: detail))
         }
-        if SlackConnectionService.shared.hasBotToken(),
+        if availability.hasCredential(.slack),
             let detail = AgentChannelAgentReplySummary.detail(
                 for: agentId,
                 dispatch: SlackConnectionService.shared.configuration().inboundDispatch
@@ -532,7 +537,7 @@ struct AgentChannelAgentRepliesSection: View {
         {
             next.append(Row(kind: .slack, detail: detail))
         }
-        if TelegramConnectionService.shared.hasBotToken(),
+        if availability.hasCredential(.telegram),
             let detail = AgentChannelAgentReplySummary.detail(
                 for: agentId,
                 dispatch: TelegramConnectionService.shared.configuration().inboundDispatch
@@ -542,7 +547,7 @@ struct AgentChannelAgentRepliesSection: View {
         }
         // iMessage has no remote credential; the verified local helper plays
         // that role.
-        if IMessageConnectionService.shared.helperAvailable(),
+        if availability.hasCredential(.imessage),
             let detail = AgentChannelAgentReplySummary.detail(
                 for: agentId,
                 dispatch: IMessageConnectionService.shared.configuration().inboundDispatch

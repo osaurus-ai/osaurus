@@ -56,15 +56,19 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
         )
     }
 
-    /// Native plugins that touch macOS automation APIs often hold
-    /// AppKit/Accessibility objects whose lifetime is tied to the main
-    /// thread. Dispatching those C ABI calls on the plugin's concurrent
-    /// queue can turn a valid UI element reference into a dangling ObjC
-    /// pointer during write actions such as click/type/press-key.
+    /// Native plugins that touch macOS automation APIs hold Accessibility
+    /// objects that must not be mutated concurrently: dispatching those
+    /// C ABI calls on the plugin's concurrent queue can turn a valid
+    /// UI-element reference into a dangling ObjC pointer during write
+    /// actions such as click/type/press-key. They get one-at-a-time
+    /// execution on the driver's off-main AX serial queue — the same queue
+    /// the native Computer Use driver uses — NOT the main actor: a plugin
+    /// legitimately driving another app for seconds must never occupy the
+    /// UI run loop for that duration.
     private static func invocationIsolation(for requirements: [String]) -> ExternalPlugin.InvocationIsolation {
         let normalized = Set(requirements.map { $0.lowercased() })
         if normalized.contains("accessibility") || normalized.contains("automation") {
-            return .mainActor
+            return .accessibilityQueue
         }
         return .pluginQueue
     }

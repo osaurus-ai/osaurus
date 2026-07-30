@@ -582,23 +582,17 @@ public enum MCPProviderProbeService {
         )
     }
 
+    /// Non-rejoining timeout: an MCP SDK call that ignores cancellation is
+    /// abandoned at the deadline instead of blocking the probe (a task-group
+    /// race would re-join the stuck child at scope exit).
     private static func withTimeout<T: Sendable>(
         seconds: TimeInterval,
         operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask {
-                try await operation()
-            }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw MCPProviderError.timeout
-            }
-            guard let result = try await group.next() else {
-                throw MCPProviderError.timeout
-            }
-            group.cancelAll()
-            return result
+        do {
+            return try await valueWithDeadline(seconds: seconds, operationName: "MCP probe", operation: operation)
+        } catch is DeadlineExceededError {
+            throw MCPProviderError.timeout
         }
     }
 }

@@ -67,7 +67,9 @@ struct KnowledgeCurationApprovalGuardTests {
             // deleted temp root for whatever runs after this suite.
             KnowledgeDatabase.shared.close()
             OsaurusPaths.overrideRoot = previousRoot
-            KnowledgeManager.shared.reload()
+            // `reload()` is async (off-main registry I/O); a defer cannot
+            // await, so reset the shared registry as a fire-and-forget hop.
+            Task { @MainActor in await KnowledgeManager.shared.reload() }
             try? FileManager.default.removeItem(at: root)
         }
 
@@ -81,7 +83,7 @@ struct KnowledgeCurationApprovalGuardTests {
         let collection = KnowledgeCollection(
             name: "Guard Corpus", summary: "", folderPath: folder.path)
         KnowledgeCollectionStore.save(collection)
-        KnowledgeManager.shared.reload()
+        await KnowledgeManager.shared.reload()
 
         try KnowledgeDatabase.shared.open()
         let proposalId = try KnowledgeDatabase.shared.createProposal(

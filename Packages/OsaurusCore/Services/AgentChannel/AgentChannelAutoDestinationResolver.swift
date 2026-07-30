@@ -167,30 +167,38 @@ enum AgentChannelAutoDestinationResolver {
     /// allowlists come from the same resolved connection views the publish
     /// path enforces at send time, so a derived destination can never
     /// advertise a room the send-time policy would refuse.
+    ///
+    /// Credential availability comes from the non-blocking
+    /// `AgentChannelCredentialAvailability` snapshot rather than live
+    /// Keychain/filesystem probes: this function is reached from MainActor
+    /// paths (prompt preview composition, Settings reloads) and a
+    /// synchronous `SecItemCopyMatching` under securityd contention was a
+    /// measured multi-second main-thread hang (Sentry APPLE-MACOS-1B5).
     static func liveSources() -> [AgentChannelAutoDestinationSource] {
         let service = AgentChannelConnectionService.shared
+        let availability = AgentChannelCredentialAvailability.shared
         let slackConfig = SlackConnectionService.shared.configuration()
         let natives: [(id: String, hasCredential: Bool, dispatch: AgentChannelInboundDispatchConfiguration)] = [
             (
                 AgentChannelConnection.nativeDiscordConnectionId,
-                DiscordConnectionService.shared.hasBotToken(),
+                availability.hasCredential(.discord),
                 DiscordConnectionService.shared.configuration().inboundDispatch
             ),
             (
                 AgentChannelConnection.nativeSlackConnectionId,
-                SlackConnectionService.shared.hasBotToken() || !slackConfig.workspaceAccounts.isEmpty,
+                availability.hasCredential(.slack) || !slackConfig.workspaceAccounts.isEmpty,
                 slackConfig.inboundDispatch
             ),
             (
                 AgentChannelConnection.nativeTelegramConnectionId,
-                TelegramConnectionService.shared.hasBotToken(),
+                availability.hasCredential(.telegram),
                 TelegramConnectionService.shared.configuration().inboundDispatch
             ),
             (
                 AgentChannelConnection.nativeIMessageConnectionId,
                 // iMessage has no token; a verified helper is what makes
                 // sends possible, so it plays the credential role here.
-                IMessageConnectionService.shared.helperAvailable(),
+                availability.hasCredential(.imessage),
                 IMessageConnectionService.shared.configuration().inboundDispatch
             ),
         ]

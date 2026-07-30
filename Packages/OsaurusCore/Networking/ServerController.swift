@@ -64,8 +64,6 @@ final class ServerController: ObservableObject {
 
     // MARK: - Private Properties
 
-    private var eventLoopGroup: MultiThreadedEventLoopGroup?
-    private var serverChannel: Channel?
     private var serverActor: OsaurusServer?
     private var agentsCancellable: AnyCancellable?
     private var runtimeSettingsCancellable: AnyCancellable?
@@ -180,7 +178,6 @@ final class ServerController: ObservableObject {
             RelayTunnelManager.shared.reconnectIfNeeded(port: configuration.port)
         } catch {
             handleServerError(error)
-            await cleanupRuntime()
         }
     }
 
@@ -189,7 +186,7 @@ final class ServerController: ObservableObject {
         isRestarting = true
         serverHealth = .restarting
         defer { isRestarting = false }
-        if serverChannel != nil || eventLoopGroup != nil || isRunning {
+        if serverActor != nil || isRunning {
             await stopServer()
         }
         await startServer()
@@ -198,7 +195,7 @@ final class ServerController: ObservableObject {
     /// Stops the running server
     func stopServer() async {
         // If nothing to stop, return
-        guard serverActor != nil || serverChannel != nil || eventLoopGroup != nil else { return }
+        guard serverActor != nil else { return }
         if !isRestarting { serverHealth = .stopping }
         print("[Osaurus] Stopping NIO server...")
 
@@ -206,14 +203,15 @@ final class ServerController: ObservableObject {
         BonjourAdvertiser.shared.stopAdvertising()
         isRunning = false
 
-        // Stop the actor-backed server if present
+        // Stop the actor-backed server if present. The event-loop group is
+        // process-shared (`SharedEventLoopGroups.server`), so stop only
+        // closes channels — no thread/descriptor churn on restart.
         if let server = serverActor {
             await server.stop(gracefully: true)
             serverActor = nil
         }
 
         localNetworkAddress = "127.0.0.1"
-        await cleanupRuntime()
 
         if !isRestarting { serverHealth = .stopped }
         print("[Osaurus] Server stopped successfully")
@@ -221,7 +219,7 @@ final class ServerController: ObservableObject {
 
     /// Ensures the server is properly shut down before app termination
     func ensureShutdown() async {
-        guard serverActor != nil || serverChannel != nil || eventLoopGroup != nil else { return }
+        guard serverActor != nil else { return }
 
         print("[Osaurus] Ensuring NIO server shutdown before app termination")
         RelayTunnelManager.shared.disconnectAll()
@@ -233,25 +231,16 @@ final class ServerController: ObservableObject {
         serverHealth = .stopping
 
         if let server = serverActor {
-            // Termination path: use the bounded (`gracefully: false`) shutdown
-            // so a lingering SSE child channel can't stall quit.
-            let completed = await server.stop(gracefully: false)
-            // Only drop our reference when the EventLoopGroup actually shut
-            // down. On timeout the group is still running; releasing the actor
-            // here would let it (and its group) deinit mid-shutdown and trip
-            // NIO's `EventLoopGroup is still running` precondition (issue
-            // #860). Keep it rooted — the process is exiting anyway.
-            if completed {
-                serverActor = nil
-            } else {
-                print(
-                    "[Osaurus] NIO group still draining at quit; keeping serverActor rooted to avoid mid-shutdown dealloc"
-                )
-            }
+            // Termination path: bounded (`gracefully: false`) drain so a
+            // lingering SSE child channel can't stall quit. The shared
+            // event-loop group is never shut down, so there is no
+            // mid-shutdown group to keep rooted (issue #860 no longer
+            // applies).
+            _ = await server.stop(gracefully: false)
+            serverActor = nil
         }
 
         localNetworkAddress = "127.0.0.1"
-        await cleanupRuntime()
 
         print("[Osaurus] Server shutdown completed")
     }
@@ -510,18 +499,6 @@ final class ServerController: ObservableObject {
 
     // MARK: - Private Helpers
 
-    /// Sets up channel closure handler
-    private func setupChannelClosureHandler(_ channel: Channel) {
-        channel.closeFuture.whenComplete { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                self.isRunning = false
-                if !self.isRestarting { self.serverHealth = .stopped }
-                self.serverChannel = nil
-            }
-        }
-    }
-
     /// Handles server startup errors
     private func handleServerError(_ error: Error) {
         print("[Osaurus] Failed to start server: \(error)")
@@ -539,7 +516,7 @@ final class ServerController: ObservableObject {
     }
 
     private func stopServerIfNeeded() async throws {
-        if serverActor != nil || serverChannel != nil || eventLoopGroup != nil {
+        if serverActor != nil {
             await stopServer()
         }
     }
@@ -584,20 +561,5 @@ final class ServerController: ObservableObject {
 
         freeifaddrs(ifaddr)
         return address
-    }
-
-    private func cleanupRuntime() async {
-        // Shutdown the event loop group gracefully
-        if let group = eventLoopGroup {
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                group.shutdownGracefully { error in
-                    if let error {
-                        print("[Osaurus] Error shutting down EventLoopGroup: \(error)")
-                    }
-                    continuation.resume()
-                }
-            }
-            eventLoopGroup = nil
-        }
     }
 }

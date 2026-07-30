@@ -51,6 +51,16 @@ public final class StorageMutationGate {
 
     private init() {}
 
+    /// Isolated instance for unit tests. The park/resume semantics tests
+    /// must not use `shared`: other suites running in parallel (storage
+    /// migration, key rotation) call `endMutating()` on the singleton and
+    /// wake the test's parked probes early. Note the `isMutating` didSet
+    /// still mirrors into the process-wide atomic; harmless under tests,
+    /// where `blockingAwaitNotMutating()` early-returns anyway.
+    static func makeForTesting() -> StorageMutationGate {
+        StorageMutationGate()
+    }
+
     // MARK: - Rotation hooks
 
     /// Called by `StorageExportService.rotateStorageKey` before it
@@ -117,6 +127,13 @@ public final class StorageMutationGate {
         }
 
         if Thread.isMainThread {
+            // Ledger entry: the run-loop spin keeps the UI painting, but a
+            // rotation that never ends would still be a user-visible stall —
+            // the watchdog should attribute it to the storage gate.
+            let token = MainThreadOperationLedger.shared.begin(
+                subsystem: "storage", operation: "await-key-rotation"
+            )
+            defer { MainThreadOperationLedger.shared.end(token) }
             while semaphore.wait(timeout: .now() + 0.05) == .timedOut {
                 RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
             }

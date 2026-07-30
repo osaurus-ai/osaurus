@@ -791,25 +791,23 @@ public final class MCPProviderManager: ObservableObject {
     }
 
     /// Trampoline that runs the MCP network call outside MainActor isolation.
+    /// Non-rejoining timeout (see `withTimeout`): a tool call the SDK cannot
+    /// cancel is abandoned at the deadline instead of pinning the agent turn.
     private nonisolated static func callMCPTool(
         client: MCP.Client,
         toolName: String,
         arguments: [String: MCP.Value],
         timeout: TimeInterval
     ) async throws -> ([MCP.Tool.Content], Bool?) {
-        try await withThrowingTaskGroup(of: ([MCP.Tool.Content], Bool?).self) { group in
-            group.addTask {
+        do {
+            return try await valueWithDeadline(
+                seconds: timeout,
+                operationName: "MCP tool \(toolName)"
+            ) {
                 try await client.callTool(name: toolName, arguments: arguments)
             }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                throw MCPProviderError.timeout
-            }
-            guard let result = try await group.next() else {
-                throw MCPProviderError.timeout
-            }
-            group.cancelAll()
-            return result
+        } catch is DeadlineExceededError {
+            throw MCPProviderError.timeout
         }
     }
 
@@ -1327,24 +1325,18 @@ public final class MCPProviderManager: ObservableObject {
         return tools
     }
 
+    /// Non-rejoining timeout: `valueWithDeadline` abandons an MCP SDK call
+    /// that ignores cancellation instead of blocking the caller until it
+    /// returns (a `withThrowingTaskGroup` race re-joins the stuck child at
+    /// scope exit, so "Connecting…" could still hang forever after the
+    /// timeout had nominally fired).
     private func withTimeout<T: Sendable>(seconds: TimeInterval, operation: @escaping @Sendable () async throws -> T)
         async throws -> T
     {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask {
-                try await operation()
-            }
-
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw MCPProviderError.timeout
-            }
-
-            guard let result = try await group.next() else {
-                throw MCPProviderError.timeout
-            }
-            group.cancelAll()
-            return result
+        do {
+            return try await valueWithDeadline(seconds: seconds, operationName: "MCP request", operation: operation)
+        } catch is DeadlineExceededError {
+            throw MCPProviderError.timeout
         }
     }
 

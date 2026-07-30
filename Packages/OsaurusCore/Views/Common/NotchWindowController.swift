@@ -470,6 +470,14 @@ public final class NotchWindowController: NSObject, ObservableObject {
 /// Opting into key status allows typing without changing the overlay's
 /// transient, non-main-window behavior.
 final class NotchPanel: NSPanel {
+    /// The controller computes a safe frame for both placement modes. AppKit
+    /// otherwise constrains borderless windows again when they are shown or
+    /// resized, which can intermittently push an on-menu-bar panel down to the
+    /// visible frame and detach it from the top edge.
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        frameRect
+    }
+
     override var canBecomeKey: Bool { true }
 }
 

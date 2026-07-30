@@ -430,7 +430,11 @@ public actor ModelRuntime {
     /// enter MLX/Metal setup concurrently and trip native command-buffer
     /// assertions before Swift can throw. Hot cache hits bypass this slot.
     private var coldLoadActive = false
-    private var coldLoadWaiters: [CheckedContinuation<Void, Never>] = []
+    /// FIFO cold-load waiters, keyed so a cancelled waiter can be removed
+    /// and resumed with `CancellationError` immediately: Stop must unlock a
+    /// queued load's caller even while another model's cold load (possibly
+    /// wedged in native code) still holds the slot.
+    private var coldLoadWaiters: [(id: UUID, continuation: CheckedContinuation<Void, Error>)] = []
     private var currentModelName: String?
     private var cachedConfig: RuntimeConfig?
     /// Monotonic sequence for every published residency-set mutation. Direct
@@ -1384,7 +1388,23 @@ public actor ModelRuntime {
         // generation is in flight runs two unsynchronized command buffers and
         // trips `AGXG17XFamilyCommandBuffer` asserts (issue #1632). Balanced
         // on every exit path below.
-        await MetalGate.shared.enterGeneration(model: holder.name)
+        //
+        // Cancellation-aware: a cancelled attach gives up the wait instead of
+        // parking behind a wedged producer. No gate is held on the throw path.
+        do {
+            try await MetalGate.shared.enterGeneration(model: holder.name)
+        } catch {
+            await soloLease.release()
+            await ModelLease.shared.release(holder.name)
+            await scheduleIdleResidency(for: holder.name)
+            return LiveVoiceAudioPreencodeResult(
+                status: .failed,
+                sampleCount: samples.count,
+                sampleRate: sampleRate,
+                encodeMs: 0,
+                message: "Cancelled while waiting for the GPU gate"
+            )
+        }
 
         do {
             try await holder.container.perform { context in
@@ -3107,22 +3127,46 @@ public actor ModelRuntime {
         }
     }
 
-    private func acquireColdLoadSlot() async {
+    /// Acquire the process-wide cold-load slot, or throw `CancellationError`
+    /// if the caller is cancelled while queued. The wait itself is unbounded
+    /// on purpose — a queued load must not barge into MLX/Metal setup while
+    /// another cold load holds the slot — but it is always escapable: the
+    /// caller's cancellation (Stop, turn deadline) releases the waiter
+    /// immediately instead of leaving it parked behind a wedged native load.
+    private func acquireColdLoadSlot() async throws {
         if !coldLoadActive {
             coldLoadActive = true
             return
         }
 
-        await withCheckedContinuation { continuation in
-            coldLoadWaiters.append(continuation)
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                coldLoadWaiters.append((id: waiterID, continuation: continuation))
+            }
+        } onCancel: {
+            Task { await self.cancelColdLoadWaiter(id: waiterID) }
         }
+    }
+
+    /// Remove and fail one queued waiter. No-op when the waiter was already
+    /// resumed (slot handed over) or removed — a continuation is resumed at
+    /// most once because both paths remove it from the queue first.
+    private func cancelColdLoadWaiter(id: UUID) {
+        guard let index = coldLoadWaiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = coldLoadWaiters.remove(at: index)
+        waiter.continuation.resume(throwing: CancellationError())
     }
 
     private func releaseColdLoadSlot() {
         guard coldLoadActive else { return }
         if !coldLoadWaiters.isEmpty {
             let next = coldLoadWaiters.removeFirst()
-            next.resume()
+            next.continuation.resume(returning: ())
         } else {
             coldLoadActive = false
         }
@@ -3402,7 +3446,7 @@ public actor ModelRuntime {
             break
         }
 
-        await acquireColdLoadSlot()
+        try await acquireColdLoadSlot()
         defer { releaseColdLoadSlot() }
 
         while true {

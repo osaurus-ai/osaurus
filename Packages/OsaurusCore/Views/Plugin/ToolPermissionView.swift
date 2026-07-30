@@ -86,16 +86,20 @@ struct ToolPermissionView: View {
                     .offset(y: appeared ? 0 : -8)
 
                 if !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(description)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.secondaryText)
-                        .multilineTextAlignment(.center)
-                        .lineSpacing(2)
-                        .padding(.top, 8)
-                        .padding(.horizontal, 24)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .opacity(appeared ? 1 : 0)
-                        .offset(y: appeared ? 0 : -4)
+                    ScrollView(.vertical, showsIndicators: true) {
+                        Text(description)
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.secondaryText)
+                            .multilineTextAlignment(.center)
+                            .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .frame(maxHeight: 140)
+                    .padding(.top, 8)
+                    .padding(.horizontal, 24)
+                    .opacity(appeared ? 1 : 0)
+                    .offset(y: appeared ? 0 : -4)
                 }
 
                 if hasArguments {
@@ -128,7 +132,7 @@ struct ToolPermissionView: View {
                     .offset(y: appeared ? 0 : 8)
             }
         }
-        .frame(width: 380)
+        .frame(width: 460)
         .fixedSize(horizontal: true, vertical: true)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(

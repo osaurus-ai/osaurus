@@ -230,7 +230,7 @@ enum ToolPermissionPromptService {
 
         hostingController.view.layoutSubtreeIfNeeded()
         let fittingSize = hostingController.view.fittingSize
-        let windowSize = NSSize(
+        var windowSize = NSSize(
             width: max(fittingSize.width, 480),
             height: max(fittingSize.height, 300)
         )
@@ -249,6 +249,9 @@ enum ToolPermissionPromptService {
         )
         if let screen = targetScreen {
             let vf = screen.visibleFrame
+            // The approval buttons must stay reachable: never size the panel
+            // taller (or wider) than the visible screen area.
+            windowSize = clampedWindowSize(windowSize, to: vf.size)
             panel.setFrame(
                 NSRect(
                     x: vf.origin.x + (vf.width - windowSize.width) / 2,
@@ -296,6 +299,13 @@ enum ToolPermissionPromptService {
 
     /// Pure seams keep the security-sensitive screen and key-event policy
     /// deterministic in tests without constructing AppKit windows.
+    nonisolated static func clampedWindowSize(_ size: NSSize, to visible: NSSize) -> NSSize {
+        NSSize(
+            width: min(size.width, visible.width),
+            height: min(size.height, visible.height)
+        )
+    }
+
     nonisolated static func preferredPresentationCandidate<T>(
         keyWindow: T?,
         mainWindow: T?,

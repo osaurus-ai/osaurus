@@ -10,11 +10,24 @@
 
 import Foundation
 
-@MainActor
+/// Nonisolated on purpose: every function here is pure filesystem I/O.
+/// Directory enumeration plus per-file JSON decoding can stall for seconds
+/// on a cold or contended disk, so registry loads must be able to run off
+/// the main thread (Sentry APPLE-MACOS-1B6 measured `loadAll()` blocking
+/// launch inside `KnowledgeManager.shared` init).
 public enum KnowledgeCollectionStore {
     // MARK: - Public API
 
-    /// Load all collections sorted by name.
+    /// `loadAll()` moved to a background thread. Prefer this from any
+    /// MainActor caller.
+    public static func loadAllAsync() async -> [KnowledgeCollection] {
+        await Task.detached(priority: .userInitiated) {
+            loadAll()
+        }.value
+    }
+
+    /// Load all collections sorted by name. Blocking filesystem I/O — do
+    /// not call on the main thread; use `loadAllAsync()` there.
     public static func loadAll() -> [KnowledgeCollection] {
         let directory = OsaurusPaths.knowledgeCollections()
         OsaurusPaths.ensureExistsSilent(directory)

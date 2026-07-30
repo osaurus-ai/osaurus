@@ -8,6 +8,10 @@
 //    * skips ONLY the `.ask` user prompt,
 //    * `.deny` policies still throw even while it is bound.
 //
+//  Also pins the user-facing `ToolApprovalSettings.autoAllowAll` chat
+//  setting: default off, approves only `.ask` prompts, and is outranked by
+//  both `.deny` policies and headless surface denials.
+//
 //  The complementary "without the binding, `.ask` prompts" path is
 //  deliberately NOT executed here: it would present a real NSPanel and
 //  hang the test run — exactly the failure mode the TaskLocal exists to
@@ -100,6 +104,75 @@ struct ToolRegistryAutoApproveTests {
         #expect(object["field"] as? String == "columns")
         #expect(object["expected"] as? String == "one value per declared parameter")
         #expect(object["retryable"] as? Bool == true)
+    }
+
+    // MARK: Global auto-allow chat setting
+
+    @Test func globalAutoAllowDefaultsToOff() {
+        UserDefaults.standard.removeObject(
+            forKey: ToolApprovalSettings.autoAllowAllDefaultsKey
+        )
+        #expect(ToolApprovalSettings.autoAllowAll == false)
+    }
+
+    @Test func askGatedToolExecutesWhenGlobalAutoAllowIsOn() async throws {
+        let tool = PolicyProbeTool(name: "test_global_auto_allow_ask_probe", policy: .ask)
+        ToolRegistry.shared.register(tool)
+        UserDefaults.standard.set(true, forKey: ToolApprovalSettings.autoAllowAllDefaultsKey)
+        defer {
+            UserDefaults.standard.removeObject(
+                forKey: ToolApprovalSettings.autoAllowAllDefaultsKey
+            )
+            ToolRegistry.shared.unregister(names: [tool.name])
+        }
+
+        let result = try await ToolRegistry.shared.execute(
+            name: tool.name,
+            argumentsJSON: "{}"
+        )
+
+        #expect(tool.executions == 1)
+        #expect(!ToolEnvelope.isError(result))
+    }
+
+    @Test func denyPolicyOutranksGlobalAutoAllow() async {
+        let tool = PolicyProbeTool(name: "test_global_auto_allow_deny_probe", policy: .deny)
+        ToolRegistry.shared.register(tool)
+        UserDefaults.standard.set(true, forKey: ToolApprovalSettings.autoAllowAllDefaultsKey)
+        defer {
+            UserDefaults.standard.removeObject(
+                forKey: ToolApprovalSettings.autoAllowAllDefaultsKey
+            )
+            ToolRegistry.shared.unregister(names: [tool.name])
+        }
+
+        await #expect(throws: (any Error).self) {
+            _ = try await ToolRegistry.shared.execute(name: tool.name, argumentsJSON: "{}")
+        }
+        #expect(tool.executions == 0)
+    }
+
+    /// Headless surfaces that bind `denyUnapprovedToolPrompts` must stay
+    /// denial-shaped even when the user's global auto-allow setting is on:
+    /// the setting replaces the interactive card, it never overrides a
+    /// surface-level denial.
+    @Test func headlessDenyOutranksGlobalAutoAllow() async {
+        let tool = PolicyProbeTool(name: "test_global_auto_allow_headless_probe", policy: .ask)
+        ToolRegistry.shared.register(tool)
+        UserDefaults.standard.set(true, forKey: ToolApprovalSettings.autoAllowAllDefaultsKey)
+        defer {
+            UserDefaults.standard.removeObject(
+                forKey: ToolApprovalSettings.autoAllowAllDefaultsKey
+            )
+            ToolRegistry.shared.unregister(names: [tool.name])
+        }
+
+        await #expect(throws: (any Error).self) {
+            _ = try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
+                try await ToolRegistry.shared.execute(name: tool.name, argumentsJSON: "{}")
+            }
+        }
+        #expect(tool.executions == 0)
     }
 
     // MARK: Two-phase batch (serial approvals → parallel execution)

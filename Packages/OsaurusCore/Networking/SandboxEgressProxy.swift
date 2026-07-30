@@ -47,7 +47,6 @@ import NIOPosix
         /// Returns `nil` for unknown tokens (connection is refused).
         public typealias AllowlistResolver = @Sendable (String) async -> [String]?
 
-        private var group: MultiThreadedEventLoopGroup?
         private var channel: Channel?
         public private(set) var boundPort: Int?
 
@@ -58,6 +57,10 @@ import NIOPosix
         /// Start the proxy bound to `host` (the vmnet gateway address —
         /// never 0.0.0.0, which would expose the proxy to the LAN).
         /// Returns the bound port (`port == 0` picks an ephemeral one).
+        ///
+        /// Runs on the process-shared utility event-loop group — sandbox
+        /// start/stop cycles previously allocated a fresh 2-thread group
+        /// each time (descriptor build-up, APPLE-MACOS-19T).
         @discardableResult
         public func start(
             host: String,
@@ -66,8 +69,7 @@ import NIOPosix
         ) async throws -> Int {
             if channel != nil { await stop() }
 
-            let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
-            let bootstrap = ServerBootstrap(group: group)
+            let bootstrap = ServerBootstrap(group: SharedEventLoopGroups.utility)
                 .serverChannelOption(ChannelOptions.backlog, value: 64)
                 .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
                 .childChannelInitializer { channel in
@@ -82,27 +84,17 @@ import NIOPosix
                     }
                 }
 
-            do {
-                let ch = try await bootstrap.bind(host: host, port: port).get()
-                self.group = group
-                self.channel = ch
-                self.boundPort = ch.localAddress?.port
-                debugLog("[SandboxEgress] Proxy listening on \(host):\(boundPort ?? -1)")
-                return boundPort ?? 0
-            } catch {
-                try? await group.shutdownGracefully()
-                throw error
-            }
+            let ch = try await bootstrap.bind(host: host, port: port).get()
+            self.channel = ch
+            self.boundPort = ch.localAddress?.port
+            debugLog("[SandboxEgress] Proxy listening on \(host):\(boundPort ?? -1)")
+            return boundPort ?? 0
         }
 
         public func stop() async {
             if let ch = channel {
                 _ = try? await ch.close()
                 channel = nil
-            }
-            if let g = group {
-                try? await g.shutdownGracefully()
-                group = nil
             }
             boundPort = nil
         }

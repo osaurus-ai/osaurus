@@ -2087,15 +2087,19 @@ struct RuntimePolicySourceTests {
         )
         let body = String(controller[start.lowerBound ..< end.lowerBound])
 
-        // On timeout the actor (and its EventLoopGroup) must stay rooted — only
-        // drop it when shutdown actually completed (issue #860).
+        // Quit-path drain must be bounded (`gracefully: false`) so a
+        // lingering SSE child channel can't stall quit. Server lifecycles
+        // now run on the process-wide shared EventLoopGroup which is never
+        // shut down, so there is no mid-shutdown group to keep rooted (the
+        // issue #860 "stay rooted on timeout" contract no longer applies)
+        // and the actor is always released.
         #expect(
-            body.contains("let completed = await server.stop(gracefully: false)"),
-            "ensureShutdown must capture whether the bounded NIO shutdown completed"
+            body.contains("await server.stop(gracefully: false)"),
+            "ensureShutdown must run a bounded (non-graceful) NIO drain on the quit path"
         )
         #expect(
-            body.contains("if completed {") && body.contains("serverActor = nil"),
-            "ensureShutdown must only release serverActor when the group fully shut down"
+            body.contains("serverActor = nil"),
+            "ensureShutdown must release the server actor after the bounded drain"
         )
         #expect(
             body.contains("BonjourAdvertiser.shared.stopAdvertising()"),

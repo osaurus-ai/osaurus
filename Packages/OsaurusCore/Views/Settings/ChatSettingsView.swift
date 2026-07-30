@@ -54,6 +54,18 @@ struct ChatSettingsView: View {
     /// immediately, so it's excluded from the debounced save baseline.
     @AppStorage("chatExpandThinkingWhileStreamingEnabled")
     private var expandThinkingWhileStreamingEnabled: Bool = false
+    /// Auto-allow all tool calls without showing the approval card. Default
+    /// off. Bound to `UserDefaults` key `ToolApprovalSettings
+    /// .autoAllowAllDefaultsKey`, read by `ToolRegistry` at each `.ask`-policy
+    /// tool invocation. Applied immediately, so it's excluded from the
+    /// debounced save baseline.
+    @AppStorage(ToolApprovalSettings.autoAllowAllDefaultsKey)
+    private var autoAllowAllToolsEnabled: Bool = false
+    /// Turning auto-allow ON disables a security gate for every tool, so the
+    /// toggle's binding intercepts the off→on flip and routes it through a
+    /// confirmation alert; only confirming persists the value. Turning it
+    /// off applies immediately.
+    @State private var showAutoAllowAllConfirm = false
     /// Roll up runs of consecutive thinking / tool-call rows into a single
     /// expandable "Worked for …" row so agent loops don't push the
     /// conversation out of view. Default off. Bound to `UserDefaults` key
@@ -162,6 +174,29 @@ struct ChatSettingsView: View {
         }
         // Persist a pending edit if the user leaves before the debounce fires.
         .onDisappear { flushPendingSave() }
+        .themedAlert(
+            L("Auto-Allow All Tool Calls?"),
+            isPresented: $showAutoAllowAllConfirm,
+            message: L(
+                "Every tool call will run immediately without asking for approval, including tools that can execute code, modify files, or send data. You can turn this off at any time in Chat settings."
+            ),
+            primaryButton: .destructive(L("Auto-Allow All")) { autoAllowAllToolsEnabled = true },
+            secondaryButton: .cancel(L("Cancel"))
+        )
+    }
+
+    /// See `showAutoAllowAllConfirm`: off→on asks first, on→off is immediate.
+    private var autoAllowAllToolsBinding: Binding<Bool> {
+        Binding(
+            get: { autoAllowAllToolsEnabled },
+            set: { isOn in
+                if isOn && !autoAllowAllToolsEnabled {
+                    showAutoAllowAllConfirm = true
+                } else {
+                    autoAllowAllToolsEnabled = isOn
+                }
+            }
+        )
     }
 
     /// Bridges the string-backed placement preference to the boolean
@@ -297,6 +332,13 @@ struct ChatSettingsView: View {
                         object: nil
                     )
                 }
+
+                SettingsToggle(
+                    title: L("Auto-Allow All Tool Calls"),
+                    description:
+                        "Run every tool call without asking for approval, including tools that would normally show a confirmation card. Convenient for multi-step agent workflows, but tools can execute code and modify files. Enable only if you trust the tools you have installed. Per-tool Deny policies still apply.",
+                    isOn: autoAllowAllToolsBinding
+                )
 
                 SettingsToggle(
                     title: L("Clipboard Monitoring"),

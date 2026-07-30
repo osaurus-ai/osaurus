@@ -280,19 +280,23 @@ public enum AgentStore {
         }
     }
 
-    /// Check if an agent exists
-    public static func exists(id: UUID) -> Bool {
+    /// Check if an agent exists. `nonisolated`: pure filesystem + static
+    /// data, callable from any thread — background validators must not have
+    /// to `DispatchQueue.main.sync` into the MainActor just to run a
+    /// `fileExists` (that hop can deadlock when the main thread is itself
+    /// waiting on the background queue, and stalls behind a busy run loop).
+    public nonisolated static func exists(id: UUID) -> Bool {
         Agent.builtInAgents.contains(where: { $0.id == id })
             || FileManager.default.fileExists(atPath: agentFileURL(for: id).path)
     }
 
     // MARK: - Private
 
-    private static func agentsDirectory() -> URL {
+    private nonisolated static func agentsDirectory() -> URL {
         OsaurusPaths.resolvePath(new: OsaurusPaths.agents(), legacy: "Personas")
     }
 
-    private static func agentFileURL(for id: UUID) -> URL {
+    private nonisolated static func agentFileURL(for id: UUID) -> URL {
         agentsDirectory().appendingPathComponent("\(id.uuidString).json")
     }
 

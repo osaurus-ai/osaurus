@@ -69,13 +69,18 @@ public actor ImageGenerationService {
         // `enterModelLoad`); without the gate that reload starts while these
         // frees are still settling and races them on the shared Metal command
         // queue (the `MTLReleaseAssertionFailure` / `Gather::eval_gpu` class).
-        await MetalGate.shared.enterImageGeneration()
+        //
+        // Teardown uses the NON-cancellable teardown owner (any distinct
+        // owner is exclusive against all others): once we decide to free the
+        // FLUX weights, giving up mid-wait on cancellation would either leak
+        // the engine or free buffers without the gate.
+        await MetalGate.shared.enterModelTeardown(model: "image-unload")
         await engine.unload()
         loadedDirectoryName = nil
         MLXCacheIOLock.withSerializedMLXCacheIO {
             Memory.clearCache()
         }
-        await MetalGate.shared.exitImageGeneration()
+        await MetalGate.shared.exitModelTeardown(model: "image-unload")
     }
 
     // MARK: - Model store root
@@ -305,7 +310,18 @@ public actor ImageGenerationService {
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
-                await MetalGate.shared.enterImageGeneration()
+                do {
+                    // Cancellation-aware: consumer termination (or job cancel)
+                    // while another producer holds the GPU releases this task
+                    // instead of parking it. No gate is held on the throw
+                    // path, so none of the drain tail below applies.
+                    try await MetalGate.shared.enterImageGeneration()
+                } catch {
+                    continuation.yield(.cancelled)
+                    continuation.finish()
+                    if let jobID { self.cancelledJobIDs.remove(jobID) }
+                    return
+                }
                 // Proper GPU handoff barrier. The prior LLM turn's async tail —
                 // the post-generation cache store (held under MLXDiskCacheIOLock,
                 // submits Metal work) and the chat-model teardown's buffer frees —

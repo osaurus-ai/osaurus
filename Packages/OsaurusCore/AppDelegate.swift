@@ -364,6 +364,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             MasterKey.warmExistsCacheInBackground()
         }
 
+        // Seed channel credential availability (Keychain bot-token probes +
+        // the iMessage helper digest check) off-main so the first prompt
+        // preview / Settings recompute reads a cached answer instead of
+        // paying a synchronous SecItemCopyMatching on the main thread.
+        AgentChannelCredentialAvailability.shared.seedAllInBackground()
+
         Task { @MainActor in
             // Await the identity-existence seed before the first
             // `RemoteProviderManager.shared` touch below: its cold init
@@ -397,17 +403,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
 
-        // Pre-warm the open-panel machinery. The first NSOpenPanel init in a
-        // process loads the remote file-picker (ViewBridge) service, which can
-        // take seconds cold — reported as a hang when it happens on the user's
-        // click (folder selection, file attach). Creating one throwaway panel
-        // now moves that one-time cost to launch idle time, a few seconds in,
-        // when the user isn't mid-interaction. Must run on the main thread —
-        // NSOpenPanel is main-thread-only, so the cost can't be moved off it,
-        // only moved earlier.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-            _ = NSOpenPanel()
-        }
+        // NOTE: an earlier build pre-warmed NSOpenPanel here (3s after launch)
+        // to move the cold ViewBridge file-picker cost off the user's first
+        // click. Production Sentry data (APPLE-MACOS-1AG, 20 users in one day
+        // on 0.22.12) showed the prewarm itself blocked the main thread for
+        // 3s+ — the launch window is exactly when the machine is most
+        // contended, so the deferred init still stalled inside
+        // `-[NSSavePanel _initBridgeAndStuff]` waiting on the remote service.
+        // The prewarm is intentionally removed: the one-time cost belongs on
+        // an explicit user action (where the beachball is attributable and
+        // rare), not injected into every launch.
 
         // VecturaKit inits run sequentially. Memory DB opens first because
         // MemorySearchService.initialize() needs it for reverse maps.
@@ -518,6 +523,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // unchanged corpus costs one folder scan per collection.
         Task { @MainActor in
             await embeddingInitTask.value
+            // The registry now loads off-main after the cold `shared` touch;
+            // wait for that snapshot so the startup pass indexes the real
+            // collection set instead of an empty pre-load array.
+            await KnowledgeManager.shared.ensureLoaded()
             KnowledgeManager.shared.scheduleIndexAll()
             KnowledgeFolderWatcher.shared.start()
         }
