@@ -32,6 +32,7 @@ described as release-ready or regression-free.
 | vMLX linked oversized-boundary quota regression | 1/1 passed |
 | vMLX complete focused `DiskCache` lane | 18/18 passed |
 | Osaurus exact-pin focused suites | 33/33 passed across 5 suites |
+| Osaurus four-surface pin guard correction | 3/3 passed across 2 suites |
 | OsaurusCore production Release build | passed in 528.55 seconds |
 
 The exact-pin focused command covered the Seatbelt integration, Laguna local
@@ -39,6 +40,15 @@ metadata paths, external model discovery, and iteration-cap source policy in
 one invocation. The real UI lifecycle and the model-dependent full AgentLoop /
 AgentLoopFrontier lanes remain `PARTIAL`; the PR's cold CI supplies the full
 core and deterministic eval gates, not those live/model-dependent rows.
+
+The first GitHub `test-core` attempt ran the runtime suites but failed five
+source-policy assertions because the initial pin commit updated
+`Packages/OsaurusCore/Package.resolved` while missing both Xcode workspace
+`Package.resolved` files and their two expected-revision guard constants.
+Xcode regenerated both workspace pins and origin hashes at the same merged
+vMLX SHA; the two focused guard suites then passed `3/3`. This was pin hygiene,
+not a model/runtime assertion failure. The final-head core rerun is the merge
+gate.
 
 ## 1. Ornith 1.0 9B JANG_4M exclamation degeneration
 
