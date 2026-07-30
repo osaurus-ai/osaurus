@@ -243,7 +243,16 @@ enum Keychain {
         if DispatchQueue.getSpecific(key: writeQueueKey) != nil {
             return work()
         }
-        return writeQueue.sync(execute: work)
+        // Ledger entry (main thread only): a synchronous mutation from the
+        // main thread waits behind every queued background write PLUS its
+        // own SecItem call — the classic securityd-contention stall shape.
+        // With the entry, a watchdog breach names "keychain.mutation-sync"
+        // instead of logging a generic hang.
+        return MainThreadOperationLedger.shared.withMainThreadOperation(
+            subsystem: "keychain", operation: "mutation-sync"
+        ) {
+            writeQueue.sync(execute: work)
+        }
     }
 
     /// Block until every mutation enqueued so far has completed, bounded by
@@ -311,7 +320,15 @@ enum Keychain {
             ]
         ) { _, new in new }
 
-        let (status, result) = backend.copyMatching(query)
+        // Ledger entry (main thread only): `SecItemCopyMatching` is a
+        // securityd XPC round-trip that has stalled the main thread for
+        // seconds under contention (Sentry APPLE-MACOS-1B5). Naming it here
+        // makes any watchdog breach attribute to "keychain.read".
+        let (status, result) = MainThreadOperationLedger.shared.withMainThreadOperation(
+            subsystem: "keychain", operation: "read"
+        ) {
+            backend.copyMatching(query)
+        }
         let outcome = readOutcome(for: status, result: result)
         if case .found = outcome { return outcome }
         if case .notFound = outcome { return outcome }

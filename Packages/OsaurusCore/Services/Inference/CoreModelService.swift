@@ -509,21 +509,18 @@ public actor CoreModelService {
         }
     }
 
+    /// Non-rejoining timeout: native model work that ignores cancellation is
+    /// abandoned at the deadline instead of blocking the caller (a task-group
+    /// race would re-join the stuck child at scope exit).
     private func withTimeout<T: Sendable>(
         seconds: TimeInterval,
         _ operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { try await operation() }
-            group.addTask {
-                try await Task.sleep(for: .seconds(seconds))
-                throw CoreModelError.timedOut
-            }
-            guard let result = try await group.next() else {
-                throw CoreModelError.timedOut
-            }
-            group.cancelAll()
-            return result
+        do {
+            return try await valueWithDeadline(
+                seconds: seconds, operationName: "core model request", operation: operation)
+        } catch is DeadlineExceededError {
+            throw CoreModelError.timedOut
         }
     }
 }

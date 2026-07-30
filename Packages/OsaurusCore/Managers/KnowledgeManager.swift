@@ -27,8 +27,39 @@ public final class KnowledgeManager: ObservableObject {
     /// show a live "Indexing…" state instead of a fire-and-forget toast.
     @Published public private(set) var indexingCollectionIds: Set<UUID> = []
 
+    /// The one-time initial registry load. Runs off the main thread: the
+    /// cold `shared` touch happens during launch on MainActor, and loading
+    /// the registry there (directory enumeration + JSON decode per
+    /// collection) was a measured multi-second launch hang on contended
+    /// disks (Sentry APPLE-MACOS-1B6). Consumers that need a settled
+    /// registry await `ensureLoaded()`; everyone else observes the
+    /// published `collections` update.
+    private var initialLoad: Task<Void, Never>?
+    private var hasLoadedRegistry = false
+
     private init() {
-        collections = KnowledgeCollectionStore.loadAll()
+        initialLoad = Task.detached(priority: .userInitiated) { [weak self] in
+            let loaded = KnowledgeCollectionStore.loadAll()
+            await MainActor.run {
+                self?.adoptInitialSnapshot(loaded)
+            }
+        }
+    }
+
+    /// Await the initial registry load. Cheap after the first completion.
+    public func ensureLoaded() async {
+        await initialLoad?.value
+    }
+
+    private func adoptInitialSnapshot(_ loaded: [KnowledgeCollection]) {
+        // A reload or mutation that landed before the deferred initial load
+        // finished already produced a fresher registry; don't clobber it.
+        guard !hasLoadedRegistry else { return }
+        hasLoadedRegistry = true
+        collections = loaded
+        if !loaded.isEmpty {
+            NotificationCenter.default.post(name: .knowledgeCollectionsChanged, object: nil)
+        }
     }
 
     // MARK: - Lookup
@@ -57,12 +88,26 @@ public final class KnowledgeManager: ObservableObject {
 
     // MARK: - Lifecycle
 
-    public func reload() {
-        collections = KnowledgeCollectionStore.loadAll()
+    public func reload() async {
+        let loaded = await KnowledgeCollectionStore.loadAllAsync()
+        hasLoadedRegistry = true
+        collections = loaded
+    }
+
+    /// Apply one registry mutation to the published array without
+    /// re-enumerating the collections directory on the main thread.
+    private func applyUpsert(_ collection: KnowledgeCollection) {
+        hasLoadedRegistry = true
+        var updated = collections.filter { $0.id != collection.id }
+        updated.append(collection)
+        collections = updated.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
     }
 
     @discardableResult
     public func create(name: String, summary: String = "", folderPath: String) async -> KnowledgeCollection {
+        await ensureLoaded()
         var collection = KnowledgeCollection(name: name, summary: summary, folderPath: folderPath)
         // Adopting a folder that is already a git repo: remember its
         // `origin` so the card shows the link and Sync can pull/push.
@@ -71,7 +116,7 @@ public final class KnowledgeManager: ObservableObject {
             collection.gitRemoteURL = await KnowledgeGitSyncService.shared.remoteURL(of: collection.folderURL)
         }
         KnowledgeCollectionStore.save(collection)
-        collections = KnowledgeCollectionStore.loadAll()
+        applyUpsert(collection)
         NotificationCenter.default.post(name: .knowledgeCollectionsChanged, object: collection.id)
         scheduleIndex(of: collection)
         return collection
@@ -81,14 +126,15 @@ public final class KnowledgeManager: ObservableObject {
         var updated = collection
         updated.updatedAt = Date()
         KnowledgeCollectionStore.save(updated)
-        collections = KnowledgeCollectionStore.loadAll()
+        applyUpsert(updated)
         NotificationCenter.default.post(name: .knowledgeCollectionsChanged, object: collection.id)
         scheduleIndex(of: updated)
     }
 
     public func delete(id: UUID) {
         KnowledgeCollectionStore.delete(id: id)
-        collections = KnowledgeCollectionStore.loadAll()
+        hasLoadedRegistry = true
+        collections.removeAll { $0.id == id }
         NotificationCenter.default.post(name: .knowledgeCollectionsChanged, object: id)
         Task.detached(priority: .utility) {
             await KnowledgeIndexService.shared.removeCollectionArtifacts(collectionId: id)
@@ -111,6 +157,7 @@ public final class KnowledgeManager: ObservableObject {
         summary: String = "",
         remoteURL: String
     ) async throws -> KnowledgeCollection {
+        await ensureLoaded()
         let id = UUID()
         let target = try await KnowledgeGitSyncService.shared.clone(
             remoteURL: remoteURL,
@@ -124,7 +171,7 @@ public final class KnowledgeManager: ObservableObject {
             gitRemoteURL: remoteURL
         )
         KnowledgeCollectionStore.save(collection)
-        collections = KnowledgeCollectionStore.loadAll()
+        applyUpsert(collection)
         NotificationCenter.default.post(name: .knowledgeCollectionsChanged, object: collection.id)
         scheduleIndex(of: collection)
         return collection

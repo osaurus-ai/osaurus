@@ -1262,10 +1262,18 @@ struct MLXBatchAdapter {
         let prepChat = PrepChatBox(buildRawPrompt == nil ? buildChat() : [])
         let prepIsExclusive = prepChat.hasMedia
         let prepared: PreparedInput
-        if prepIsExclusive {
-            await MetalGate.shared.enterMediaPrep(model: modelName)
-        } else {
-            await MetalGate.shared.enterGeneration(model: modelName)
+        do {
+            // Cancellation-aware: a Stop while another producer holds the GPU
+            // throws here instead of parking this request behind the gate. No
+            // gate is held on the throw path, so only the solo lease unwinds.
+            if prepIsExclusive {
+                try await MetalGate.shared.enterMediaPrep(model: modelName)
+            } else {
+                try await MetalGate.shared.enterGeneration(model: modelName)
+            }
+        } catch {
+            if let soloLease { await soloLease.release() }
+            throw error
         }
         func exitPrepGate() async {
             if prepIsExclusive {
@@ -1463,7 +1471,16 @@ struct MLXBatchAdapter {
         // keep batching; only embedding is exclusive. Released by the producer
         // task once the upstream stream has fully drained, which (per the note
         // above) is AFTER vmlx's post-`.info` cache-store eval.
-        await MetalGate.shared.enterGeneration(model: modelName)
+        //
+        // Cancellation-aware: a Stop while a foreign producer holds the GPU
+        // throws instead of parking this request. No gate is held on the
+        // throw path — only the solo lease needs unwinding.
+        do {
+            try await MetalGate.shared.enterGeneration(model: modelName)
+        } catch {
+            if let soloLease { await soloLease.release() }
+            throw error
+        }
         let upstream = await engine.generate(
             input: prepared.input,
             parameters: mlxParams

@@ -464,42 +464,66 @@ final class PluginManager {
     private func runFirstDeliverySweep(from scanResult: PluginScanResult) {
         let agents = AgentManager.shared.agents
         let statuses = RelayTunnelManager.shared.agentStatuses
+        let agentIds = agents.map(\.id)
+        let probeAgentId = agents.first?.id ?? Agent.defaultId
 
-        for entry in scanResult.loadResults {
-            guard case .success(let loaded) = entry.result else { continue }
+        let loadedPlugins: [LoadedPlugin] = scanResult.loadResults.compactMap { entry in
+            guard case .success(let loaded) = entry.result else { return nil }
+            return loaded
+        }
+        guard !loadedPlugins.isEmpty else { return }
 
-            let pluginId = loaded.plugin.id
-            Self.writeLoadingMarker(pluginId: pluginId)
-            // Deliberately no `defer`: the marker must persist on the
-            // SIGABRT path. It is cleared only after the probe returns
-            // cleanly below.
-            runAbiHandshakeProbe(loaded: loaded, agentId: agents.first?.id ?? Agent.defaultId)
-            Self.clearLoadingMarker()
-
-            // Real per-agent config + tunnel URL pushes resume the
-            // existing async fire-and-forget path. The probe above
-            // already exercised the misalignment-prone host call
-            // pattern, so this fan-out preserves perf without giving
-            // up the crash-loop guard.
-            //
-            // Resolve and deliver the per-agent config off the main
-            // actor: the secret reads behind it round-trip to the
-            // authentication daemon over blocking XPC, which can stall
-            // the main thread for seconds at launch. The plugin's
-            // `on_config_changed` already runs on its own serial queue,
-            // so nothing on this path needs the main thread.
-            let agentIds = agents.map(\.id)
-            Task.detached(priority: .userInitiated) { [weak self] in
-                guard let self else { return }
-                for agentId in agentIds {
-                    self.deliverInitialConfig(to: loaded, agentId: agentId)
+        // Tunnel URLs for routed plugins, resolved on the main actor now so
+        // the off-main sweep below doesn't need `RelayTunnelManager` state.
+        let tunnelPushes: [(pluginId: String, agentId: UUID, url: String)] = loadedPlugins
+            .filter { !$0.routes.isEmpty }
+            .flatMap { loaded in
+                agents.compactMap { agent -> (String, UUID, String)? in
+                    guard case .connected(let url) = statuses[agent.id] else { return nil }
+                    return (loaded.plugin.id, agent.id, url)
                 }
             }
 
-            if !loaded.routes.isEmpty {
-                for agent in agents {
-                    guard case .connected(let url) = statuses[agent.id] else { continue }
-                    pushTunnelURL(url, to: loaded, agentId: agent.id)
+        // The whole sweep runs off the main actor: the ABI handshake probe
+        // (`notifyConfigBatchSync`) blocks until the plugin's C
+        // `on_config_changed` returns, and a plugin doing heavy work there
+        // (HTTP, OAuth refresh) used to stall the main thread for seconds at
+        // launch — one plugin at a time. The secret reads behind the config
+        // delivery also round-trip to the authentication daemon over
+        // blocking XPC. Nothing on this path needs the main thread; the
+        // per-plugin ordering (marker → probe → clear → config → tunnel)
+        // is preserved because the sweep stays sequential inside one task,
+        // keeping the crash-loop quarantine contract: a SIGABRT inside the
+        // probe leaves the marker on disk for the next launch to read.
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            for loaded in loadedPlugins {
+                let pluginId = loaded.plugin.id
+                Self.writeLoadingMarker(pluginId: pluginId)
+                // Deliberately no `defer`: the marker must persist on the
+                // SIGABRT path. It is cleared only after the probe returns
+                // cleanly below.
+                Self.runAbiHandshakeProbe(loaded: loaded, agentId: probeAgentId)
+                Self.clearLoadingMarker()
+
+                // Real per-agent config delivery. The probe above already
+                // exercised the misalignment-prone host call pattern, so
+                // this fan-out runs outside the marker window.
+                for agentId in agentIds {
+                    self.deliverInitialConfig(to: loaded, agentId: agentId)
+                }
+
+                // Tunnel pushes after the probe, so an ABI-misaligned
+                // plugin aborts inside the marker window (quarantine on
+                // next launch) rather than on this uncovered path. The
+                // dedup cache lives on the main actor.
+                let pushes = tunnelPushes.filter { $0.pluginId == pluginId }
+                if !pushes.isEmpty {
+                    await MainActor.run {
+                        for push in pushes {
+                            self.pushTunnelURL(push.url, to: loaded, agentId: push.agentId)
+                        }
+                    }
                 }
             }
         }
@@ -513,10 +537,12 @@ final class PluginManager {
     /// instead of crash-looping the host on every subsequent launch.
     ///
     /// No-op for v1 plugins (no `on_config_changed` slot to dispatch to).
-    private func runAbiHandshakeProbe(loaded: LoadedPlugin, agentId: UUID) {
+    /// `nonisolated static`: runs from the off-main first-delivery sweep
+    /// (blocking until plugin C code returns must never happen on main).
+    private nonisolated static func runAbiHandshakeProbe(loaded: LoadedPlugin, agentId: UUID) {
         guard loaded.plugin.abiVersion >= 2 else { return }
         loaded.plugin.notifyConfigBatchSync(
-            [(key: Self.abiProbeKey, value: UUID().uuidString)],
+            [(key: abiProbeKey, value: UUID().uuidString)],
             agentId: agentId
         )
     }

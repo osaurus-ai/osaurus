@@ -412,12 +412,14 @@ final class SlackConnectionService: @unchecked Sendable {
                 "The bot token was empty or Keychain storage was unavailable."
             )
         }
+        AgentChannelCredentialAvailability.shared.invalidate(.slack)
         return saved
     }
 
     @discardableResult
     func deleteBotToken() -> Bool {
-        credentialStore.deleteBotToken()
+        defer { AgentChannelCredentialAvailability.shared.invalidate(.slack) }
+        return credentialStore.deleteBotToken()
     }
 
     func hasBotToken() -> Bool {
@@ -509,6 +511,9 @@ final class SlackConnectionService: @unchecked Sendable {
             }
             return nil
         }
+        if botToken != nil {
+            AgentChannelCredentialAvailability.shared.invalidate(.slack)
+        }
         if let failure {
             throw SlackConnectionServiceError.configurationSaveFailed(failure)
         }
@@ -517,6 +522,7 @@ final class SlackConnectionService: @unchecked Sendable {
     @discardableResult
     func deleteBotTokenOffMain() async -> Bool {
         let store = credentialStore
+        defer { AgentChannelCredentialAvailability.shared.invalidate(.slack) }
         return await Keychain.perform { store.deleteBotToken() }
     }
 

@@ -78,19 +78,16 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
     private static let supportedHTTPMethods = Set(["GET", "POST", "PUT", "PATCH", "DELETE"])
 
     /// Agent existence check for binding reference validation, injectable
-    /// so tests don't need real agent files on disk. The default routes to
-    /// the MainActor-isolated `AgentStore`; binding edits/imports come from
-    /// the settings UI, so in practice this is already on the main thread.
+    /// so tests don't need real agent files on disk. `AgentStore.exists` is
+    /// nonisolated (pure filesystem), so validation never has to hop onto
+    /// the main thread — the old `DispatchQueue.main.sync` bridge here was
+    /// a deadlock vector whenever the main thread was itself waiting on
+    /// background work.
     private let agentExists: @Sendable (UUID) -> Bool
 
     init(
         agentExists: @escaping @Sendable (UUID) -> Bool = { id in
-            if Thread.isMainThread {
-                return MainActor.assumeIsolated { AgentStore.exists(id: id) }
-            }
-            return DispatchQueue.main.sync {
-                MainActor.assumeIsolated { AgentStore.exists(id: id) }
-            }
+            AgentStore.exists(id: id)
         }
     ) {
         self.agentExists = agentExists
