@@ -359,6 +359,13 @@ struct MLXBatchAdapter {
         private let coalescer = TaskCoalescer<BatchEngine>()
         private var nativeMTPWarmModels: Set<String> = []
         private var lastEffectiveGenerationSettings: [String: EffectiveGenerationSettings] = [:]
+        /// Counters from engines and cache coordinators that have left the
+        /// live resident set. Before this accumulator, switching model A to B
+        /// made process-level diagnostics decrease because A simply vanished
+        /// from the aggregate. Eval and `spawn_batch` before/after subtraction
+        /// then emitted impossible negative cache deltas.
+        private var processLifetimeCounters = ProcessLifetimeBatchCounters()
+        private var hasRetiredDiagnostics = false
 
         /// Returns the cached engine for `modelName`, creating it on first
         /// use from the supplied `ModelContainer`. The container's existing
@@ -412,8 +419,11 @@ struct MLXBatchAdapter {
                     batchAdapterLog.notice(
                         "registry: cached BatchEngine for \(modelName, privacy: .public) is shut down; evicting and rebuilding at maxBatchSize=\(maxBatchSize, privacy: .public)"
                     )
-                    await coalescer.remove(modelName) { engine in
+                    let removed = await coalescer.remove(modelName) { engine in
                         await engine.shutdown()
+                    }
+                    if let removed {
+                        await recordRetiredEngineCounters(removed)
                     }
                     // Rebuild via the same path. The new engine is
                     // constructed with `maxBatchSize` directly, so the
@@ -508,8 +518,11 @@ struct MLXBatchAdapter {
                     do {
                         try await entry.1.updateMaxBatchSize(requestedMaximum)
                     } catch BatchEngineConfigurationError.engineShutdown {
-                        await coalescer.remove(entry.0) { engine in
+                        let removed = await coalescer.remove(entry.0) { engine in
                             await engine.shutdown()
+                        }
+                        if let removed {
+                            await recordRetiredEngineCounters(removed)
                         }
                         return nil
                     } catch {
@@ -522,8 +535,11 @@ struct MLXBatchAdapter {
             }
             let snapshot = await entry.1.capacitySnapshot
             if snapshot.isShutdown {
-                await coalescer.remove(entry.0) { engine in
+                let removed = await coalescer.remove(entry.0) { engine in
                     await engine.shutdown()
+                }
+                if let removed {
+                    await recordRetiredEngineCounters(removed)
                 }
                 return nil
             }
@@ -540,12 +556,14 @@ struct MLXBatchAdapter {
         }
 
         /// Aggregate live BatchEngine diagnostics across every resolved
-        /// engine in the registry. Used by the Server → Settings panel
-        /// to render the "Live Diagnostics" subsection. Returns `nil`
-        /// when no engine has been created yet.
+        /// engine in the registry, folding monotonic counters from retired
+        /// engines/model residencies forward for the rest of this process.
+        /// Occupancy, capacity, and loaded-model topology remain live-only.
+        /// Used by the Server → Settings panel, APIs, delegation diagnostics,
+        /// and eval harness. Returns `nil` only before any engine has existed.
         func snapshotDiagnostics() async -> BatchDiagnosticsSnapshot? {
             let entries = await coalescer.resolvedEntries()
-            guard !entries.isEmpty else { return nil }
+            guard !entries.isEmpty || hasRetiredDiagnostics else { return nil }
 
             var pending = 0
             var active = 0
@@ -609,7 +627,7 @@ struct MLXBatchAdapter {
                     accepting = false
                 }
             }
-            return BatchDiagnosticsSnapshot(
+            let live = BatchDiagnosticsSnapshot(
                 pendingCount: pending,
                 activeCount: active,
                 activeHighWatermark: highWatermark,
@@ -635,6 +653,29 @@ struct MLXBatchAdapter {
                 ssmCompanionMisses: ssmMisses,
                 ssmCompanionReDerives: ssmReDerives
             )
+            return processLifetimeCounters.mergingCounters(into: live)
+        }
+
+        /// Fold one container's final cache-coordinator counters into the
+        /// process lifetime after `ModelRuntime` has removed that holder from
+        /// its live dictionary. The call ordering prevents a transient double
+        /// count: until removal the counters are in the live summary; after
+        /// removal they are represented here.
+        func recordRetiredCacheCounters(_ counters: ProcessLifetimeBatchCounters) {
+            processLifetimeCounters.absorb(counters)
+            hasRetiredDiagnostics = true
+        }
+
+        private func recordRetiredEngineCounters(_ engine: BatchEngine) async {
+            let capacity = await engine.capacitySnapshot
+            let counters = ProcessLifetimeBatchCounters(
+                activeHighWatermark: capacity.activeCountHighWatermark,
+                decodeSplitCount: await engine.decodeCompatibilitySplitCountForDiagnostics,
+                turboQuantCompressions:
+                    await engine.turboQuantCompressionCountForDiagnostics
+            )
+            processLifetimeCounters.absorb(counters)
+            hasRetiredDiagnostics = true
         }
 
         /// Shut down and remove the engine for `modelName`. Safe to call
@@ -650,11 +691,14 @@ struct MLXBatchAdapter {
         /// exists to prevent).
         func shutdownEngine(for modelName: String) async {
             nativeMTPWarmModels.remove(modelName)
-            await coalescer.remove(modelName) { engine in
+            let removed = await coalescer.remove(modelName) { engine in
                 await engine.shutdown()
                 batchAdapterLog.info(
                     "registry: shutdown BatchEngine for \(modelName, privacy: .public)"
                 )
+            }
+            if let removed {
+                await recordRetiredEngineCounters(removed)
             }
         }
 
@@ -665,11 +709,14 @@ struct MLXBatchAdapter {
         /// `shutdownEngine(for:)`, applied to every cached entry.
         func shutdownAll() async {
             nativeMTPWarmModels.removeAll()
-            await coalescer.removeAll { modelName, engine in
+            let removed = await coalescer.removeAll { modelName, engine in
                 await engine.shutdown()
                 batchAdapterLog.info(
                     "registry: shutdown BatchEngine for \(modelName, privacy: .public)"
                 )
+            }
+            for (_, engine) in removed {
+                await recordRetiredEngineCounters(engine)
             }
         }
 

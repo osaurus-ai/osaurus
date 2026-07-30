@@ -18,6 +18,102 @@ import Testing
 @Suite(.serialized)
 struct MLXBatchAdapterTests {
 
+    @Test func processLifetimeDiagnosticsKeepOccupancyLiveAndCountersMonotonic() {
+        var retired = ProcessLifetimeBatchCounters(
+            activeHighWatermark: 3,
+            decodeSplitCount: 4,
+            turboQuantCompressions: 5,
+            prefixHits: 10,
+            prefixMisses: 11,
+            pagedEvictions: 12,
+            diskL2Hits: 13,
+            diskL2Misses: 14,
+            diskL2Stores: 15,
+            ssmCompanionHits: 16,
+            ssmCompanionMisses: 17,
+            ssmCompanionReDerives: 18
+        )
+        retired.absorb(
+            ProcessLifetimeBatchCounters(
+                activeHighWatermark: 2,
+                prefixHits: 1,
+                diskL2Hits: 2,
+                ssmCompanionHits: 3
+            )
+        )
+        let live = BatchDiagnosticsSnapshot(
+            pendingCount: 2,
+            activeCount: 1,
+            activeHighWatermark: 2,
+            configuredEngineCapacity: 6,
+            nominalAvailableCapacity: 3,
+            engineCapacitySummary: "model-b: 6",
+            decodeSplitCount: 6,
+            turboQuantCompressions: 7,
+            isAcceptingRequests: false,
+            loadedModelCount: 1,
+            nativeMTPModelCount: 1,
+            nativeMTPDepthSummary: "d3",
+            cacheEnabledModelCount: 1,
+            hybridModelCount: 1,
+            pagedIncompatibleModelCount: 1,
+            prefixHits: 20,
+            prefixMisses: 21,
+            pagedEvictions: 22,
+            diskL2Hits: 23,
+            diskL2Misses: 24,
+            diskL2Stores: 25,
+            ssmCompanionHits: 26,
+            ssmCompanionMisses: 27,
+            ssmCompanionReDerives: 28
+        )
+
+        let merged = retired.mergingCounters(into: live)
+
+        #expect(merged.pendingCount == 2)
+        #expect(merged.activeCount == 1)
+        #expect(merged.configuredEngineCapacity == 6)
+        #expect(merged.nominalAvailableCapacity == 3)
+        #expect(merged.engineCapacitySummary == "model-b: 6")
+        #expect(!merged.isAcceptingRequests)
+        #expect(merged.loadedModelCount == 1)
+        #expect(merged.nativeMTPModelCount == 1)
+        #expect(merged.cacheEnabledModelCount == 1)
+        #expect(merged.hybridModelCount == 1)
+        #expect(merged.pagedIncompatibleModelCount == 1)
+        #expect(merged.activeHighWatermark == 3)
+        #expect(merged.decodeSplitCount == 10)
+        #expect(merged.turboQuantCompressions == 12)
+        #expect(merged.prefixHits == 31)
+        #expect(merged.prefixMisses == 32)
+        #expect(merged.pagedEvictions == 34)
+        #expect(merged.diskL2Hits == 38)
+        #expect(merged.diskL2Misses == 38)
+        #expect(merged.diskL2Stores == 40)
+        #expect(merged.ssmCompanionHits == 45)
+        #expect(merged.ssmCompanionMisses == 44)
+        #expect(merged.ssmCompanionReDerives == 46)
+    }
+
+    @Test func processLifetimeDiagnosticsClampNegativeInputsAndSaturateOverflow() {
+        var counters = ProcessLifetimeBatchCounters(
+            decodeSplitCount: Int.max - 1,
+            prefixHits: -7,
+            diskL2Hits: Int.max
+        )
+        counters.absorb(
+            ProcessLifetimeBatchCounters(
+                decodeSplitCount: 10,
+                prefixHits: 2,
+                diskL2Hits: 1
+            )
+        )
+
+        #expect(counters.decodeSplitCount == Int.max)
+        #expect(counters.prefixHits == 2)
+        #expect(counters.diskL2Hits == Int.max)
+    }
+
     @Test func maxBatchSize_safeAutoProfileResolvesToOne() {
         let runtime = VMLXServerRuntimeSettings()
         #expect(

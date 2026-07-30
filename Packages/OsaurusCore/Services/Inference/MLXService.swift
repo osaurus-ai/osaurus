@@ -207,8 +207,19 @@ actor MLXService: ToolCapableService {
         await ModelRuntime.shared.cachedModelSummaries()
     }
 
-    func unloadRuntimeModel(named name: String) async {
-        await ModelRuntime.shared.unload(name: name)
+    /// User-initiated cache eviction must never leave its control spinning
+    /// forever behind a leaked or still-owned lease. Runtime teardown remains
+    /// fail-closed: on timeout the model stays resident and the UI receives
+    /// `false`, so it can explain that the model is still in use.
+    @discardableResult
+    func unloadRuntimeModel(
+        named name: String,
+        leaseDrainTimeoutSeconds: Double = 5
+    ) async -> Bool {
+        await ModelRuntime.shared.unload(
+            name: name,
+            leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds
+        )
     }
 
     func clearRuntimeCache() async {

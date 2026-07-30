@@ -5,6 +5,7 @@
 //  Popover UI to inspect and manage cached MLX models.
 //
 
+import Foundation
 import SwiftUI
 
 struct ModelCacheInspectorView: View {
@@ -13,6 +14,8 @@ struct ModelCacheInspectorView: View {
     @State private var isClearingAll = false
     @State private var isRefreshing = false
     @State private var isHoveringRefresh = false
+    @State private var unloadingNames: Set<String> = []
+    @State private var unloadFailure: String?
 
     var onRefresh: (() -> Void)?
 
@@ -72,15 +75,21 @@ struct ModelCacheInspectorView: View {
                     ForEach(items, id: \.name) { item in
                         ModelCacheRow(
                             item: item,
+                            isUnloading: unloadingNames.contains(item.name),
                             onUnload: {
-                                Task {
-                                    await MLXService.shared.unloadRuntimeModel(named: item.name)
-                                    await refresh()
-                                }
+                                Task { await unload(item) }
                             }
                         )
                     }
                 }
+            }
+
+            if let unloadFailure {
+                Label(unloadFailure, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("model-cache-unload-failure")
             }
 
             // Divider
@@ -120,6 +129,9 @@ struct ModelCacheInspectorView: View {
         .onAppear {
             Task { await refresh() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .modelRuntimeResidencyChanged)) { _ in
+            Task { await refresh() }
+        }
     }
 
     private func refresh() async {
@@ -127,6 +139,25 @@ struct ModelCacheInspectorView: View {
         items = await MLXService.shared.cachedRuntimeSummaries()
         isRefreshing = false
         onRefresh?()
+    }
+
+    @MainActor
+    private func unload(_ item: ModelRuntime.ModelCacheSummary) async {
+        guard unloadingNames.insert(item.name).inserted else { return }
+        unloadFailure = nil
+
+        let didUnload = await MLXService.shared.unloadRuntimeModel(named: item.name)
+        unloadingNames.remove(item.name)
+        await refresh()
+
+        guard didUnload else {
+            unloadFailure = String(
+                localized:
+                    "Couldn't unload \(item.name) because it is still in use. Stop its active request and try again.",
+                bundle: .module
+            )
+            return
+        }
     }
 }
 
@@ -199,6 +230,7 @@ private struct RefreshButton: View {
 private struct ModelCacheRow: View {
     @Environment(\.theme) private var theme
     let item: ModelRuntime.ModelCacheSummary
+    let isUnloading: Bool
     let onUnload: () -> Void
 
     @State private var isHovered = false
@@ -244,31 +276,43 @@ private struct ModelCacheRow: View {
 
             // Unload button
             Button(action: onUnload) {
-                Text("Unload", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(isUnloadHovered ? theme.errorColor : theme.secondaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(theme.buttonBackground.opacity(isUnloadHovered ? 0.95 : 0.7))
-
-                            if isUnloadHovered {
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(theme.errorColor.opacity(0.08))
-                            }
-                        }
-                    )
-                    .overlay(
+                HStack(spacing: 5) {
+                    if isUnloading {
+                        ProgressView()
+                            .controlSize(.mini)
+                    }
+                    Text(isUnloading ? "Unloading…" : "Unload", bundle: .module)
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(
+                    isUnloading
+                        ? theme.secondaryText
+                        : (isUnloadHovered ? theme.errorColor : theme.secondaryText)
+                )
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    ZStack {
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(
-                                isUnloadHovered ? theme.errorColor.opacity(0.3) : theme.buttonBorder.opacity(0.5),
-                                lineWidth: 1
-                            )
-                    )
+                            .fill(theme.buttonBackground.opacity(isUnloadHovered ? 0.95 : 0.7))
+
+                        if isUnloadHovered {
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(theme.errorColor.opacity(0.08))
+                        }
+                    }
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(
+                            isUnloadHovered ? theme.errorColor.opacity(0.3) : theme.buttonBorder.opacity(0.5),
+                            lineWidth: 1
+                        )
+                )
             }
             .buttonStyle(PlainButtonStyle())
+            .disabled(isUnloading)
+            .accessibilityIdentifier("model-cache-unload-\(item.name)")
             .onHover { hovering in
                 withAnimation(.easeOut(duration: 0.15)) {
                     isUnloadHovered = hovering

@@ -1247,6 +1247,30 @@ public actor ModelRuntime {
         }
     }
 
+    /// Final monotonic cache counters for one resident holder. The caller
+    /// captures this only after its BatchEngine is shut down, then publishes
+    /// it to the registry only after removing the holder from `modelCache`.
+    /// That live-to-retired ordering keeps every counter represented exactly
+    /// once during model handoff.
+    private static func processLifetimeCacheCounters(
+        for holder: SessionHolder
+    ) -> ProcessLifetimeBatchCounters? {
+        guard let stats = holder.container.cacheCoordinator?.snapshotStats() else {
+            return nil
+        }
+        return ProcessLifetimeBatchCounters(
+            prefixHits: stats.pagedStats?.cacheHits ?? 0,
+            prefixMisses: stats.pagedStats?.cacheMisses ?? 0,
+            pagedEvictions: stats.pagedStats?.evictions ?? 0,
+            diskL2Hits: stats.diskStats?.hits ?? 0,
+            diskL2Misses: stats.diskStats?.misses ?? 0,
+            diskL2Stores: stats.diskStats?.stores ?? 0,
+            ssmCompanionHits: stats.ssmStats.hits,
+            ssmCompanionMisses: stats.ssmStats.misses,
+            ssmCompanionReDerives: stats.ssmStats.reDerives
+        )
+    }
+
     /// Resolve the canonical installed identity before asking the vMLX
     /// registry for one model's actor-consistent capacity. A preloaded model
     /// can legitimately return nil until its first generation creates the
@@ -1487,11 +1511,12 @@ public actor ModelRuntime {
     // MARK: - Model lifecycle
 
     /// Defensive helper: cancels and awaits every tracked generation task
-    /// (optionally filtered to one model). With `ModelLease` enforcing
-    /// per-stream lifetime the unload paths already wait on
-    /// `waitForZero(name)` first, so this primarily catches the rare race
-    /// where a task was launched but never made it to `acquire`, and — at
-    /// quit — guarantees *all* concurrent streams are cancelled, not just
+    /// (optionally filtered to one model). Explicit unload must call this
+    /// before `waitForZero(name)`: the wrapper releases its `ModelLease` only
+    /// after its producer drains, so waiting first can deadlock the very task
+    /// that owns the lease. Idle-policy unload is intentionally different — it
+    /// waits for valid foreground work to finish without cancelling it. At quit
+    /// this also guarantees *all* concurrent streams are cancelled, not just
     /// the most recent. Callers should still treat the lease as authoritative.
     private func cancelActiveGeneration(for modelName: String? = nil) async {
         let records = activeGenerationTasks.filter { _, record in
@@ -1836,6 +1861,11 @@ public actor ModelRuntime {
             inFlightIdleResidencyDecisions.removeValue(forKey: name)
             await ModelResidencyManager.shared.cancel(modelName: name)
             await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)
+            // The tracked wrapper owns the ModelLease and releases it only
+            // after the vMLX producer has drained. Cancel and await that exact
+            // model's wrappers before waiting for zero; the old reverse order
+            // left explicit UI unload parked forever behind its own stream.
+            await cancelActiveGeneration(for: name)
             if let leaseDrainTimeoutSeconds {
                 let drained = await ModelLease.shared.waitForZero(
                     name,
@@ -1880,9 +1910,11 @@ public actor ModelRuntime {
             return false
         }
 
-        await cancelActiveGeneration(for: name)
         if let record = loadingTasks[name] {
             await cancelAndDrainLoadingTasks([(name, record)])
+        }
+        let retiredCacheCounters = modelCache[name].flatMap {
+            Self.processLifetimeCacheCounters(for: $0)
         }
         modelCache[name]?.container.disableCaching()
 
@@ -1894,6 +1926,11 @@ public actor ModelRuntime {
         lastUseSource.removeValue(forKey: name)
         if currentModelName == name { currentModelName = nil }
         if didRemove {
+            if let retiredCacheCounters {
+                await MLXBatchAdapter.Registry.shared.recordRetiredCacheCounters(
+                    retiredCacheCounters
+                )
+            }
             publishResidencyChange(reason: reason, idleDecisionID: idleDecisionID)
         }
 
@@ -2067,12 +2104,23 @@ public actor ModelRuntime {
         // down, and blocking on a wedged gate holder must never hang the quit
         // chain (the stuck-lease guard above already chose to let the OS reclaim).
         if !quit { await MetalGate.shared.enterModelTeardown(model: "all-models") }
+        var retiredCacheCounters = ProcessLifetimeBatchCounters()
+        var hasRetiredCacheCounters = false
         for holder in modelCache.values {
+            if let counters = Self.processLifetimeCacheCounters(for: holder) {
+                retiredCacheCounters.absorb(counters)
+                hasRetiredCacheCounters = true
+            }
             holder.container.disableCaching()
         }
 
         autoreleasepool {
             modelCache.removeAll()
+        }
+        if hasRetiredCacheCounters {
+            await MLXBatchAdapter.Registry.shared.recordRetiredCacheCounters(
+                retiredCacheCounters
+            )
         }
         lastUseSource.removeAll()
         pendingIdleResidencyDecisions.removeAll()
