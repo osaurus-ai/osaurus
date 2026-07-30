@@ -764,7 +764,7 @@ struct MLXBatchAdapterTests {
         #expect(dsv4.contains("kv=fp16"))
         #expect(dsv4.contains("cachefmt=2"))
         #expect(dsv4.contains("restore=fullhit-trim-eval1"))
-        #expect(dsv4.contains("warmup=exact-reusable-prefix-v1"))
+        #expect(dsv4.contains("warmup=recurrent-safe-seed-v2"))
         #expect(dsv4.contains("layers=deepseekV4"))
         #expect(dsv4.contains("prefix=hybrid-pool-disk"))
         #expect(dsv4.contains("decode=max-rp110"))

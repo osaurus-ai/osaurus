@@ -111,12 +111,13 @@ let package = Package(
         // in float32 across cold and restored prefix partitions, and admits
         // linked KV + recurrent disk boundaries under one quota transaction.
         // vmlx-swift#196 marks caller-proven reusable-prefix warmup prompts
-        // explicitly so solo, batched, and native-MTP cache writers
-        // store the exact prefix without stripping it again or persisting the
-        // warmup's throwaway decoded token.
+        // explicitly so solo, batched, and native-MTP cache writers retain
+        // exact boundaries for fully restorable topologies and recurrent-safe
+        // processor seeds for hybrid state, without persisting the warmup's
+        // throwaway decoded token.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "2cf479b2faaf476b0fe688e556bd00b04fd46b0d"
+            revision: "0d54c2517fd39cc5781df6d44942a44b36615c6a"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

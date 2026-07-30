@@ -4303,12 +4303,12 @@ public actor ModelRuntime {
             // paired vmlx fix materializes full-hit trim mutations before
             // the one-token seed forward on the B=1 TokenIterator path.
             "restore=fullhit-trim-eval1",
-            // Dedicated prefill warmups now mark their complete token stream
-            // as the caller-proven reusable prefix. Older app/runtime pairs
-            // stripped that prefix a second time on hybrid models and may
-            // have persisted path-dependent state under an unsafe boundary;
-            // keep those records outside the new cache namespace.
-            "warmup=exact-reusable-prefix-v1",
+            // Dedicated prefill warmups now preserve exact boundaries only for
+            // fully restorable topologies. Recurrent hybrids persist an N-1
+            // processor-proven seed instead; older exact Ornith warmup records
+            // can replay a prior tool turn after reasoning-mode changes, so
+            // keep every previous record outside this cache namespace.
+            "warmup=recurrent-safe-seed-v2",
         ]
 
         if let cacheTopology {

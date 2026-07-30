@@ -19,8 +19,8 @@ is therefore not yet described as release-ready or regression-free.
   `cf50cf9cc424726df93187f5542faf03bacdcc95`
 - cache-warmup continuation vMLX PR: `osaurus-ai/vmlx-swift#196`
 - cache-warmup continuation vMLX commit:
-  `c543487bb75553320638377eda02411b3d8f6a00`
-- tested Osaurus vMLX pin: `c543487bb75553320638377eda02411b3d8f6a00`
+  `0d54c2517fd39cc5781df6d44942a44b36615c6a`
+- tested Osaurus vMLX pin: `0d54c2517fd39cc5781df6d44942a44b36615c6a`
 - Paged RAM cache: off for the reported cache row
 - host/toolchain: macOS 26.4 (`25E246`), Apple Swift 6.3.1
 - Local bundles:
