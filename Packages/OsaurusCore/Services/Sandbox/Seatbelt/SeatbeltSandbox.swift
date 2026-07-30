@@ -68,6 +68,74 @@ public enum SeatbeltSandbox {
         NSTemporaryDirectory() + "osaurus-seatbelt"
     }
 
+    private static func validatedDeveloperDirectory(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let path = URL(fileURLWithPath: trimmed, isDirectory: true)
+            .standardizedFileURL.path
+        let isXcodeBundle = path.hasSuffix(".app/Contents/Developer")
+            && (path.hasPrefix("/Applications/")
+                || path.hasPrefix("/System/Applications/")
+                || path.hasPrefix("/Volumes/"))
+        let hasExpectedShape = isXcodeBundle
+            || path == "/Library/Developer/CommandLineTools"
+        var isDirectory: ObjCBool = false
+        guard hasExpectedShape,
+              FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else { return nil }
+        return path
+    }
+
+    /// Read root needed by the active developer toolchain. Xcode command-line
+    /// shims load DVT frameworks from `Contents/SharedFrameworks`, a sibling of
+    /// `Contents/Developer`, so an Xcode selection needs the containing
+    /// `Contents` tree. CommandLineTools is already self-contained.
+    private static func developerReadRoot(_ developerDirectory: String?) -> String? {
+        guard let directory = validatedDeveloperDirectory(developerDirectory) else {
+            return nil
+        }
+        if directory.hasSuffix(".app/Contents/Developer") {
+            return URL(fileURLWithPath: directory, isDirectory: true)
+                .deletingLastPathComponent().path
+        }
+        return directory
+    }
+
+    /// The active Xcode developer directory used by Apple's `/usr/bin`
+    /// tool shims (including `python3` via `xcrun`). The deny-by-default
+    /// profile already permits `/usr`, but the shim dynamically loads
+    /// Xcode frameworks from the selected app bundle under `/Applications`.
+    ///
+    /// Resolve once on the host before entering Seatbelt. Only canonical
+    /// Xcode/CommandLineTools directory shapes are accepted so a malformed
+    /// selection can never turn into an arbitrary broad read grant.
+    public static let activeDeveloperDirectory: String? = {
+        if let configured = validatedDeveloperDirectory(
+            ProcessInfo.processInfo.environment["DEVELOPER_DIR"]
+        ) {
+            return configured
+        }
+
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
+        process.arguments = ["-p"]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return nil }
+            return validatedDeveloperDirectory(
+                String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+            )
+        } catch {
+            return nil
+        }
+    }()
+
     // MARK: - Profile
 
     /// Network policy for a generated profile, derived from
@@ -97,7 +165,8 @@ public enum SeatbeltSandbox {
     public static func profile(
         workspaceRoot: String,
         tempDir: String,
-        network: NetworkPolicy
+        network: NetworkPolicy,
+        developerDirectory: String? = activeDeveloperDirectory
     ) -> String {
         let workspace = escapeProfilePath(workspaceRoot)
         let temp = escapeProfilePath(tempDir)
@@ -130,6 +199,13 @@ public enum SeatbeltSandbox {
             "  (subpath \"/private/var/db/timezone\")",
             "  (subpath \"/opt\")",
             "  (subpath \"/dev\")",
+        ]
+        if let readRoot = developerReadRoot(developerDirectory) {
+            lines.append(
+                "  (subpath \"\(escapeProfilePath(readRoot))\")"
+            )
+        }
+        lines.append(contentsOf: [
             "  (literal \"/\")",
             "  (literal \"/private\")",
             "  (literal \"/tmp\")",
@@ -148,7 +224,7 @@ public enum SeatbeltSandbox {
             "  (literal \"/dev/stdout\")",
             "  (literal \"/dev/stderr\")",
             "  (subpath \"/dev/fd\"))",
-        ]
+        ])
 
         switch network {
         case .allowed:
@@ -208,4 +284,3 @@ public enum SeatbeltPathMapper {
         env.mapValues { mapToHost($0, workspaceRoot: workspaceRoot) }
     }
 }
-

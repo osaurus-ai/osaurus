@@ -92,7 +92,11 @@ enum SeatbeltExecutor {
         let scratch = SeatbeltSandbox.scratchDir
         try? FileManager.default.createDirectory(
             atPath: scratch, withIntermediateDirectories: true)
-        if env["TMPDIR"] == nil { env["TMPDIR"] = scratch }
+        // This is a confinement boundary, not a caller preference. An
+        // inherited or tool-supplied TMPDIR points outside the profile's
+        // writable scratch grant and breaks xcrun-backed shims such as
+        // `/usr/bin/python3`; always replace it with the allowed path.
+        env["TMPDIR"] = scratch
         if env["HOME"] == nil { env["HOME"] = request.cwd ?? scratch }
         process.environment = env
 
@@ -168,4 +172,3 @@ enum SeatbeltExecutor {
         )
     }
 }
-

@@ -1465,6 +1465,26 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("iteration-cap wrap-up uses the typed chat stream decoder")
+    func iterationCapWrapUpCannotLeakStreamingSentinels() throws {
+        let chat = try Self.source("Views/Chat/ChatView.swift")
+        let start = try #require(
+            chat.range(of: "if runResult.exit == .iterationCapReached && isRunActive(runId)")
+        )
+        let end = try #require(
+            chat.range(
+                of: "} catch is CancellationError {",
+                range: start.upperBound ..< chat.endIndex
+            )
+        )
+        let block = String(chat[start.lowerBound ..< end.lowerBound])
+
+        #expect(block.contains("try await processStreamDeltas("))
+        #expect(block.contains("assistantTurn = finalTurn"))
+        #expect(!block.contains("let processor = StreamingDeltaProcessor("))
+        #expect(!block.contains("processor.receiveDelta(delta)"))
+    }
+
     @Test("ChatEngine honors tool choice none by bypassing local tool dispatch")
     func chatEngineHonorsToolChoiceNoneBypassingLocalToolDispatch() throws {
         let chatEngine = try Self.source("Services/Chat/ChatEngine.swift")

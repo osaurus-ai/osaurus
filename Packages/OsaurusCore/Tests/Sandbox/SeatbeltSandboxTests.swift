@@ -77,14 +77,75 @@ struct SeatbeltSandboxTests {
         let profile = SeatbeltSandbox.profile(
             workspaceRoot: "/Users/me/.osaurus/container/workspace",
             tempDir: "/tmp/osaurus-seatbelt",
-            network: .allowed
+            network: .allowed,
+            developerDirectory: "/Applications/Xcode.app/Contents/Developer"
         )
         #expect(profile.hasPrefix("(version 1)\n(deny default)"))
         #expect(profile.contains("(subpath \"/Users/me/.osaurus/container/workspace\")"))
         #expect(profile.contains("(subpath \"/tmp/osaurus-seatbelt\")"))
+        #expect(profile.contains("(subpath \"/Applications/Xcode.app/Contents\")"))
         #expect(profile.contains("(allow network*)"))
         // No blanket home-directory read grant.
         #expect(!profile.contains("(subpath \"/Users\")"))
+
+        // The developer tree is read-only. It must appear only in the
+        // read grant, never in the workspace/scratch write section.
+        let writeSection = profile.components(separatedBy: "(allow file-read* file-write*").last ?? ""
+        #expect(!writeSection.contains("/Applications/Xcode.app/Contents"))
+    }
+
+    @Test("profile omits an unavailable developer directory")
+    func profileWithoutDeveloperDirectory() {
+        let profile = SeatbeltSandbox.profile(
+            workspaceRoot: "/w",
+            tempDir: "/t",
+            network: .denied,
+            developerDirectory: nil
+        )
+        #expect(!profile.contains("/Applications"))
+    }
+
+    @Test("generated profile launches Apple's Python shim through active Xcode")
+    func profileLaunchesPythonShim() async throws {
+        guard let developerDirectory = SeatbeltSandbox.activeDeveloperDirectory,
+              FileManager.default.isExecutableFile(atPath: "/usr/bin/sandbox-exec"),
+              FileManager.default.isExecutableFile(atPath: "/usr/bin/python3")
+        else { return }
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-seatbelt-python-\(UUID().uuidString)")
+        let workspace = root.appendingPathComponent("workspace")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: workspace, withIntermediateDirectories: true)
+        let scratch = SeatbeltSandbox.scratchDir
+        try FileManager.default.createDirectory(
+            atPath: scratch, withIntermediateDirectories: true)
+
+        let result = try await SeatbeltExecutor.run(
+            SeatbeltExecutor.Request(
+                command: "/usr/bin/python3 -c \"print('seatbelt-python-ok')\"",
+                // Prove the executor replaces a caller-supplied TMPDIR that
+                // the deny-default profile cannot write.
+                env: ["TMPDIR": "/var/empty/osaurus-denied"],
+                cwd: workspace.path,
+                timeout: 10,
+                profile: SeatbeltSandbox.profile(
+                    workspaceRoot: workspace.path,
+                    tempDir: scratch,
+                    network: .denied,
+                    developerDirectory: developerDirectory
+                ),
+                stdoutTee: nil,
+                stderrTee: nil,
+                onProcessStarted: nil
+            )
+        )
+        #expect(
+            result.exitCode == 0,
+            "sandboxed Python failed: \(result.stderr)"
+        )
+        #expect(result.stdout.contains("seatbelt-python-ok"))
     }
 
     @Test("network none denies network in the profile")
