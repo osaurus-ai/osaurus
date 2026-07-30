@@ -155,11 +155,15 @@ struct SeatbeltSandboxTests {
         let result = try await SeatbeltExecutor.run(
             SeatbeltExecutor.Request(
                 command: "\(cacheReadChecks) && /bin/pwd >/dev/null && "
+                    + "/bin/test \"$HOME\" = '\(workspace.path)' && "
                     + "/usr/bin/python3 -c \"print('seatbelt-python-ok')\"",
                 // Prove the executor replaces a caller-supplied TMPDIR that
                 // the deny-default profile cannot write.
                 env: [
                     "TMPDIR": "/var/empty/osaurus-denied",
+                    // HOME changes xcrun's cache key. It must be replaced by
+                    // the mapped confined cwd before host-side preparation.
+                    "HOME": "/var/empty/osaurus-denied",
                     // A caller cannot redirect the developer shim outside the
                     // validated toolchain tree granted by the profile.
                     "DEVELOPER_DIR": "/var/empty/osaurus-denied",
