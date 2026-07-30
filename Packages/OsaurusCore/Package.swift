@@ -110,9 +110,13 @@ let package = Package(
         // vmlx-swift#195 keeps Qwen 3.5 / Ornith GatedDelta recurrent state
         // in float32 across cold and restored prefix partitions, and admits
         // linked KV + recurrent disk boundaries under one quota transaction.
+        // vmlx-swift#196 marks caller-proven reusable-prefix warmup prompts
+        // explicitly so solo, batched, and native-MTP cache writers
+        // store the exact prefix without stripping it again or persisting the
+        // warmup's throwaway decoded token.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "cf50cf9cc424726df93187f5542faf03bacdcc95"
+            revision: "c543487bb75553320638377eda02411b3d8f6a00"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

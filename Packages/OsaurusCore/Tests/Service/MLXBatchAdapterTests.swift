@@ -9,6 +9,7 @@
 //
 
 import Foundation
+import MLX
 import MLXLMCommon
 import Testing
 
@@ -763,6 +764,7 @@ struct MLXBatchAdapterTests {
         #expect(dsv4.contains("kv=fp16"))
         #expect(dsv4.contains("cachefmt=2"))
         #expect(dsv4.contains("restore=fullhit-trim-eval1"))
+        #expect(dsv4.contains("warmup=exact-reusable-prefix-v1"))
         #expect(dsv4.contains("layers=deepseekV4"))
         #expect(dsv4.contains("prefix=hybrid-pool-disk"))
         #expect(dsv4.contains("decode=max-rp110"))
@@ -2428,6 +2430,40 @@ struct MLXBatchAdapterTests {
         )
 
         #expect(boundary == 4)
+    }
+
+    @Test func warmupTruncation_marksExactPrefixAndPreservesTheMarkerAcrossToolCopies() {
+        let input = LMInput(
+            tokens: MLXArray([Int32(1), 5, 6, 7, 90, 91])
+                .expandedDimensions(axis: 0),
+            tokenIds: [1, 5, 6, 7, 90, 91],
+            cachePrefixTokenCounts: [4]
+        )
+
+        let warmup = MLXBatchAdapter.truncatingToCanonicalCacheBoundary(input)
+
+        #expect(warmup.text.tokenIds == [1, 5, 6, 7])
+        #expect(warmup.cachePromptIntent == .reusablePrefixWarmup)
+        #expect(
+            warmup.withToolSchemas(nil).cachePromptIntent
+                == .reusablePrefixWarmup)
+    }
+
+    @Test func bothWarmupConstructionPathsSetTheTypedCacheIntent() throws {
+        let coreRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: coreRoot.appendingPathComponent(
+                "Services/ModelRuntime/MLXBatchAdapter.swift"
+            ),
+            encoding: .utf8)
+
+        #expect(
+            source.components(
+                separatedBy: "cachePromptIntent: .reusablePrefixWarmup"
+            ).count - 1 == 2)
     }
 
     /// VLM processors (e.g. Gemma 4) never populate `cachePrefixTokenCounts`,

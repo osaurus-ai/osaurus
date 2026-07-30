@@ -4303,6 +4303,12 @@ public actor ModelRuntime {
             // paired vmlx fix materializes full-hit trim mutations before
             // the one-token seed forward on the B=1 TokenIterator path.
             "restore=fullhit-trim-eval1",
+            // Dedicated prefill warmups now mark their complete token stream
+            // as the caller-proven reusable prefix. Older app/runtime pairs
+            // stripped that prefix a second time on hybrid models and may
+            // have persisted path-dependent state under an unsafe boundary;
+            // keep those records outside the new cache namespace.
+            "warmup=exact-reusable-prefix-v1",
         ]
 
         if let cacheTopology {

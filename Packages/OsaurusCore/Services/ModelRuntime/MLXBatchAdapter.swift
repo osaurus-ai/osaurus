@@ -1642,6 +1642,7 @@ struct MLXBatchAdapter {
             cacheScopeSalt: scopeSalt,
             cachePrefixTokenCounts: cacheBoundaries.all,
             cacheStablePrefixTokenCounts: cacheBoundaries.stable,
+            cachePromptIntent: .reusablePrefixWarmup,
             toolSchemas: toolsSpec
         )
     }
@@ -1764,6 +1765,7 @@ struct MLXBatchAdapter {
             tokenIds: prefix,
             cacheScopeSalt: input.cacheScopeSalt,
             cachePrefixTokenCounts: [],
+            cachePromptIntent: .reusablePrefixWarmup,
             toolSchemas: input.toolSchemas
         )
     }
