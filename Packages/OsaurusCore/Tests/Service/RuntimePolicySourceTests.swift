@@ -2927,6 +2927,79 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    /// A dispatched background run (schedule, plugin, HTTP dispatch, watcher)
+    /// must release its residency claim when it reaches a terminal state and
+    /// re-arm warm-up on the active chat window. Without this, the finished
+    /// run's model sat resident until the full idle policy expired while every
+    /// speculative chat warm-up was refused ("a different model is resident"),
+    /// leaving an open chat cold indefinitely.
+    @Test("background task completion releases residency and re-arms chat warm-up")
+    func backgroundTaskCompletionReleasesResidencyAndRearmsWarmup() throws {
+        let tasks = try Self.source("Managers/BackgroundTaskManager.swift")
+
+        // Both terminal funnels must trigger the release: completion/failure
+        // and cancellation.
+        let completedBody = try Self.functionBody(
+            "private func markCompleted(",
+            in: tasks
+        )
+        #expect(completedBody.contains("releaseResidencyAndRearmChatWarmup(after: state)"))
+        let cancelBody = try Self.functionBody(
+            "public func cancelTask(",
+            in: tasks
+        )
+        #expect(cancelBody.contains("releaseResidencyAndRearmChatWarmup(after: state)"))
+
+        let releaseBody = try Self.functionBody(
+            "private func releaseResidencyAndRearmChatWarmup(",
+            in: tasks
+        )
+        #expect(releaseBody.contains("state.source.inferenceSource"))
+        #expect(releaseBody.contains("taskSource != .chatUI"))
+        #expect(releaseBody.contains("accelerateIdleUnloadAfterBackgroundTaskCompleted"))
+        #expect(releaseBody.contains("ChatWindowManager.shared.activeLocalModelNames()"))
+        #expect(releaseBody.contains("rearmChatWarmupAfterBackgroundWork()"))
+
+        // The runtime side keeps every chat-close protection: policy gate,
+        // source-class ownership, keep-set, lease drain, pending idle
+        // decision, and the fire-time re-check.
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let acceleratedReleaseBody = try Self.functionBody(
+            "func accelerateIdleUnloadAfterBackgroundTaskCompleted(",
+            in: runtime
+        )
+        #expect(acceleratedReleaseBody.contains("guard taskSource != .chatUI else { return }"))
+        #expect(acceleratedReleaseBody.contains("guard case .afterSeconds = policy else { return }"))
+        #expect(acceleratedReleaseBody.contains("guard !activeNames.contains(name) else { return }"))
+        #expect(
+            acceleratedReleaseBody.contains("guard lastUseSource[name] == taskSource else { return }")
+        )
+        #expect(acceleratedReleaseBody.contains("ModelLease.shared.count(for: name) == 0"))
+        #expect(acceleratedReleaseBody.contains("pendingIdleResidencyDecisions[name]"))
+        #expect(acceleratedReleaseBody.contains("shouldStillUnload"))
+
+        // Only the visible key chat re-arms; hidden windows warm on focus.
+        let windows = try Self.source("Managers/Chat/ChatWindowManager.swift")
+        let rearmBody = try Self.functionBody(
+            "func rearmChatWarmupAfterBackgroundWork()",
+            in: windows
+        )
+        #expect(rearmBody.contains("isChatWindowActive(id: id)"))
+        #expect(rearmBody.contains("notifySessionBecameActive()"))
+
+        // The freed-slot rewarm closes the different-model race (rearm can
+        // fire before the release unload lands): the residency notification
+        // for the idle removal that empties the runtime schedules the
+        // warm-up, and only when the removed model was not the chat's own.
+        let warmup = try Self.source("Services/Chat/ChatWarmupController.swift")
+        let removalBody = try Self.functionBody(
+            "func handleRuntimeResidencyChanged(",
+            in: warmup
+        )
+        #expect(removalBody.contains("guard !wasSelectedModelResident,"))
+        #expect(removalBody.contains("snapshot.names.isEmpty"))
+    }
+
     /// Management-window deeplink reuse swaps the hosting controller of a
     /// live NSWindow. A SwiftUI `.sheet`'s presentation window stays attached
     /// through that swap and keeps observing parent frame changes; when the
