@@ -1152,6 +1152,62 @@ public actor ModelRuntime {
         }
     }
 
+    /// Background-task-completion residency release: shorten the pending idle
+    /// unload of the model a finished dispatched run (schedule, watcher,
+    /// plugin, HTTP agent dispatch, channel) was using, so an open chat
+    /// window can warm its own selection again instead of staying cold behind
+    /// a resident model whose owning surface already finished.
+    ///
+    /// This is the dispatched-run mirror of `accelerateIdleUnloadAfterChatClose`
+    /// and keeps every protection that path has:
+    /// - Only under an `.afterSeconds` idle policy. `.immediately` already
+    ///   unloaded at generation end, and `.never` is an explicit user opt-in
+    ///   to permanent residency that a task completion must not override.
+    /// - Only the resident this task's source class owns (`lastUseSource`).
+    ///   A model that a chat window or another surface generated on since
+    ///   keeps its full residency — in particular, chat-owned release stays
+    ///   exclusively on the window-close path.
+    /// - `keeping` / `isModelStillWanted` protect models an open window or a
+    ///   still-active registry task references, re-checked at fire time, and
+    ///   the fire path re-checks the lease count — a follow-up turn or an API
+    ///   client generation that starts inside the grace keeps the model warm.
+    func accelerateIdleUnloadAfterBackgroundTaskCompleted(
+        modelName: String,
+        taskSource: RequestSource,
+        keeping activeNames: Set<String>,
+        grace: TimeInterval = ModelRuntime.chatCloseUnloadGraceSeconds,
+        isModelStillWanted: @Sendable @escaping (String) async -> Bool
+    ) async {
+        guard taskSource != .chatUI else { return }
+        let policy =
+            await ServerConfigurationStore.load()?.modelIdleResidencyPolicy
+            ?? ServerConfiguration.default.modelIdleResidencyPolicy
+        guard case .afterSeconds = policy else { return }
+
+        guard let name = residentKey(matching: modelName) else { return }
+        guard !activeNames.contains(name) else { return }
+        guard lastUseSource[name] == taskSource else { return }
+        guard await ModelLease.shared.count(for: name) == 0 else { return }
+        guard let idleDecisionID = pendingIdleResidencyDecisions[name] else { return }
+        await ModelResidencyManager.shared.accelerateIdleUnload(
+            modelName: name,
+            grace: grace,
+            ownerDecisionID: idleDecisionID,
+            unload: { name in
+                await ModelRuntime.shared.performIdleUnloadIfCurrent(
+                    name: name,
+                    decisionID: idleDecisionID
+                )
+            },
+            leaseCount: { name in await ModelLease.shared.count(for: name) },
+            isResident: { name in await ModelRuntime.shared.isResident(name: name) },
+            shouldStillUnload: { name in
+                let stillWanted = await isModelStillWanted(name)
+                return !stillWanted
+            }
+        )
+    }
+
     func cachedModelSummaries(refreshTopology: Bool = false) async -> [ModelCacheSummary] {
         if refreshTopology {
             for holder in modelCache.values {

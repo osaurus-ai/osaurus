@@ -495,6 +495,19 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         return window.isVisible && window.isKeyWindow
     }
 
+    /// Re-arm speculative warm-up on the active chat window after a
+    /// registry-owned background run reaches a terminal state. While that run
+    /// streamed, `shouldAttemptWarmup` refused every warm-up; nothing else
+    /// re-triggers one until the user refocuses the window, so a chat left
+    /// open through a dispatched run stayed cold indefinitely. Only the
+    /// visible key window re-arms — hidden windows warm on their next focus,
+    /// by which point the finished run's residency release has settled.
+    func rearmChatWarmupAfterBackgroundWork() {
+        for (id, state) in windowStates where isChatWindowActive(id: id) {
+            state.session.notifySessionBecameActive()
+        }
+    }
+
     /// Set a callback to be invoked when window is about to close (for session saving)
     public func setCloseCallback(for windowId: UUID, callback: @escaping () -> Void) {
         sessionCallbacks[windowId] = callback

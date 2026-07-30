@@ -588,6 +588,10 @@ final class ChatWarmupController: ObservableObject {
     ) {
         let selectedModel = session.selectedModel
         let wasWarm = state == .warm
+        // Captured before the snapshot is applied: distinguishes "this event
+        // removed MY model" (recovery rules below apply) from "this event
+        // freed a slot another surface was holding" (freed-slot rewarm).
+        let wasSelectedModelResident = selectedModelResident
         guard acceptResidencySnapshot(snapshot, selectedModel: selectedModel) else { return }
 
         guard let selectedModel,
@@ -626,8 +630,33 @@ final class ChatWarmupController: ObservableObject {
             state = .cold
         }
 
-        guard mayRecover,
-            snapshot.idleDecisionID != nil
+        if mayRecover, snapshot.idleDecisionID != nil {
+            scheduleWarmup(
+                session: session,
+                debounce: debounce,
+                revalidateResidencyAfterDebounce: true
+            )
+            return
+        }
+
+        // Freed-slot rewarm: an idle-policy removal of ANOTHER surface's
+        // model (a finished background task's accelerated release, or its
+        // natural idle expiry) emptied the runtime while this chat's
+        // speculative warm-ups were being refused ("a different model is
+        // resident and this warm-up lacks user intent"). Nothing else
+        // re-triggers a warm-up until the user refocuses the window, so
+        // without this the visible chat stays cold indefinitely.
+        //
+        // `wasSelectedModelResident == false` keeps every removal of the
+        // chat's OWN model on the strict recovery rules above — this path
+        // can never recreate the idle unload/rewarm ping-pong they close.
+        // The reason gate keeps shutdown / settings-clear / explicit-unload
+        // removals from resurrecting a load the user just tore down, and
+        // the warm-up itself still runs with background load intent.
+        guard !wasSelectedModelResident,
+            isSessionActive,
+            snapshot.reason == .idlePolicy,
+            snapshot.names.isEmpty
         else { return }
 
         scheduleWarmup(
