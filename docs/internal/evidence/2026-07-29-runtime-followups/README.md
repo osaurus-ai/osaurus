@@ -21,9 +21,11 @@ yet described as release-ready or regression-free.
 - follow-up vMLX PR: `osaurus-ai/vmlx-swift#195`, merged as
   `cf50cf9cc424726df93187f5542faf03bacdcc95`
 - cache-warmup continuation vMLX PR: `osaurus-ai/vmlx-swift#196`
-- cache-warmup continuation vMLX commit:
+- tested cache-warmup continuation vMLX head:
   `0d54c2517fd39cc5781df6d44942a44b36615c6a`
-- tested Osaurus vMLX pin: `0d54c2517fd39cc5781df6d44942a44b36615c6a`
+- vMLX PR #196 merged as:
+  `958eb6bed2e2fd4fde30574141e17a1dce773895`
+- final Osaurus vMLX pin: `958eb6bed2e2fd4fde30574141e17a1dce773895`
 - Paged RAM cache: off for the reported cache row
 - host/toolchain: macOS 26.4 (`25E246`), Apple Swift 6.3.1
 - Local bundles:
