@@ -23,6 +23,94 @@
 import Foundation
 import os
 
+/// Thrown by `valueWithDeadline` when the wall-clock deadline fires before
+/// the operation completes. Carries the operation name so timeout telemetry
+/// and user-facing errors can say *what* exceeded its budget.
+public struct DeadlineExceededError: Error, LocalizedError, Sendable {
+    public let operationName: String
+    public let seconds: Double
+
+    public init(operationName: String, seconds: Double) {
+        self.operationName = operationName
+        self.seconds = seconds
+    }
+
+    public var errorDescription: String? {
+        "\(operationName) did not complete within \(Int(seconds.rounded()))s"
+    }
+}
+
+/// Race `operation` against a wall-clock deadline and the caller's own
+/// cancellation, returning its value.
+///
+/// Unlike a `withThrowingTaskGroup` race, the caller is NEVER re-joined to
+/// the operation: structured concurrency waits for every child at scope
+/// exit, so a child stuck in a non-cancellable await (an MCP SDK call, an
+/// OAuth browser wait, native model-load code) keeps the "timed out"
+/// caller blocked forever. Here the operation runs as an *unstructured*
+/// task; whichever of {completion, deadline, caller cancellation} happens
+/// first resumes the caller, and a non-cooperative operation is cancelled
+/// (best effort) and abandoned to finish on its own.
+///
+/// - Throws: the operation's own error, `DeadlineExceededError` when the
+///   deadline fires first, or `CancellationError` when the caller is
+///   cancelled while waiting (Stop must unblock immediately even when the
+///   underlying work cannot be interrupted).
+public func valueWithDeadline<T: Sendable>(
+    seconds: Double,
+    operationName: String = "operation",
+    operation: @escaping @Sendable () async throws -> T
+) async throws -> T {
+    let work = Task(priority: .high) { try await operation() }
+    let state = OSAllocatedUnfairLock<CheckedContinuation<T, Error>?>(initialState: nil)
+
+    /// Resolve at most once; later racers find nil and do nothing.
+    @Sendable func take() -> CheckedContinuation<T, Error>? {
+        state.withLock { held in
+            defer { held = nil }
+            return held
+        }
+    }
+
+    return try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<T, Error>) in
+            // If the caller was already cancelled before we stored the
+            // continuation, resolve immediately instead of parking.
+            if Task.isCancelled {
+                work.cancel()
+                cont.resume(throwing: CancellationError())
+                return
+            }
+            state.withLock { $0 = cont }
+
+            // Completion racer.
+            Task {
+                let result: Result<T, Error>
+                do { result = .success(try await work.value) } catch { result = .failure(error) }
+                take()?.resume(with: result)
+            }
+            // Deadline racer on a Dispatch timer rather than `Task.sleep`
+            // so cooperative-pool saturation cannot delay the bound (see
+            // `runWithDeadline` below).
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(
+                deadline: .now() + max(0, seconds)
+            ) {
+                if let cont = take() {
+                    work.cancel()
+                    cont.resume(
+                        throwing: DeadlineExceededError(operationName: operationName, seconds: seconds)
+                    )
+                }
+            }
+        }
+    } onCancel: {
+        work.cancel()
+        // Unblock the caller NOW: Stop/turn-cancel must not wait out the
+        // remaining deadline behind a non-cooperative operation.
+        take()?.resume(throwing: CancellationError())
+    }
+}
+
 /// Runs `operation`, returning no later than `seconds`.
 ///
 /// - Returns: `true` if `operation` completed before the deadline, `false`

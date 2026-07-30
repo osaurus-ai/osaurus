@@ -32,6 +32,20 @@ struct NotchPanelPlacementTests {
         panel.close()
     }
 
+    @Test @MainActor func notchPanelPreservesControllerManagedFrame() {
+        let requestedFrame = CGRect(x: 420, y: 580, width: 600, height: 500)
+        let panel = NotchPanel(
+            contentRect: requestedFrame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+
+        #expect(panel.frame == requestedFrame)
+        #expect(panel.constrainFrameRect(requestedFrame, to: nil) == requestedFrame)
+        panel.close()
+    }
+
     @Test func notchSessionKeyboardNavigationRequiresExactCommandArrow() {
         #expect(
             NotchWindowController.sessionNavigationDirection(

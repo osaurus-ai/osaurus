@@ -9272,6 +9272,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "ram_feasibility": ramFeasibility,
                 "batch_diagnostics": batchDiagnostics,
                 "persistence": PersistenceHealth.shared.snapshot(),
+                // Descriptor-exhaustion early warning (APPLE-MACOS-19T died
+                // fatally at EMFILE with zero prior signal). A steadily
+                // climbing count across restarts is a leak.
+                "open_file_descriptors": SharedEventLoopGroups.openFileDescriptorCount() as Any? ?? NSNull(),
+                "open_connections": ConnectionLimitHandler.currentCount,
             ]
             if batchDiagTimedOut {
                 obj["batch_diagnostics_timeout"] = true

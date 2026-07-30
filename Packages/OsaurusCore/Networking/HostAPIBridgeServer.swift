@@ -16,24 +16,26 @@ import NIOPosix
 public actor HostAPIBridgeServer {
     public static let shared = HostAPIBridgeServer()
 
-    private var group: MultiThreadedEventLoopGroup?
     private var channel: Channel?
     private var boundSocketPath: String?
 
-    public var isRunning: Bool { group != nil }
+    public var isRunning: Bool { channel != nil }
 
     /// Start the bridge server on a Unix domain socket.
     /// The socket is relayed into the container via vsock by the Containerization framework.
     /// If already running, stops the existing server first to ensure a clean socket.
+    ///
+    /// Runs on the process-shared utility event-loop group — sandbox
+    /// start/stop cycles previously allocated a fresh 2-thread group each
+    /// time, contributing to descriptor build-up (APPLE-MACOS-19T).
     public func start(socketPath: String) async throws {
-        if group != nil {
+        if channel != nil {
             await stop()
         }
 
         try? FileManager.default.removeItem(atPath: socketPath)
 
-        let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
-        let bootstrap = ServerBootstrap(group: group)
+        let bootstrap = ServerBootstrap(group: SharedEventLoopGroups.utility)
             .serverChannelOption(ChannelOptions.backlog, value: 64)
             .childChannelInitializer { channel in
                 channel.pipeline.configureHTTPServerPipeline().flatMap {
@@ -42,23 +44,16 @@ public actor HostAPIBridgeServer {
             }
 
         let ch = try await bootstrap.bind(unixDomainSocketPath: socketPath).get()
-        self.group = group
         self.channel = ch
         self.boundSocketPath = socketPath
         NSLog("[HostAPIBridge] Started on unix:\(socketPath)")
     }
 
     public func stop() async {
-        let hadResources = channel != nil || group != nil || boundSocketPath != nil
+        let hadResources = channel != nil || boundSocketPath != nil
         if let ch = channel {
             _ = try? await ch.close()
             channel = nil
-        }
-        if let g = group {
-            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-                g.shutdownGracefully { _ in cont.resume() }
-            }
-            group = nil
         }
         if let path = boundSocketPath {
             try? FileManager.default.removeItem(atPath: path)

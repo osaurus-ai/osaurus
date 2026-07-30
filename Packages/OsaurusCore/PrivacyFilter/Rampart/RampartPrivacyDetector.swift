@@ -30,7 +30,9 @@ actor RampartPrivacyDetector {
     /// already loaded from the same directory.
     func loadIfNeeded(bundle directory: URL) async throws {
         if let loadedDirectory, loadedDirectory == directory, model != nil { return }
-        await MetalGate.shared.enterPIIDetection()
+        // Throws CancellationError if cancelled while waiting; no gate is
+        // held on that path, so the exit pairing below is untouched.
+        try await MetalGate.shared.enterPIIDetection()
         do {
             model = try RampartPII(directory: directory)
             await MetalGate.shared.exitPIIDetection()
@@ -50,8 +52,13 @@ actor RampartPrivacyDetector {
     func modelSpans(in text: String) async -> [(category: EntityCategory, range: Range<String.Index>)] {
         guard !text.isEmpty, let model else { return [] }
         // Hold the gate only across the forward pass; the span/index mapping
-        // below is CPU-only string work.
-        await MetalGate.shared.enterPIIDetection()
+        // below is CPU-only string work. A cancelled request skips detection
+        // entirely (the scan's outcome no longer matters to anyone).
+        do {
+            try await MetalGate.shared.enterPIIDetection()
+        } catch {
+            return []
+        }
         let detected = model.detect(text)
         await MetalGate.shared.exitPIIDetection()
         var raw: [(category: EntityCategory, range: Range<String.Index>)] = []

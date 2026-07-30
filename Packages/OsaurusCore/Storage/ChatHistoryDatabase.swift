@@ -592,6 +592,14 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// fetched inside one `queue.sync` block so the main actor only
     /// pays a single round-trip across the serial queue.
     public func loadSession(id: UUID) -> ChatSessionData? {
+        MainThreadOperationLedger.shared.withMainThreadOperation(
+            subsystem: "chat-history-db", operation: "load-session"
+        ) {
+            loadSessionOnQueue(id: id)
+        }
+    }
+
+    private func loadSessionOnQueue(id: UUID) -> ChatSessionData? {
         var session: ChatSessionData?
         do {
             try queue.sync {
@@ -1530,6 +1538,22 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         bind: (OpaquePointer) -> Void,
         process: (OpaquePointer) throws -> Void
     ) throws {
+        // Ledger entry (main thread only): a main-thread read parks behind
+        // whatever already holds the serial queue (a large transaction, a
+        // maintenance pass). A watchdog breach then attributes to
+        // "chat-history-db.query" rather than a generic hang.
+        try MainThreadOperationLedger.shared.withMainThreadOperation(
+            subsystem: "chat-history-db", operation: "query"
+        ) {
+            try prepareAndExecuteOnQueue(sql, bind: bind, process: process)
+        }
+    }
+
+    private func prepareAndExecuteOnQueue(
+        _ sql: String,
+        bind: (OpaquePointer) -> Void,
+        process: (OpaquePointer) throws -> Void
+    ) throws {
         try queue.sync {
             guard let connection = db else { throw ChatHistoryDatabaseError.notOpen }
             var stmt: OpaquePointer?
@@ -1551,6 +1575,14 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     }
 
     private func inTransaction<T>(_ operation: (OpaquePointer) throws -> T) throws -> T {
+        try MainThreadOperationLedger.shared.withMainThreadOperation(
+            subsystem: "chat-history-db", operation: "transaction"
+        ) {
+            try inTransactionOnQueue(operation)
+        }
+    }
+
+    private func inTransactionOnQueue<T>(_ operation: (OpaquePointer) throws -> T) throws -> T {
         try queue.sync {
             guard let connection = db else { throw ChatHistoryDatabaseError.notOpen }
             try executeRaw("BEGIN TRANSACTION")

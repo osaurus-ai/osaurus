@@ -182,10 +182,79 @@ final class ChatSession: ObservableObject {
             guard isStreaming != oldValue else { return }
             if isStreaming {
                 ChatPerfTrace.shared.begin("stream-\(Int(Date().timeIntervalSince1970))")
+                beginRunProgressMonitor()
             } else {
                 ChatPerfTrace.shared.end()
+                endRunProgressMonitor()
             }
         }
+    }
+
+    // MARK: - Run progress (slow / stalled surfacing)
+
+    /// Coarse liveness of the in-flight run, derived from time since the last
+    /// observed progress event (stream delta, tool event, image-generation
+    /// event). Drives a visible notice above the composer so a wedged
+    /// provider/model/tool reads as "stalled — Stop is right there" instead of
+    /// an indefinite shimmer the user can only interpret as a hang.
+    enum RunProgressState {
+        case active
+        /// No progress for `runSlowThreshold` — worth telling the user we're
+        /// still alive but waiting (long prefill, slow provider, big tool).
+        case slow
+        /// No progress for `runStalledThreshold` — likely wedged; surface
+        /// Stop as the recovery action. The run is NOT auto-killed: a huge
+        /// model load can legitimately take minutes, so the user decides.
+        case stalled
+    }
+
+    @Published private(set) var runProgressState: RunProgressState = .active
+
+    private var lastRunProgressAt = Date()
+    private var runProgressMonitorTask: Task<Void, Never>?
+    private static let runSlowThreshold: TimeInterval = 30
+    private static let runStalledThreshold: TimeInterval = 120
+
+    /// Record run liveness. Called from every streaming/tool/image event
+    /// loop; must stay cheap (a Date store; the published state only changes
+    /// on an actual transition).
+    func noteRunProgress() {
+        lastRunProgressAt = Date()
+        if runProgressState != .active {
+            runProgressState = .active
+        }
+    }
+
+    private func beginRunProgressMonitor() {
+        lastRunProgressAt = Date()
+        runProgressState = .active
+        runProgressMonitorTask?.cancel()
+        runProgressMonitorTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard let self, !Task.isCancelled else { return }
+                let idle = Date().timeIntervalSince(self.lastRunProgressAt)
+                let newState: RunProgressState =
+                    idle >= Self.runStalledThreshold
+                    ? .stalled
+                    : idle >= Self.runSlowThreshold ? .slow : .active
+                if newState != self.runProgressState {
+                    self.runProgressState = newState
+                    if newState == .stalled {
+                        CrashReportingService.recordBreadcrumb(
+                            category: "chat.run",
+                            message: "run stalled: no progress for \(Int(idle))s"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private func endRunProgressMonitor() {
+        runProgressMonitorTask?.cancel()
+        runProgressMonitorTask = nil
+        runProgressState = .active
     }
 
     @Published var lastStreamError: String?
@@ -1979,6 +2048,12 @@ final class ChatSession: ObservableObject {
         if wasAwaitingPreSendHandshake {
             warmupController.cancelPendingWorkForUserStop()
         }
+        // Resolve every mounted/queued prompt (secret, clarify) BEFORE
+        // cancelling the run: a tool call parked on a prompt continuation
+        // does not observe task cancellation, so without this drain Stop
+        // would leave that continuation suspended forever, the overlay
+        // mounted, and the input bar hit-test disabled.
+        promptQueue.drainAll()
         stopRequested = true
         let task = currentTask
         task?.cancel()
@@ -3694,6 +3769,7 @@ final class ChatSession: ObservableObject {
         debugLog("send: got stream, entering delta loop")
         do {
             for try await delta in stream {
+                noteRunProgress()
                 if !isRunActive(runId) {
                     await processor.finalize()
                     // Cancelled mid-run: don't leave a remote tool chip
@@ -4216,6 +4292,7 @@ final class ChatSession: ObservableObject {
         }
         do {
             for try await event in stream {
+                noteRunProgress()
                 guard isRunActive(runId) else { break }
                 switch event {
                 case .loadingModel:
@@ -6145,6 +6222,7 @@ final class ChatSession: ObservableObject {
 
                             let stream = try await engine.streamChat(request: finalReq)
                             for try await delta in stream {
+                                noteRunProgress()
                                 if !isRunActive(runId) { break }
                                 if !delta.isEmpty { processor.receiveDelta(delta) }
                             }
@@ -6549,6 +6627,46 @@ struct ChatView: View {
         }
     }
 
+    /// Run-liveness chip shown above the composer while a run has produced no
+    /// stream/tool/image progress for a while. `slow` reassures ("still
+    /// working"); `stalled` names the likely wedge and points at Stop — the
+    /// recovery action — without auto-killing a run that may legitimately be
+    /// deep in a long model load or tool call.
+    @ViewBuilder
+    private var runProgressNotice: some View {
+        if observedSession.isStreaming {
+            switch observedSession.runProgressState {
+            case .active:
+                EmptyView()
+            case .slow:
+                remoteAgentNoticeRow(tint: theme.accentColor) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(L("Still working — waiting on the model or a tool…"))
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                }
+            case .stalled:
+                remoteAgentNoticeRow(tint: theme.warningColor) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: CGFloat(theme.captionSize), weight: .semibold))
+                        .foregroundColor(theme.warningColor)
+                    Text(L("No response for a while — this run may be stuck."))
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button(action: { observedSession.stop() }) {
+                        Text(L("Stop"))
+                            .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                            .foregroundColor(theme.warningColor)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
     /// Connection-failure chip: the error message plus a Retry that re-runs the
     /// connect + model-pin flow.
     private func connectionFailedNotice(_ message: String) -> some View {
@@ -6887,6 +7005,17 @@ struct ChatView: View {
                                 .frame(maxWidth: 1100)
                                 .frame(maxWidth: .infinity)
                                 .animation(theme.springAnimation(), value: windowState.remoteAgentConnectionPhase)
+
+                            // Run-liveness notice (slow / stalled) so a run
+                            // with no visible progress reads as a knowable
+                            // state with a recovery action, not a hang.
+                            runProgressNotice
+                                .frame(maxWidth: 1100)
+                                .frame(maxWidth: .infinity)
+                                .animation(
+                                    theme.springAnimation(),
+                                    value: observedSession.runProgressState
+                                )
 
                             // Floating input card. Dimmed and
                             // hit-test-disabled while a prompt overlay

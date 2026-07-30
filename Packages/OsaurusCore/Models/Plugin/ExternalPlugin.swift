@@ -673,7 +673,15 @@ private final class RouteHandlerRaceState: @unchecked Sendable {
 final class ExternalPlugin: @unchecked Sendable {
     enum InvocationIsolation: Sendable, Equatable {
         case pluginQueue
-        case mainActor
+        /// Serialize on `AccessibilityManager.serialQueue` — the same
+        /// off-main queue the native Computer Use driver uses for all AX
+        /// IPC and input synthesis. Accessibility/automation plugins need
+        /// one-at-a-time execution so UI-element references can't be
+        /// mutated out from under a write action; they do NOT need the
+        /// main thread (AX APIs are thread-safe), and running arbitrary
+        /// plugin C code synchronously on the main actor blocked the UI
+        /// for the full duration of every click/type/press-key call.
+        case accessibilityQueue
     }
 
     let id: String
@@ -701,9 +709,10 @@ final class ExternalPlugin: @unchecked Sendable {
     private let didDestroy = OSAllocatedUnfairLock<Bool>(initialState: false)
 
     /// Tracks plugin callbacks that can run OUTSIDE the queues `shutdown()`
-    /// drains: main-actor invocations (`dispatchPluginCallOnMainActor` never
-    /// touches `invokeQueue`) and task-event deliveries whose per-task queue
-    /// was created after `shutdown()` took its snapshot (or whose body read
+    /// drains: accessibility-queue invocations (which run on the shared
+    /// `AccessibilityManager.serialQueue`, never `invokeQueue`) and
+    /// task-event deliveries whose per-task queue was created after
+    /// `shutdown()` took its snapshot (or whose body read
     /// `isShutDown == false` just before the mid-drain flip). Either could
     /// still be executing plugin code when the drain group completed, so
     /// `destroy(ctx)` freed the context under a live callback — the
@@ -852,6 +861,10 @@ final class ExternalPlugin: @unchecked Sendable {
     /// (which may call host API trampolines like httpRequest) never runs on
     /// the main thread, avoiding deadlocks with `blockingAsync`.
     func shutdown() async {
+        // Tear down the out-of-process helper (if any) first: it holds its
+        // own copy of the plugin and must not outlive an unload/reload.
+        await PluginProcessHostManager.shared.shutdownClient(pluginId: self.id)
+
         let queues: [DispatchQueue] = taskEventQueuesLock.withLock {
             Array(taskEventQueues.values)
         }
@@ -936,21 +949,37 @@ final class ExternalPlugin: @unchecked Sendable {
         isolation: InvocationIsolation = .pluginQueue,
         _ call: @Sendable @escaping (osr_plugin_ctx_t) -> UnsafePointer<CChar>?
     ) async throws -> String {
-        if isolation == .mainActor {
-            return try await dispatchPluginCallOnMainActor(
-                agentId: agentId,
-                errorCode: errorCode,
-                errorMessage: errorMessage,
-                call
-            )
-        }
-
         let freeString = api.free_string
         nonisolated(unsafe) let ctx = self.ctx
         let pluginId = self.id
 
+        // Accessibility/automation calls run on the driver's shared serial
+        // queue instead of `invokeQueue` (see `InvocationIsolation`).
+        // Those callbacks are invisible to `shutdown()`'s invoke-queue
+        // barrier drain, so they must enter the in-flight group BEFORE the
+        // latch check (see `inFlightCallbacks`) so `destroy(ctx)` waits for
+        // them instead of freeing the context under a live callback.
+        let queue: DispatchQueue
+        let escapesShutdownDrain: Bool
+        switch isolation {
+        case .pluginQueue:
+            queue = invokeQueue
+            escapesShutdownDrain = false
+        case .accessibilityQueue:
+            queue = AccessibilityManager.serialQueue
+            escapesShutdownDrain = true
+        }
+
         return try await withCheckedThrowingContinuation { continuation in
-            self.invokeQueue.async { [self] in
+            queue.async { [self] in
+                if escapesShutdownDrain {
+                    self.inFlightCallbacks.enter()
+                }
+                defer {
+                    if escapesShutdownDrain {
+                        self.inFlightCallbacks.leave()
+                    }
+                }
                 guard !self.isShutDown.withLock({ $0 }) else {
                     continuation.resume(
                         throwing: NSError(
@@ -983,54 +1012,6 @@ final class ExternalPlugin: @unchecked Sendable {
         }
     }
 
-    @MainActor
-    private func dispatchPluginCallOnMainActor(
-        agentId: UUID? = nil,
-        errorCode: Int,
-        errorMessage: String,
-        _ call: @Sendable (osr_plugin_ctx_t) -> UnsafePointer<CChar>?
-    ) throws -> String {
-        // Main-actor invocations never touch `invokeQueue`, so `shutdown()`'s
-        // barrier drain cannot see them. Enter the in-flight group BEFORE the
-        // latch check (see `inFlightCallbacks`) so `destroy(ctx)` waits for
-        // this call instead of freeing the context under it.
-        inFlightCallbacks.enter()
-        defer { inFlightCallbacks.leave() }
-        guard !isShutDown.withLock({ $0 }) else {
-            throw NSError(
-                domain: "ExternalPlugin",
-                code: errorCode,
-                userInfo: [NSLocalizedDescriptionKey: "Plugin has been shut down"]
-            )
-        }
-
-        let freeString = api.free_string
-        let ctx = self.ctx
-        let pluginId = self.id
-        // This synchronous C call runs on the main actor by design — native accessibility/
-        // automation plugins hold main-thread-bound objects (see ExternalTool.invocationIsolation)
-        // — and can legitimately block for seconds while it drives another app. Pause app-hang
-        // tracking so that expected block isn't reported as a false-positive hang; the per-tool
-        // timeout in ToolRegistry still bounds a genuinely stuck handler.
-        let resPtr = CrashReportingService.shared.withAppHangTrackingPaused {
-            PluginHostContext.withTLSScope(pluginId: pluginId, agentId: agentId) {
-                call(ctx)
-            }
-        }
-        guard let resPtr else {
-            throw NSError(
-                domain: "ExternalPlugin",
-                code: errorCode,
-                userInfo: [NSLocalizedDescriptionKey: errorMessage]
-            )
-        }
-
-        let result = String(cString: resPtr)
-        freeString?(resPtr)
-        withExtendedLifetime(self) {}
-        return result
-    }
-
     func invoke(
         type: String,
         id: String,
@@ -1052,6 +1033,22 @@ final class ExternalPlugin: @unchecked Sendable {
             category: "plugin.invoke",
             message: "plugin=\(self.id) type=\(type) id=\(id) isolation=\(isolation)"
         )
+
+        // Staged out-of-process execution (feature-flagged, default off):
+        // accessibility/automation plugins run synchronous C the app cannot
+        // cancel. When the process host is enabled, route those calls to a
+        // killable helper so a wedged AX call is recovered by killing the
+        // helper instead of wedging the shared accessibility queue until
+        // the app restarts. Other isolations stay in-process.
+        if isolation == .accessibilityQueue,
+            let hostClient = PluginProcessHostManager.shared.client(
+                pluginId: self.id, dylibPath: self.bundlePath
+            )
+        {
+            return try await hostClient.invoke(
+                type: type, id: id, payload: payload, agentId: agentId
+            )
+        }
 
         return try await dispatchPluginCall(
             agentId: agentId,
@@ -1162,6 +1159,21 @@ final class ExternalPlugin: @unchecked Sendable {
         agentId: UUID? = nil,
         force: Bool = false
     ) {
+        // Mirror config events to a live out-of-process helper (if one was
+        // spawned for this plugin) so its copy of the plugin sees the same
+        // `on_config_changed` stream as the in-process instance. Never
+        // spawns a helper; a fresh helper reads config lazily via the
+        // host-API bridge on load.
+        if let hostClient = PluginProcessHostManager.shared.existingClient(pluginId: self.id) {
+            let forwarded = changes
+            Task.detached {
+                for change in forwarded {
+                    await hostClient.notifyConfigChanged(
+                        key: change.key, value: change.value, agentId: agentId
+                    )
+                }
+            }
+        }
         guard
             let prep = prepareConfigDelivery(changes: changes, agentId: agentId, force: force)
         else { return }

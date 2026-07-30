@@ -168,6 +168,75 @@ public final class CrashReportingService {
     private nonisolated static let breadcrumbQueue = DispatchQueue(
         label: "com.dinoki.osaurus.crash-breadcrumbs", qos: .utility)
 
+    // MARK: - Main-thread stall reporting
+
+    /// Privacy-safe description of one operation in flight during a stall
+    /// (identifiers only — never content, paths, or account names).
+    public struct StallOperation: Sendable {
+        public let subsystem: String
+        public let operation: String
+        public let ageSeconds: TimeInterval
+
+        public init(subsystem: String, operation: String, ageSeconds: TimeInterval) {
+            self.subsystem = subsystem
+            self.operation = operation
+            self.ageSeconds = ageSeconds
+        }
+    }
+
+    /// Report a `MainThreadWatchdog` breach to Sentry as a first-class event.
+    ///
+    /// The event is fingerprinted on the longest-running instrumented
+    /// operation, so a Keychain stall, a database stall, and an AX stall
+    /// become separate, individually-actionable issue groups instead of
+    /// collapsing into one omnibus "app hang" bucket. The watchdog throttles
+    /// calls (one per stall episode, minimum interval between reports);
+    /// this method assumes that and always records.
+    ///
+    /// `static`/`nonisolated`: called from the watchdog's background queue
+    /// while the main thread is — by definition — blocked. Must never hop
+    /// to the main actor.
+    public nonisolated static func recordMainThreadStall(
+        thresholdSeconds: TimeInterval,
+        operations: [StallOperation]
+    ) {
+        guard SentrySDK.isEnabled else { return }
+        breadcrumbQueue.async {
+            let primary = operations.max(by: { $0.ageSeconds < $1.ageSeconds })
+            let opsSummary =
+                operations.isEmpty
+                ? "none"
+                : operations
+                    .map { "\($0.subsystem).\($0.operation)(\(Int($0.ageSeconds))s)" }
+                    .joined(separator: ",")
+
+            let event = Event(level: .warning)
+            event.message = SentryMessage(
+                formatted:
+                    "Main thread blocked >\(Int(thresholdSeconds))s — \(primary.map { "\($0.subsystem).\($0.operation)" } ?? "uninstrumented")"
+            )
+            // Stable, operation-based grouping. Uninstrumented stalls share
+            // one group ("uninstrumented") — a signal that ledger coverage
+            // is missing where users actually hang.
+            event.fingerprint = [
+                "main-thread-stall",
+                primary?.subsystem ?? "uninstrumented",
+                primary?.operation ?? "unknown",
+            ]
+            event.tags = [
+                "stall.subsystem": primary?.subsystem ?? "uninstrumented",
+                "stall.operation": primary?.operation ?? "unknown",
+            ]
+            event.context = [
+                "main_thread_stall": [
+                    "threshold_seconds": thresholdSeconds,
+                    "operations": opsSummary,
+                ]
+            ]
+            SentrySDK.capture(event: event)
+        }
+    }
+
     // MARK: - DSN resolution
 
     /// Key precedence mirrors `TelemetryService.resolveAppKey()`:
@@ -274,6 +343,7 @@ public final class CrashReportingService {
                 anonymous.userId = event.user?.userId
                 event.user = anonymous
                 event.serverName = nil
+                annotateAppHangEvent(event)
                 return event
             }
 
@@ -281,5 +351,43 @@ public final class CrashReportingService {
                 options.debug = true
             #endif
         }
+    }
+
+    /// Enrich the SDK's own AppHang events with the operation the
+    /// `MainThreadOperationLedger` says was in flight when the hang fired.
+    ///
+    /// Without this, every hang groups purely by sampled stack — and since a
+    /// blocked main thread is usually sampled somewhere inside AppKit/SwiftUI
+    /// plumbing rather than at the blocking call, unrelated hangs collapsed
+    /// into one un-actionable omnibus issue (APPLE-MACOS-5, 13k events). With
+    /// an instrumented operation active, the event is re-fingerprinted on
+    /// `subsystem.operation`, splitting Keychain stalls from database stalls
+    /// from AX stalls into individually-triageable groups. Hangs with no
+    /// instrumented operation keep the SDK's default stack grouping (there is
+    /// nothing better to group on — and their volume tells us where ledger
+    /// coverage is still missing).
+    ///
+    /// `nonisolated`: `beforeSend` runs on the SDK's ANR-monitor thread while
+    /// the main thread is blocked; the ledger is lock-protected and safe.
+    private nonisolated static func annotateAppHangEvent(_ event: Event) {
+        let isAppHang =
+            event.exceptions?.contains { $0.type?.hasPrefix("App Hang") == true } ?? false
+        guard isAppHang else { return }
+
+        let operations = MainThreadOperationLedger.shared.snapshot()
+        guard let primary = operations.first else {
+            event.tags = (event.tags ?? [:]).merging(
+                ["stall.subsystem": "uninstrumented"], uniquingKeysWith: { _, new in new }
+            )
+            return
+        }
+        event.tags = (event.tags ?? [:]).merging(
+            [
+                "stall.subsystem": primary.subsystem,
+                "stall.operation": primary.operation,
+            ],
+            uniquingKeysWith: { _, new in new }
+        )
+        event.fingerprint = ["app-hang", primary.subsystem, primary.operation]
     }
 }

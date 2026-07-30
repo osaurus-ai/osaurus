@@ -52,8 +52,14 @@ public actor OsaurusServer: Sendable {
         }
     }
 
-    private var group: MultiThreadedEventLoopGroup?
     private var channel: Channel?
+    /// Live child (per-connection) channels, tracked so `stop` can close
+    /// them explicitly. The event-loop group is process-shared
+    /// (`SharedEventLoopGroups.server`) and never shut down, so "stop the
+    /// server" means "close the listener and its connections" — not "tear
+    /// down loops". Per-start groups were the EMFILE crash (APPLE-MACOS-19T:
+    /// nine accumulated 10-thread groups).
+    private let childChannels = ChildChannelRegistry()
 
     public init() {}
 
@@ -69,10 +75,10 @@ public actor OsaurusServer: Sendable {
         _ config: Config = .init(),
         serverConfiguration: ServerConfiguration = .default
     ) async throws {
-        guard group == nil, channel == nil else { return }
+        guard channel == nil else { return }
 
-        let threads = ProcessInfo.processInfo.activeProcessorCount
-        let group = MultiThreadedEventLoopGroup(numberOfThreads: threads)
+        let group = SharedEventLoopGroups.server
+        let childChannels = self.childChannels
 
         let validatorSnapshot = LazyAPIKeyValidatorSnapshot {
             Self.buildValidator(agentIndex: config.agentIndex)
@@ -83,7 +89,8 @@ public actor OsaurusServer: Sendable {
             .serverChannelOption(ChannelOptions.backlog, value: 256)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer { channel in
-                channel.pipeline.configureHTTPServerPipeline().flatMap {
+                childChannels.track(channel)
+                return channel.pipeline.configureHTTPServerPipeline().flatMap {
                     // Outbound encryption stage for Secure Channel calls.
                     // Must sit between the HTTP encoder and HTTPHandler so
                     // every response part the routes write can be sealed.
@@ -116,68 +123,48 @@ public actor OsaurusServer: Sendable {
             .childChannelOption(ChannelOptions.recvAllocator, value: AdaptiveRecvByteBufferAllocator())
 
         let ch = try await bootstrap.bind(host: config.host, port: config.port).get()
-        self.group = group
         self.channel = ch
         print("[Osaurus] OsaurusServer started on http://\(config.host):\(config.port)")
     }
 
-    /// Stop the server.
+    /// Stop the server: close the listener, then close the per-connection
+    /// child channels. The event-loop group is process-shared and is never
+    /// shut down here, so this cannot leak threads/descriptors across
+    /// restarts (APPLE-MACOS-19T) and cannot trip NIO's "EventLoopGroup is
+    /// still running" deinit precondition at exit (issue #860).
     ///
-    /// - Returns: `true` if the `EventLoopGroup` fully shut down (and was
-    ///   released), `false` if the graceful shutdown exceeded its budget and
-    ///   the group was deliberately left rooted to finish on its own. Callers
-    ///   on the quit path use this to decide whether it is safe to drop their
-    ///   reference to the actor (issue #860: dropping a still-running group
-    ///   trips NIO's `EventLoopGroup is still running` precondition at exit).
+    /// - Parameter gracefully: when `true`, in-flight connections get up to
+    ///   8 seconds to finish before being force-closed; the quit path passes
+    ///   `false` for a bounded 1-second drain.
+    /// - Returns: `true` always (kept for call-site compatibility — with a
+    ///   shared group there is no longer a "shutdown still in flight" state
+    ///   that requires keeping the actor rooted).
     @discardableResult
     public func stop(gracefully: Bool = true) async -> Bool {
         if let ch = self.channel {
             _ = try? await ch.close()
             self.channel = nil
         }
-        if let g = self.group {
-            // `shutdownGracefully` waits for every in-flight child channel
-            // to close. A long-lived SSE stream whose producer hasn't been
-            // cancelled yet can keep one open, so on the quit path (where
-            // callers pass `gracefully: false`) we cap the wait. On timeout
-            // we DON'T null `group`: the shutdown is still in flight and the
-            // group is rooted by the `ServerController` singleton, so it is
-            // never deinitialized at process exit — that avoids the NIO
-            // "EventLoopGroup is still running" precondition (issue #860)
-            // while still unblocking quit.
-            let budget: Double = gracefully ? 8.0 : 2.5
-            let completed = await withCheckedContinuation {
-                (cont: CheckedContinuation<Bool, Never>) in
-                let resolved = OSAllocatedUnfairLock(initialState: false)
-                @Sendable func claim() -> Bool {
-                    resolved.withLock { done in
-                        if done { return false }
-                        done = true
-                        return true
-                    }
-                }
-                g.shutdownGracefully { _ in
-                    if claim() { cont.resume(returning: true) }
-                }
-                Task {
-                    try? await Task.sleep(nanoseconds: UInt64(budget * 1_000_000_000))
-                    if claim() { cont.resume(returning: false) }
-                }
-            }
-            if completed {
-                self.group = nil
-                print("[Osaurus] OsaurusServer stopped")
-                return true
-            } else {
-                print(
-                    "[Osaurus] OsaurusServer graceful shutdown exceeded \(budget)s budget; proceeding (group left to finish)"
-                )
-                return false
-            }
-        } else {
-            print("[Osaurus] OsaurusServer stopped")
-            return true
+        // Give in-flight connections a bounded window to complete on their
+        // own (an SSE stream mid-generation, a response mid-flush), then
+        // force-close whatever remains. Closing is idempotent, so racing a
+        // natural close is fine.
+        let budget: Double = gracefully ? 8.0 : 1.0
+        let deadline = Date().addingTimeInterval(budget)
+        while !childChannels.isEmpty, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 100_000_000)
         }
+        let remaining = childChannels.drain()
+        if !remaining.isEmpty {
+            print(
+                "[Osaurus] OsaurusServer force-closing \(remaining.count) connection(s) after \(budget)s drain budget"
+            )
+            for ch in remaining {
+                ch.close(promise: nil)
+            }
+        }
+        print("[Osaurus] OsaurusServer stopped")
+        return true
     }
 
     // MARK: - Validator Construction
@@ -237,6 +224,49 @@ public actor OsaurusServer: Sendable {
             print("[Osaurus] Failed to build validator: \(error). Falling back to empty validator.")
             return .empty
         }
+    }
+}
+
+/// Tracks the live child (per-connection) channels of one server instance so
+/// `stop` can drain and close them explicitly. Needed because the event-loop
+/// group is process-shared: `shutdownGracefully` — which used to close
+/// stragglers — is never called anymore.
+final class ChildChannelRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var channels: [ObjectIdentifier: Channel] = [:]
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return channels.count
+    }
+
+    var isEmpty: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return channels.isEmpty
+    }
+
+    func track(_ channel: Channel) {
+        let id = ObjectIdentifier(channel)
+        lock.lock()
+        channels[id] = channel
+        lock.unlock()
+        channel.closeFuture.whenComplete { [weak self] _ in
+            guard let self else { return }
+            self.lock.lock()
+            self.channels.removeValue(forKey: id)
+            self.lock.unlock()
+        }
+    }
+
+    /// Remove and return every tracked channel (they are about to be closed).
+    func drain() -> [Channel] {
+        lock.lock()
+        defer { lock.unlock() }
+        let all = Array(channels.values)
+        channels.removeAll()
+        return all
     }
 }
 

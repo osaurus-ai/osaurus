@@ -213,21 +213,18 @@ public final class OAuthLoopbackServer: @unchecked Sendable {
     /// Await the authorization callback with a hard deadline. If the browser
     /// flow is abandoned (tab closed, user walks away), this throws
     /// `OAuthLoopbackError.callbackTimeout` after `timeout` seconds instead
-    /// of suspending forever. The losing branch is cancelled either way —
-    /// the unbounded `waitForCallback()` resolves through its cancellation
+    /// of suspending forever. `valueWithDeadline` never re-joins the losing
+    /// branch, so even a wait whose cancellation handler misbehaves cannot
+    /// keep the caller blocked past the deadline; the unbounded
+    /// `waitForCallback()` still resolves through its own cancellation
     /// handler, so no continuation is stranded.
     public func waitForCallback(timeout: TimeInterval) async throws -> OAuthCallbackResult {
-        try await withThrowingTaskGroup(of: OAuthCallbackResult.self) { group in
-            group.addTask { try await self.waitForCallback() }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                throw OAuthLoopbackError.callbackTimeout
+        do {
+            return try await valueWithDeadline(seconds: timeout, operationName: "OAuth callback") {
+                try await self.waitForCallback()
             }
-            guard let result = try await group.next() else {
-                throw OAuthLoopbackError.callbackTimeout
-            }
-            group.cancelAll()
-            return result
+        } catch is DeadlineExceededError {
+            throw OAuthLoopbackError.callbackTimeout
         }
     }
 

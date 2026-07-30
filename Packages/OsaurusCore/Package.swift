@@ -6,7 +6,13 @@ let package = Package(
     defaultLocalization: "en",
     platforms: [.macOS(.v15)],
     products: [
-        .library(name: "OsaurusCore", targets: ["OsaurusCore"])
+        .library(name: "OsaurusCore", targets: ["OsaurusCore"]),
+        // Out-of-process native plugin host: loads one plugin dylib via the
+        // frozen C ABI and executes it over stdio JSON-RPC so the app can
+        // kill/restart wedged accessibility/automation plugin code instead
+        // of hanging in-process. See `PluginHost/main.swift` and
+        // `Services/Plugin/PluginProcessHost.swift`.
+        .executable(name: "osaurus-plugin-host", targets: ["osaurus-plugin-host"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.88.0"),
@@ -277,7 +283,7 @@ let package = Package(
                 .product(name: "Sentry", package: "sentry-cocoa"),
             ],
             path: ".",
-            exclude: ["Tests", "SQLCipher", "ObjCSupport"],
+            exclude: ["Tests", "SQLCipher", "ObjCSupport", "PluginHost"],
             resources: [.process("Resources")],
             swiftSettings: [
                 // `SystemLanguageModel.contextSize` only exists in the macOS 26.4+
@@ -287,11 +293,22 @@ let package = Package(
                 // .define("HAS_FM_CONTEXT_SIZE"),
             ]
         ),
+        // Dependency-free (Foundation-only) helper executable: it must never
+        // link the app graph, so a wedged app subsystem can't wedge the
+        // helper and the binary stays small enough to respawn instantly.
+        .executableTarget(
+            name: "osaurus-plugin-host",
+            path: "PluginHost"
+        ),
         .testTarget(
             name: "OsaurusCoreTests",
             dependencies: [
                 "OsaurusCore",
                 "OsaurusSQLCipher",
+                // Ensures the helper binary is built into the products
+                // directory for every test lane (swift test AND xcodebuild),
+                // so PluginProcessHostTests can spawn the real executable.
+                "osaurus-plugin-host",
                 .product(name: "VMLXJinja", package: "vmlx-swift"),
                 .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "VecturaKit", package: "VecturaKit"),
