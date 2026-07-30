@@ -109,7 +109,7 @@ let package = Package(
         // subagent waves against the engine that actually owns admission.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "84612e143d2e51da865316dbc49167530a1717ad"
+            revision: "439f53694f3d630663e97612c264ae73e499121a"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
