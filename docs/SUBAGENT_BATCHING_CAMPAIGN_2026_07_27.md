@@ -2,29 +2,36 @@
 
 ## Status
 
-`MERGE CANDIDATE` — runtime/test source was frozen at
-`ebdd229381d6ed12abcfced407bc75e00c2b4543`, rebased onto current upstream,
-and passed the full Core and OsaurusEvals packages plus fresh Release-app
-acceptance runs. The live scope covers settings persistence,
-permission, configured fan-out, same-model batching, different-local
-handoff/restore, mixed local/OpenAI-compatible-provider execution,
-cancellation, strict RAM refusal, thinking on/off, interleaved reasoning/tool
-lifecycle, terminal unlock, and follow-up turns.
+`PARTIAL — AFFECTED FOLLOW-UP PROVEN; BROAD MODEL EVAL SETUP-BLOCKED` — the
+original batching campaign merged in PR #2221. The post-merge shared-concurrency
+follow-up was tested at behavioral source/test SHA
+`cf97ceddfc5250c28fe6ee5d78e34df3f45f5662`; its patch-identical current
+behavioral commit is `f08d660fc49f96f1d87125190f4c2818bcbd2640` after rebasing over an
+appcast-only upstream commit. It has fresh focused, full-Core,
+deterministic-eval, exact-pin vMLX, and isolated Release-app evidence. The
+affected live scope covers bidirectional Settings synchronization
+and relaunch persistence, Always Allow persistence, same-model concurrency,
+different-local handoff/restore, mixed local/OpenAI-compatible-provider work,
+active remote cancellation, strict RAM refusal, terminal unlock, and exact
+follow-up turns.
 
-Two visible local-model content misses are retained below and are not described
-as runtime passes: one thinking-on parent emitted a false intermediate status,
-and the final RAM-refusal chat retried a disallowed sibling target then repeated
-a stale exact-response token on follow-up. In both cases tool authorization,
-admission/cancellation, card settlement, Stop removal, and input unlock behaved
-correctly. The provider proof uses a deterministic no-auth localhost emulator;
-it does not claim an authenticated public-cloud account test and did not read
-or copy Codex credentials.
+The final full model-backed AgentLoop/AgentLoopFrontier invocation did not see
+the local Nanbeige registration and therefore produced setup errors before
+model execution. Those rows are recorded as `BLOCKED`, not as product failures
+or passes, and this document does not describe the follow-up as release-ready
+or regression-free. Earlier model-backed rows remain historical evidence only.
+The provider proof uses a deterministic no-auth localhost emulator; it does not
+claim an authenticated public-cloud account test and did not read or copy Codex
+credentials.
 
-- Frozen runtime/test source: `ebdd229381d6ed12abcfced407bc75e00c2b4543`.
-- Rebased upstream base: `f013ccc7ac109aa5fba7c22c1174cfb9022e3150`.
-- vMLX Swift pin: `84612e143d2e51da865316dbc49167530a1717ad`
-- Worktree: `/private/tmp/osaurus-subagent-batching-complete-20260727`
-- Branch: `codex/subagent-batching-complete-20260727`
+- Tested behavioral source/test SHA: `cf97ceddfc5250c28fe6ee5d78e34df3f45f5662`.
+- Patch-identical current behavioral commit: `f08d660fc49f96f1d87125190f4c2818bcbd2640`.
+- Rebased upstream base: `a83f667f944fcea918141b743348f5d27aa6c4d0`.
+- vMLX Swift pin: `439f53694f3d630663e97612c264ae73e499121a`.
+- Worktree: `/private/tmp/osaurus-subagent-postmerge-cleanup-20260729`.
+- Branch: `codex/subagent-postmerge-cleanup-20260729`.
+- A later documentation-only commit may advance the PR head; the tested
+  behavioral tree remains the SHA above.
 
 This document separates current-source trace evidence, historical proof tied to
 older commits, current automated evidence, and current live Release-app proof.
@@ -910,3 +917,70 @@ Fresh evidence at this checkpoint:
 | Spawn-batch fixture/scorer | PASS (automated only) | 11/11; log SHA-256 `bd0b4327321ffe5bfd97778a6ed968c2225010820d2091178e24abca46dfd29b`. The different-local fixture now declares Continuous Batching on and canonical server maximum two. |
 | Different-local Nanbeige -> Ornith handoff/restore | PASS (model-backed) | One `spawn_batch`, two ordered successes, `max_parallel=2`, two serialized one-job local waves, Nanbeige parent restored, no tool errors; 30.5 tok/s, TTFT 4.871 s, peak physical footprint 3,883 MB, disk-L2 +1 hit/+1 store. Report SHA-256 `3f4c3483614699403bb9aa40d86710d925bf724c22eff3850003071df7ab5e55`; log SHA-256 `eaff0b4d539e25f061a3e1103681fa4362f7f55493b22c9e399db267447d2e5c`. |
 | Same-model concurrent batch repetition | PASS RUNTIME / BATCH-29 LIVE UI PENDING | The aggregate repeat passed 3/3 and three separately persisted trials also passed: one call, two concurrent child slots in one `[2]` subwave, ordered 2/2 settlement, no tool errors, cache available, and one non-duplicated parent final in each retained trial. Aggregate report SHA-256 `423cbf880e4e220e8037e0a9ee6db1ec14a5f639e6317431b44405fc1677e07c`; individual report hashes `876755aca315e8f1608163227948da81109994163d06069ff4d7523aaa9eee33`, `5e13865f85a67b72904790f2f234f88fc59063ea6e40e0a0fc02ed440cb89f95`, and `920bee23c41d566ff6789cfb45baf91c298b0caba786758027910c17fcf10b40`. The earlier duplicated final remains a real recorded occurrence; six clean current-source trials do not replace the required Release UI lifecycle row. |
+
+### Final follow-up freeze — `cf97cedd`
+
+The follow-up was tested at behavioral SHA
+`cf97ceddfc5250c28fe6ee5d78e34df3f45f5662`, then rebased patch-identically
+onto Osaurus `a83f667f944fcea918141b743348f5d27aa6c4d0` as current behavioral commit
+`f08d660fc49f96f1d87125190f4c2818bcbd2640`. `git range-diff` matched all ten
+product/eval commits exactly; the final proof-only commit changed only to record
+the new base. The sole new upstream commit only added `docs/appcast.xml`, so no
+product source, configuration, dependency, or test changed and the matrix was
+not rerun. All four Osaurus dependency surfaces resolve vMLX Swift
+`439f53694f3d630663e97612c264ae73e499121a`; the visible serialized
+prefill/completion and SMELT controls remain removed, and the unused SMELT
+runtime policy remains disabled rather than being represented as active.
+
+Current-SHA automated evidence:
+
+| Row | Result | Evidence |
+|---|---|---|
+| Focused concurrency/settings/runtime suites | PASS | 167/167 across 5 suites; `/private/tmp/osaurus-shared-concurrency-focused-cf97cedd.log`; SHA-256 `2b4ceea9f247c42f6823666f4bd6290fd9f27436602d0bed1d079f171c085759` |
+| Full OsaurusCore package | PASS | 7,104/7,104 across 786 suites; `/private/tmp/osaurus-shared-concurrency-full-cf97cedd.log`; SHA-256 `b32586343b17b54f871d90dd0cfd9268240e99463d9ed47aaa63efbc9c4aea63` |
+| Full deterministic OsaurusEvals harness | PASS | 299/299 across 36 suites; `/private/tmp/osaurus-shared-concurrency-evals-harness-cf97cedd.log`; SHA-256 `b5c6e5c8884aa5e6fd13344cec4323116cd9a808ba6e9c80b6c35e6c2ea9e505` |
+| Deterministic delegation floor | PASS | 101/101; `/private/tmp/osaurus-shared-concurrency-evals-deterministic-cf97cedd.log`; SHA-256 `b49f2b4241dd7f949515917d13ca2ebf31bd597e4d56d248a4cddcb1259b4c2c` |
+| Exact-pin vMLX model registration, prefill, parsers, isolation, and cache | PASS | Nanbeige 6/6; chunked prefill 9/9; reasoning/tool parsers 335/335; mode isolation 9/9; cache coordinator 13/13 plus quota; cache topology 42/42; general cache 105/105; paged/disk 19/19. Log SHA-256 values respectively: `9224bca94b818b2d78cd179e089b736f11e00787e2c0e9ba2f7c4135b86d4196`, `2d9423004a1f2b9a2c8c2e85146b404867d10a02f8522533c9da224a304893d7`, `88d59c126db8d5d1345863dcf0cc8a2c4e26cbe6a2ce0420382babc8f7a1e16d`, `4ef058ab22389c0f020105536f7830ef098ca30059de3adca22c7047f38bd243`, `74f03a75b5fd008bf3ef5db0199955ca4c806b2e1a84c26337db1ec8a0eb1` plus quota `b8ed7c927159c196e68c12a8214f5b336e5377c5eb5bd70582191394075a2b20`, `c8b1f5e402769a19a520465daffafbb7d969c6cf328be949c9fbfb6362b29070`, `02a7888892b429b712979bc0e4e12f11fe27f1f4f1dbb54151eb3b9344096484`, and `e9b70c74e06ada5b3e98b257862697e22e9c91c97fb61fe676e9bb8974da1390`. |
+| Full current-SHA model-backed AgentLoop | BLOCKED — evaluator registration setup | 40 cases: 1 passed, 36 errored before model execution, 3 skipped. Every attempted model row reported `Model 'JANGQ-AI/Nanbeige4.2-3B-JANG_4M' is not installed or registered with any provider.` Report `/private/tmp/osaurus-shared-concurrency-evals-model-cf97cedd/cf97cedd-AgentLoop.json`, SHA-256 `2f185b6695624b3dbdec87ac98b4248d262ccedd907b008a8cb11b3e34455023`. |
+| Full current-SHA model-backed AgentLoopFrontier | BLOCKED — evaluator registration setup | 39/39 errored before model execution with the same registration error. Report `/private/tmp/osaurus-shared-concurrency-evals-model-cf97cedd/cf97cedd-AgentLoopFrontier.json`, SHA-256 `0637f37fe7a825b979de205bcbe08dc667d9c443edc0fc6d7560f30a2ed97610`. Combined raw log `/private/tmp/osaurus-shared-concurrency-agentloop-frontier-cf97cedd.log`, SHA-256 `6bed9da340e35428290297ffac7c574dd8dc3d14531f10de6f86473e2cc12cd6`. This is not counted as a pass and was not rerun. |
+
+The exact Release development app was built from `cf97cedd` at
+`/private/tmp/osaurus-batching-ui-cf97cedd-DerivedData/Build/Products/Release/osaurus.app`.
+The build log SHA-256 is
+`4e9183300222542ed9b0161083a02e9d7658439e3303336765f1ac3042f4d07a`,
+the executable SHA-256 is
+`4a2acdd5034d587372a8619236b71f8c6fac2dcc3f50b3586ab1dd9a2cb06512`,
+strict code-sign verification passed, and the CDHash is
+`907ccd94e09bd8a9a1add9b1d1e8aad0f578db54`. It ran under an isolated test
+root with the real local model directory and keychain disabled; the installed
+production app was not modified or stopped.
+
+Current-SHA live Release-app evidence:
+
+| Row | Result | Evidence |
+|---|---|---|
+| Shared Settings authority and persistence | PASS | Spawn maximum `2 -> 3` immediately changed Server Concurrent Sessions to 3; Server `3 -> 2` immediately changed the Spawn summary to 2. Save, navigation, and relaunch preserved the canonical value. `Always Allow` also persisted. Key screenshots `04`, `05`, `06`, and `07` in the manifest below. |
+| Same-model local batch | PASS | Two Nanbeige workers completed with exact ordered results in one concurrent wave. Telemetry reported configured, engine, and effective capacity 2 with process active high-watermark 2; the parent and a separate follow-up completed exactly, Stop disappeared, and input unlocked. Key screenshots `10` and `11`. This closes BATCH-29 for the affected Release UI lifecycle without output masking. |
+| Different-local handoff/restore | PASS | Nanbeige -> Ornith -> Nanbeige ran as honest serialized local waves, returned exact ordered results, restored the parent model, completed the parent, and completed an exact separate follow-up. Key screenshots `16` and `17`. |
+| Provider discovery and mixed local/remote batch | PASS — localhost emulator | The no-auth OpenAI-compatible localhost provider connected and exposed `proof-remote-echo`. One Nanbeige plus one remote child returned exact ordered results; the parent and follow-up completed exactly. This proves the provider contract without claiming authenticated public-cloud coverage. Key screenshots `18`, `19`, and `20`. |
+| Stop during active remote child | PASS | A deliberately delayed 60-second remote child was visibly active when parent Stop was clicked. The tool settled with `cancelled with the parent run`, `retryable:false`; Stop disappeared, input unlocked, and the next turn completed exactly. Key screenshots `22` through `25`. |
+| Strict RAM-safety refusal | PASS | Custom Strict 10% was saved. A first 35B target that fit was correctly admitted rather than falsely refused; the larger HY-3 request was then rejected before load because it needed about 130.5 GB with about 78.7 GB available after freeing the chat model. Loaded-model count remained 1 before/after; the card settled and the follow-up completed exactly. Key screenshots `27`, `29`, `30`, `31`, and `32`. |
+
+The live evidence directory is
+`/private/tmp/osaurus-batching-ui-cf97cedd-evidence`; its 32 JPEGs are listed
+in `SHA256SUMS.txt`, whose SHA-256 is
+`b2eb1e2eaa8687319ef0b1640f39dc20459cce6b418315f5524e4587fd5dd8a7`.
+Images are local evidence only and must not be uploaded to the repository.
+The first non-hermetic launch omitted the keychain-disable environment and a
+follow-up spent time in `SecItemCopyMatching`; the correctly isolated repeat
+passed. The diagnostic sample is
+`/private/tmp/osaurus-batching-ui-cf97cedd-followup-hang.sample.txt`, SHA-256
+`cba9cbb36ef56f8be46305d763bbb55cf4c9ec152f7a89f938c4de1282619639`.
+
+The reported Ornith database/tool-output exclamation-loop transcript remains
+documented as open and unreproduced in
+`GEMMA_BONSAI_EMERGENCY_PROOF_2026-07-15.md`; it is not silently counted as
+fixed by this concurrency follow-up. The existing cache/parser/prefill rows
+above remain separate evidence: this follow-up did not introduce a second
+spawn cache and does not infer longest-prefix restoration merely from a UI
+color or a setting toggle.
