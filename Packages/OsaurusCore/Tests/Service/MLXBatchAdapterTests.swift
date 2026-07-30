@@ -2466,6 +2466,24 @@ struct MLXBatchAdapterTests {
             ).count - 1 == 2)
     }
 
+    @Test func requiredToolChoiceRequestsFreshDiskBackedSelection() throws {
+        let coreRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: coreRoot.appendingPathComponent(
+                "Services/ModelRuntime/MLXBatchAdapter.swift"
+            ),
+            encoding: .utf8)
+        let prepareInput = try #require(source.range(of: "private static func prepareInput("))
+        let preparedInputSource = source[prepareInput.lowerBound...]
+
+        #expect(preparedInputSource.contains("if toolChoiceRequiresLocalCall(toolChoice)"))
+        #expect(preparedInputSource.contains(
+            "lmInput = lmInput.withCacheRestorePolicy(.freshRequiredToolSelection)"))
+    }
+
     /// VLM processors (e.g. Gemma 4) never populate `cachePrefixTokenCounts`,
     /// which is exactly the live "warm dot but prefill from 0" failure: the
     /// warm-up stored a full prompt ending in generation tokens that the real

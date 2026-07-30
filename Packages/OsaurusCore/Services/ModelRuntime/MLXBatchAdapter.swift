@@ -1976,6 +1976,10 @@ struct MLXBatchAdapter {
                 trace?.mark("batch_tokenization_done")
             }
 
+            if toolChoiceRequiresLocalCall(toolChoice) {
+                lmInput = lmInput.withCacheRestorePolicy(.freshRequiredToolSelection)
+            }
+
             let tokens =
                 lmInput.text.tokenIds
                 ?? MLXCacheIOLock.withSerializedMLXCacheIO {
