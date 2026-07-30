@@ -1,13 +1,12 @@
 # Runtime follow-ups — 2026-07-29
 
-Status: `PARTIAL` — fixes for the four reported issues and the final vMLX
-continuation regressions are committed in the coordinated Osaurus and vMLX
-branches. Focused source/runtime tests, the full deterministic harness, the
-raw Ornith AgentLoop/AgentLoopFrontier lanes, and the affected exact-pin
-isolated Release live-UI rows are complete. Committing and pushing this
-evidence does not alter the tested runtime code; fresh GitHub checks/review on
-the resulting PR heads and the merge audit remain. This work is therefore not
-yet described as release-ready or regression-free.
+Status: `PARTIAL` — vMLX PR #196 is merged and Osaurus contains the four
+reported fixes plus the final cache-continuation and mixed-quant integration.
+Focused source/runtime tests, the full deterministic harness, the raw Ornith
+AgentLoop/AgentLoopFrontier lanes, and the affected exact-pin isolated Release
+live-UI rows are complete. Committing and pushing this evidence does not alter
+the tested runtime code; final Osaurus GitHub checks and the merge audit remain.
+This work is therefore not yet described as release-ready or regression-free.
 
 ## Exact source baseline
 
@@ -15,6 +14,8 @@ yet described as release-ready or regression-free.
 - tested Osaurus runtime code head: `e810eda8a1df72b48cf2eb515e6d3e49522cb504`
 - tested final Osaurus integration head:
   `260668294a7c0ab7ca7417940384f57267331e34`
+- post-main-integration and merged-vMLX-pin runtime/config head:
+  `2acd2dc7652df32c5e6060dbb31d3c18ebab1c65`
 - amended Seatbelt source/test commit:
   `f68057bee7e81c75df41e17757ad75afc6ff4620`
 - baseline Osaurus vMLX pin: `439f53694f3d630663e97612c264ae73e499121a`
@@ -57,6 +58,7 @@ yet described as release-ready or regression-free.
 | Final vMLX cache / mixed-quant / MTP focused lanes | 131/131 passed across 7 suites |
 | Final Osaurus pin / adapter / runtime-policy focused lanes | 186/186 passed across 3 suites |
 | Final exact-pin Osaurus production Release build | passed |
+| Post-main-integration merged-vMLX-pin focused rerun | 186/186 passed across 3 suites |
 
 The exact-pin focused commands covered the Seatbelt integration, Laguna local
 metadata paths, external model discovery, iteration-cap source policy, agent
@@ -557,6 +559,18 @@ Exact automated proof at the final coordinated source heads:
   `f13a1da799a7365383293b79dff6c0cab93902fba6576377869d0d99045e41c9`;
   original executable SHA-256
   `468be9b626bfd4b9da09fdd6a0330c54bf8d63d34194a6454eb69a690c7baea4`.
+
+PR #196 merged as `958eb6bed2e2fd4fde30574141e17a1dce773895`.
+The merged commit and tested PR head have the identical Git tree
+`2a2ea6066737911e521f31e856bfe1e8e53fd7bd`. Osaurus then integrated current
+`main` through `d01aae616176cb0fc885f92166b9fd424eb4f552` and preserved the typed
+iteration-cap decoder when resolving the sole `ChatView.swift` conflict. After
+all four pin surfaces and both guard constants moved to the merged vMLX SHA,
+the same three focused suites passed `186/186` again at Osaurus runtime/config
+head `2acd2dc7652df32c5e6060dbb31d3c18ebab1c65`. Raw log:
+`/private/tmp/osaurus-pr2235-final-evidence/osaurus-focused-2acd2dc7.log`,
+SHA-256
+`1e03edddcd981f56b0152b7a7607554d9969caf2070ce4414446caaa54edad87`.
 
 Final isolated Release Chat UI proof used bundle defaults with no hidden
 sampler overrides:
