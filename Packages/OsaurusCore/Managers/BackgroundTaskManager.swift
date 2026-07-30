@@ -639,6 +639,10 @@ public final class BackgroundTaskManager: ObservableObject {
             }
             return true
         }
+        // Headless conversations follow the agent's current default model
+        // on every turn (no-op for window chats); the retained branch above
+        // gets the same treatment via `context.prepare()`.
+        session.applyAgentDefaultModelForDispatch()
         // `send` clears any clarify pause / stale prompt overlay and starts
         // the next run; the streaming observer transitions the task back to
         // `.running`, so no status write is needed here.

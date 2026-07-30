@@ -996,6 +996,30 @@ final class ChatSession: ObservableObject {
         Task { [weak self] in await self?.refreshContextEstimates() }
     }
 
+    /// For headless dispatched runs (channel / schedule / HTTP / plugin /
+    /// watcher), make the agent's CURRENT default model win over whatever
+    /// the session had persisted. Reattached conversations (e.g. one
+    /// session per Slack room) otherwise pin the model that was selected
+    /// when the session was first created, so changing an agent's default
+    /// model never took effect on ongoing channel conversations — and a
+    /// cold-start fallback pick became permanent. The persisted model stays
+    /// as the fallback when the agent's default isn't available yet (remote
+    /// catalog still loading, model uninstalled). Never touches window
+    /// chats (`source == .chat`), where a manual pick must survive.
+    func applyAgentDefaultModelForDispatch() {
+        guard source != .chat else { return }
+        guard
+            let model = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId),
+            pickerItems.contains(where: { $0.id == model }),
+            selectedModel != model
+        else { return }
+        isLoadingModel = true
+        selectedModel = model
+        loadActiveModelOptions(for: model)
+        applyImageModelDefaults(for: model)
+        isLoadingModel = false
+    }
+
     /// Pick the picker item that best matches the agent's preferred model
     /// (falling back to the first chat-capable item). Wrapped in
     /// `isLoadingModel = true` so the auto-persist sink in `init()` does

@@ -125,6 +125,10 @@ public final class ExecutionContext: ObservableObject {
             chatSession.load(from: pending)
             pendingReattachSession = nil
         }
+        // Headless dispatches follow the agent's current default model on
+        // every turn; the persisted session model is only a fallback. No-op
+        // for window chats (see the method doc).
+        chatSession.applyAgentDefaultModelForDispatch()
     }
 
     /// Begin execution with the given prompt.
