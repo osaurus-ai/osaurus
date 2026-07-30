@@ -367,7 +367,7 @@ struct DiscordSettingsView: View {
             }
 
             if let discovery {
-                Picker(L("Server"), selection: $selectedGuildId) {
+                Picker(L("discord.guild.picker"), selection: $selectedGuildId) {
                     ForEach(discovery.guilds, id: \.id) { guild in
                         Text(guild.name).tag(guild.id)
                     }

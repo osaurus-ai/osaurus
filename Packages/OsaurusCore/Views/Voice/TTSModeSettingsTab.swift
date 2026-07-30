@@ -311,7 +311,7 @@ struct TTSModeSettingsTab: View {
     // MARK: - Remote Server Card
 
     private var remoteServerCard: some View {
-        SettingsSection(title: "Server", icon: "network", anchorId: "voice.tts.remote") {
+        SettingsSection(title: "voice.tts.remote.title", icon: "network", anchorId: "voice.tts.remote") {
             VStack(alignment: .leading, spacing: 16) {
                 labeledField(L("Endpoint")) {
                     TextField(TTSConfiguration.defaultRemoteEndpoint, text: $config.remoteEndpoint)

@@ -63904,6 +63904,47 @@
         }
       }
     },
+    "discord.guild.picker" : {
+      "comment" : "Picker label in Discord channel settings for choosing which Discord server (guild) the bot should act in. Kept separate from the 'Server' key (Osaurus's own local inference server) so locales can use their word for a Discord community.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Server"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Server"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "서버"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务器"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服務器"
+          }
+        }
+      }
+    },
     "Discourage repeats. 1.0 = off; ~1.05–1.15 is typical." : {
       "localizations" : {
         "de" : {
@@ -214592,6 +214633,47 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "適用於任意應用的語音轉文字輸入"
+          }
+        }
+      }
+    },
+    "voice.tts.remote.title" : {
+      "comment" : "Card title for the remote text-to-speech endpoint in Voice settings. Kept separate from the 'Server' key (Osaurus's own local inference server) so locales can name a third-party host without renaming the app's own server.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Server"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Server"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "서버"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务器"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服務器"
           }
         }
       }
