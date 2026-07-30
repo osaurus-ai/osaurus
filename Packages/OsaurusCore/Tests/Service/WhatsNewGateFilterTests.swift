@@ -103,13 +103,28 @@ struct WhatsNewGateFilterTests {
         #expect(release.pages.last?.action == .openBrowserSettings)
     }
 
+    @Test
+    func channelsReleaseOpensSettings() throws {
+        let release = try #require(WhatsNewContent.release(for: "0.22.13"))
+
+        #expect(
+            release.pages.map(\.id) == [
+                "channels-0.22.13:summary",
+                "channels-0.22.13:routing",
+                "channels-0.22.13:control",
+            ]
+        )
+        #expect(release.pages.last?.actionLabel == "Open Channels")
+        #expect(release.pages.last?.action == .openChannelsSettings)
+    }
+
     /// Catalog keeps only the three most recent announcements, sorted
     /// oldest → newest so `latest` (== `releases.last`) stays correct.
     @Test
     func catalogContainsOnlyRetainedReleasesInOrder() {
         #expect(
-            WhatsNewContent.releases.map(\.version) == ["0.21.11", "0.22.7", "0.22.9"]
+            WhatsNewContent.releases.map(\.version) == ["0.22.7", "0.22.9", "0.22.13"]
         )
-        #expect(WhatsNewContent.latest?.version == "0.22.9")
+        #expect(WhatsNewContent.latest?.version == "0.22.13")
     }
 }
