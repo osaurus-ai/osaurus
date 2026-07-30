@@ -1,17 +1,20 @@
 # Runtime follow-ups — 2026-07-29
 
-Status: `PARTIAL` — fixes for the four reported issues are committed in the
-coordinated Osaurus and vMLX branches. Focused source/runtime tests, the full
-deterministic harness, the raw Ornith AgentLoop/AgentLoopFrontier lanes, and
-the affected exact-pin isolated Release live-UI rows are complete. Committing
-and pushing this evidence does not alter the tested runtime code; fresh GitHub
-checks/review on the resulting PR head and the merge audit remain. This work
-is therefore not yet described as release-ready or regression-free.
+Status: `PARTIAL` — fixes for the four reported issues and the final vMLX
+continuation regressions are committed in the coordinated Osaurus and vMLX
+branches. Focused source/runtime tests, the full deterministic harness, the
+raw Ornith AgentLoop/AgentLoopFrontier lanes, and the affected exact-pin
+isolated Release live-UI rows are complete. Committing and pushing this
+evidence does not alter the tested runtime code; fresh GitHub checks/review on
+the resulting PR heads and the merge audit remain. This work is therefore not
+yet described as release-ready or regression-free.
 
 ## Exact source baseline
 
 - Osaurus baseline: `f33c9eca144a84beb4bbde705af649bed060acf8`
 - tested Osaurus runtime code head: `e810eda8a1df72b48cf2eb515e6d3e49522cb504`
+- tested final Osaurus integration head:
+  `260668294a7c0ab7ca7417940384f57267331e34`
 - amended Seatbelt source/test commit:
   `f68057bee7e81c75df41e17757ad75afc6ff4620`
 - baseline Osaurus vMLX pin: `439f53694f3d630663e97612c264ae73e499121a`
@@ -26,6 +29,7 @@ is therefore not yet described as release-ready or regression-free.
 - Local bundles:
   - `/Users/eric/models/JANGQ-AI/Ornith-1.0-9B-JANG_4M`
   - `/Users/eric/models/JANGQ-AI/Ornith-1.0-9B-MXFP8`
+  - `/Users/eric/models/OsaurusAI/Raptor-1.0-16B-A3B-qat-JANG_4M-L12c`
   - `/Users/eric/models/dealign.ai/Laguna-S-2.1-JANG_2L-CRACK`
   - `/Users/eric/models/dealign.ai/Laguna-S-2.1-JANG_4M-CRACK`
   - `/Users/eric/models/dealign.ai/Laguna-S-2.1-JANG_6M-CRACK`
@@ -48,6 +52,9 @@ is therefore not yet described as release-ready or regression-free.
 | Ornith local `AgentLoop` raw lane | 33/40 passed; 4 failed; 3 skipped; 0 errored |
 | Ornith local `AgentLoopFrontier` raw lane | 21/39 passed; 18 failed; 0 skipped; 0 errored |
 | OsaurusCore production Release build | passed in 528.55 seconds |
+| Final vMLX cache / mixed-quant / MTP focused lanes | 131/131 passed across 7 suites |
+| Final Osaurus pin / adapter / runtime-policy focused lanes | 186/186 passed across 3 suites |
+| Final exact-pin Osaurus production Release build | passed |
 
 The exact-pin focused commands covered the Seatbelt integration, Laguna local
 metadata paths, external model discovery, iteration-cap source policy, agent
@@ -508,6 +515,82 @@ Final-head Settings/UI proof used the same isolated Release executable:
   68,093,609,576, and 96,480,659,088 bytes). A shallow sum of all files is
   slightly larger because it also includes bundle metadata; the UI correctly
   reports authoritative weight size without recursive UI-time scanning.
+
+## 5. Final cache continuation and mixed-group runtime fixes
+
+The cache follow-up and reported Raptor mixed-quant failure were fixed in the
+same vMLX continuation PR rather than left as test-only findings. PR #196 at
+tested head `0d54c2517fd39cc5781df6d44942a44b36615c6a` contains four directly
+exercised contracts:
+
+- caller-initiated warm-up uses the largest compatible prefix and persists a
+  reusable checkpoint without generating throwaway output tokens;
+- mixed JANG bundles normalize `model.`-prefixed quantization overrides and
+  apply each module's effective `bits` and `group_size` both when deriving
+  `inFeatures = scalesLastDimension * groupSize` and when deciding whether a
+  tensor requires quantization;
+- a forced required-tool turn does not accept disk-restored sampled output as
+  a fresh tool selection and instead samples the required selection anew;
+- recurrent/hybrid topologies no longer persist an unsafe exact-full-prompt
+  warm-up state. They retain the processor-proven stable `N-1` seed, while
+  non-recurrent topologies may retain the exact full prompt.
+
+Exact automated proof at the final coordinated source heads:
+
+- vMLX: `131/131` passed across seven cache, quantization, batch, and native-MTP
+  focused suites. Raw log:
+  `/private/tmp/osaurus-pr2235-final-evidence/vmlx-focused-0d54c251.log`,
+  SHA-256
+  `78b7738082b91481193a329434ea24f34c4cad9a68816c4b8b71624c7a9596ac`.
+- Osaurus: `186/186` passed across `MLXBatchAdapterTests`,
+  `RuntimePolicySourceTests`, and `ImageGenerationBridgeContractTests` at
+  Osaurus `260668294a7c0ab7ca7417940384f57267331e34` pinned to vMLX
+  `0d54c2517fd39cc5781df6d44942a44b36615c6a`. Raw log:
+  `/private/tmp/osaurus-pr2235-final-evidence/osaurus-focused-0d54c251.log`,
+  SHA-256
+  `b2a9cabc24d7e5ef14def60067a78307448e07bc74ee8a644cb273395e3889bd`.
+- The exact-pin production Release app also built successfully. Raw log:
+  `/private/tmp/osaurus-pr2235-final-evidence/osaurus-release-26066829-0d54c251.log`,
+  SHA-256
+  `f13a1da799a7365383293b79dff6c0cab93902fba6576377869d0d99045e41c9`;
+  original executable SHA-256
+  `468be9b626bfd4b9da09fdd6a0330c54bf8d63d34194a6454eb69a690c7baea4`.
+
+Final isolated Release Chat UI proof used bundle defaults with no hidden
+sampler overrides:
+
+- Ornith JANG_4M, Thinking off: one sandbox card settled and the final was
+  exactly `ORNITH_OFF=71` (TTFT 1.63 s, 75.7 tok/s, 6 output tokens). The
+  follow-up also settled and finalized exactly `ORNITH_FOLLOW=72` (TTFT
+  0.32 s, 76.6 tok/s, 6 output tokens). Stop disappeared and input unlocked
+  after both turns.
+- After visibly enabling Thinking, the warm-up request contained 4,089 prompt
+  tokens but persisted only the stable recurrent boundary at 3,616; it did not
+  create an unsafe exact-4,089 entry. The next turn closed both reasoning
+  cards, settled its sandbox card, continued to a coherent final containing
+  `ORNITH_REASONING=73`, removed Stop, and unlocked input (TTFT 0.31 s,
+  98.3 tok/s, 48 output tokens). It did not replay the earlier
+  `ORNITH_FOLLOW=72` output. The model added one explanatory sentence before
+  the requested token, so this row proves lifecycle and stale-replay safety,
+  not exact-only formatting.
+- Raptor L12c first and follow-up turns each settled one sandbox card and
+  finalized exactly `RAPTOR_MIXED=81` and `RAPTOR_FOLLOW=82`, respectively.
+  TTFT was 0.80 / 0.39 s and decode was 87.0 / 86.7 tok/s. Both turns removed
+  Stop and unlocked input with no shape mismatch or unsupported-model error.
+  The loader reported top-level `(bits=8, group_size=64)` plus 2,555 merged,
+  359 inferred, and 439 explicit per-module overrides with a 2,048 hidden-size
+  hint, proving that the expert `bits=4, group_size=128` grid was applied
+  independently of the non-expert default. Steady post-turn physical footprint
+  was 8,167,673,168 bytes. The process peak is intentionally not attributed to
+  this row because an accidental earlier W4A16 selection contaminated it.
+
+The final screenshots are local-only evidence under
+`/private/tmp/osaurus-pr2235-final-evidence/`; none are committed or uploaded
+to GitHub. Their SHA-256 values are
+`9325cde1f9a455e4120b5feed29536f3aa014816780cde317e57d3052e0d940a`,
+`599bfcc3e63df9a366956e2d2d1ab32378cfceba2930f4068e35a15665b49594`,
+`a8cd691de1a3b85a7a3d21e14834f9e54b304771b9654f6d1d9509e9ae722610`,
+and `6a8994bf20ee32c0936c46529bf1b21edfba22c81156c9caafc7e31fc7bf1f40`.
 
 ## Proof boundary
 
