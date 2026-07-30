@@ -58,6 +58,11 @@ sufficient:
   the effective request/runtime state changed. Inspect the complete turn until
   reasoning closes, every tool/subagent card settles, Stop disappears, input
   unlocks, and a follow-up turn completes.
+- During a user-authorized live UI proof, when Osaurus shows its first-use
+  permission popup for a newly exercised tool kind, choose **Always Allow**
+  for that tool in the isolated test agent. Record the granted tool kind and
+  verify the choice survives the intended follow-up/relaunch. This does not
+  authorize unrelated macOS, browser, account, or external-service grants.
 - For batching/delegation specifically, live-test the allowed agent/local/cloud
   target pool, add/remove/save/relaunch, target notes, permission modes, worker
   tools, child budgets, per-agent maximum fan-out, Server Continuous Batching,
