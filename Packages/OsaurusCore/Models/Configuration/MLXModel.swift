@@ -110,6 +110,157 @@ struct MLXModel: Identifiable, Codable {
         )
     }
 
+    /// Preserve catalog/editorial metadata while folding in authoritative
+    /// facts from a bundle that is actually present on disk. This keeps a
+    /// curated card's name, description, release data, and use-case badge,
+    /// but replaces stale Hub download size with the installed bundle's real
+    /// weight size and preserves an external bundle path when applicable.
+    /// The caller must pass output from local/external bundle discovery; this
+    /// intentionally does not consult `isDownloaded`, whose process cache may
+    /// have been populated before the background scan completed.
+    func mergingLocalInstallationMetadata(from local: MLXModel) -> MLXModel {
+        guard id.caseInsensitiveCompare(local.id) == .orderedSame,
+              let localBytes = local.downloadSizeBytes,
+              localBytes > 0
+        else { return self }
+        return MLXModel(
+            id: id,
+            name: name,
+            description: description,
+            downloadURL: downloadURL,
+            isTopSuggestion: isTopSuggestion,
+            downloadSizeBytes: localBytes,
+            modelType: local.modelType ?? modelType,
+            releasedAt: releasedAt,
+            downloads: downloads,
+            useCase: useCase,
+            rootDirectory: local.rootDirectory ?? rootDirectory,
+            bundleDirectory: local.bundleDirectory ?? bundleDirectory,
+            externalSource: local.externalSource ?? externalSource
+        )
+    }
+
+    /// Read a local bundle's authoritative weight size without recursively
+    /// walking it. Hugging Face/JANG indexes expose `metadata.total_size`; if
+    /// that is absent, sum the bounded unique shard map, direct weight file,
+    /// or one shallow directory listing. Callers use this only from existing
+    /// off-main model discovery paths, never from SwiftUI rendering.
+    nonisolated static func localBundleWeightSizeBytes(at directory: URL) -> Int64? {
+        let fm = FileManager.default
+        let root = directory.standardizedFileURL
+        let maximumIndexBytes: Int64 = 16 * 1_024 * 1_024
+
+        func positiveInt64(_ value: Any?) -> Int64? {
+            let result: Int64?
+            switch value {
+            case let number as NSNumber:
+                result = number.int64Value
+            case let string as String:
+                result = Int64(string)
+            default:
+                result = nil
+            }
+            guard let result, result > 0 else { return nil }
+            return result
+        }
+
+        func boundedJSONData(at url: URL) -> Data? {
+            guard let attrs = try? fm.attributesOfItem(atPath: url.path),
+                  let size = attrs[.size] as? NSNumber,
+                  size.int64Value > 0,
+                  size.int64Value <= maximumIndexBytes
+            else { return nil }
+            return try? Data(contentsOf: url, options: [.mappedIfSafe])
+        }
+
+        func containedShardURL(_ name: String) -> URL? {
+            guard !name.isEmpty, !name.hasPrefix("/") else { return nil }
+            let candidate = root.appendingPathComponent(name).standardizedFileURL
+            let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+            guard candidate.path.hasPrefix(rootPrefix) else { return nil }
+            return candidate
+        }
+
+        for indexName in [
+            "model.safetensors.index.json",
+            "pytorch_model.safetensors.index.json",
+        ] {
+            let indexURL = root.appendingPathComponent(indexName)
+            guard let data = boundedJSONData(at: indexURL),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }
+
+            if let metadata = object["metadata"] as? [String: Any],
+               let total = positiveInt64(metadata["total_size"])
+            {
+                return total
+            }
+
+            if let weightMap = object["weight_map"] as? [String: String] {
+                let shardNames = Set(weightMap.values)
+                guard !shardNames.isEmpty, shardNames.count <= 4_096 else { continue }
+                var total: Int64 = 0
+                var complete = true
+                for shardName in shardNames {
+                    guard let shardURL = containedShardURL(shardName) else {
+                        complete = false
+                        break
+                    }
+                    let path = shardURL.path
+                    guard let attrs = try? fm.attributesOfItem(atPath: path),
+                          let size = attrs[.size] as? NSNumber,
+                          size.int64Value > 0
+                    else {
+                        complete = false
+                        break
+                    }
+                    let addition = total.addingReportingOverflow(size.int64Value)
+                    guard !addition.overflow else {
+                        complete = false
+                        break
+                    }
+                    total = addition.partialValue
+                }
+                if complete, total > 0 { return total }
+            }
+        }
+
+        for name in [
+            "model.safetensors",
+            "weights.safetensors",
+            "model-00001-of-00001.safetensors",
+            "weights-00001-of-00001.safetensors",
+        ] {
+            let path = root.appendingPathComponent(name).path
+            if let attrs = try? fm.attributesOfItem(atPath: path),
+               let size = attrs[.size] as? NSNumber,
+               size.int64Value > 0
+            {
+                return size.int64Value
+            }
+        }
+
+        guard let entries = try? fm.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+        var total: Int64 = 0
+        for entry in entries where entry.pathExtension.lowercased() == "safetensors" {
+            guard let values = try? entry.resourceValues(forKeys: [
+                .isRegularFileKey, .fileSizeKey,
+            ]),
+                values.isRegularFile == true,
+                let size = values.fileSize,
+                size > 0
+            else { continue }
+            let addition = total.addingReportingOverflow(Int64(size))
+            guard !addition.overflow else { return nil }
+            total = addition.partialValue
+        }
+        return total > 0 ? total : nil
+    }
+
     /// Returns a copy with the HF Hub `downloads` count populated. Used to
     /// fold in stats from the OsaurusAI org listing onto curated entries
     /// without rewriting their hand-tuned descriptions / Top Pick flags

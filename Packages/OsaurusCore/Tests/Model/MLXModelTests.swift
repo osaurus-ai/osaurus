@@ -53,6 +53,90 @@ struct MLXModelTests {
         #expect(model.isDownloaded == true)
     }
 
+    @Test func localBundleSizeAndExactCatalogMergeUseInstalledMetadata() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osu-local-size-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let local = MLXModel(
+            id: "JANGQ-AI/Laguna-S.2-21B-A3B-JANG_2L",
+            name: "local",
+            description: "detected",
+            downloadURL: "https://example.invalid/local",
+            downloadSizeBytes: 44_298_536_392,
+            modelType: "laguna_s2",
+            rootDirectory: root
+        )
+        try FileManager.default.createDirectory(
+            at: local.localDirectory, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: local.localDirectory.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: local.localDirectory.appendingPathComponent("tokenizer.json"))
+        try Data("{}".utf8).write(
+            to: local.localDirectory.appendingPathComponent("model.safetensors.index.json"))
+
+        let catalog = MLXModel(
+            id: local.id,
+            name: "Laguna S.2 Curated",
+            description: "Curated description",
+            downloadURL: "https://huggingface.co/\(local.id)",
+            isTopSuggestion: true,
+            downloadSizeBytes: 20_432_000_000,
+            modelType: nil,
+            downloads: 123
+        )
+        let merged = catalog.mergingLocalInstallationMetadata(from: local)
+
+        #expect(local.isDownloaded)
+        #expect(merged.downloadSizeBytes == 44_298_536_392)
+        #expect(merged.totalSizeEstimateBytes == 44_298_536_392)
+        #expect(merged.name == catalog.name)
+        #expect(merged.description == catalog.description)
+        #expect(merged.isTopSuggestion)
+        #expect(merged.downloads == 123)
+        #expect(merged.modelType == "laguna_s2")
+    }
+
+    @Test func localBundleSizePrefersSafetensorsIndexMetadata() throws {
+        let bundle = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osu-index-size-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: bundle) }
+        try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+        try Data(#"{"metadata":{"total_size":44298536392},"weight_map":{}}"#.utf8)
+            .write(to: bundle.appendingPathComponent("model.safetensors.index.json"))
+
+        #expect(MLXModel.localBundleWeightSizeBytes(at: bundle) == 44_298_536_392)
+    }
+
+    @Test func localBundleSizeFallsBackFromMalformedIndexToShallowWeights() throws {
+        let bundle = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osu-fallback-size-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: bundle) }
+        try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+        try Data("not-json".utf8)
+            .write(to: bundle.appendingPathComponent("model.safetensors.index.json"))
+        try Data(repeating: 1, count: 17)
+            .write(to: bundle.appendingPathComponent("model-00001-of-00002.safetensors"))
+        try Data(repeating: 2, count: 23)
+            .write(to: bundle.appendingPathComponent("model-00002-of-00002.safetensors"))
+
+        #expect(MLXModel.localBundleWeightSizeBytes(at: bundle) == 40)
+    }
+
+    @Test func localBundleSizeRejectsIndexShardPathsOutsideBundle() throws {
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osu-contained-size-\(UUID().uuidString)")
+        let bundle = parent.appendingPathComponent("bundle")
+        defer { try? FileManager.default.removeItem(at: parent) }
+        try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+        try Data(repeating: 9, count: 99)
+            .write(to: parent.appendingPathComponent("outside.safetensors"))
+        try Data(#"{"weight_map":{"layer":"../outside.safetensors"}}"#.utf8)
+            .write(to: bundle.appendingPathComponent("model.safetensors.index.json"))
+        try Data(repeating: 1, count: 7)
+            .write(to: bundle.appendingPathComponent("inside.safetensors"))
+
+        #expect(MLXModel.localBundleWeightSizeBytes(at: bundle) == 7)
+    }
+
     @Test func step37DownloadedModelIsTextOnlyForPickerEvenWithVisionConfig() async throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)

@@ -343,10 +343,15 @@ struct ModelManagerTests {
         try fm.createDirectory(at: repo, withIntermediateDirectories: true)
         try Data("{}".utf8).write(to: repo.appendingPathComponent("config.json"))
         try Data("{}".utf8).write(to: repo.appendingPathComponent("tokenizer.json"))
-        try Data("{}".utf8).write(to: repo.appendingPathComponent("model.safetensors.index.json"))
+        try Data(#"{"metadata":{"total_size":44298536392}}"#.utf8)
+            .write(to: repo.appendingPathComponent("model.safetensors.index.json"))
 
         let detected = ModelManager.scanLocalModels(at: root)
         #expect(detected.map(\.id).contains("JANGQ-AI/Step-3.7-Flash-JANGTQ_K"))
+        #expect(
+            detected.first { $0.id == "JANGQ-AI/Step-3.7-Flash-JANGTQ_K" }?
+                .downloadSizeBytes == 44_298_536_392
+        )
     }
 
     @Test func scanLocalModels_detectsHighShardCountWithoutFixedMissLoop() async throws {

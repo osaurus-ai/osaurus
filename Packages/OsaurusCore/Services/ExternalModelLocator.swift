@@ -203,6 +203,7 @@ enum ExternalModelLocator {
                 name: ModelMetadataParser.friendlyName(from: entry.id),
                 description: "Found in \(entry.source).",
                 downloadURL: "https://huggingface.co/\(entry.id)",
+                downloadSizeBytes: MLXModel.localBundleWeightSizeBytes(at: bundleDirectory),
                 // The persisted external registry intentionally stores only
                 // identity/path/provenance. Rehydrate architecture from the
                 // authoritative bundle here; otherwise an external model is

@@ -280,6 +280,8 @@ struct ExternalModelLocatorTests {
         writeBundle(at: bundle)
         try? Data(#"{"model_type":"gemma4"}"#.utf8)
             .write(to: bundle.appendingPathComponent("config.json"))
+        try? Data(#"{"metadata":{"total_size":44298536392}}"#.utf8)
+            .write(to: bundle.appendingPathComponent("model.safetensors.index.json"))
 
         ExternalModelLocator.testRootsOverride = [(root: customRoot, source: .customModelFolder)]
         ExternalModelLocator.rescan()
@@ -298,6 +300,7 @@ struct ExternalModelLocatorTests {
                 $0.id == "publisher/repo"
                     && $0.externalSource == "Custom model folder"
                     && $0.modelType == "gemma4"
+                    && $0.downloadSizeBytes == 44_298_536_392
             }
         )
 

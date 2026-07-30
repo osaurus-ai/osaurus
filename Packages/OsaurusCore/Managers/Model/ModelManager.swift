@@ -295,7 +295,10 @@ final class ModelManager: NSObject, ObservableObject {
         // stays main-actor isolated so `self` never crosses actor boundaries.
         Task { [weak self] in
             let localModels = await Self.discoverLocalModelsOffMain()
-            self?.mergeAvailable(with: localModels)
+            self?.mergeAvailable(
+                with: localModels,
+                refreshLocalInstallationMetadata: true
+            )
         }
 
         isLoadingModels = false
@@ -339,7 +342,10 @@ final class ModelManager: NSObject, ObservableObject {
             }.value
             guard let self else { return }
             self.downloadService.syncStates(for: models)
-            self.mergeAvailable(with: localModels)
+            self.mergeAvailable(
+                with: localModels,
+                refreshLocalInstallationMetadata: true
+            )
             self.checkForDeprecatedModels()
         }
     }
@@ -1548,7 +1554,10 @@ extension ModelManager {
         return nil
     }
 
-    fileprivate func mergeAvailable(with newModels: [MLXModel]) {
+    fileprivate func mergeAvailable(
+        with newModels: [MLXModel],
+        refreshLocalInstallationMetadata: Bool = false
+    ) {
         // Repo tail (everything after the last "/") is the basename a user actually
         // recognises; when two ids share a tail, treat them as the same model — this
         // collapses cases like flat-layout `Nemotron-3-...` colliding with curated
@@ -1567,10 +1576,38 @@ extension ModelManager {
 
         var appended: [MLXModel] = []
         var replacements: [(oldId: String, new: MLXModel)] = []
+        var refreshedExactMatch = false
 
         for m in newModels {
             let key = m.id.lowercased()
-            if existingLower.contains(key) { continue }
+            if existingLower.contains(key) {
+                // An exact local/curated id collision used to discard the
+                // local entry wholesale, including its authoritative bundle
+                // size. Refresh only installation metadata so editorial
+                // catalog fields still win. Only background local discovery
+                // may take this path; registry and Hub merges must never be
+                // mistaken for installed metadata just because a future
+                // response also carries a byte estimate.
+                if refreshLocalInstallationMetadata {
+                    if let idx = availableModels.firstIndex(where: {
+                        $0.id.caseInsensitiveCompare(m.id) == .orderedSame
+                    }) {
+                        let merged = availableModels[idx]
+                            .mergingLocalInstallationMetadata(from: m)
+                        availableModels[idx] = merged
+                        refreshedExactMatch = true
+                    }
+                    if let idx = suggestedModels.firstIndex(where: {
+                        $0.id.caseInsensitiveCompare(m.id) == .orderedSame
+                    }) {
+                        let merged = suggestedModels[idx]
+                            .mergingLocalInstallationMetadata(from: m)
+                        suggestedModels[idx] = merged
+                        refreshedExactMatch = true
+                    }
+                }
+                continue
+            }
 
             let mTail = tail(m.id)
             if let existing = existingTails[mTail], existing.id.lowercased() != key {
@@ -1605,7 +1642,7 @@ extension ModelManager {
             }
         }
 
-        guard !appended.isEmpty || !replacements.isEmpty else { return }
+        guard !appended.isEmpty || !replacements.isEmpty || refreshedExactMatch else { return }
         availableModels.append(contentsOf: appended)
         downloadService.syncStates(for: appended + replacements.map { $0.new })
     }
@@ -2167,6 +2204,7 @@ extension ModelManager {
                         name: ModelMetadataParser.friendlyName(from: id),
                         description: L("Local model (detected)"),
                         downloadURL: "https://huggingface.co/\(id)",
+                        downloadSizeBytes: MLXModel.localBundleWeightSizeBytes(at: resolved),
                         // The scan already runs off-main. Preserve the bundle's
                         // architecture tag here so hot UI paths can distinguish
                         // image-only from video-capable local VLMs without
