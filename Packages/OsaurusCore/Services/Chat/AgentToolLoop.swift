@@ -905,6 +905,19 @@ enum AgentToolLoop {
         "[System Notice] Tool call budget: \(remaining) of \(maxIterations) remaining. Wrap up your current work and provide a summary."
     }
 
+    /// Final, transient control notice for the one tool-free summarization
+    /// request issued after the hard iteration cap. The model may still have
+    /// an unfinished tool request in mind; without this explicit boundary it
+    /// can print an imitation tool/result envelope and claim work that never
+    /// executed. This notice asks for an honest status only. It does not alter
+    /// sampling, thinking, templates, or any model-family behavior.
+    static let iterationCapWrapUpNotice =
+        "[System Notice] The configured tool-call limit has been reached. "
+        + "No more tools are available in this response. Give the user an honest final status "
+        + "using only tool results already present. Do not emit or imitate a tool call or "
+        + "tool-result payload, do not claim an unexecuted step succeeded, and explicitly "
+        + "identify any requested step that remains unfinished."
+
     /// The mid-run near-limit notice (history estimate crossed ~90% of the
     /// history budget). When a spawn tool is visible in the schema, the
     /// notice also nudges delegation: offloading the remaining bulk

@@ -154,6 +154,20 @@ Remaining proof: an authorized real-UI iteration-cap row showing typed
 telemetry, no visible/exported sentinel bytes, reasoning closure, Stop
 disappearance, input unlock, and coherent finalization.
 
+Current-head live discovery (`236d832eddbae5c0ecbf0364bfc37860f29900fa`,
+isolated Release executable SHA-256
+`d41412a2cea987a3fd654382316143d333e19970a94e63f43c236c2b3aef424d`):
+with **Max Tool Attempts** changed through Settings from `30` to `1` and
+verified after navigating away and back, the capped turn rendered typed
+reasoning/stats with no visible U+FFFE sentinel, settled the one permitted
+`sandbox_read_file` card, removed Stop, and unlocked input. However, its
+tool-free wrap-up then printed a fabricated `sandbox_read_file` JSON result
+for the unexecuted second read and changed the known file content from
+`beta-two` to `beta-one`. This is a related terminal-integrity failure, not a
+passing cap row. Fix the generic cap-finalization contract so it reports only
+confirmed completed work and explicitly identifies unfinished work, then
+rebuild and repeat the live row before calling this section verified.
+
 ## 3. Warm-up prefix lost during disk-L2 quota enforcement
 
 Observed trace:

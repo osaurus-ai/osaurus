@@ -6089,17 +6089,32 @@ final class ChatSession: ObservableObject {
                             rebuildVisibleBlocks()
                         } else {
                             do {
+                                let trimmedFinalMessages =
+                                    AgentLoopBudget.trimPreservingSystemPrefix(
+                                        buildMessages(),
+                                        with: loopBudgetManager,
+                                        watermark: compactionWatermark
+                                    )
+                                // The final request intentionally has no tool
+                                // schema. Make that boundary visible to the
+                                // model as transient tool-role feedback (when
+                                // the transcript ends in a tool result), so it
+                                // reports unfinished work instead of imitating
+                                // a tool/result envelope. Appending after trim
+                                // preserves the same stable-prefix contract as
+                                // ordinary loop notices.
+                                let finalMessages =
+                                    AgentLoopBudget.appendingTransientNotices(
+                                        [AgentToolLoop.iterationCapWrapUpNotice],
+                                        to: trimmedFinalMessages
+                                    )
                                 var finalReq = ChatCompletionRequest(
                                     model: selectedModel ?? "default",
                                     // Same watermark-trimmed view of history the
                                     // loop iterations used — the raw array can
                                     // exceed the window precisely when the cap
                                     // hits after heavy tool traffic.
-                                    messages: AgentLoopBudget.trimPreservingSystemPrefix(
-                                        buildMessages(),
-                                        with: loopBudgetManager,
-                                        watermark: compactionWatermark
-                                    ),
+                                    messages: finalMessages,
                                     temperature: effectiveTemp,
                                     max_tokens: effectiveMaxTokensForAgent,
                                     stream: true,

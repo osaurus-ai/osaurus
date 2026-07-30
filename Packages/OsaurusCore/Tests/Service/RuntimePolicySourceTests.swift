@@ -1481,6 +1481,8 @@ struct RuntimePolicySourceTests {
 
         #expect(block.contains("try await processStreamDeltas("))
         #expect(block.contains("assistantTurn = finalTurn"))
+        #expect(block.contains("AgentLoopBudget.appendingTransientNotices("))
+        #expect(block.contains("AgentToolLoop.iterationCapWrapUpNotice"))
         #expect(!block.contains("let processor = StreamingDeltaProcessor("))
         #expect(!block.contains("processor.receiveDelta(delta)"))
     }

@@ -194,6 +194,33 @@ struct AgentLoopBudgetTests {
         #expect(!composed.overBudget)
     }
 
+    @Test func iterationCapWrapUpNoticeForbidsFabricatedUnexecutedWork() {
+        let notice = AgentToolLoop.iterationCapWrapUpNotice
+        #expect(notice.contains("No more tools are available"))
+        #expect(notice.contains("only tool results already present"))
+        #expect(notice.contains("Do not emit or imitate a tool call"))
+        #expect(notice.contains("do not claim an unexecuted step succeeded"))
+        #expect(notice.contains("remains unfinished"))
+
+        let messages = AgentLoopBudget.appendingTransientNotices(
+            [notice],
+            to: [
+                ChatMessage(role: "user", content: "read two files"),
+                ChatMessage(
+                    role: "tool",
+                    content: #"{"ok":true,"result":"alpha"}"#,
+                    tool_calls: nil,
+                    tool_call_id: "read_alpha"
+                ),
+            ]
+        )
+
+        #expect(messages.last?.role == "tool")
+        #expect(messages.last?.tool_call_id == "read_alpha")
+        #expect(messages.last?.content == notice)
+        #expect(messages.filter { $0.role == "user" }.count == 1)
+    }
+
     /// Regression (KV/prefix re-prefill after a tool call): a transient notice
     /// that rides the iteration AFTER a tool call must NOT be appended as a
     /// trailing *user* turn. Chat templates that gate the assistant reasoning
