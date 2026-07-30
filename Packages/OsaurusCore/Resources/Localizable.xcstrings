@@ -26816,7 +26816,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "授权发送者"
+            "value" : "已授权发送者"
           }
         },
         "zh-Hant" : {
@@ -67339,7 +67339,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "持续时间"
+            "value" : "时长"
           }
         },
         "zh-Hant" : {
@@ -73348,7 +73348,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "情节"
+            "value" : "情景"
           }
         },
         "zh-Hant" : {
@@ -107953,7 +107953,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "最大词元数"
+            "value" : "最大 Token 数"
           }
         },
         "zh-Hant" : {
@@ -121324,7 +121324,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "还没有请求"
+            "value" : "暂无请求"
           }
         },
         "zh-Hant" : {
@@ -135174,7 +135174,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "PATH"
+            "value" : "路径"
           }
         },
         "zh-Hant" : {
@@ -152152,7 +152152,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "近期活动"
+            "value" : "最近活动"
           }
         },
         "zh-Hant" : {
@@ -152222,7 +152222,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "最近的聊天"
+            "value" : "最近聊天"
           }
         },
         "zh-Hant" : {
@@ -164521,7 +164521,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "路由器均衡"
+            "value" : "路由器余额"
           }
         },
         "zh-Hant" : {
@@ -166209,7 +166209,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正在运行"
+            "value" : "运行中"
           }
         },
         "zh-Hant" : {
@@ -183374,7 +183374,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "平滑流式传输"
+            "value" : "平滑流式输出"
           }
         },
         "zh-Hant" : {
@@ -201395,7 +201395,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "勉强够用"
+            "value" : "空间紧张"
           }
         },
         "zh-Hant" : {
