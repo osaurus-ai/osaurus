@@ -151,7 +151,7 @@ public actor OsaurusServer: Sendable {
         // natural close is fine.
         let budget: Double = gracefully ? 8.0 : 1.0
         let deadline = Date().addingTimeInterval(budget)
-        while childChannels.count > 0, Date() < deadline {
+        while !childChannels.isEmpty, Date() < deadline {
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         let remaining = childChannels.drain()
@@ -239,6 +239,12 @@ final class ChildChannelRegistry: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return channels.count
+    }
+
+    var isEmpty: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return channels.isEmpty
     }
 
     func track(_ channel: Channel) {
