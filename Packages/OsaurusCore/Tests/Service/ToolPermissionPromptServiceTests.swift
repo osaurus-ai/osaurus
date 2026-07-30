@@ -61,6 +61,23 @@ struct ToolPermissionPromptServiceTests {
         }
     }
 
+    @Test("panel never sizes past the visible screen area")
+    func windowSizeClampsToVisibleFrame() {
+        let visible = NSSize(width: 1440, height: 875)
+
+        let oversized = ToolPermissionPromptService.clampedWindowSize(
+            NSSize(width: 744, height: 2114),
+            to: visible
+        )
+        #expect(oversized == NSSize(width: 744, height: 875))
+
+        let fitting = ToolPermissionPromptService.clampedWindowSize(
+            NSSize(width: 480, height: 620),
+            to: visible
+        )
+        #expect(fitting == NSSize(width: 480, height: 620))
+    }
+
     @Test("production prompt has one app-local keyboard monitor")
     func promptDoesNotListenToOtherApps() throws {
         let here = URL(fileURLWithPath: #filePath)
