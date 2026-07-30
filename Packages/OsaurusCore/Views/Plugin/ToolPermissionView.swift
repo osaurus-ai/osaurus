@@ -132,7 +132,7 @@ struct ToolPermissionView: View {
                     .offset(y: appeared ? 0 : 8)
             }
         }
-        .frame(width: 380)
+        .frame(width: 460)
         .fixedSize(horizontal: true, vertical: true)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
