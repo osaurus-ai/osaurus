@@ -38,6 +38,8 @@ public enum WhatsNewAction: Hashable, Sendable {
     case openKnowledgeSettings
     /// Open Settings → Browser (Browser Use sessions + guidance).
     case openBrowserSettings
+    /// Open Management → Channels.
+    case openChannelsSettings
 }
 
 public struct WhatsNewPage: Identifiable, Hashable, Sendable {
@@ -101,37 +103,10 @@ public enum WhatsNewContent {
     /// here whose `version` matches `CFBundleShortVersionString` for each
     /// release that should announce changes on first launch after update.
     public static let releases: [WhatsNewRelease] = [
-        nativeSearch_0_21_11,
         knowledge_0_22_7,
         browserUse_0_22_9,
+        channels_0_22_13,
     ]
-
-    /// First-launch announcement for native web search in 0.21.11.
-    /// Two pages: search now works out of the box (superseding the
-    /// osaurus.search plugin, whose API keys were migrated automatically),
-    /// and the new Search settings tab for connecting keyed providers.
-    /// The final CTA deep-links to Settings → Search.
-    private static let nativeSearch_0_21_11 = WhatsNewRelease(
-        version: "0.21.11",
-        pages: [
-            WhatsNewPage(
-                id: "native-search-0.21.11:summary",
-                title: "Web search is now built in",
-                description:
-                    "Your agents can search the web out of the box — no plugin, no API key required. Built-in sources are on by default, and if you used the search plugin before, your API keys were carried over automatically.",
-                systemImage: "magnifyingglass"
-            ),
-            WhatsNewPage(
-                id: "native-search-0.21.11:providers",
-                title: "Bring your own provider",
-                description:
-                    "For faster, higher-quality results, connect a provider like Tavily or Exa in the new Search tab. Providers are tried in your order, with built-in sources as backup, and you can test any query right from settings.",
-                systemImage: "antenna.radiowaves.left.and.right",
-                actionLabel: "Open Search settings",
-                action: .openSearchSettings
-            ),
-        ]
-    )
 
     /// First-launch announcement for knowledge collections in 0.22.7.
     /// Three pages: what a collection is and the formats it indexes,
@@ -204,6 +179,42 @@ public enum WhatsNewContent {
                 systemImage: "person.2.fill",
                 actionLabel: "Open Browser settings",
                 action: .openBrowserSettings
+            ),
+        ]
+    )
+
+    /// First-launch announcement for native Channels in 0.22.13.
+    /// Three pages introduce supported services, per-channel reply routing
+    /// and outbound destinations, and the global safety and audit controls.
+    /// The final CTA deep-links to Management → Channels.
+    private static let channels_0_22_13 = WhatsNewRelease(
+        version: "0.22.13",
+        pages: [
+            WhatsNewPage(
+                id: "channels-0.22.13:summary",
+                title: "Channels",
+                titlePrefix: "Introducing",
+                description:
+                    "Connect Discord, Slack, Telegram, and iMessage so your agents can read and reply where conversations already happen. Set up every service in one place and check its status at a glance.",
+                systemImage: "bubble.left.and.bubble.right.fill"
+            ),
+            WhatsNewPage(
+                id: "channels-0.22.13:routing",
+                title: "Route replies to the right agent",
+                eyebrow: "Introducing Channels",
+                description:
+                    "Choose which agent answers each connected channel and which people may trigger it. Agents can also start new messages only in destinations you explicitly allow.",
+                systemImage: "arrow.triangle.branch"
+            ),
+            WhatsNewPage(
+                id: "channels-0.22.13:control",
+                title: "You stay in control",
+                eyebrow: "Introducing Channels",
+                description:
+                    "Pause sending everywhere with one switch, review incoming activity and the outbox, and keep access limited to the channels, people, and destinations you choose.",
+                systemImage: "checkmark.shield.fill",
+                actionLabel: "Open Channels",
+                action: .openChannelsSettings
             ),
         ]
     )

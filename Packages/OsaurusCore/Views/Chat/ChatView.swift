@@ -7179,6 +7179,8 @@ struct ChatView: View {
                         AppDelegate.shared?.showManagementWindow(initialTab: .knowledge)
                     case .openBrowserSettings:
                         AppDelegate.shared?.showManagementWindow(initialTab: .browser)
+                    case .openChannelsSettings:
+                        AppDelegate.shared?.showManagementWindow(initialTab: .agentChannels)
                     case .openSubagentSettings:
                         // Land on the first custom (non-built-in) agent's
                         // Subagents tab (per-agent spawn / image config). With
