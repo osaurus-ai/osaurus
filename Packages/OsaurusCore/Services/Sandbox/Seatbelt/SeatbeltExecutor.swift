@@ -15,6 +15,33 @@ import Foundation
 
 enum SeatbeltExecutor {
 
+    /// Populate xcrun's Python lookup before entering deny-default Seatbelt.
+    /// The confined process receives read-only access to the exact cache file,
+    /// never permission to create or replace host cache entries. Arguments are
+    /// fixed and the environment contains no caller-controlled values.
+    private static let preparedDeveloperToolCache: Bool = {
+        guard SeatbeltSandbox.activeDeveloperDirectory != nil,
+              FileManager.default.isExecutableFile(atPath: "/usr/bin/xcrun")
+        else { return false }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        process.arguments = ["--find", "python3"]
+        let environment = [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"
+        ]
+        process.environment = environment
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }()
+
     struct Request {
         /// Shell command, already host-path-mapped by the caller.
         let command: String
@@ -78,6 +105,8 @@ enum SeatbeltExecutor {
     }
 
     static func run(_ request: Request) async throws -> ContainerExecResult {
+        _ = preparedDeveloperToolCache
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: SeatbeltSandbox.sandboxExecPath)
         process.arguments = ["-p", request.profile, "/bin/sh", "-c", request.command]
@@ -97,6 +126,10 @@ enum SeatbeltExecutor {
         // writable scratch grant and breaks xcrun-backed shims such as
         // `/usr/bin/python3`; always replace it with the allowed path.
         env["TMPDIR"] = scratch
+        // Use the host's system-selected developer tools, matching the
+        // sanitized cache-preparation process above. A caller override could
+        // select an ungranted tree and force xcrun to refresh its host cache.
+        env.removeValue(forKey: "DEVELOPER_DIR")
         if env["HOME"] == nil { env["HOME"] = request.cwd ?? scratch }
         process.environment = env
 

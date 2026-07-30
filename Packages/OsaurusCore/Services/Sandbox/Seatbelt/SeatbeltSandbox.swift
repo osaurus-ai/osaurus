@@ -65,7 +65,64 @@ public enum SeatbeltSandbox {
     /// Scratch directory granted read-write in every profile and
     /// exported as `TMPDIR` — the user's real `$TMPDIR` stays denied.
     public static var scratchDir: String {
-        NSTemporaryDirectory() + "osaurus-seatbelt"
+        canonicalProfilePath(
+            URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+                .appendingPathComponent("osaurus-seatbelt", isDirectory: true)
+                .path
+        )
+    }
+
+    /// xcrun's shared lookup database. Apple's `/usr/bin` developer-tool
+    /// shims consult this file even when `TMPDIR` points at our private
+    /// scratch directory. It is exposed read-only: letting sandboxed work
+    /// update the host's developer-tool cache would cross the confinement
+    /// boundary, while denying reads makes successful shim launches emit
+    /// spurious cache-write failures.
+    static var xcrunCacheFiles: [String] {
+        profilePathVariants(
+            URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+                .appendingPathComponent("xcrun_db", isDirectory: false)
+                .path
+        )
+    }
+
+    /// Seatbelt evaluates canonical filesystem paths. Normalize aliases such
+    /// as `/tmp` and `/var` before embedding a path in the profile so an exact
+    /// workspace or scratch grant remains effective after kernel resolution.
+    private static func canonicalProfilePath(_ raw: String) -> String {
+        var existing = URL(fileURLWithPath: raw).standardizedFileURL
+        var missingComponents: [String] = []
+        while existing.path != "/",
+              !FileManager.default.fileExists(atPath: existing.path)
+        {
+            missingComponents.append(existing.lastPathComponent)
+            existing.deleteLastPathComponent()
+        }
+
+        guard let resolved = realpath(existing.path, nil) else {
+            return URL(fileURLWithPath: raw).standardizedFileURL.path
+        }
+        defer { free(resolved) }
+
+        var canonical = URL(
+            fileURLWithPath: String(cString: resolved), isDirectory: true)
+        for component in missingComponents.reversed() {
+            canonical.appendPathComponent(component)
+        }
+        // Do not call `standardizedFileURL` here: on modern macOS Foundation
+        // rewrites realpath's `/private/var` and `/private/tmp` back to their
+        // synthetic aliases, defeating the canonical Seatbelt grant.
+        return canonical.path
+    }
+
+    /// `sandbox-exec` path matching is not consistent about whether a vnode
+    /// reached through macOS's synthetic `/tmp` and `/var` aliases is reported
+    /// lexically or canonically. Grant both spellings when they differ; they
+    /// resolve to the same object and therefore do not widen the capability.
+    private static func profilePathVariants(_ raw: String) -> [String] {
+        let lexical = URL(fileURLWithPath: raw).standardizedFileURL.path
+        let canonical = canonicalProfilePath(lexical)
+        return canonical == lexical ? [canonical] : [canonical, lexical]
     }
 
     private static func validatedDeveloperDirectory(_ raw: String?) -> String? {
@@ -168,8 +225,9 @@ public enum SeatbeltSandbox {
         network: NetworkPolicy,
         developerDirectory: String? = activeDeveloperDirectory
     ) -> String {
-        let workspace = escapeProfilePath(workspaceRoot)
-        let temp = escapeProfilePath(tempDir)
+        let workspaces = profilePathVariants(workspaceRoot).map(escapeProfilePath)
+        let temps = profilePathVariants(tempDir).map(escapeProfilePath)
+        let xcrunCaches = xcrunCacheFiles.map(escapeProfilePath)
 
         var lines: [String] = [
             "(version 1)",
@@ -200,6 +258,9 @@ public enum SeatbeltSandbox {
             "  (subpath \"/opt\")",
             "  (subpath \"/dev\")",
         ]
+        // Read the host-prepared xcrun lookup database without allowing
+        // sandboxed tools to mutate it or its containing temp directory.
+        lines.append(contentsOf: xcrunCaches.map { "  (literal \"\($0)\")" })
         if let readRoot = developerReadRoot(developerDirectory) {
             lines.append(
                 "  (subpath \"\(escapeProfilePath(readRoot))\")"
@@ -214,8 +275,10 @@ public enum SeatbeltSandbox {
             // Writes: workspace + scratch only, plus the pseudo
             // devices shells rely on.
             "(allow file-read* file-write*",
-            "  (subpath \"\(workspace)\")",
-            "  (subpath \"\(temp)\")",
+        ])
+        lines.append(contentsOf: workspaces.map { "  (subpath \"\($0)\")" })
+        lines.append(contentsOf: temps.map { "  (subpath \"\($0)\")" })
+        lines.append(contentsOf: [
             "  (literal \"/dev/null\")",
             "  (literal \"/dev/zero\")",
             "  (literal \"/dev/random\")",

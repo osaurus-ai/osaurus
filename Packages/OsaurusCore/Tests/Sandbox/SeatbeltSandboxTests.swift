@@ -97,8 +97,11 @@ struct SeatbeltSandboxTests {
         )
         #expect(profile.hasPrefix("(version 1)\n(deny default)"))
         #expect(profile.contains("(subpath \"/Users/me/.osaurus/container/workspace\")"))
-        #expect(profile.contains("(subpath \"/tmp/osaurus-seatbelt\")"))
+        #expect(profile.contains("(subpath \"/private/tmp/osaurus-seatbelt\")"))
         #expect(profile.contains("(subpath \"/Applications/Xcode.app/Contents\")"))
+        for cacheFile in SeatbeltSandbox.xcrunCacheFiles {
+            #expect(profile.contains("(literal \"\(cacheFile)\")"))
+        }
         #expect(profile.contains("(allow network*)"))
         // No blanket home-directory read grant.
         #expect(!profile.contains("(subpath \"/Users\")"))
@@ -107,6 +110,9 @@ struct SeatbeltSandboxTests {
         // read grant, never in the workspace/scratch write section.
         let writeSection = profile.components(separatedBy: "(allow file-read* file-write*").last ?? ""
         #expect(!writeSection.contains("/Applications/Xcode.app/Contents"))
+        for cacheFile in SeatbeltSandbox.xcrunCacheFiles {
+            #expect(!writeSection.contains(cacheFile))
+        }
     }
 
     @Test("profile omits an unavailable developer directory")
@@ -120,7 +126,7 @@ struct SeatbeltSandboxTests {
         #expect(!profile.contains("/Applications"))
     }
 
-    @Test("generated profile launches Apple's Python shim through active Xcode")
+    @Test("generated profile launches Apple's Python shim through selected tools")
     func profileLaunchesPythonShim() async throws {
         guard let developerDirectory = SeatbeltSandbox.activeDeveloperDirectory,
               FileManager.default.isExecutableFile(atPath: "/usr/bin/sandbox-exec"),
@@ -136,21 +142,31 @@ struct SeatbeltSandboxTests {
         let scratch = SeatbeltSandbox.scratchDir
         try FileManager.default.createDirectory(
             atPath: scratch, withIntermediateDirectories: true)
+        let cacheReadChecks = SeatbeltSandbox.xcrunCacheFiles
+            .map { "/bin/cat '\($0)' >/dev/null" }
+            .joined(separator: " && ")
+        let profile = SeatbeltSandbox.profile(
+            workspaceRoot: workspace.path,
+            tempDir: scratch,
+            network: .denied,
+            developerDirectory: developerDirectory
+        )
 
         let result = try await SeatbeltExecutor.run(
             SeatbeltExecutor.Request(
-                command: "/usr/bin/python3 -c \"print('seatbelt-python-ok')\"",
+                command: "\(cacheReadChecks) && /bin/pwd >/dev/null && "
+                    + "/usr/bin/python3 -c \"print('seatbelt-python-ok')\"",
                 // Prove the executor replaces a caller-supplied TMPDIR that
                 // the deny-default profile cannot write.
-                env: ["TMPDIR": "/var/empty/osaurus-denied"],
+                env: [
+                    "TMPDIR": "/var/empty/osaurus-denied",
+                    // A caller cannot redirect the developer shim outside the
+                    // validated toolchain tree granted by the profile.
+                    "DEVELOPER_DIR": "/var/empty/osaurus-denied",
+                ],
                 cwd: workspace.path,
                 timeout: 10,
-                profile: SeatbeltSandbox.profile(
-                    workspaceRoot: workspace.path,
-                    tempDir: scratch,
-                    network: .denied,
-                    developerDirectory: developerDirectory
-                ),
+                profile: profile,
                 stdoutTee: nil,
                 stderrTee: nil,
                 onProcessStarted: nil
@@ -158,9 +174,12 @@ struct SeatbeltSandboxTests {
         )
         #expect(
             result.exitCode == 0,
-            "sandboxed Python failed: \(result.stderr)"
+            "sandboxed Python failed: \(result.stderr)\nProfile:\n\(profile)"
         )
         #expect(result.stdout.contains("seatbelt-python-ok"))
+        #expect(!result.stderr.contains("error retrieving current directory"))
+        #expect(!result.stderr.contains("couldn't create cache file"))
+        #expect(!result.stderr.contains("xcrun_db-"))
     }
 
     @Test("network none denies network in the profile")
