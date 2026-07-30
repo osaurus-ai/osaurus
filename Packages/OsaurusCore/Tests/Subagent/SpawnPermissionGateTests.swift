@@ -238,6 +238,24 @@ struct SpawnPermissionGateTests {
         """
     }
 
+    private static func installServerBatchLimit(
+        _ value: Int,
+        in sandbox: URL
+    ) -> URL? {
+        let previousDirectory = ServerRuntimeSettingsStore.overrideDirectory
+        ServerRuntimeSettingsStore.overrideDirectory = sandbox
+        ServerRuntimeSettingsStore.invalidateSnapshot()
+        var settings = ServerRuntimeSettingsStore.snapshot()
+        settings.concurrency.maxConcurrentSequences = value
+        ServerRuntimeSettingsStore.save(settings)
+        return previousDirectory
+    }
+
+    private static func restoreServerRuntimeDirectory(_ directory: URL?) {
+        ServerRuntimeSettingsStore.overrideDirectory = directory
+        ServerRuntimeSettingsStore.invalidateSnapshot()
+    }
+
     @Test("ask supports allow once and deny without persisting")
     func askSupportsAllowOnceAndDeny() async {
         let allowProbe = SpawnPromptProbe()
@@ -776,7 +794,11 @@ struct SpawnPermissionGateTests {
     @Test("spawn batch rejects invalid targets without prompting")
     func batchRejectsInvalidTargetsBeforePrompt() async throws {
         let lease = await acquireSubagentStoreSandbox("spawn-permission-one-batch-prompt")
-        defer { lease.release() }
+        let previousRuntimeDirectory = Self.installServerBatchLimit(2, in: lease.sandbox)
+        defer {
+            Self.restoreServerRuntimeDirectory(previousRuntimeDirectory)
+            lease.release()
+        }
 
         var permissions = SubagentPermissionDefaults()
         permissions.setPolicy(.ask, for: SubagentCapabilityRegistry.spawn.id)
@@ -826,7 +848,11 @@ struct SpawnPermissionGateTests {
     @Test("spawn batch asks exactly once after all targets validate")
     func batchAsksExactlyOnceAfterValidation() async throws {
         let lease = await acquireSubagentStoreSandbox("spawn-permission-batch-one-prompt")
-        defer { lease.release() }
+        let previousRuntimeDirectory = Self.installServerBatchLimit(2, in: lease.sandbox)
+        defer {
+            Self.restoreServerRuntimeDirectory(previousRuntimeDirectory)
+            lease.release()
+        }
 
         var permissions = SubagentPermissionDefaults()
         permissions.setPolicy(.ask, for: SubagentCapabilityRegistry.spawn.id)
@@ -1609,7 +1635,11 @@ struct SpawnPermissionGateTests {
     @Test("batch Stop cancels and drains its one prompt after target validation")
     func batchStopCancelsPromptWithoutLoading() async throws {
         let lease = await acquireSubagentStoreSandbox("spawn-permission-batch-stop")
-        defer { lease.release() }
+        let previousRuntimeDirectory = Self.installServerBatchLimit(2, in: lease.sandbox)
+        defer {
+            Self.restoreServerRuntimeDirectory(previousRuntimeDirectory)
+            lease.release()
+        }
 
         var permissions = SubagentPermissionDefaults()
         permissions.setPolicy(.ask, for: SubagentCapabilityRegistry.spawn.id)
