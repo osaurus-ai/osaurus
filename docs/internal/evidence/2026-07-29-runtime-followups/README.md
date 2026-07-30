@@ -12,6 +12,8 @@ is therefore not yet described as release-ready or regression-free.
 
 - Osaurus baseline: `f33c9eca144a84beb4bbde705af649bed060acf8`
 - tested Osaurus runtime code head: `e810eda8a1df72b48cf2eb515e6d3e49522cb504`
+- amended Seatbelt source/test commit:
+  `f68057bee7e81c75df41e17757ad75afc6ff4620`
 - baseline Osaurus vMLX pin: `439f53694f3d630663e97612c264ae73e499121a`
 - follow-up vMLX PR: `osaurus-ai/vmlx-swift#195`, merged as
   `cf50cf9cc424726df93187f5542faf03bacdcc95`
@@ -36,6 +38,7 @@ is therefore not yet described as release-ready or regression-free.
 | Osaurus `AgentToolLoop` / `AgentLoopBudget` / `RuntimePolicy` regressions | 205/205 passed |
 | Osaurus iteration-cap wrap-up regressions | 2/2 passed |
 | Osaurus complete focused Seatbelt suite | 15/15 passed |
+| Osaurus fresh-workspace Seatbelt Python integration | 1/1 passed |
 | Osaurus four-surface pin guard correction | 3/3 passed across 2 suites |
 | OsaurusEvals Swift harness | 299 passed in 36 suites; 3 host-sampler rows skipped by platform/resource guards |
 | OsaurusEvals deterministic lanes | 101/101 passed across 8 suites |
@@ -58,6 +61,18 @@ Xcode regenerated both workspace pins and origin hashes at the same merged
 vMLX SHA; the two focused guard suites then passed `3/3`. This was pin hygiene,
 not a model/runtime assertion failure. The final-head core rerun is the merge
 gate.
+
+Fresh PR-head CI run `30544535694` at evidence commit
+`4617d862ff6479f4db6b77a2bbbb893b1263469a` exposed one additional in-scope
+Seatbelt edge case. `test-core` job `90877235832` failed only
+`SeatbeltSandboxTests` → `generated profile launches Apple's Python shim
+through selected tools`: `/usr/bin/python3` completed successfully, but xcrun
+still attempted an atomic cache refresh at
+`/var/folders/.../T/xcrun_db-<random>` and emitted two
+`Operation not permitted` expectations. All seven other required CI jobs
+passed. The exact-HOME root cause and narrow fix are recorded below. The PR
+remains unmergeable until the amended final head passes the focused integration
+row in cold CI and a new exact-head CI run is fully green.
 
 Investigated eval-reporting discrepancy:
 `agent_loop.spawn-batch-two-different-local-workers` completed successfully
@@ -244,6 +259,13 @@ Fix:
   read grant and no Xcode write grant.
 - Always replace inherited/tool-supplied `TMPDIR` with the Seatbelt-writable
   scratch directory. A caller cannot redirect xcrun's cache to a denied path.
+- xcrun keys its shared lookup database by `HOME`. Always replace a
+  caller-supplied `HOME` with the mapped confined working directory, then run
+  only the fixed `/usr/bin/xcrun --find python3` resolver before entering
+  Seatbelt with that exact `HOME` and the validated `DEVELOPER_DIR`. This
+  resolves the shim but never executes caller Python, runs only for commands
+  that contain `python3`, and does not grant the confined process write access
+  to `/var/folders` or any other host temp directory.
 - Unit coverage checks the profile shape and omission of invalid paths.
 - A focused integration test uses the production `SeatbeltExecutor` to execute
   `/usr/bin/python3 -c ...` with a deliberately denied inherited `TMPDIR`.
@@ -264,6 +286,48 @@ stdout `42`, and empty stderr. There was no xcrun denial, denied-cache path,
 file read, reached a coherent terminal answer, accepted a corrective read
 follow-up, and then completed a tool-free follow-up with Stop gone and input
 unlocked.
+
+The cold CI failure showed why a single process-global warmup was insufficient:
+the host warmup used the host `HOME`, while each agent request intentionally
+uses its isolated workspace as `HOME`, producing a different xcrun database
+key. Commit `f68057bee7e81c75df41e17757ad75afc6ff4620` replaces that singleton
+warmup with the exact sanitized per-request resolver above. The complete
+focused Seatbelt suite passed `15/15`, and an independent fresh UUID workspace
+integration passed `1/1` with hostile caller `HOME`, `TMPDIR`, and
+`DEVELOPER_DIR` values, exact `/usr/bin/python3`, exit code 0, expected stdout,
+and empty stderr.
+
+The amended isolated Release build was then exercised in a newly created real
+UI agent (`D5F1B303-69E4-462D-B157-08E63871CE63`) and chat session
+`A72845E2-9DA1-43A6-BF77-C3E27EE7F1FE`. The model bundle was
+`/Users/eric/models/JANGQ-AI/Ornith-1.0-9B-JANG_4M` (`qwen3_5`,
+`Qwen3_5ForConditionalGeneration`, JANG profile `JANG_4M`). Its bundle
+generation config supplies no temperature, top-p, top-k, min-p, repetition,
+or output-length override; EOS remains bundle-defined as `[248046, 248046]`.
+
+- Cold workspace/HOME: exactly one expanded `sandbox_exec` card ran
+  `/usr/bin/python3 -c "print(6*7)"`, settled as `exited`, returned exit code
+  0, stdout `42`, and empty stderr with no xcrun warning or retry. Pre-tool and
+  post-tool reasoning opened and closed cleanly, Stop disappeared, and input
+  unlocked. Visible metrics were TTFT 1.56 s, 88.7 tok/s, and 88 output tokens.
+  The model's first final was `42` rather than the requested prefixed phrase;
+  the database stored the same model-authored content with terminal stop reason
+  `stop`, so this is retained as an instruction-fidelity miss rather than
+  hidden as a UI/parser pass. A no-tool follow-up completed exactly as
+  `SEATBELT_HOMEFIX=42` with TTFT 0.38 s, 86.0 tok/s, and 285 output tokens.
+- Warm workspace/HOME: exactly one expanded `sandbox_exec` card ran
+  `/usr/bin/python3 -c "print('SEATBELT_WARM=43')"`, settled as `exited`, and
+  returned exit code 0, exact stdout `SEATBELT_WARM=43`, and empty stderr. The
+  reasoning -> tool -> reasoning -> final sequence preserved ordering, the
+  visible/stored final was exactly `SEATBELT_WARM=43`, Stop disappeared, input
+  unlocked, and metrics were TTFT 0.29 s, 91.9 tok/s, and 48 output tokens.
+
+The complete SQLite evidence backup is
+`/private/tmp/osaurus-pr2235-final-evidence/history-complete.sqlite` with
+SHA-256 `2ac99cccd78271e7ad24b3758030a5e92f8f5b4deaf96e628e57eda3889a883c`.
+No permission-kind popup appeared during these rows; had one appeared, the
+authorized isolated-app policy was to select **Always Allow** and continue the
+full lifecycle.
 
 ### 2b. U+FFFE prefill/stats sentinels leaked at the iteration cap
 
@@ -463,6 +527,30 @@ Seatbelt recheck. That copy used the same compiled source and isolated root,
 passed strict deep signature verification, and had executable SHA-256
 `2c71103b7b345a748358a38113023c88e89383bdf0f9ba0bcf8030d73fde0e95`.
 No screenshots are committed or uploaded to the repository.
+
+The amended Seatbelt build used the same Release DerivedData at
+`/private/tmp/osaurus-pr2235-236d832e-release-derived-20260730-1`; its original
+compiled executable SHA-256 is
+`77adbd5ef4d5ae09f57681864b740ad943bedfd2dcbabdde8626e5fd4a3a60d0`.
+The disposable entitlement-preserving UI copy at
+`/private/tmp/osaurus-pr2235-seatbelt-homefix-ui/osaurus.app` passed strict deep
+signature verification and has executable SHA-256
+`8fdece22a9276fa554eb38cf2a3ab742332d4b5bc36e05199e0af816eaee5f65`.
+
+One non-blocking UI/catalog discrepancy was recorded for a follow-up rather
+than hidden: during fresh agent creation the outer form reported 21 assigned
+tools while its Customize sheet briefly rendered `0 of 0 assigned` and `No
+tools available`. The saved agent subsequently showed Tools and Autonomous
+Execution enabled and successfully executed `sandbox_exec`, so the runtime
+contract under test passed; the contradictory creation-sheet hydration is a
+separate visual/settings-catalog issue for the next settings/delegation PR.
+
+One additional local scratch-path attempt used the machine's active
+CommandLineTools developer directory and therefore failed before test
+execution with `no such module 'Testing'`; OsaurusCore itself compiled. That
+non-Xcode invocation is not counted as a test result. The earlier 15/15 Xcode
+toolchain run, the fresh-workspace integration, the Release UI rows, and the
+new cold GitHub `test-core` run are the applicable evidence gates.
 
 The exact tested Osaurus code head and merged vMLX pin compile as a production
 OsaurusCore Release build (`528.55s`). `swift test -c release` cannot compile
