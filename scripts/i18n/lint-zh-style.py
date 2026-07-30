@@ -76,15 +76,21 @@ def empty_entry_keys(text):
     """Escaped key text of every entry Xcode serialised as "{\\n\\n    }"."""
     return EMPTY_ENTRY.findall(text)
 
-def serialize(catalog, empty_keys):
-    """json.dumps in Xcode's exact shape, with empty entries written back."""
+def serialize(catalog, empty_keys, trailing_newline):
+    """json.dumps in Xcode's exact shape, with empty entries written back.
+
+    Whether the file ends in a newline is not ours to decide: it has been both
+    ways in this repo's history (it gained one in #2221), and either is valid
+    JSON. Mirror whatever the file on disk already does, so the guard measures
+    the serializer and not a byte the serializer never controlled.
+    """
     out = json.dumps(catalog, ensure_ascii=False, indent=2, separators=(",", " : "))
     for key in empty_keys:
         collapsed = f'"{key}" : {{}}'
         if collapsed not in out:
             continue
         out = out.replace(collapsed, f'"{key}" : {{\n\n    }}')
-    return out
+    return out + "\n" if trailing_newline else out
 
 def apply_rules(value, rules):
     masked, spans = protect(value)
@@ -122,7 +128,8 @@ def main():
     raw = args.catalog.read_text(encoding="utf-8")
     catalog = json.loads(raw)
     empties = empty_entry_keys(raw)
-    if serialize(catalog, empties) != raw:
+    trailing_newline = raw.endswith("\n")
+    if serialize(catalog, empties, trailing_newline) != raw:
         sys.exit("refusing to run: catalog does not round-trip byte-exactly; check serialization recipe")
 
     changed = []
@@ -143,7 +150,7 @@ def main():
     print(f"\n{len(changed)} value(s) {'fixed' if args.fix else 'need fixing'}")
 
     if args.fix and changed:
-        args.catalog.write_text(serialize(catalog, empties), encoding="utf-8")
+        args.catalog.write_text(serialize(catalog, empties, trailing_newline), encoding="utf-8")
     if args.check and changed:
         sys.exit(1)
 
