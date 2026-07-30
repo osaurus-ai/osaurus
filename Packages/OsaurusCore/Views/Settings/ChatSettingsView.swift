@@ -336,7 +336,7 @@ struct ChatSettingsView: View {
                 SettingsToggle(
                     title: L("Auto-Allow All Tool Calls"),
                     description:
-                        "Run every tool call without asking for approval, including tools that would normally show a confirmation card. Convenient for multi-step agent workflows, but tools can execute code and modify files — enable only if you trust the tools you have installed. Per-tool Deny policies still apply.",
+                        "Run every tool call without asking for approval, including tools that would normally show a confirmation card. Convenient for multi-step agent workflows, but tools can execute code and modify files. Enable only if you trust the tools you have installed. Per-tool Deny policies still apply.",
                     isOn: autoAllowAllToolsBinding
                 )
 
