@@ -748,7 +748,8 @@ struct FileReadTool: OsaurusTool {
     let name = "file_read"
     let description =
         "Read a file's contents, or list a directory's contents — the path decides. Files return text "
-        + "with `N|` line-number prefixes (text-extractable documents — PDF, Word, PowerPoint, RTF, HTML — "
+        + "with `N|` line-number prefixes (HTML and other source files are returned raw; "
+        + "text-extractable documents — PDF, Word, PowerPoint, RTF — "
         + "and a bounded XLSX preview are supported; binaries are not); bound large reads with "
         + "start_line/end_line, tail_lines, or max_chars. Directories return a listing; bound with "
         + "max_depth. Example: {\"path\": \"src/app.py\", \"start_line\": 1, \"end_line\": 120}"
@@ -1141,9 +1142,9 @@ struct FileReadTool: OsaurusTool {
     ///   - PDFs use `PDFAdapter` directly so spawned reads remain
     ///     cancellation-cooperative without crossing the synchronous
     ///     `DocumentParser` compatibility shim;
-    ///   - other text-extractable documents (Word, PowerPoint, RTF, HTML,
+    ///   - other text-extractable documents (Word, PowerPoint, RTF,
     ///     …) continue through `DocumentParser`;
-    ///   - plain text / source / CSV / unknown extensions read raw bytes,
+    ///   - plain text / source / HTML / CSV / unknown extensions read raw bytes,
     ///     NUL-sniff the first 4KB, then UTF-8 decode. The raw path keeps
     ///     line-numbering and `start_line`/`end_line` semantics, and the
     ///     byte-first ordering catches binaries whose UTF-8 prefix happens
@@ -1226,14 +1227,21 @@ struct FileReadTool: OsaurusTool {
 
     /// Whether `url` should be routed through `DocumentParser` for text
     /// extraction rather than read as raw bytes. Plain-text / source /
-    /// CSV extensions stay on the raw path (so line ranges keep working).
+    /// HTML / CSV extensions stay on the raw path (so source and line ranges
+    /// keep working).
     /// PDFs are intercepted by `extractPDFTextLayer`; every other format the
-    /// document infrastructure can parse — Word, PowerPoint, RTF, HTML,
+    /// document infrastructure can parse — Word, PowerPoint, RTF,
     /// etc. — is extracted here. Lazily registers
     /// the built-in adapters (idempotent) so `canParse` sees formats like
     /// PPTX even on entry points that didn't bootstrap at launch, mirroring
     /// `workbookAdapter(for:)`.
     private static func shouldExtractViaParser(url: URL, ext: String) -> Bool {
+        // HTML is simultaneously a rich-document format and one of the most
+        // common workspace source formats. Returning its rendered text after
+        // `file_write` makes the source appear truncated or replaced, causing
+        // agents to overwrite the file repeatedly. Workspace reads must
+        // preserve the authored markup and scripts byte-for-byte.
+        if ext == "html" || ext == "htm" { return false }
         if DocumentParser.isPlainTextExtension(ext) { return false }
         DocumentAdaptersBootstrap.registerBuiltIns()
         return DocumentParser.canParse(url: url)

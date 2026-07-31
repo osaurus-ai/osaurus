@@ -50,6 +50,7 @@
       "agent_loop.edit-file-then-verify",
       "agent_loop.edit-one-key-preserve-others",
       "agent_loop.final-after-success-with-pending-todo",
+      "agent_loop.html-source-roundtrip",
       "agent_loop.idempotent-already-satisfied",
       "agent_loop.impossible-task-declines",
       "agent_loop.listing-navigation-discipline",

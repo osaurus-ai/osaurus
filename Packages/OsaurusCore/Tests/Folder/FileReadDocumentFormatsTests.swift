@@ -4,7 +4,7 @@
 //  Pins the widened `file_read` routing: text-extractable documents the
 //  shared document infrastructure can parse (PPTX, PDF, Word, …) now flow
 //  through `DocumentParser` instead of being rejected as binary, while
-//  images stay refused (text-only tool) and plain-text / CSV files keep
+//  images stay refused (text-only tool) and plain-text / HTML / CSV files keep
 //  the raw line-numbered read path. The PPTX package is built in memory
 //  (stored ZIP, no checked-in binary) mirroring the OpenXML adapter tests.
 //
@@ -94,7 +94,45 @@ struct FileReadDocumentFormatsTests {
         )
     }
 
-    // MARK: - Plain text / CSV stays on the raw line-numbered path
+    // MARK: - Source / CSV stays on the raw line-numbered path
+
+    @Test func fileWriteThenReadHTMLPreservesSource() async throws {
+        DocumentAdaptersBootstrap.registerBuiltIns()
+
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = """
+            <!doctype html>
+            <html>
+            <body>
+            <div id="board"></div>
+            <script>
+            document.querySelector("#board").textContent = "ready";
+            </script>
+            </body>
+            </html>
+            """
+        let writeData = try JSONSerialization.data(
+            withJSONObject: ["path": "minesweeper.html", "content": source]
+        )
+        let writeArguments = try #require(String(data: writeData, encoding: .utf8))
+        let writeResult = try await FileWriteTool(rootPath: root).execute(
+            argumentsJSON: writeArguments
+        )
+        #expect(ToolEnvelope.isSuccess(writeResult))
+
+        let readResult = try await FileReadTool(rootPath: root).execute(
+            argumentsJSON: #"{"path":"minesweeper.html"}"#
+        )
+
+        #expect(ToolEnvelope.isSuccess(readResult))
+        let text = EnvelopeAssertions.successText(readResult) ?? ""
+        #expect(text.contains("<!doctype html>"))
+        #expect(text.contains(#"<div id="board"></div>"#))
+        #expect(text.contains("document.querySelector(\"#board\")"))
+        let payload = EnvelopeAssertions.successPayload(readResult)
+        #expect(payload?["total_lines"] as? Int == source.components(separatedBy: .newlines).count)
+    }
 
     @Test func fileReadCSVStaysRawLineNumbered() async throws {
         let root = tmpRoot()

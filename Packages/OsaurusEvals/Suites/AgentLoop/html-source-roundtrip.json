@@ -1,0 +1,27 @@
+{
+  "id": "agent_loop.html-source-roundtrip",
+  "domain": "agent_loop",
+  "label": "agent loop • HTML write/read preserves source without rewrite",
+  "query": "Create index.html with a div whose id is grid and an inline script that sets that div's textContent to READY. Then use file_read to verify the saved raw HTML source still contains both the <script> tag and the grid selector. If the read confirms them, do not rewrite the file.",
+  "notes": "Regression for workspace HTML being routed through rich-document extraction: file_read returned only rendered page text after a successful write, causing the agent to misdiagnose truncation and repeatedly overwrite the file.",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 3,
+      "maxTokens": 4096,
+      "maxModelSteps": 3,
+      "maxToolCalls": 3,
+      "noDuplicateExecutedCalls": true,
+      "mustCallTools": ["file_write", "file_read"],
+      "toolUsageAudit": [
+        { "tool": "file_write", "minCalls": 1, "maxCalls": 1, "maxErrors": 0 },
+        { "tool": "file_read", "minCalls": 1, "maxCalls": 2, "maxErrors": 0 }
+      ],
+      "files": [
+        { "path": "index.html", "contains": "<script>" },
+        { "path": "index.html", "contains": "grid" },
+        { "path": "index.html", "contains": "READY" }
+      ]
+    }
+  }
+}
