@@ -64,7 +64,7 @@ struct ChatSessionImporterTests {
         """
 
     @Test func chatGPTLinearizesCanonicalPath() throws {
-        let imported = try ChatSessionImporter.parse(data: Data(chatGPTExport.utf8))
+        let imported = try ChatSessionImporter.parse(data: Data(chatGPTExport.utf8)).conversations
         #expect(imported.count == 1)
         let session = try #require(imported.first).session
 
@@ -85,7 +85,7 @@ struct ChatSessionImporterTests {
     @Test func chatGPTFallsBackToDeepestLeafWithoutCurrentNode() throws {
         let export = chatGPTExport.replacingOccurrences(
             of: "\"current_node\": \"n3\",", with: "")
-        let imported = try ChatSessionImporter.parse(data: Data(export.utf8))
+        let imported = try ChatSessionImporter.parse(data: Data(export.utf8)).conversations
         let session = try #require(imported.first).session
         // Deepest "last child" chain is root → n1 → n2b.
         #expect(session.turns.map(\.content) == ["Explain lifetimes", "Abandoned branch"])
@@ -117,7 +117,7 @@ struct ChatSessionImporterTests {
         """
 
     @Test func claudeMapsSenderToRole() throws {
-        let imported = try ChatSessionImporter.parse(data: Data(claudeExport.utf8))
+        let imported = try ChatSessionImporter.parse(data: Data(claudeExport.utf8)).conversations
         let session = try #require(imported.first).session
 
         #expect(session.title == "Trip planning")
@@ -159,7 +159,7 @@ struct ChatSessionImporterTests {
         """
 
     @Test func geminiActivityEntriesBecomeIndividualSessions() throws {
-        let imported = try ChatSessionImporter.parse(data: Data(geminiExport.utf8))
+        let imported = try ChatSessionImporter.parse(data: Data(geminiExport.utf8)).conversations
 
         // The "Used Gemini Apps" row has no prompt and is dropped.
         #expect(imported.count == 2)
@@ -178,7 +178,7 @@ struct ChatSessionImporterTests {
     }
 
     @Test func geminiPromptWithoutResponseImportsAsUserOnlySession() throws {
-        let imported = try ChatSessionImporter.parse(data: Data(geminiExport.utf8))
+        let imported = try ChatSessionImporter.parse(data: Data(geminiExport.utf8)).conversations
         let promptOnly = try #require(
             imported.first(where: { $0.session.turns[0].content == "what's 2+2" })
         ).session
@@ -210,7 +210,7 @@ struct ChatSessionImporterTests {
         """
 
     @Test func openWebUIExportMapsChatMessages() throws {
-        let imported = try ChatSessionImporter.parse(data: Data(openWebUIExport.utf8))
+        let imported = try ChatSessionImporter.parse(data: Data(openWebUIExport.utf8)).conversations
 
         #expect(imported.count == 1)
         let entry = try #require(imported.first)
@@ -231,7 +231,7 @@ struct ChatSessionImporterTests {
               \(openWebUIExport.dropFirst().dropLast())
             ]
             """
-        let imported = try ChatSessionImporter.parse(data: Data(export.utf8))
+        let imported = try ChatSessionImporter.parse(data: Data(export.utf8)).conversations
         #expect(imported.count == 1)
     }
 
@@ -268,7 +268,7 @@ struct ChatSessionImporterTests {
         """
 
     @Test func grokExportParsesNestedResponsesAndMongoDates() throws {
-        let imported = try ChatSessionImporter.parse(data: Data(grokExport.utf8))
+        let imported = try ChatSessionImporter.parse(data: Data(grokExport.utf8)).conversations
 
         #expect(imported.count == 2)
         #expect(imported.allSatisfy { $0.format == .grok })
@@ -284,7 +284,7 @@ struct ChatSessionImporterTests {
     }
 
     @Test func grokExportAcceptsFlatResponsesAndOidIds() throws {
-        let imported = try ChatSessionImporter.parse(data: Data(grokExport.utf8))
+        let imported = try ChatSessionImporter.parse(data: Data(grokExport.utf8)).conversations
         let flat = try #require(imported.last).session
 
         #expect(flat.externalSessionKey == "grok:665f1e2a9b3c4d5e6f708192")
@@ -310,7 +310,7 @@ struct ChatSessionImporterTests {
               ]
             }
             """
-        let imported = try ChatSessionImporter.parse(data: Data(export.utf8))
+        let imported = try ChatSessionImporter.parse(data: Data(export.utf8)).conversations
         let session = try #require(imported.first).session
         #expect(session.externalSessionKey == "import:g1")
         #expect(session.title == "hello there")
@@ -333,7 +333,7 @@ struct ChatSessionImporterTests {
               ]
             }
             """
-        let imported = try ChatSessionImporter.parse(data: Data(export.utf8))
+        let imported = try ChatSessionImporter.parse(data: Data(export.utf8)).conversations
         let session = try #require(imported.first).session
         #expect(session.turns.count == 4)
         #expect(session.turns[1].role == .assistant)
@@ -345,7 +345,7 @@ struct ChatSessionImporterTests {
         let export = """
             {"messages": [{"role": "user", "content": "solo"}]}
             """
-        let imported = try ChatSessionImporter.parse(data: Data(export.utf8))
+        let imported = try ChatSessionImporter.parse(data: Data(export.utf8)).conversations
         #expect(imported.count == 1)
         #expect(imported.first?.session.turns.first?.content == "solo")
     }
@@ -394,7 +394,7 @@ struct ChatSessionImporterTests {
             ("user.json", Data("{\"id\": \"user-1\"}".utf8), false),
             ("conversations.json", Data(chatGPTExport.utf8), true),
         ])
-        let imported = try ChatSessionImporter.parse(data: zip)
+        let imported = try ChatSessionImporter.parse(data: zip).conversations
 
         #expect(imported.count == 1)
         let session = try #require(imported.first).session
@@ -406,7 +406,7 @@ struct ChatSessionImporterTests {
         let zip = try makeZip([
             ("Takeout/Gemini Apps/MyActivity.json", Data(geminiExport.utf8), true)
         ])
-        let imported = try ChatSessionImporter.parse(data: zip)
+        let imported = try ChatSessionImporter.parse(data: zip).conversations
 
         #expect(imported.count == 2)
         #expect(imported.allSatisfy { $0.format == .gemini })
@@ -445,5 +445,42 @@ struct ChatSessionImporterTests {
         #expect(throws: ChatSessionImporter.ImportError.self) {
             _ = try ChatSessionImporter.parse(data: export)
         }
+    }
+
+    // MARK: - Partial failures
+
+    @Test func countsUnreadableConversationsButNotEmptyOnes() throws {
+        // "Broken" has real user content but an unwalkable tree (its
+        // current_node doesn't exist); "Empty" has no user content at all.
+        // Only the former should be reported as unreadable.
+        let export = Data(
+            """
+            [
+              {
+                "title": "Good", "current_node": "b",
+                "mapping": {
+                  "a": {"id": "a", "parent": null, "children": ["b"],
+                    "message": {"author": {"role": "user"},
+                      "content": {"content_type": "text", "parts": ["hi"]}}},
+                  "b": {"id": "b", "parent": "a", "children": [],
+                    "message": {"author": {"role": "assistant"},
+                      "content": {"content_type": "text", "parts": ["hello"]}}}
+                }
+              },
+              {
+                "title": "Broken", "current_node": "missing",
+                "mapping": {
+                  "x": {"id": "x", "parent": "ghost", "children": [],
+                    "message": {"author": {"role": "user"},
+                      "content": {"content_type": "text", "parts": ["lost message"]}}}
+                }
+              },
+              {"title": "Empty", "mapping": {}}
+            ]
+            """.utf8)
+        let result = try ChatSessionImporter.parse(data: export)
+        #expect(result.conversations.count == 1)
+        #expect(result.conversations.first?.session.title == "Good")
+        #expect(result.unreadable == 1)
     }
 }
