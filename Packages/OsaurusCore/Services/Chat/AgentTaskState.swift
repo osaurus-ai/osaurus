@@ -589,6 +589,13 @@ public final class AgentTaskState {
                 "The previous `file_write` did not execute because `content` exceeded the per-call limit. Do not regenerate another complete oversized payload. Split the content now: send a first chunk under \(WorkspaceToolContract.recommendedWriteChunkCharacters) characters with overwrite mode, then send only each remaining chunk with `mode: \"append\"`."
         }
 
+        if let tool = lastToolName,
+            let envelope = lastResultEnvelope,
+            let notice = Self.runnableMutationNotice(tool: tool, envelope: envelope)
+        {
+            return notice
+        }
+
         // Repeated identical write/exec call: the strongest stuck signal we
         // have, so it outranks the result-class nudges. Reactive (3rd
         // identical call) and advisory only — the call still executed.
@@ -767,6 +774,28 @@ public final class AgentTaskState {
             let message = dict["message"] as? String
         else { return false }
         return message.contains("must contain at most")
+    }
+
+    private static func runnableMutationNotice(tool: String, envelope: String) -> String? {
+        guard writeLikeTools.contains(tool),
+            ToolEnvelope.isSuccess(envelope),
+            let payload = ToolEnvelope.successPayload(envelope) as? [String: Any],
+            payload["dry_run"] as? Bool != true,
+            payload["applied"] as? Bool != false,
+            let verification = payload["verification"] as? [String: Any],
+            verification["status"] as? String == "not_run"
+        else { return nil }
+
+        let path = payload["path"] as? String ?? "the runnable artifact"
+        let diffNotice: String
+        if payload["diff_truncated"] as? Bool == true {
+            diffNotice =
+                " `diff_truncated:true` means only the review preview was shortened; the full file mutation completed. Do not rewrite the whole file because the diff preview was truncated."
+        } else {
+            diffNotice = ""
+        }
+        return
+            "The previous `\(tool)` succeeded for `\(path)`.\(diffNotice) Saving bytes proves persistence, not that runnable code works. Before claiming completion, use `shell_run` or another available syntax/build/test/behavior check; if no checker exists, inspect the critical initialization path. Fix only an evidenced defect rather than regenerating the whole file."
     }
 
     /// Convert a second identical transient extraction failure into the

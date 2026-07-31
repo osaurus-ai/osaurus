@@ -81,12 +81,10 @@ struct FolderToolsResilienceTests {
         #expect(failureField(result) == "path")
     }
 
-    /// Pins the `.docx` / `.pdf` / `.rtf` fix: rich-document extensions
-    /// route through `DocumentParser` instead of the raw UTF-8 decode
-    /// that used to surface `NSCocoaErrorDomain` code 264 ("isn't in
-    /// the correct format"). We use RTF here because `NSAttributedString`
-    /// can synthesise it inline without checking in a binary fixture.
-    @Test @MainActor func fileRead_richDocumentExtractsText() async throws {
+    /// RTF is authored UTF-8 source in a workspace. Attachment ingestion may
+    /// render it, but file_read must preserve the control words needed for
+    /// exact verification and file_edit.
+    @Test @MainActor func fileRead_rtfPreservesRawSource() async throws {
         let root = tmpRoot()
         let body = "Hello rich world — extracted via DocumentParser."
         let attributed = NSAttributedString(string: body)
@@ -107,7 +105,9 @@ struct FolderToolsResilienceTests {
         )
         #expect(ToolEnvelope.isSuccess(result))
         let text = EnvelopeAssertions.successText(result) ?? ""
-        #expect(text.contains(body), "extracted text missing the body: \(text)")
+        #expect(text.contains(#"{\rtf"#))
+        #expect(text.contains("Hello rich world"))
+        #expect(text.contains(#"\f0"#))
     }
 
     /// Pins the binary-sniff branch: a non-rich file whose first 4KB
@@ -364,11 +364,16 @@ struct FolderToolsResilienceTests {
         #expect(written == "month,total\nJan,1200\n")
     }
 
-    @Test func fileWrite_rejectsPDFAndPresentationPackagesWithoutTouchingExistingFile() async throws {
+    @Test func fileWrite_rejectsBinaryDocumentPackagesWithoutTouchingExistingFile() async throws {
         let root = tmpRoot()
         let cases: [(name: String, bytes: [UInt8])] = [
             ("report.pdf", [0x25, 0x50, 0x44, 0x46]),
+            ("report.docx", [0x50, 0x4B, 0x03, 0x04]),
+            ("legacy.doc", [0xD0, 0xCF, 0x11, 0xE0]),
+            ("bundle.rtfd", [0x50, 0x4B, 0x03, 0x04]),
             ("deck.pptx", [0x50, 0x4B, 0x03, 0x04]),
+            ("document.pages", [0x50, 0x4B, 0x03, 0x04]),
+            ("document.odt", [0x50, 0x4B, 0x03, 0x04]),
         ]
 
         let tool = FileWriteTool(rootPath: root)
@@ -469,6 +474,32 @@ struct FolderToolsResilienceTests {
             try String(contentsOf: path, encoding: .utf8)
                 == "<html>\n<body>done</body>\n</html>"
         )
+    }
+
+    @Test func fileWrite_runnableArtifactReportsVerificationAndDiffScope() async throws {
+        let root = tmpRoot()
+        let content = (1 ... 100)
+            .map { "<div data-row=\"\($0)\"></div>" }
+            .joined(separator: "\n")
+        let arguments = try JSONSerialization.data(withJSONObject: [
+            "path": "index.html",
+            "content": content,
+        ])
+
+        let result = try await FileWriteTool(rootPath: root).execute(
+            argumentsJSON: String(decoding: arguments, as: UTF8.self)
+        )
+
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
+        #expect(payload["content_write_complete"] as? Bool == true)
+        #expect(payload["diff_truncated"] as? Bool == true)
+        #expect(
+            (payload["diff_truncation_note"] as? String)?
+                .contains("full content was applied") == true
+        )
+        let verification = try #require(payload["verification"] as? [String: Any])
+        #expect(verification["status"] as? String == "not_run")
+        #expect((verification["next_action"] as? String)?.contains("before claiming") == true)
     }
 
     @Test func fileWrite_rejectsExistingNonUTF8TextTarget() async throws {
@@ -580,6 +611,12 @@ struct FolderToolsResilienceTests {
         let payload = try #require(EnvelopeAssertions.successPayload(result))
         let reference = try #require(payload["file_reference"] as? [String: Any])
         #expect(reference["path"] as? String == "f.txt")
+        #expect(payload["risk_level"] as? String == "low")
+        let envelope = try #require(
+            JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any]
+        )
+        let warnings = envelope["warnings"] as? [String] ?? []
+        #expect(!warnings.contains { $0.contains("overwrite an existing file") })
         let after = try String(contentsOf: path, encoding: .utf8)
         #expect(after == "hello ")
     }

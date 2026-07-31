@@ -1663,7 +1663,9 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         + "provide `old_string` (+`new_string`) to replace one exact match. **Use this instead of "
         + "`echo`/`cat` heredoc / `sed` / `awk` in `sandbox_exec`.** Creates parent directories as "
         + "needed. For an edit, `old_string` must uniquely match one location — include surrounding "
-        + "context lines if needed; it fails if `old_string` is missing or matches multiple locations."
+        + "context lines if needed; it fails if `old_string` is missing or matches multiple locations. "
+        + "Binary document/package extensions are rejected; this tool writes UTF-8 source only. "
+        + "For runnable code, verify the result before claiming it works; a truncated diff is only a shortened review preview, not a partial mutation."
     let agentName: String
     let home: String
 
@@ -1727,6 +1729,13 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
 
         let resolvedReq = requirePath(path, home: home, tool: name)
         guard case .value(let resolved) = resolvedReq else { return resolvedReq.failureEnvelope ?? "" }
+        if let rejected = WorkspaceWriteSafety.structuredTextWriteRejection(
+            path: path,
+            fileExtension: URL(fileURLWithPath: resolved).pathExtension.lowercased(),
+            toolName: name
+        ) {
+            return rejected
+        }
 
         // The presence of `old_string` decides edit vs whole-file write —
         // the model picks the behavior from an argument it already holds,
@@ -1976,6 +1985,7 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             ],
         ]
         dict.merge(extra) { _, new in new }
+        var diffTruncated = false
         if let before, let after {
             let diff = WorkspaceWriteSafety.unifiedDiffText(
                 old: before.content,
@@ -1985,9 +1995,16 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             )
             dict["diff"] = diff.text
             dict["diff_truncated"] = diff.truncated
+            diffTruncated = diff.truncated
             dict["dry_run"] = false
             dict["action"] = before.existed ? "update" : "create"
         }
+        WorkspaceWriteSafety.annotateMutationResult(
+            &dict,
+            path: resolved,
+            dryRun: false,
+            diffTruncated: diffTruncated
+        )
         return dict
     }
 }

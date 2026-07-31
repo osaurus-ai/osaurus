@@ -752,8 +752,8 @@ struct FileReadTool: OsaurusTool {
     let name = "file_read"
     let description =
         "Read a file's contents, or list a directory's contents — the path decides. Files return text "
-        + "with `N|` line-number prefixes (HTML and other source files are returned raw; "
-        + "text-extractable documents — PDF, Word, PowerPoint, RTF — "
+        + "with `N|` line-number prefixes (UTF-8 source files, including HTML/RTF/SVG, are returned raw; "
+        + "binary text-extractable documents — PDF, Word, PowerPoint — "
         + "and a bounded XLSX preview are supported; binaries are not); bound large reads with "
         + "start_line/end_line, tail_lines, or max_chars. Directories return a listing; bound with "
         + "max_depth. Example: {\"path\": \"src/app.py\", \"start_line\": 1, \"end_line\": 120}"
@@ -828,8 +828,7 @@ struct FileReadTool: OsaurusTool {
         var isDirectory: ObjCBool = false
         let ext = fileURL.pathExtension.lowercased()
         guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory),
-            !isDirectory.boolValue,
-            !DocumentParser.isImageFile(url: fileURL)
+            !isDirectory.boolValue
         else {
             return .unsupported
         }
@@ -840,7 +839,10 @@ struct FileReadTool: OsaurusTool {
         if ext == "pdf" {
             return .cooperative
         }
-        guard !Self.shouldExtractViaParser(url: fileURL, ext: ext) else {
+        guard !WorkspaceFileFormatPolicy.prefersDocumentExtraction(ext) else {
+            return .unsupported
+        }
+        if DocumentParser.isImageFile(url: fileURL), ext != "svg" {
             return .unsupported
         }
         return .cooperative
@@ -933,12 +935,16 @@ struct FileReadTool: OsaurusTool {
         guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory) else {
             throw FolderToolError.fileNotFound(relativePath)
         }
+        let ext = fileURL.pathExtension.lowercased()
 
         // A directory path lists rather than reads (the path carries the
         // decision — no separate `file_tree` tool to mis-select). Reuse the
         // internal tree lister, honoring `max_depth`, but stamp the
         // envelope as `file_read` since that's the only file tool now.
-        if isDirectory.boolValue {
+        // Document packages such as RTFD are directories on macOS, but remain
+        // files at the workspace contract boundary and must use extraction.
+        if isDirectory.boolValue,
+            !WorkspaceFileFormatPolicy.prefersDocumentExtraction(ext) {
             let maxDepth = coerceInt(args["max_depth"]) ?? 3
             let listing = FileTreeTool(rootPath: rootPath).entries(for: fileURL, maxDepth: maxDepth)
             return ToolEnvelope.listing(
@@ -974,7 +980,6 @@ struct FileReadTool: OsaurusTool {
             return ToolEnvelope.success(tool: name, text: workbookPreview)
         }
 
-        let ext = fileURL.pathExtension.lowercased()
         let content = try await loadFileContent(
             url: fileURL,
             relativePath: relativePath,
@@ -1141,28 +1146,23 @@ struct FileReadTool: OsaurusTool {
     }
 
     /// Pull text out of the file at `url`, throwing `binaryContent` when
-    /// the file is not text or text-extractable. Four branches:
-    ///   - images are refused outright (this tool returns text only);
+    /// the file is not text or text-extractable:
     ///   - PDFs use `PDFAdapter` directly so spawned reads remain
     ///     cancellation-cooperative without crossing the synchronous
     ///     `DocumentParser` compatibility shim;
-    ///   - other text-extractable documents (Word, PowerPoint, RTF,
-    ///     …) continue through `DocumentParser`;
-    ///   - plain text / source / HTML / CSV / unknown extensions read raw bytes,
-    ///     NUL-sniff the first 4KB, then UTF-8 decode. The raw path keeps
-    ///     line-numbering and `start_line`/`end_line` semantics, and the
-    ///     byte-first ordering catches binaries whose UTF-8 prefix happens
-    ///     to be valid by coincidence.
+    ///   - other known binary document packages use document extraction;
+    ///   - every other UTF-8 file reads as raw source regardless of extension;
+    ///   - binary images are refused, while parser-supported binary documents
+    ///     fall back to extraction;
+    /// Raw reads NUL-sniff the first 4KB, then UTF-8 decode. This keeps
+    /// line-numbering and `start_line`/`end_line` semantics, and the
+    /// byte-first ordering catches binaries whose UTF-8 prefix happens
+    /// to be valid by coincidence.
     private func loadFileContent(
         url: URL,
         relativePath: String,
         ext: String
     ) async throws -> LoadedFileContent {
-        // Text-only tool: never try to surface image pixels.
-        if DocumentParser.isImageFile(url: url) {
-            throw Self.binaryError(path: relativePath, ext: ext, detail: .image)
-        }
-
         if ext == "pdf" {
             return LoadedFileContent(
                 text: try await extractPDFTextLayer(
@@ -1174,7 +1174,11 @@ struct FileReadTool: OsaurusTool {
             )
         }
 
-        if Self.shouldExtractViaParser(url: url, ext: ext) {
+        if WorkspaceFileFormatPolicy.prefersDocumentExtraction(ext) {
+            DocumentAdaptersBootstrap.registerBuiltIns()
+            guard DocumentParser.canParse(url: url) else {
+                throw Self.binaryError(path: relativePath, ext: ext, detail: .parseFailed)
+            }
             return LoadedFileContent(
                 text: try await extractRichDocumentText(
                     url: url,
@@ -1185,17 +1189,39 @@ struct FileReadTool: OsaurusTool {
             )
         }
 
-        let worker = Task.detached(priority: .userInitiated) {
-            try Self.loadBoundedRawText(
-                url: url,
-                relativePath: relativePath,
-                ext: ext
-            )
-        }
-        return try await withTaskCancellationHandler {
-            try await worker.value
-        } onCancel: {
-            worker.cancel()
+        do {
+            let worker = Task.detached(priority: .userInitiated) {
+                try Self.loadBoundedRawText(
+                    url: url,
+                    relativePath: relativePath,
+                    ext: ext
+                )
+            }
+            return try await withTaskCancellationHandler {
+                try await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+        } catch let error as FolderToolError {
+            guard case .binaryContent = error else { throw error }
+
+            // Raw UTF-8 always wins. Only after strict decoding fails do we
+            // reinterpret the bytes as an image or rich binary document.
+            if DocumentParser.isImageFile(url: url) {
+                throw Self.binaryError(path: relativePath, ext: ext, detail: .image)
+            }
+            DocumentAdaptersBootstrap.registerBuiltIns()
+            if DocumentParser.canParse(url: url) {
+                return LoadedFileContent(
+                    text: try await extractRichDocumentText(
+                        url: url,
+                        relativePath: relativePath,
+                        ext: ext
+                    ),
+                    rawRead: nil
+                )
+            }
+            throw error
         }
     }
 
@@ -1227,28 +1253,6 @@ struct FileReadTool: OsaurusTool {
                 throw Self.binaryError(path: relativePath, ext: ext, detail: .parseFailed)
             }
         }
-    }
-
-    /// Whether `url` should be routed through `DocumentParser` for text
-    /// extraction rather than read as raw bytes. Plain-text / source /
-    /// HTML / CSV extensions stay on the raw path (so source and line ranges
-    /// keep working).
-    /// PDFs are intercepted by `extractPDFTextLayer`; every other format the
-    /// document infrastructure can parse — Word, PowerPoint, RTF,
-    /// etc. — is extracted here. Lazily registers
-    /// the built-in adapters (idempotent) so `canParse` sees formats like
-    /// PPTX even on entry points that didn't bootstrap at launch, mirroring
-    /// `workbookAdapter(for:)`.
-    private static func shouldExtractViaParser(url: URL, ext: String) -> Bool {
-        // HTML is simultaneously a rich-document format and one of the most
-        // common workspace source formats. Returning its rendered text after
-        // `file_write` makes the source appear truncated or replaced, causing
-        // agents to overwrite the file repeatedly. Workspace reads must
-        // preserve the authored markup and scripts byte-for-byte.
-        if ext == "html" || ext == "htm" { return false }
-        if DocumentParser.isPlainTextExtension(ext) { return false }
-        DocumentAdaptersBootstrap.registerBuiltIns()
-        return DocumentParser.canParse(url: url)
     }
 
     /// Run the non-PDF `DocumentParser.parse(url:)` compatibility path on a
@@ -1320,18 +1324,19 @@ struct FileReadTool: OsaurusTool {
                 guard let chunk = try handle.read(upToCount: count), !chunk.isEmpty else { break }
                 data.append(chunk)
                 bytesRead += chunk.count
+                if data.prefix(Self.binarySniffBytes).contains(0) {
+                    throw binaryError(path: relativePath, ext: ext, detail: .nulByte)
+                }
                 if chunk.count < count { break }
             }
         } catch let error as CancellationError {
+            throw error
+        } catch let error as FolderToolError {
             throw error
         } catch {
             throw FolderToolError.operationFailed(
                 "Could not read '\(relativePath)': \(error.localizedDescription)"
             )
-        }
-
-        if data.prefix(Self.binarySniffBytes).contains(0) {
-            throw binaryError(path: relativePath, ext: ext, detail: .nulByte)
         }
 
         let truncatedByByteLimit: Bool
@@ -1620,8 +1625,9 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         + "`content` parameter. Use `mode: \"append\"` for any additive change so existing content remains intact. "
         + "For a large file, keep calls bounded: write the first chunk normally, "
         + "then pass `mode: \"append\"` for later chunks. Pass `dry_run: true` to preview the diff and risk warnings without "
-        + "writing. Not for structured `.xlsx` / `.pdf` / `.pptx` outputs — write text formats such "
-        + "as CSV/TSV/Markdown instead. "
+        + "writing. Binary document/package extensions such as `.docx`, `.xlsx`, `.pdf`, and `.pptx` "
+        + "are rejected — write UTF-8 formats such as Markdown/HTML/CSV/TSV instead. "
+        + "For runnable code, a successful write proves only persistence; run an available check before claiming it works. "
         + "Example: {\"path\": \"notes/summary.md\", \"content\": \"# Summary\\n...\"}"
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -1781,6 +1787,7 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
             proposedContent: proposedContent,
             operation: name,
             dryRun: dryRun,
+            overwritesExistingFile: mode != "append",
             createsParentDirectories: createsParentDirectories,
             fileURL: fileURL
         )
@@ -1845,6 +1852,8 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         + "location in the file — include surrounding context lines if needed to ensure uniqueness. "
         + "Copy the RAW file text only: never include the `N|` line-number prefixes shown in "
         + "`file_read` output. Fails if `old_string` is not found or matches multiple locations. "
+        + "Binary document/package extensions are rejected; this tool edits UTF-8 source only. "
+        + "For runnable code, verify the result before claiming it works; a truncated diff is only a shortened review preview, not a partial edit. "
         + "Pass `dry_run: true` to preview the diff without modifying the file. "
         + "Example: {\"path\": \"config.py\", \"old_string\": \"debug = True\", \"new_string\": \"debug = False\"}"
     let parameters: JSONValue? = .object([
@@ -2022,6 +2031,7 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             proposedContent: content,
             operation: name,
             dryRun: dryRun,
+            overwritesExistingFile: false,
             createsParentDirectories: false,
             fileURL: fileURL
         )

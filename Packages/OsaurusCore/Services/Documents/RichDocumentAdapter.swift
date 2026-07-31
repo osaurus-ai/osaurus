@@ -110,7 +110,8 @@ public struct RichDocumentAdapter: DocumentFormatAdapter {
         switch ext {
         case "docx": return nil  // NSAttributedString auto-detects OOXML
         case "doc": return .docFormat
-        case "rtf", "rtfd": return .rtf
+        case "rtf": return .rtf
+        case "rtfd": return .rtfd
         case "html", "htm": return .html
         default: return nil
         }

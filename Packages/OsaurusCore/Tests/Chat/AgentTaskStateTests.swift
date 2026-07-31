@@ -413,6 +413,54 @@ struct AgentTaskStateTests {
         #expect(bias.contains(#"mode: "append""#))
     }
 
+    @Test func bias_runnableWriteRequiresVerificationAndExplainsTruncatedDiff() {
+        let state = AgentTaskState()
+        let result = ToolEnvelope.success(
+            tool: "file_edit",
+            result: [
+                "kind": "workspace_write_result",
+                "path": "minesweeper.html",
+                "applied": true,
+                "dry_run": false,
+                "diff_truncated": true,
+                "content_write_complete": true,
+                "verification": [
+                    "status": "not_run",
+                    "reason": "Persistence is not runtime correctness.",
+                ],
+            ] as [String: Any]
+        )
+        state.record(
+            name: "file_edit",
+            argsJSON: #"{"path":"minesweeper.html","old_string":"x","new_string":"y"}"#,
+            result: result
+        )
+
+        let bias = state.nextStepBias() ?? ""
+        #expect(bias.contains("succeeded"))
+        #expect(bias.contains("only the review preview was shortened"))
+        #expect(bias.contains("Do not rewrite the whole file"))
+        #expect(bias.contains("proves persistence, not that runnable code works"))
+        #expect(bias.contains("shell_run"))
+    }
+
+    @Test func bias_plainTextWriteWithoutVerificationMetadataHasNoNudge() {
+        let state = AgentTaskState()
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"notes.txt","content":"done"}"#,
+            result: ToolEnvelope.success(
+                tool: "file_write",
+                result: [
+                    "kind": "workspace_write_result",
+                    "path": "notes.txt",
+                    "applied": true,
+                ]
+            )
+        )
+        #expect(state.nextStepBias() == nil)
+    }
+
     /// Issue #2098: a rendered-cap-truncated read stages a continuation
     /// notice naming the exact path and `start_line`/`end_line` to resume
     /// with, so the model reads the rest instead of reviewing a prefix as

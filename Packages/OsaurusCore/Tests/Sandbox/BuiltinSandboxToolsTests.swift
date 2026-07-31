@@ -783,6 +783,9 @@ struct BuiltinSandboxToolsTests {
 
         let payload = try successPayload(output)
         #expect((payload["path"] as? String)?.contains("notes/index.html") == true)
+        #expect(payload["content_write_complete"] as? Bool == true)
+        let verification = try #require(payload["verification"] as? [String: Any])
+        #expect(verification["status"] as? String == "not_run")
 
         let calls = await runner.calls
         let commands = calls.compactMap { call -> String? in
@@ -792,6 +795,25 @@ struct BuiltinSandboxToolsTests {
         #expect(commands.contains { $0.contains("printf") && $0.contains("notes/index.html") })
         // The whole-file write must NOT touch the in-place edit machinery.
         #expect(!commands.contains { $0.contains("python3 -c") })
+    }
+
+    @Test @MainActor
+    func sandboxWriteFile_rejectsTextWrittenToBinaryDocumentExtension() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON: #"{"path":"report.docx","content":"not a real package"}"#
+            )
+        }
+
+        let payload = try failurePayload(output)
+        #expect(payload["kind"] as? String == "rejected")
+        #expect(payload["field"] as? String == "path")
+        #expect((payload["message"] as? String)?.contains("only writes UTF-8 text") == true)
+        let calls = await runner.calls
+        #expect(calls.isEmpty)
     }
 
     /// `sandbox_write_file` with `old_string` selects the in-place edit
