@@ -19033,7 +19033,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "服务器向 OpenAI / Ollama / Anthropic 客户端报告的别名。"
+            "value" : "服务端向 OpenAI / Ollama / Anthropic 客户端报告的别名。"
           }
         },
         "zh-Hant" : {
@@ -23245,7 +23245,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "API 请求活动将显示在此处。\n你可以在“服务器”标签页测试端点，或通过 API 连接应用。"
+            "value" : "API 请求活动将显示在此处。\n你可以在“服务端”标签页测试端点，或通过 API 连接应用。"
           }
         },
         "zh-Hant" : {
@@ -28398,7 +28398,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "你的 Osaurus 服务器上的可用端点。展开即可直接测试。"
+            "value" : "你的 Osaurus 服务端上的可用端点。展开即可直接测试。"
           }
         },
         "zh-Hant" : {
@@ -46383,7 +46383,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "配置用于外部集成的本地 API 服务器。"
+            "value" : "配置用于外部集成的本地 API 服务端。"
           }
         },
         "zh-Hant" : {
@@ -75399,7 +75399,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "实验性功能：当服务器驱逐策略设为“灵活（多模型）”且内存预测显示两个模型都能容纳时，将辅助模型与聊天模型并行加载，而非先卸载再重新加载——在大内存 Mac 上跳过换入换出的往返开销。内存紧张或采用严格策略时，始终回退至常规交接流程。"
+            "value" : "实验性功能：当服务端驱逐策略设为“灵活（多模型）”且内存预测显示两个模型都能容纳时，将辅助模型与聊天模型并行加载，而非先卸载再重新加载——在大内存 Mac 上跳过换入换出的往返开销。内存紧张或采用严格策略时，始终回退至常规交接流程。"
           }
         },
         "zh-Hant" : {
@@ -80310,7 +80310,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "修复或清除服务器设置中的代理 URL。"
+            "value" : "修复或清除服务端设置中的代理 URL。"
           }
         },
         "zh-Hant" : {
@@ -100972,7 +100972,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允许服务器在没有正在处理的请求时释放内存。"
+            "value" : "允许服务端在没有正在处理的请求时释放内存。"
           }
         },
         "zh-Hant" : {
@@ -106013,7 +106013,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在“服务器 → 概览”标签页中管理密钥。它们存储在 macOS 钥匙串中，绝不会离开此设备。"
+            "value" : "在“服务端 → 概览”标签页中管理密钥。它们存储在 macOS 钥匙串中，绝不会离开此设备。"
           }
         },
         "zh-Hant" : {
@@ -129524,7 +129524,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "打开服务器管理"
+            "value" : "打开服务端管理"
           }
         },
         "zh-Hant" : {
@@ -132430,7 +132430,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 服务器"
+            "value" : "Osaurus 服务端"
           }
         },
         "zh-Hant" : {
@@ -140975,7 +140975,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "端口、网络暴露、CORS、top-P、模型逐出和空闲驻留现在位于“服务器 → 设置”中，由 vmlx 服务器运行时契约提供支持。"
+            "value" : "端口、网络暴露、CORS、top-P、模型逐出和空闲驻留现在位于“服务端 → 设置”中，由 vmlx 服务端运行时契约提供支持。"
           }
         },
         "zh-Hant" : {
@@ -153216,7 +153216,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "服务器空闲时回收 GPU 和磁盘资源。目前设置已持久化；主机生命周期桥接器将在后续版本中推出。"
+            "value" : "服务端空闲时回收 GPU 和磁盘资源。目前设置已持久化；主机生命周期桥接器将在后续版本中推出。"
           }
         },
         "zh-Hant" : {
@@ -162014,7 +162014,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正在重启服务器..."
+            "value" : "正在重启服务端..."
           }
         },
         "zh-Hant" : {
@@ -163098,7 +163098,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "重试启动服务器"
+            "value" : "重试启动服务端"
           }
         },
         "zh-Hant" : {
@@ -164484,7 +164484,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "根端点 - 服务器状态消息"
+            "value" : "根端点 - 服务端状态消息"
           }
         },
         "zh-Hant" : {
@@ -170452,7 +170452,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存这些更改将重新启动 NIO 服务器，以绑定新的套接字并刷新中间件。"
+            "value" : "保存这些更改将重新启动 NIO 服务端，以绑定新的套接字并刷新中间件。"
           }
         },
         "zh-Hant" : {
@@ -177184,7 +177184,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "服务器"
+            "value" : "服务端"
           }
         },
         "zh-Hant" : {
@@ -177218,7 +177218,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "服务器错误"
+            "value" : "服务端错误"
           }
         },
         "zh-Hant" : {
@@ -177286,7 +177286,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "服务器已锁定"
+            "value" : "服务端已锁定"
           }
         },
         "zh-Hant" : {
@@ -177320,7 +177320,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "服务器未运行"
+            "value" : "服务端未运行"
           }
         },
         "zh-Hant" : {
@@ -177354,7 +177354,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "服务器正在运行"
+            "value" : "服务端正在运行"
           }
         },
         "zh-Hant" : {
@@ -177388,7 +177388,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "服务器正在运行"
+            "value" : "服务端正在运行"
           }
         },
         "zh-Hant" : {
@@ -177425,7 +177425,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "服务器设置已移动"
+            "value" : "服务端设置已移动"
           }
         },
         "zh-Hant" : {
@@ -177459,7 +177459,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "服务器已停止"
+            "value" : "服务端已停止"
           }
         },
         "zh-Hant" : {
@@ -177533,7 +177533,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "服务器 URL"
+            "value" : "服务端 URL"
           }
         },
         "zh-Hant" : {
@@ -186949,7 +186949,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "启动服务器"
+            "value" : "启动服务端"
           }
         },
         "zh-Hant" : {
@@ -187296,7 +187296,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从“概览”标签页启动服务器以测试端点。"
+            "value" : "从“概览”标签页启动服务端以测试端点。"
           }
         },
         "zh-Hant" : {
@@ -187468,7 +187468,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正在启动服务器..."
+            "value" : "正在启动服务端..."
           }
         },
         "zh-Hant" : {
@@ -188641,7 +188641,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正在停止服务器..."
+            "value" : "正在停止服务端..."
           }
         },
         "zh-Hant" : {
@@ -201769,7 +201769,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "这将通过 agent.osaurus.ai 为此智能体创建一个公开 URL。任何拥有该 URL 的人都可以向你的本地服务器发送请求。你的访问密钥仍会保护 API 端点。"
+            "value" : "这将通过 agent.osaurus.ai 为此智能体创建一个公开 URL。任何拥有该 URL 的人都可以向你的本地服务端发送请求。你的访问密钥仍会保护 API 端点。"
           }
         },
         "zh-Hant" : {
@@ -212645,7 +212645,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "服务器端请求日志的详细程度。"
+            "value" : "服务端请求日志的详细程度。"
           }
         },
         "zh-Hant" : {
@@ -218064,7 +218064,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 监听客户端请求的位置。更改会重启服务器。"
+            "value" : "Osaurus 监听客户端请求的位置。更改会重启服务端。"
           }
         },
         "zh-Hant" : {
@@ -222493,7 +222493,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bonjour 启用期间，你的服务器会暴露在本地网络中。"
+            "value" : "Bonjour 启用期间，你的服务端会暴露在本地网络中。"
           }
         },
         "zh-Hant" : {
