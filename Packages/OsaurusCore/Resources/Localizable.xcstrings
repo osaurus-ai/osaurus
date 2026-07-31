@@ -198210,36 +198210,36 @@
         }
       }
     },
-    "The zip archive is damaged and can't be read." : {
+    "The zip archive is damaged and can't be read. Try unzipping it first, then import the JSON files inside." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Das Zip-Archiv ist beschädigt und kann nicht gelesen werden."
+            "value" : "Das Zip-Archiv ist beschädigt und kann nicht gelesen werden. Entpacken Sie es zuerst und importieren Sie dann die enthaltenen JSON-Dateien."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "zip 아카이브가 손상되어 읽을 수 없습니다."
+            "value" : "zip 아카이브가 손상되어 읽을 수 없습니다. 먼저 압축을 해제한 다음 안에 있는 JSON 파일을 가져오세요."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Zip-архив поврежден и не может быть прочитан."
+            "value" : "Zip-архив поврежден и не может быть прочитан. Сначала распакуйте его, затем импортируйте JSON-файлы из него."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "zip 压缩包已损坏，无法读取。"
+            "value" : "zip 压缩包已损坏，无法读取。请先解压，然后导入其中的 JSON 文件。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "zip 壓縮包已損壞，無法讀取。"
+            "value" : "zip 壓縮包已損壞，無法讀取。請先解壓縮，然後導入其中的 JSON 檔案。"
           }
         }
       }

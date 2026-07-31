@@ -27,7 +27,9 @@ enum ZipArchiveError: LocalizedError {
         case .notAnArchive:
             return L("The file is not a zip archive.")
         case .corruptArchive:
-            return L("The zip archive is damaged and can't be read.")
+            return L(
+                "The zip archive is damaged and can't be read. Try unzipping it first, then import the JSON files inside."
+            )
         case .unsupportedEntry(let name):
             return L("The zip entry \"\(name)\" uses an unsupported format.")
         }
