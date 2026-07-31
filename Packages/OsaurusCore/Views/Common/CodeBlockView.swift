@@ -390,7 +390,15 @@ struct CodeContentView: NSViewRepresentable {
 
 /// Minimal NSTextView subclass that draws line numbers in the gutter.
 /// No background drawing, no overlay coordination — just text + line numbers.
-final class CodeNSTextView: NSTextView {
+final class CodeNSTextView: NSTextView, CrossSelectableTextView {
+    /// Slice of the thread-wide cross-block selection (see ChatCrossSelection).
+    var crossSelectionRange: NSRange? {
+        didSet {
+            guard oldValue != crossSelectionRange else { return }
+            needsDisplay = true
+        }
+    }
+
     var lineNumberColor: NSColor = .tertiaryLabelColor
     var lineCount: Int = 0
     var codeFontSize: CGFloat = 12
@@ -425,10 +433,18 @@ final class CodeNSTextView: NSTextView {
             let url = (link as? URL) ?? (link as? String).flatMap(URL.init(string:))
             if let url { NSWorkspace.shared.open(url); return }
         }
+        // See SelectableNSTextView.mouseDown — single-click drags go through
+        // the cross-block selection controller (#2129).
+        if event.clickCount == 1 {
+            ChatCrossSelection.shared.beginDrag(from: self, with: event)
+            return
+        }
+        ChatCrossSelection.shared.clear()
         super.mouseDown(with: event)
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        drawCrossSelectionHighlight()
         guard let layoutManager = layoutManager,
             textContainer != nil,
             let textStorage = textStorage,

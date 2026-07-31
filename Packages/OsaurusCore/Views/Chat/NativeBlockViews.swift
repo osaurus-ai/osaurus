@@ -1017,10 +1017,35 @@ final class NativeCodeBlockView: NSView {
 
 /// NSTextView subclass used as a grid cell. Keeps attributed-string formatting
 /// intact on focus and supports native selection within the cell.
-final class CellTextView: NSTextView {
+final class CellTextView: NSTextView, CrossSelectableTextView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { isSelectable }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { isSelectable }
+
+    /// Slice of the thread-wide cross-block selection (see ChatCrossSelection).
+    var crossSelectionRange: NSRange? {
+        didSet {
+            guard oldValue != crossSelectionRange else { return }
+            needsDisplay = true
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        drawCrossSelectionHighlight()
+        super.draw(dirtyRect)
+    }
+
+    /// See SelectableNSTextView.mouseDown — single-click drags go through
+    /// the cross-block selection controller (#2129).
+    override func mouseDown(with event: NSEvent) {
+        if isSelectable, event.clickCount == 1 {
+            ChatCrossSelection.shared.beginDrag(from: self, with: event)
+            return
+        }
+        ChatCrossSelection.shared.clear()
+        super.mouseDown(with: event)
+    }
+
 }
 
 // MARK: - NativeMarkdownTableView

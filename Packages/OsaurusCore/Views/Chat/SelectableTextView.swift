@@ -1080,7 +1080,17 @@ struct SelectableTextView: NSViewRepresentable {
 /// Custom NSTextView that handles link clicks, cursor changes, blockquote bars, and heading underlines.
 /// Code blocks are now rendered as standalone `CodeBlockView` / `CodeNSTextView` — no code-block
 /// drawing happens here.
-final class SelectableNSTextView: NSTextView {
+final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
+
+    /// Slice of the thread-wide cross-block selection (see ChatCrossSelection).
+    /// Painted at the top of `draw(_:)` — drawsBackground is false here, so
+    /// AppKit's own background/selection pass never runs.
+    var crossSelectionRange: NSRange? {
+        didSet {
+            guard oldValue != crossSelectionRange else { return }
+            needsDisplay = true
+        }
+    }
 
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -1151,6 +1161,15 @@ final class SelectableNSTextView: NSTextView {
             }
         }
 
+        // Single-click drags route to the cross-block selection controller
+        // so the highlight can span past this block (each block is its own
+        // text view — native tracking can't cross that boundary, #2129).
+        // Multi-clicks (word/paragraph select) keep native behavior.
+        if event.clickCount == 1 {
+            ChatCrossSelection.shared.beginDrag(from: self, with: event)
+            return
+        }
+        ChatCrossSelection.shared.clear()
         super.mouseDown(with: event)
     }
 
@@ -1252,6 +1271,7 @@ final class SelectableNSTextView: NSTextView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        drawCrossSelectionHighlight()
         guard let layoutManager = layoutManager,
             let textContainer = textContainer,
             let textStorage = textStorage

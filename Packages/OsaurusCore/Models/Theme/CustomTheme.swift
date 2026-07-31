@@ -1542,8 +1542,13 @@ extension Color {
             (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
         case 6:  // RGB (24-bit)
             (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
-        case 8:  // ARGB (32-bit)
-            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
+        case 8:  // RGBA (32-bit) — theme colors are authored web-style with
+            // trailing alpha ("#3b82f680", accent+"45"). This previously read
+            // ARGB, so the leading red byte became the alpha and colors like
+            // the system-accent selection "#007aff26" resolved fully
+            // transparent (invisible selection highlight, issue #2129).
+            // Mirrors the same fix in Color(hex:) (Theme.swift).
+            (r, g, b, a) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
         default:
             (a, r, g, b) = (255, 0, 0, 0)
         }

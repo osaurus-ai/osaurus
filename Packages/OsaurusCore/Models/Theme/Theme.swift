@@ -1097,8 +1097,13 @@ extension Color {
             (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
         case 6:  // RGB (24-bit)
             (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
-        case 8:  // ARGB (32-bit)
-            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
+        case 8:  // RGBA (32-bit) — every 8-digit color in the theme catalog is
+            // authored web-style with trailing alpha ("#3b82f680", accent+"45").
+            // This case previously read ARGB, so the leading red byte became
+            // the alpha: system-accent selection colors like "#007aff26"
+            // resolved to ~0% opacity and the selection highlight painted
+            // invisibly (issue #2129).
+            (r, g, b, a) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
         default:
             (a, r, g, b) = (1, 1, 1, 0)
         }

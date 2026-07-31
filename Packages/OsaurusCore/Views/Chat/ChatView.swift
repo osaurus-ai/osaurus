@@ -8351,6 +8351,17 @@ extension ChatView {
         let windowState = self.windowState
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak session, weak windowState] event in
+            // Cmd+C copies an active cross-block selection (a drag spanning
+            // multiple message blocks, see ChatCrossSelection). Individual
+            // NSTextViews only know their own slice, so the controller owns
+            // the concatenated copy.
+            if event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
+                event.charactersIgnoringModifiers?.lowercased() == "c",
+                ChatCrossSelection.shared.copyIfActive(window: event.window)
+            {
+                return nil
+            }
+
             // Cmd+F opens the in-conversation find bar.
             if event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
                 event.charactersIgnoringModifiers?.lowercased() == "f"
