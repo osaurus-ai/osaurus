@@ -36,6 +36,25 @@ protocol CrossSelectableTextView: NSTextView {
     var crossSelectionRange: NSRange? { get set }
 }
 
+extension NSTextView {
+    /// Shared `cursorUpdate` body for chat block text views: I-beam over
+    /// text, pointing hand over links. Legacy cursor rects
+    /// (`resetCursorRects`) are unreliable inside layer-backed, recycled
+    /// table cells, so these views drive the cursor from a `.cursorUpdate`
+    /// tracking area instead.
+    func chatTextCursorUpdate(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let index = characterIndexForInsertion(at: point)
+        if index < (textStorage?.length ?? 0),
+            textStorage?.attribute(.link, at: index, effectiveRange: nil) != nil
+        {
+            NSCursor.pointingHand.set()
+        } else {
+            NSCursor.iBeam.set()
+        }
+    }
+}
+
 extension CrossSelectableTextView {
     /// Fills the line-fragment rects of `crossSelectionRange` with the
     /// view's selection color. Call at the top of `draw(_:)` so text renders

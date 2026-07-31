@@ -424,6 +424,30 @@ final class CodeNSTextView: NSTextView, CrossSelectableTextView {
         addCursorRect(bounds, cursor: .iBeam)
     }
 
+    /// Cursor comes from a `.cursorUpdate` tracking area — legacy cursor
+    /// rects don't survive layer-backed table-cell recycling (see
+    /// `chatTextCursorUpdate`).
+    private var cursorTrackingArea: NSTrackingArea?
+
+    override func cursorUpdate(with event: NSEvent) {
+        chatTextCursorUpdate(with: event)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let cursorTrackingArea {
+            removeTrackingArea(cursorTrackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.cursorUpdate, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        cursorTrackingArea = area
+    }
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         let charIndex = characterIndexForInsertion(at: point)

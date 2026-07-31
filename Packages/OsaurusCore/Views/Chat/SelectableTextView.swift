@@ -1234,8 +1234,28 @@ final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
     /// `updateTrackingAreas()` pass; nil when hover tracking is disabled.
     private var redactionHoverTrackingArea: NSTrackingArea?
 
+    /// Drives the I-beam/pointing-hand cursor. Legacy cursor rects don't
+    /// survive layer-backed table-cell recycling, so the cursor comes from
+    /// a `.cursorUpdate` tracking area (see `chatTextCursorUpdate`).
+    private var cursorTrackingArea: NSTrackingArea?
+
+    override func cursorUpdate(with event: NSEvent) {
+        chatTextCursorUpdate(with: event)
+    }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
+        if let cursorTrackingArea {
+            removeTrackingArea(cursorTrackingArea)
+        }
+        let cursorArea = NSTrackingArea(
+            rect: bounds,
+            options: [.cursorUpdate, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(cursorArea)
+        cursorTrackingArea = cursorArea
         // Reconcile only the area we own (tracked by reference). NSTextView
         // manages its own areas — for the I-beam cursor etc. — via
         // `super`, and we must not disturb those. Remove-then-add against

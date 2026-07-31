@@ -1035,6 +1035,38 @@ final class CellTextView: NSTextView, CrossSelectableTextView {
         super.draw(dirtyRect)
     }
 
+    /// Cursor comes from a `.cursorUpdate` tracking area — legacy cursor
+    /// rects don't survive layer-backed table-cell recycling (see
+    /// `chatTextCursorUpdate`).
+    private var cursorTrackingArea: NSTrackingArea?
+
+    override func cursorUpdate(with event: NSEvent) {
+        guard isSelectable else {
+            super.cursorUpdate(with: event)
+            return
+        }
+        chatTextCursorUpdate(with: event)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let cursorTrackingArea {
+            removeTrackingArea(cursorTrackingArea)
+        }
+        guard isSelectable else {
+            cursorTrackingArea = nil
+            return
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.cursorUpdate, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        cursorTrackingArea = area
+    }
+
     /// See SelectableNSTextView.mouseDown — single-click drags go through
     /// the cross-block selection controller (#2129).
     override func mouseDown(with event: NSEvent) {
