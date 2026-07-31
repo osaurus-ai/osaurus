@@ -854,7 +854,8 @@ public struct SystemPromptComposer: Sendable {
                             + "do not only describe or promise it. "
                             + "To append while preserving a file, call file_write with mode "
                             + "append and put only the new bytes in content. "
-                            + "Keep each file_write content under 18,000 characters; "
+                            + "Keep each file_write content under "
+                            + "\(WorkspaceToolContract.recommendedWriteChunkCharacters) characters; "
                             + "for larger files use repeated calls with mode append."
                     )
                 )
@@ -3043,7 +3044,9 @@ public struct SystemPromptComposer: Sendable {
                 "content": .object([
                     "type": .string("string"),
                     "maxLength": .number(Double(WorkspaceToolContract.maxWriteContentCharacters)),
-                    "description": .string("File content, at most 7000 characters"),
+                    "description": .string(
+                        "File content, at most \(WorkspaceToolContract.maxWriteContentCharacters) characters"
+                    ),
                 ]),
                 "mode": .object([
                     "type": .string("string"),

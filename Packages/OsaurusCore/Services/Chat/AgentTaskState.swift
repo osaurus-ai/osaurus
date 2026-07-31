@@ -582,6 +582,13 @@ public final class AgentTaskState {
     public func nextStepBias() -> String? {
         guard biasEnabled, let last = lastResultClass else { return nil }
 
+        if lastToolName == "file_write",
+            let envelope = lastResultEnvelope,
+            Self.isFileWriteContentTooLarge(envelope) {
+            return
+                "The previous `file_write` did not execute because `content` exceeded the per-call limit. Do not regenerate another complete oversized payload. Split the content now: send a first chunk under \(WorkspaceToolContract.recommendedWriteChunkCharacters) characters with overwrite mode, then send only each remaining chunk with `mode: \"append\"`."
+        }
+
         // Repeated identical write/exec call: the strongest stuck signal we
         // have, so it outranks the result-class nudges. Reactive (3rd
         // identical call) and advisory only — the call still executed.
@@ -749,6 +756,17 @@ public final class AgentTaskState {
             let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         return dict["retryable"] as? Bool
+    }
+
+    private static func isFileWriteContentTooLarge(_ envelope: String) -> Bool {
+        guard ToolEnvelope.isError(envelope),
+            let data = envelope.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            dict["kind"] as? String == ToolEnvelope.Kind.invalidArgs.rawValue,
+            dict["field"] as? String == "content",
+            let message = dict["message"] as? String
+        else { return false }
+        return message.contains("must contain at most")
     }
 
     /// Convert a second identical transient extraction failure into the

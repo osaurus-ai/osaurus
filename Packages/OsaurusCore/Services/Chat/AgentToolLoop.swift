@@ -895,9 +895,9 @@ enum AgentToolLoop {
         + "or continue from the latest tool result."
 
     // This bounds the serialized JSON envelope, not just `content`. A valid
-    // 20,000-character write made entirely of quotes or backslashes expands
-    // to roughly 40K after JSON escaping, plus path/mode framing.
-    static let maxStreamingToolArgumentCharacters = 49_152
+    // 30,000-character write made entirely of quotes or backslashes expands
+    // to roughly 60K after JSON escaping, plus path/mode framing.
+    static let maxStreamingToolArgumentCharacters = 65_536
     static let maxOversizedToolCallRetries = 1
     static let maxTruncatedToolCallRetries = 1
 
@@ -906,6 +906,7 @@ enum AgentToolLoop {
         return
             "[System Notice] The previous \(tool) call exceeded the \(argumentCharacters)-character "
             + "streaming argument limit before it became executable. Retry with smaller calls. "
+            + "Keep each content chunk under \(WorkspaceToolContract.recommendedWriteChunkCharacters) characters. "
             + "For a large file, write the first chunk with `file_write`, then use "
             + "`file_write` with `mode: \"append\"` for later chunks."
     }
@@ -919,7 +920,8 @@ enum AgentToolLoop {
         return
             "[System Notice] The previous \(tool) call reached the model output limit after "
             + "\(argumentCharacters) argument characters and did not execute. "
-            + "Retry now with `file_write` content under 18,000 characters. "
+            + "Retry now with `file_write` content under "
+            + "\(WorkspaceToolContract.recommendedWriteChunkCharacters) characters. "
             + "Write a viable first chunk, then use `file_write` with `mode: \"append\"` "
             + "for every later chunk."
     }

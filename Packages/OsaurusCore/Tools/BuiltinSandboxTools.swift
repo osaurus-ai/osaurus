@@ -1686,7 +1686,7 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
                         Double(WorkspaceToolContract.maxWriteContentCharacters)
                     ),
                     "description": .string(
-                        "Whole-file contents (maximum 7000 characters per call; use append for more). Pass `\"\"` for an empty file. Omit when editing via `old_string`. Binary / NUL bytes are not safe — they ride a `printf` shell pipeline."
+                        "Whole-file contents (maximum \(WorkspaceToolContract.maxWriteContentCharacters) characters per call; use append for more). Pass `\"\"` for an empty file. Omit when editing via `old_string`. Binary / NUL bytes are not safe — they ride a `printf` shell pipeline."
                     ),
                 ]),
                 "mode": .object([

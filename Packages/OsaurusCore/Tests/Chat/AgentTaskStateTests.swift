@@ -391,6 +391,28 @@ struct AgentTaskStateTests {
         #expect(state.nextStepBias() == nil)
     }
 
+    @Test func bias_oversizedFileWriteRequiresChunkedAppendRecovery() {
+        let state = AgentTaskState()
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"index.html","content":"oversized"}"#,
+            result: ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Property 'content' must contain at most 30000 characters (got 32000).",
+                field: "content",
+                expected: "at most 30000 characters",
+                tool: "file_write",
+                retryable: true
+            )
+        )
+
+        let bias = state.nextStepBias() ?? ""
+        #expect(bias.contains("did not execute"))
+        #expect(bias.contains("Do not regenerate another complete oversized payload"))
+        #expect(bias.contains("\(WorkspaceToolContract.recommendedWriteChunkCharacters)"))
+        #expect(bias.contains(#"mode: "append""#))
+    }
+
     /// Issue #2098: a rendered-cap-truncated read stages a continuation
     /// notice naming the exact path and `start_line`/`end_line` to resume
     /// with, so the model reads the rest instead of reviewing a prefix as

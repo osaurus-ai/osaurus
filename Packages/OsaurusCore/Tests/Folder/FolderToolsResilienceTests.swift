@@ -521,6 +521,17 @@ struct FolderToolsResilienceTests {
             content["maxLength"]
                 == .number(Double(WorkspaceToolContract.maxWriteContentCharacters))
         )
+        #expect(WorkspaceToolContract.maxWriteContentCharacters >= 30_000)
+        #expect(
+            content["description"]
+                == .string(
+                    "Content to write (maximum \(WorkspaceToolContract.maxWriteContentCharacters) characters per call; use append for more)"
+                )
+        )
+        #expect(
+            WorkspaceToolContract.recommendedWriteChunkCharacters
+                < WorkspaceToolContract.maxWriteContentCharacters
+        )
 
         let oversized = String(
             repeating: "x",

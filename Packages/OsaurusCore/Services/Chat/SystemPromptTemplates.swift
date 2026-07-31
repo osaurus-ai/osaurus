@@ -1539,7 +1539,7 @@ public enum SystemPromptTemplates {
             Native execution is trusted for this workspace. Writes are confined to this folder and temporary directories. Use relative paths.
             Use the workspace tools to complete requested work now; do not only describe or promise it.
             To append while preserving a file, call file_write with mode append and put only the new bytes in content.
-            Keep each file_write content under 18,000 characters; for larger files use repeated calls with mode append.
+            Keep each file_write content under \(WorkspaceToolContract.recommendedWriteChunkCharacters) characters; for larger files use repeated calls with mode append.
             """
         if let contextFiles = folder.contextFiles, !contextFiles.isEmpty {
             section += """

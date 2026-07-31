@@ -496,7 +496,11 @@ enum FolderToolHelpers {
 enum WorkspaceToolContract {
     /// Keeps one generated tool call small enough to parse and execute
     /// promptly on local models. Large files are assembled with append calls.
-    static let maxWriteContentCharacters = 20_000
+    static let maxWriteContentCharacters = 30_000
+    /// Leaves room for JSON escaping and argument framing below the streaming
+    /// envelope while accepting the 20–25K single-file apps local models
+    /// commonly produce.
+    static let recommendedWriteChunkCharacters = 28_000
 }
 
 // MARK: File Tree Tool
@@ -1631,7 +1635,7 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
                 "type": .string("string"),
                 "maxLength": .number(Double(WorkspaceToolContract.maxWriteContentCharacters)),
                 "description": .string(
-                    "Content to write (maximum 7000 characters per call; use append for more)"
+                    "Content to write (maximum \(WorkspaceToolContract.maxWriteContentCharacters) characters per call; use append for more)"
                 ),
             ]),
             "mode": .object([
