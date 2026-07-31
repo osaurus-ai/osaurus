@@ -239,6 +239,12 @@ enum ToolPermissionPromptService {
         panel.standardWindowButton(.zoomButton)?.isHidden = true
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        // Follow the app theme, not the system appearance: otherwise the
+        // scroll indicators render for the wrong appearance (white thumb on
+        // the light card).
+        panel.appearance = NSAppearance(
+            named: ThemeManager.shared.currentTheme.isDark ? .darkAqua : .aqua
+        )
         panel.hasShadow = true
         panel.level = .modalPanel
         panel.hidesOnDeactivate = false

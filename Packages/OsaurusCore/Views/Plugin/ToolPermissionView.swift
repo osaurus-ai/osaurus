@@ -317,7 +317,7 @@ private struct PermissionButton: View {
             VStack(spacing: 4) {
                 Label(title, systemImage: icon)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(isPrimary ? (theme.isDark ? theme.primaryBackground : .white) : theme.primaryText)
+                    .foregroundColor(isPrimary ? .white : theme.primaryText)
                 KeyboardShortcutBadge(shortcut: shortcutHint, isPrimary: isPrimary)
             }
             .frame(maxWidth: .infinity)
