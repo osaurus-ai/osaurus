@@ -140,12 +140,10 @@ struct ContextBudgetPreviewTests {
 
     // MARK: - Tools on (auto)
 
-    /// Auto-mode with tools on hits the always-loaded baseline and prices
-    /// capability discovery ahead of time. The agent-loop cheat sheet is
-    /// schema-gated: loop tools are in the always-loaded baseline, so the
-    /// preview prices it from turn 1 (it never flips mid-session).
-    @Test("preview: tools on (auto) surfaces capability discovery and agent loop")
-    func toolsOn_auto_includesCapabilityNudgeOnly() async {
+    /// Auto mode keeps the identity prompt lean and exposes only compact,
+    /// generally useful gateway tools when no workspace/query is present.
+    @Test("preview: tools on (auto) keeps a lean identity and compact gateway")
+    func toolsOn_auto_keepsLeanIdentityAndCompactGateway() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
                 agentId: agentId,
@@ -154,27 +152,22 @@ struct ContextBudgetPreviewTests {
             let ids = sectionIds(preview)
             #expect(ids.contains("platform"))
             #expect(ids.contains("persona"))
-            #expect(ids.contains("agentLoopGuidance"))
-            #expect(ids.contains("capabilityNudge"))
+            #expect(ids == ["platform", "persona"])
             // No model-family hint without a model id, no skills configured.
             #expect(ids.contains("modelFamilyGuidance") == false)
             #expect(ids.contains("skills") == false)
             // Tools row is non-zero (always-loaded baseline JSON schemas).
             #expect(preview.toolTokens > 0)
-            #expect(preview.tools.contains { $0.function.name == "todo" })
-            #expect(preview.tools.contains { $0.function.name == "capabilities_discover" })
+            #expect(preview.tools.contains { $0.function.name == "capabilities" })
+            #expect(!preview.tools.contains { $0.function.name == "todo" })
+            #expect(!preview.tools.contains { $0.function.name == "capabilities_discover" })
         }
     }
 
-    /// Manual mode still includes the capability discovery tools in the
-    /// schema. The prompt
-    /// must explain those tools whenever they are callable; otherwise the
-    /// model sees an opaque `capabilities_discover` function and #789-style
-    /// "search is enabled but never found" failures are hard to diagnose.
-    /// Loop guidance is schema-gated: present exactly when a loop tool
-    /// resolves into the manual schema.
-    @Test("preview: manual mode keeps capability nudge; loop guidance tracks schema")
-    func toolsOn_manual_keepsCapabilityNudge() async {
+    /// Manual mode exposes the explicitly pinned tool without restoring
+    /// legacy gateway or lifecycle prose.
+    @Test("preview: manual mode exposes only the pinned optional capability")
+    func toolsOn_manual_exposesPinnedCapability() async {
         await withAgent(
             toolSelectionMode: .manual,
             manualToolNames: ["render_chart"]
@@ -184,10 +177,8 @@ struct ContextBudgetPreviewTests {
                 executionMode: .none
             )
             let ids = sectionIds(preview)
-            let loopNames: Set<String> = ["todo", "complete", "clarify", "share_artifact"]
-            let hasLoopTool = preview.tools.contains { loopNames.contains($0.function.name) }
-            #expect(ids.contains("agentLoopGuidance") == hasLoopTool)
-            #expect(ids.contains("capabilityNudge"))
+            #expect(!ids.contains("agentLoopGuidance"))
+            #expect(!ids.contains("capabilityNudge"))
             #expect(preview.tools.contains { $0.function.name == "render_chart" })
         }
     }
@@ -244,7 +235,7 @@ struct ContextBudgetPreviewTests {
             #expect(ids.contains("agentLoopGuidance") == false)
             #expect(context.tools.isEmpty)
             #expect(context.toolTokens == 0)
-            #expect(context.alwaysLoadedNames.contains("capabilities_load"))
+            #expect(context.alwaysLoadedNames.contains("capabilities"))
         }
     }
 
@@ -267,9 +258,10 @@ struct ContextBudgetPreviewTests {
             )
 
             #expect(greeting.tools.isEmpty)
-            #expect(greeting.alwaysLoadedNames.contains("capabilities_load"))
-            #expect(followUp.tools.contains { $0.function.name == "capabilities_load" })
-            #expect(followUp.tools.contains { $0.function.name == "capabilities_discover" })
+            #expect(greeting.alwaysLoadedNames.contains("capabilities"))
+            #expect(followUp.tools.contains { $0.function.name == "capabilities" })
+            #expect(!followUp.tools.contains { $0.function.name == "capabilities_load" })
+            #expect(!followUp.tools.contains { $0.function.name == "capabilities_discover" })
             #expect(followUp.toolTokens > 0)
         }
     }
@@ -292,8 +284,9 @@ struct ContextBudgetPreviewTests {
             )
 
             #expect(SystemPromptComposer.isTrivialUserQuery("ok"))
-            #expect(context.tools.contains { $0.function.name == "capabilities_load" })
-            #expect(context.tools.contains { $0.function.name == "capabilities_discover" })
+            #expect(context.tools.contains { $0.function.name == "capabilities" })
+            #expect(!context.tools.contains { $0.function.name == "capabilities_load" })
+            #expect(!context.tools.contains { $0.function.name == "capabilities_discover" })
             #expect(context.toolTokens > 0)
         }
     }
@@ -328,9 +321,9 @@ struct ContextBudgetPreviewTests {
 
             #expect(SystemPromptComposer.isTrivialUserQuery("hey"))
             // Sandbox mode keeps the schema (the trivial fast path is
-            // `.none`-only), so the nudge must stay too.
+            // `.none`-only) without adding legacy capability prose.
             #expect(!send.tools.isEmpty)
-            #expect(sectionIds(send).contains("capabilityNudge"))
+            #expect(!sectionIds(send).contains("capabilityNudge"))
             #expect(sectionIds(send) == sectionIds(warmup))
             #expect(send.staticPrefix == warmup.staticPrefix)
             #expect(send.prompt == warmup.prompt)
@@ -368,45 +361,39 @@ struct ContextBudgetPreviewTests {
             )
 
             #expect(SystemPromptComposer.isTrivialUserQuery("thanks"))
-            #expect(sectionIds(thanks).contains("capabilityNudge"))
+            #expect(!sectionIds(thanks).contains("capabilityNudge"))
             #expect(sectionIds(thanks) == sectionIds(steady))
             #expect(thanks.staticPrefix == steady.staticPrefix)
             #expect(thanks.prompt == steady.prompt)
         }
     }
 
-    /// The loop cheat-sheet is schema-gated: it renders from the FIRST
-    /// real turn whenever loop tools resolve into the schema, so the model
-    /// sees the "when to call which" guide on its first multi-step task
-    /// and the section never flips mid-session (KV-prefix stable).
-    @Test("compose: loop tools in schema enable agent loop guidance on turn 1")
-    func loopToolsInSchema_enableAgentLoopGuidance() async {
+    /// Ordinary work no longer injects lifecycle tools or their prompt prose.
+    @Test("compose: ordinary work omits lifecycle tools and guidance")
+    func ordinaryWork_omitsLifecycleContract() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let context = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
                 executionMode: .none,
                 query: "refactor the parser and add tests"
             )
-            #expect(context.tools.contains { $0.function.name == "todo" })
-            #expect(sectionIds(context).contains("agentLoopGuidance"))
+            #expect(!context.tools.contains { $0.function.name == "todo" })
+            #expect(!sectionIds(context).contains("agentLoopGuidance"))
         }
     }
 
     // MARK: - Computer Use
 
-    /// The reported gap: enabling Computer Use injected the `computer_use`
-    /// tool (folded into the aggregate `Tools` line) but added no prompt
-    /// section, so the budget popover showed nothing labelled "Computer Use".
-    /// Now an enabled custom agent surfaces a dedicated `computerUse` section
-    /// AND the tool, so the capability is visible in the context list.
-    @Test("preview: computer use enabled surfaces computerUse section + tool")
-    func computerUseEnabled_surfacesSectionAndTool() async {
+    /// Explicit Computer Use remains callable without adding capability prose
+    /// to the minimal prompt.
+    @Test("preview: computer use enabled exposes tool without prompt section")
+    func computerUseEnabled_exposesToolWithoutSection() async {
         await withAgent(toolSelectionMode: .auto, computerUseEnabled: true) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
                 agentId: agentId,
                 executionMode: .none
             )
-            #expect(sectionIds(preview).contains("computerUse"))
+            #expect(!sectionIds(preview).contains("computerUse"))
             #expect(preview.tools.contains { $0.function.name == ComputerUseTool.toolName })
         }
     }
@@ -447,7 +434,7 @@ struct ContextBudgetPreviewTests {
                 query: ""
             )
             #expect(sectionIds(preview) == real.manifest.sections.map(\.id))
-            #expect(sectionIds(preview).contains("computerUse"))
+            #expect(!sectionIds(preview).contains("computerUse"))
         }
     }
 
@@ -456,8 +443,8 @@ struct ContextBudgetPreviewTests {
     /// Family hints fire when the model id matches a known family
     /// substring. Pricing them ahead of time matters because some
     /// blocks (Gemma in particular) are several hundred tokens.
-    @Test("preview: gemma model triggers Model Family Guidance row")
-    func toolsOn_gemmaModel_includesModelFamilyGuidance() async {
+    @Test("preview: gemma model omits family prose from minimal contract")
+    func toolsOn_gemmaModel_omitsModelFamilyGuidance() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
                 agentId: agentId,
@@ -465,12 +452,12 @@ struct ContextBudgetPreviewTests {
                 model: "google/gemma-3-12b-it"
             )
             let ids = sectionIds(preview)
-            #expect(ids.contains("modelFamilyGuidance"))
+            #expect(!ids.contains("modelFamilyGuidance"))
         }
     }
 
-    @Test("preview: DSV4 model triggers act-now Model Family Guidance row")
-    func toolsOn_dsv4Model_includesModelFamilyGuidance() async {
+    @Test("preview: DSV4 model omits family prose from minimal contract")
+    func toolsOn_dsv4Model_omitsModelFamilyGuidance() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
                 agentId: agentId,
@@ -478,8 +465,8 @@ struct ContextBudgetPreviewTests {
                 model: "JANGQ/DeepSeek-V4-Flash-JANGTQ2"
             )
             let ids = sectionIds(preview)
-            #expect(ids.contains("modelFamilyGuidance"))
-            #expect(preview.prompt.contains("Do not say you will do it and then stop."))
+            #expect(!ids.contains("modelFamilyGuidance"))
+            #expect(!preview.prompt.contains("Do not say you will do it and then stop."))
         }
     }
 
@@ -489,16 +476,16 @@ struct ContextBudgetPreviewTests {
     /// prohibition sections and read as refusal-prone — the regression this
     /// fix targets. The block is the one for `.other`, kept short so it
     /// doesn't bias the prompt the way a full universal addendum would.
-    @Test("preview: unknown model family → default obedience guidance row")
-    func toolsOn_unknownModelFamily_usesDefaultGuidance() async {
+    @Test("preview: unknown model family omits default guidance prose")
+    func toolsOn_unknownModelFamily_omitsDefaultGuidance() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
                 agentId: agentId,
                 executionMode: .none,
                 model: "mystery/llama-finetune-x"
             )
-            #expect(sectionIds(preview).contains("modelFamilyGuidance"))
-            #expect(preview.prompt.contains(ModelFamilyGuidance.defaultGuidance))
+            #expect(!sectionIds(preview).contains("modelFamilyGuidance"))
+            #expect(!preview.prompt.contains(ModelFamilyGuidance.defaultGuidance))
         }
     }
 
@@ -533,7 +520,7 @@ struct ContextBudgetPreviewTests {
             }
 
             let genericTokens = familyTokens()
-            #expect(genericTokens > 0)
+            #expect(genericTokens == 0)
 
             session.applyPickerItems([
                 ModelPickerItem(
@@ -545,7 +532,7 @@ struct ContextBudgetPreviewTests {
             ])
 
             #expect(session.selectedPickerItem?.modelType == "qwen3_5")
-            #expect(familyTokens() != genericTokens)
+            #expect(familyTokens() == genericTokens)
         }
     }
 

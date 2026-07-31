@@ -115,15 +115,7 @@ struct PromptSectionOrderingTests {
                 executionMode: .none,
                 model: "google/gemma-3-12b-it"
             )
-            assertOrderedPrefix(
-                [
-                    "platform",
-                    "persona",
-                    "modelFamilyGuidance",
-                    "capabilityNudge",
-                ],
-                inside: sectionIds(ctx)
-            )
+            #expect(sectionIds(ctx) == ["platform", "persona"])
         }
     }
 
@@ -153,20 +145,7 @@ struct PromptSectionOrderingTests {
                 executionMode: .sandbox(hostRead: nil),
                 model: "gpt-5"
             )
-            assertOrderedPrefix(
-                [
-                    "platform",
-                    "persona",
-                    "selfImprovement",
-                    "modelFamilyGuidance",
-                    "codeStyle",
-                    "riskAware",
-                    "secretHandling",
-                    "sandbox",
-                    "capabilityNudge",
-                ],
-                inside: sectionIds(ctx)
-            )
+            #expect(sectionIds(ctx) == ["platform", "persona", "sandbox"])
 
             ToolRegistry.shared.unregisterAllSandboxTools()
             _ = await AgentManager.shared.delete(id: agent.id)
@@ -202,22 +181,9 @@ struct PromptSectionOrderingTests {
                 model: "gpt-5"
             )
             let ids = sectionIds(ctx)
-            #expect(ids.contains("secretHandling"))
-            #expect(ids.contains("selfImprovement"))
-            #expect(ctx.prompt.contains("## Secret handling"))
-            #expect(ctx.prompt.contains("## Self-improvement"))
-            // Plugin-build lines present when plugin creation is on.
-            #expect(ctx.prompt.contains("Build or update a sandbox plugin"))
-            #expect(ctx.prompt.contains("build a sandbox plugin (see Building"))
-            // The capability ladder ends in a build step, not denial.
-            #expect(ctx.prompt.contains("Only after these come up empty"))
-            // The plugin-creator backstop joins the prompt as a STATIC
-            // section — its gate is session-constant, so it belongs in the
-            // cached KV prefix rather than the dynamic tail.
-            #expect(ids.contains("pluginCreator"))
-            let pluginCreatorSection = ctx.manifest.sections.first { $0.id == "pluginCreator" }
-            #expect(pluginCreatorSection?.cacheability == .static)
-            #expect(ctx.staticPrefix.contains("## Building new tools"))
+            #expect(ids == ["platform", "persona", "sandbox"])
+            #expect(!ctx.prompt.contains("Build or update a sandbox plugin"))
+            #expect(!ctx.prompt.contains("## Building new tools"))
 
             ToolRegistry.shared.unregisterAllSandboxTools()
             _ = await AgentManager.shared.delete(id: agent.id)
@@ -250,16 +216,10 @@ struct PromptSectionOrderingTests {
                 model: "gpt-5"
             )
             let ids = sectionIds(ctx)
-            // Sections themselves remain.
-            #expect(ids.contains("secretHandling"))
-            #expect(ids.contains("selfImprovement"))
-            #expect(ctx.prompt.contains("## Self-improvement"))
-            #expect(ctx.prompt.contains("Workspace files persist across messages"))
-            // Every plugin-build line is gone.
+            #expect(ids == ["platform", "persona", "sandbox"])
             #expect(!ctx.prompt.contains("Build or update a sandbox plugin"))
             #expect(!ctx.prompt.contains("build a sandbox plugin (see Building"))
-            // The pluginCreator backstop also stays out without plugin creation.
-            #expect(ids.contains("pluginCreator") == false)
+            #expect(!ids.contains("pluginCreator"))
 
             ToolRegistry.shared.unregisterAllSandboxTools()
             _ = await AgentManager.shared.delete(id: agent.id)
@@ -320,44 +280,22 @@ struct PromptSectionOrderingTests {
                 executionMode: .hostFolder(folderCtx),
                 model: "gpt-5"
             )
-            assertOrderedPrefix(
-                [
-                    "platform",
-                    "persona",
-                    "modelFamilyGuidance",
-                    "codeStyle",
-                    "riskAware",
-                    "folderContext",
-                    "capabilityNudge",
-                ],
-                inside: sectionIds(ctx)
-            )
+            #expect(sectionIds(ctx) == ["platform", "persona", "folderContext"])
 
             _ = await AgentManager.shared.delete(id: agent.id)
         }
     }
 
-    /// The loop cheat-sheet renders whenever a loop tool is in the schema
-    /// (turn 1 included), in its order slot: after model-family guidance
-    /// and before capability discovery.
-    @Test("ordering: loop guidance sits between family guidance and capability nudge")
-    func ordering_loopGuidanceSlot() async {
+    /// Ordinary chat does not carry legacy lifecycle/gateway prose.
+    @Test("ordering: ordinary chat omits lifecycle and capability prose")
+    func ordering_ordinaryChatOmitsLegacyGuidance() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let ctx = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
                 executionMode: .none,
                 model: "google/gemma-3-12b-it"
             )
-            assertOrderedPrefix(
-                [
-                    "platform",
-                    "persona",
-                    "modelFamilyGuidance",
-                    "agentLoopGuidance",
-                    "capabilityNudge",
-                ],
-                inside: sectionIds(ctx)
-            )
+            #expect(sectionIds(ctx) == ["platform", "persona"])
         }
     }
 
@@ -408,19 +346,17 @@ struct PromptSectionOrderingTests {
 
     // MARK: - Grounding gating
 
-    /// The grounding (anti-fabrication) directive rides on tools being
-    /// present: a normal-context tool-enabled chat gets it; a tiny model
-    /// whose tools auto-disable does not (the persona handles the no-tools
-    /// case, and the section would otherwise just burn the 4K budget).
-    @Test("gate: grounding present with tools, absent when tools auto-disable")
-    func gate_groundingTracksTools() async {
+    /// The minimal contract relies on the persona rather than a separate
+    /// grounding section in both ordinary and tiny chat.
+    @Test("gate: grounding prose stays out of the minimal contract")
+    func gate_groundingStaysOutOfMinimalContract() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let on = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
                 executionMode: .none,
                 model: "gpt-5"
             )
-            #expect(sectionIds(on).contains("grounding"))
+            #expect(!sectionIds(on).contains("grounding"))
 
             let tiny = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
@@ -477,11 +413,8 @@ struct PromptSectionOrderingTests {
             // cheat-sheet is schema-gated, so it is on BOTH turns.
             #expect(s2.subtracting(s1).isEmpty)
             #expect(s1.subtracting(s2).isEmpty)
-            // The always-on sections are on BOTH turns.
-            for id in ["grounding", "modelFamilyGuidance", "agentLoopGuidance"] {
-                #expect(s1.contains(id))
-                #expect(s2.contains(id))
-            }
+            #expect(s1 == Set(["platform", "persona"]))
+            #expect(s2 == Set(["platform", "persona"]))
         }
     }
 

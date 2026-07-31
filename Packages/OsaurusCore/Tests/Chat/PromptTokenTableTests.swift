@@ -212,9 +212,7 @@ struct PromptTokenTableTests {
                     model: "qwen3-8b"
                 )
 
-                let expectedNames = ToolRegistry.shared.builtInSandboxToolNamesSnapshot
-                    .union(SystemPromptComposer.agentLoopToolNames)
-                    .union(["capabilities_discover", "capabilities_load"])
+                let expectedNames = ToolRegistry.coreWorkspaceToolNames
                 let baseline = ctx.tools.filter { expectedNames.contains($0.function.name) }
                 let toolTokens = ToolRegistry.shared.totalEstimatedTokens(for: baseline)
 

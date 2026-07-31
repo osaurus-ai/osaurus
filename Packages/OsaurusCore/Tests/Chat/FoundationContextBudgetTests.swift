@@ -8,12 +8,9 @@
 //  this suite measures, with the SAME `TokenEstimator` heuristic the budget
 //  pipeline uses:
 //
-//    1. The FULL agentic tool surface (compact system prompt + the
-//       always-loaded sandbox / agent-loop / capability-discovery schema)
-//       a `.small` session ships — to confirm it does NOT leave room for a
-//       real conversation inside 4096. This is the "why tools are auto-off
-//       at the tiny ceiling" number, and the reason the probe must keep
-//       Foundation `.tiny` until a device reports a larger window.
+//    1. The production compact workspace surface (identity prompt + five
+//       workspace tools) — to confirm the minimal-harness contract leaves
+//       useful conversation room inside 4096.
 //
 //    2. A deliberately MINIMAL "tiny-tool mode" surface (stripped prompt +
 //       3 ultra-minimal tools) — to record whether such a mode is
@@ -43,13 +40,13 @@ struct FoundationContextBudgetTests {
     /// proof is deterministic on CI without a Foundation-capable model.
     private static let foundationWindow = 4096
 
-    // MARK: - Full agentic surface (the reason tools are auto-off at 4K)
+    // MARK: - Production compact workspace surface
 
     /// Live-compose the baseline sandbox tool surface + compact prompt, then
     /// price it. Lock order mirrors `TotalPromptBudgetTests`
     /// (Storage → Sandbox, catalog lock innermost) so a concurrent suite
     /// registering dynamic/MCP tools can't inflate the schema mid-measure.
-    private func measuredFullStaticSurfaceTokens() async -> (prompt: Int, tools: Int) {
+    private func measuredProductionSurfaceTokens() async -> (prompt: Int, tools: Int) {
         await SandboxTestLock.runWithStoragePaths {
             await DynamicCatalogTestLock.shared.run {
                 let config = AutonomousExecConfig(enabled: true, pluginCreate: false)
@@ -75,9 +72,7 @@ struct FoundationContextBudgetTests {
                     model: "qwen3-8b"
                 )
 
-                let expectedNames = ToolRegistry.shared.builtInSandboxToolNamesSnapshot
-                    .union(SystemPromptComposer.agentLoopToolNames)
-                    .union(["capabilities_discover", "capabilities_load"])
+                let expectedNames = ToolRegistry.coreWorkspaceToolNames
                 let baseline = ctx.tools.filter { expectedNames.contains($0.function.name) }
                 let toolTokens = ToolRegistry.shared.totalEstimatedTokens(for: baseline)
                 let promptTokens = TokenEstimator.estimate(ctx.prompt)
@@ -89,27 +84,24 @@ struct FoundationContextBudgetTests {
         }
     }
 
-    @Test("full agentic surface does not fit Foundation's 4K window")
-    func fullSurfaceOverflowsTinyWindow() async {
-        let (promptTokens, toolTokens) = await measuredFullStaticSurfaceTokens()
+    @Test("production workspace surface fits Foundation's 4K window")
+    func productionSurfaceFitsTinyWindow() async {
+        let (promptTokens, toolTokens) = await measuredProductionSurfaceTokens()
         let total = promptTokens + toolTokens
         let window = Self.foundationWindow
         let headroom = window - total
 
         print(
-            "[W6] FULL surface @4K: prompt=\(promptTokens) + tools=\(toolTokens) "
+            "[W6] PRODUCTION surface @4K: prompt=\(promptTokens) + tools=\(toolTokens) "
                 + "= \(total) tokens; window=\(window); conversation headroom=\(headroom) "
                 + "(\(headroom * 100 / window)%)"
         )
 
-        // The full static surface must consume MORE than three-quarters of a
-        // 4096 window — i.e. it leaves under 25% for the user message,
-        // multi-step transcript growth, and the response reservation. That is
-        // the structural reason `ContextSizeResolver` keeps Foundation `.tiny`
-        // (tools off) until the device reports a larger window.
+        // The compact workspace surface must leave at least one quarter of the
+        // window for the user message, transcript growth, and response.
         #expect(
-            total > (window * 3) / 4,
-            "Full agentic surface is only \(total) tokens — if it now fits a 4K window with room to spare, Foundation could host the full tool surface and the .tiny auto-off policy should be revisited."
+            total < (window * 3) / 4,
+            "Production workspace surface costs \(total) tokens and leaves too little room in a 4K window."
         )
     }
 

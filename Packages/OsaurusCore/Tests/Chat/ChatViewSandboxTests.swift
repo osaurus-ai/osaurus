@@ -353,7 +353,7 @@ struct ChatViewSandboxTests {
     /// toggling e.g. background processes never moved the number until the
     /// next send.
     @Test
-    func estimatedContextBreakdown_updatesForBackgroundCapabilityEdit() async {
+    func estimatedContextBreakdown_ignoresUnrequestedBackgroundCapabilityEdit() async {
         await SandboxTestLock.runWithStoragePaths {
             let manager = AgentManager.shared
             let originalActiveAgentId = manager.activeAgentId
@@ -393,11 +393,11 @@ struct ChatViewSandboxTests {
             )
             manager.update(agent)
 
-            // Background execution adds launch arguments and process control,
-            // so the next-send context estimate must reflect that opt-in
-            // capability instead of remaining pinned to the five-tool core.
-            #expect(session.resyncBudgetEstimateForTests() == true)
-            #expect(session.estimatedContextBreakdown.total > beforeEdit)
+            // Background execution is query-preflighted rather than injected
+            // into unrelated turns, so this generic-work estimate stays on
+            // the five-tool core.
+            #expect(session.resyncBudgetEstimateForTests() == false)
+            #expect(session.estimatedContextBreakdown.total == beforeEdit)
 
             manager.setActiveAgent(originalActiveAgentId)
             _ = await manager.delete(id: agent.id)

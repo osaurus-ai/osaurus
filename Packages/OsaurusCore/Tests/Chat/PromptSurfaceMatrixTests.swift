@@ -235,21 +235,21 @@ struct PromptSurfaceMatrixTests {
                 ] {
                     #expect(rows[3].toolNames.contains(expected), "missing enabled tool \(expected)")
                 }
-                #expect(rows[3].sectionIds.contains("computerUse"))
-                #expect(rows[3].sectionIds.contains("spawn"))
+                #expect(!rows[3].sectionIds.contains("computerUse"))
+                #expect(!rows[3].sectionIds.contains("spawn"))
 
                 #expect(rows[4].sectionIds.contains("sandbox"))
-                #expect(rows[4].toolNames.contains("sandbox_exec"))
+                #expect(rows[4].toolNames == ToolRegistry.coreWorkspaceToolNames)
                 #expect(!rows[4].sectionIds.contains("skillsGovern"))
                 #expect(rows[4].totalTokens > rows[2].totalTokens)
 
-                #expect((rows[5].context.enabledManifest ?? "").contains("agent_channel_"))
+                #expect((rows[5].context.enabledManifest ?? "").isEmpty)
                 #expect(!rows[5].sectionIds.contains("skillsGovern"))
 
-                #expect(rows[6].sectionIds.contains("spawn"))
+                #expect(!rows[6].sectionIds.contains("spawn"))
                 #expect(rows[6].toolNames.contains("spawn_agent"))
                 #expect(rows[6].toolNames.contains("spawn_batch"))
-                #expect((rows[6].context.enabledManifest ?? "").contains("agent_channel_"))
+                #expect((rows[6].context.enabledManifest ?? "").isEmpty)
                 #expect(rows[6].toolNames.count == rows[6].context.tools.count)
                 for spawnToolName in ["spawn_agent", "spawn_batch"] {
                     let featureTool = rows[3].context.tools.first {
