@@ -41,7 +41,6 @@ private struct ImportProgressContent: View {
                 .foregroundColor(theme.secondaryText)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.top, 2)
         .frame(width: 300)
@@ -84,7 +83,22 @@ enum ChatSessionImportCoordinator {
     struct ImportSummary {
         var importedSessions: [ChatSessionData] = []
         var skippedDuplicates: Int = 0
+        /// Conversations the export contained but the parser couldn't read.
+        var unreadable: Int = 0
+        /// Files that failed wholesale (unreadable, invalid, unrecognized).
+        var failedFiles: [String] = []
         var imported: Int { importedSessions.count }
+        var hasIssues: Bool { unreadable > 0 || !failedFiles.isEmpty }
+    }
+
+    /// Accumulated result of parsing every chosen file. A failing file is
+    /// recorded and skipped rather than aborting the batch, so one bad
+    /// file can't discard the conversations of the good ones.
+    private struct ParseOutcome: Sendable {
+        var conversations: [ChatSessionImporter.ImportedConversation] = []
+        var unreadable: Int = 0
+        var failedFiles: [String] = []
+        var firstError: Error?
     }
 
     /// Presents the open panel, parses the chosen export files and saves
@@ -131,44 +145,51 @@ enum ChatSessionImportCoordinator {
             }
 
             // Parsing large exports (ChatGPT dumps run to hundreds of MB)
-            // must not block the main thread.
-            let parsed: Result<[ChatSessionImporter.ImportedConversation], Error> =
+            // must not block the main thread. Files fail independently:
+            // one bad file must not discard the good ones' conversations.
+            let outcome: ParseOutcome =
                 await Task.detached(priority: .userInitiated) {
-                    do {
-                        var all: [ChatSessionImporter.ImportedConversation] = []
-                        for url in urls {
-                            onProgress(L("Reading \(url.lastPathComponent)…"))
+                    var outcome = ParseOutcome()
+                    for url in urls {
+                        onProgress(L("Reading \(url.lastPathComponent)…"))
+                        do {
                             let data = try Data(contentsOf: url)
-                            all.append(
-                                contentsOf: try ChatSessionImporter.parse(
-                                    data: data, onProgress: onProgress))
+                            let result = try ChatSessionImporter.parse(
+                                data: data, onProgress: onProgress)
+                            outcome.conversations.append(contentsOf: result.conversations)
+                            outcome.unreadable += result.unreadable
+                        } catch {
+                            outcome.failedFiles.append(url.lastPathComponent)
+                            if outcome.firstError == nil { outcome.firstError = error }
                         }
-                        return .success(all)
-                    } catch {
-                        return .failure(error)
                     }
+                    return outcome
                 }.value
 
             ThemedAlertCenter.shared.dismiss(scope: scope, id: progressAlertId)
 
-            switch parsed {
-            case .failure(let error):
+            // Every file failed and nothing was salvaged: a themed error
+            // alert explains why instead of a summary toast.
+            if outcome.conversations.isEmpty, let error = outcome.firstError {
                 presentError(error, scope: scope)
-            case .success(let conversations):
-                let summary = persist(conversations, agentId: agentId)
-                NotificationCenter.default.post(name: .chatSessionsImported, object: nil)
-                presentSummary(summary)
-                if summary.importedSessions.count == 1, let only = summary.importedSessions.first {
-                    onOpen?(only)
-                }
-                if !summary.importedSessions.isEmpty {
-                    let ids = Set(summary.importedSessions.map(\.id))
-                    // Deferred one main-actor turn: the notification's
-                    // sidebar refresh is itself a queued task, and the
-                    // flash's scroll-to-row needs the new rows in the list.
-                    Task { @MainActor in
-                        ChatSessionImportHighlight.shared.flash(ids)
-                    }
+                return
+            }
+
+            var summary = persist(outcome.conversations, agentId: agentId)
+            summary.unreadable = outcome.unreadable
+            summary.failedFiles = outcome.failedFiles
+            NotificationCenter.default.post(name: .chatSessionsImported, object: nil)
+            presentSummary(summary)
+            if summary.importedSessions.count == 1, let only = summary.importedSessions.first {
+                onOpen?(only)
+            }
+            if !summary.importedSessions.isEmpty {
+                let ids = Set(summary.importedSessions.map(\.id))
+                // Deferred one main-actor turn: the notification's
+                // sidebar refresh is itself a queued task, and the
+                // flash's scroll-to-row needs the new rows in the list.
+                Task { @MainActor in
+                    ChatSessionImportHighlight.shared.flash(ids)
                 }
             }
         }
@@ -200,7 +221,7 @@ enum ChatSessionImportCoordinator {
     // MARK: - Feedback
 
     private static func presentSummary(_ summary: ImportSummary) {
-        if summary.imported == 0, summary.skippedDuplicates > 0 {
+        if summary.imported == 0, summary.skippedDuplicates > 0, !summary.hasIssues {
             ToastManager.shared.info(
                 L("Nothing to import"),
                 message: L("All conversations in the file were already imported.")
@@ -215,7 +236,22 @@ enum ChatSessionImportCoordinator {
         if summary.skippedDuplicates > 0 {
             parts.append(L("\(summary.skippedDuplicates) duplicates skipped"))
         }
-        ToastManager.shared.success(L("Import complete"), message: parts.joined(separator: " · "))
+        if summary.unreadable > 0 {
+            parts.append(
+                summary.unreadable == 1
+                    ? L("1 conversation couldn't be read")
+                    : L("\(summary.unreadable) conversations couldn't be read"))
+        }
+        for name in summary.failedFiles {
+            parts.append(L("\(name) couldn't be imported"))
+        }
+        if summary.hasIssues {
+            ToastManager.shared.warning(
+                L("Import finished with issues"), message: parts.joined(separator: " · "))
+        } else {
+            ToastManager.shared.success(
+                L("Import complete"), message: parts.joined(separator: " · "))
+        }
     }
 
     private static func presentError(_ error: Error, scope: ThemedAlertScope) {

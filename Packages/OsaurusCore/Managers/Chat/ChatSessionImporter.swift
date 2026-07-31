@@ -28,6 +28,16 @@ public enum ChatSessionImporter {
         public let format: SourceFormat
     }
 
+    public struct ParseResult: Sendable {
+        public var conversations: [ImportedConversation] = []
+        /// Entries that plainly contained user messages but still failed
+        /// to parse. Genuinely empty conversations (no user content, a
+        /// normal occurrence in real exports) are skipped silently and
+        /// not counted here — this counts broken data the user would
+        /// otherwise lose without noticing.
+        public var unreadable: Int = 0
+    }
+
     public enum ImportError: LocalizedError {
         case invalidJSON
         case unrecognizedFormat
@@ -60,7 +70,7 @@ public enum ChatSessionImporter {
     public static func parse(
         data: Data,
         onProgress: (@Sendable (String) -> Void)? = nil
-    ) throws -> [ImportedConversation] {
+    ) throws -> ParseResult {
         if ZipArchive.isArchive(data) {
             return try parseArchive(data, onProgress: onProgress)
         }
@@ -68,36 +78,36 @@ public enum ChatSessionImporter {
             throw ImportError.invalidJSON
         }
 
-        let conversations: [ImportedConversation]
+        let result: ParseResult
         if let array = root as? [[String: Any]] {
             onProgress?(L("Processing \(array.count) conversations…"))
             if array.contains(where: { $0["mapping"] is [String: Any] }) {
-                conversations = array.compactMap { parseChatGPT($0) }
+                result = collect(array, parseChatGPT, chatGPTHasUserContent)
             } else if array.contains(where: { $0["chat_messages"] is [Any] }) {
-                conversations = array.compactMap { parseClaude($0) }
+                result = collect(array, parseClaude, claudeHasUserContent)
             } else if array.contains(where: isGeminiActivityEntry) {
-                conversations = array.compactMap { parseGeminiActivity($0) }
+                result = collect(array, parseGeminiActivity, geminiHasUserContent)
             } else if array.contains(where: { ($0["chat"] as? [String: Any])?["messages"] is [Any] }) {
-                conversations = array.compactMap { parseOpenWebUI($0) }
+                result = collect(array, parseOpenWebUI, openWebUIHasUserContent)
             } else {
                 throw ImportError.unrecognizedFormat
             }
         } else if let object = root as? [String: Any] {
             if object["mapping"] is [String: Any] {
-                conversations = [parseChatGPT(object)].compactMap { $0 }
+                result = collect([object], parseChatGPT, chatGPTHasUserContent)
             } else if object["chat_messages"] is [Any] {
-                conversations = [parseClaude(object)].compactMap { $0 }
+                result = collect([object], parseClaude, claudeHasUserContent)
             } else if let list = object["conversations"] as? [[String: Any]],
                 list.contains(where: { $0["responses"] is [Any] })
             {
                 // Grok's account export shares the generic schema's
                 // top-level `conversations` key but nests messages under
                 // `responses`, so it must be checked first.
-                conversations = list.compactMap { parseGrok($0) }
+                result = collect(list, parseGrok, grokHasUserContent)
             } else if let list = object["conversations"] as? [[String: Any]] {
-                conversations = list.compactMap { parseGeneric($0) }
+                result = collect(list, parseGeneric, genericHasUserContent)
             } else if object["messages"] is [Any] {
-                conversations = [parseGeneric(object)].compactMap { $0 }
+                result = collect([object], parseGeneric, genericHasUserContent)
             } else {
                 throw ImportError.unrecognizedFormat
             }
@@ -105,8 +115,26 @@ public enum ChatSessionImporter {
             throw ImportError.unrecognizedFormat
         }
 
-        guard !conversations.isEmpty else { throw ImportError.noConversations }
-        return conversations
+        guard !result.conversations.isEmpty else { throw ImportError.noConversations }
+        return result
+    }
+
+    /// Runs `parse` over every entry, counting as unreadable only the
+    /// entries that `hasUserContent` confirms carried real user messages.
+    private static func collect(
+        _ items: [[String: Any]],
+        _ parse: ([String: Any]) -> ImportedConversation?,
+        _ hasUserContent: ([String: Any]) -> Bool
+    ) -> ParseResult {
+        var result = ParseResult()
+        for item in items {
+            if let conversation = parse(item) {
+                result.conversations.append(conversation)
+            } else if hasUserContent(item) {
+                result.unreadable += 1
+            }
+        }
+        return result
     }
 
     // MARK: - Zip archives
@@ -119,7 +147,7 @@ public enum ChatSessionImporter {
     private static func parseArchive(
         _ data: Data,
         onProgress: (@Sendable (String) -> Void)? = nil
-    ) throws -> [ImportedConversation] {
+    ) throws -> ParseResult {
         let jsonEntries = try ZipArchive.entries(in: data).filter { entry in
             let name = entry.name.lowercased()
             // AppleDouble metadata ("__MACOSX/…", "._foo.json") isn't JSON.
@@ -128,16 +156,17 @@ public enum ChatSessionImporter {
         }
         guard !jsonEntries.isEmpty else { throw ImportError.unrecognizedFormat }
 
-        var all: [ImportedConversation] = []
+        var all = ParseResult()
         for entry in jsonEntries {
             let shortName = entry.name.split(separator: "/").last.map(String.init) ?? entry.name
             onProgress?(L("Unpacking \(shortName)…"))
             let entryData = try ZipArchive.extract(entry, from: data)
-            if let conversations = try? parse(data: entryData, onProgress: onProgress) {
-                all.append(contentsOf: conversations)
+            if let result = try? parse(data: entryData, onProgress: onProgress) {
+                all.conversations.append(contentsOf: result.conversations)
+                all.unreadable += result.unreadable
             }
         }
-        guard !all.isEmpty else { throw ImportError.noConversations }
+        guard !all.conversations.isEmpty else { throw ImportError.noConversations }
         return all
     }
 
@@ -197,6 +226,26 @@ public enum ChatSessionImporter {
             updatedAt: (conversation["update_time"] as? Double).map(Date.init(timeIntervalSince1970:)),
             turns: turns
         )
+    }
+
+    /// True when the mapping contains at least one visible user message
+    /// with text. Scans all nodes, unlike the parser's canonical-path
+    /// walk, so a conversation whose tree links are broken still counts
+    /// as content the user would lose.
+    private static func chatGPTHasUserContent(_ conversation: [String: Any]) -> Bool {
+        guard let mapping = conversation["mapping"] as? [String: Any] else { return false }
+        return mapping.values.contains { node in
+            guard
+                let node = node as? [String: Any],
+                let message = node["message"] as? [String: Any],
+                let author = message["author"] as? [String: Any],
+                author["role"] as? String == "user",
+                (message["metadata"] as? [String: Any])?["is_visually_hidden_from_conversation"]
+                    as? Bool != true
+            else { return false }
+            return !chatGPTText(from: message["content"] as? [String: Any])
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 
     /// Fallback when `current_node` is absent: the leaf reached by the
@@ -282,6 +331,15 @@ public enum ChatSessionImporter {
         )
     }
 
+    private static func claudeHasUserContent(_ conversation: [String: Any]) -> Bool {
+        guard let messages = conversation["chat_messages"] as? [[String: Any]] else { return false }
+        return messages.contains { message in
+            message["sender"] as? String == "human"
+                && !claudeText(from: message)
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
     /// Newer Claude exports carry a `content` array of typed blocks;
     /// older ones only the flat `text` field.
     private static func claudeText(from message: [String: Any]) -> String {
@@ -348,6 +406,14 @@ public enum ChatSessionImporter {
         )
     }
 
+    private static func geminiHasUserContent(_ entry: [String: Any]) -> Bool {
+        guard let title = entry["title"] as? String, title.hasPrefix("Prompted ") else {
+            return false
+        }
+        return !String(title.dropFirst("Prompted ".count))
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     /// Minimal HTML → text for Takeout's `safeHtmlItem` responses: block
     /// tags become newlines, list items become dashes, remaining tags are
     /// stripped and common entities decoded. Not a general HTML renderer —
@@ -411,6 +477,18 @@ public enum ChatSessionImporter {
         )
     }
 
+    private static func openWebUIHasUserContent(_ record: [String: Any]) -> Bool {
+        guard
+            let chat = record["chat"] as? [String: Any],
+            let messages = chat["messages"] as? [[String: Any]]
+        else { return false }
+        return messages.contains { message in
+            message["role"] as? String == "user"
+                && !genericText(from: message["content"])
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
     // MARK: - Grok (accounts.x.ai data export)
 
     /// Grok's account export (`prod-grok-backend.json`) wraps each
@@ -449,6 +527,18 @@ public enum ChatSessionImporter {
             updatedAt: mongoDate(meta["modify_time"]),
             turns: turns
         )
+    }
+
+    private static func grokHasUserContent(_ item: [String: Any]) -> Bool {
+        guard let responses = item["responses"] as? [[String: Any]] else { return false }
+        return responses.contains { wrapper in
+            let message = wrapper["response"] as? [String: Any] ?? wrapper
+            guard let sender = (message["sender"] as? String)?.lowercased(),
+                sender == "human" || sender == "user"
+            else { return false }
+            let text = (message["message"] as? String) ?? (message["text"] as? String) ?? ""
+            return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 
     /// The conversation id appears as a plain string or a MongoDB
@@ -510,6 +600,15 @@ public enum ChatSessionImporter {
             updatedAt: flexibleDate(conversation["updatedAt"]),
             turns: turns
         )
+    }
+
+    private static func genericHasUserContent(_ conversation: [String: Any]) -> Bool {
+        guard let messages = conversation["messages"] as? [[String: Any]] else { return false }
+        return messages.contains { message in
+            message["role"] as? String == "user"
+                && !genericText(from: message["content"])
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 
     /// Generic-schema `content` accepts a plain string, an array of
