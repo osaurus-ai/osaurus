@@ -1,5 +1,206 @@
 # Cache telemetry continuity and explicit model unload — 2026-07-30
 
+## Final rebased/current-vMLX gate — authoritative
+
+Status: `LOCAL VERIFIED` for the affected source, automated, exact
+model-backed, and isolated Release-app UI rows. The raw broad model suites are
+reported separately and are not converted into passing runtime evidence.
+GitHub final-head checks and the merge result remain external gates until the
+PR is published.
+
+This section supersedes the older integrated and initial rounds retained below.
+The tested runtime source is
+`6b1f159c8a31bef29f1a8de715834ad84ebb065c`; the later evidence-only commit
+does not alter that runtime.
+
+### Exact source, pin, build, and settings
+
+- Osaurus base:
+  `5212ffbc6208b676de6ba2b67fdaf975ed503236`
+  (current `osaurus/main` after PR #2247).
+- Tested Osaurus runtime:
+  `6b1f159c8a31bef29f1a8de715834ad84ebb065c`.
+- Owning unload/telemetry fix:
+  `d4304449144f45cc77a577fe0c0c412414c8b1ec`.
+- Active-unload warm-up cancellation fix:
+  `2fa187d912240d6c14a21837e6295805a159c3ee`.
+- Pinned vMLX at every Osaurus ownership surface and in both resolved build
+  graphs:
+  `0d838879a7ea102eb6e034f1d33ac0dbb51c02c3`.
+- A fresh fetch immediately after live proof confirmed both upstream refs were
+  unchanged: Osaurus `main` remained `5212ffbc...`; vMLX `main` remained
+  `0d838879...`.
+- Fresh Release app:
+  `/Users/eric/osaurus-cache-telemetry-final-20260730/build/DerivedData-cache-unload-release-6b1f159c/Build/Products/Release/osaurus.app`.
+- Release executable SHA-256:
+  `48ec104e7bf7a38d70e989dea18d0686c472c860dd15389d45cb4477f7b0c382`.
+- Release build log SHA-256:
+  `92fe97aef4c92bc369a14070bdafe0e4599e626d119dc31f20c9666ebf6d1ba5`.
+- Isolated live-test copy:
+  `/private/tmp/osaurus-cache-telemetry-clean-ui-6b1f159c.app`;
+  isolated bundle domain
+  `com.dinoki.osaurus.cacheunload6b1f159cclean`;
+  isolated root
+  `/private/tmp/osaurus-cache-telemetry-clean-ui-6b1f159c-root`.
+- Host: Apple M5 Max, 128 GiB unified memory, macOS 26.4.
+- Model root: `/Users/eric/models`.
+- Paged RAM KV: off. Disk block L2 and prefix cache: on. SSM rederive:
+  on. Continuous batching: on with two configured sequences.
+- Persisted clean-root settings SHA-256:
+  `server-runtime.json`
+  `8a33fd8a019702ff2e8b6900d048e768c0ede92744bd3adec87a03586408e4a2`;
+  `agent-delegation.json`
+  `ceef0b0d1f29844237d655b9b75e766fec1dd6a9f13d5af077f442598ab0a511`;
+  custom `Assistant` agent
+  `37f6d470976196a5713f770a98891ee27934afb451a125164ee0ee65b15760a7`.
+
+The clean settings persisted continuous batching, concurrent sequences `2`,
+local handoff, RAM-safety preflight, maximum parallel spawns `2`, permission
+mode `always_allow`, and both allowed local models plus their target notes.
+The same values were changed through the real UI, saved, inspected after
+navigation, and inspected again after app relaunch.
+
+The exact model identities and bundle-driven generation defaults are unchanged
+from the retained model table below:
+
+- Nanbeige:
+  `/Users/eric/models/JANGQ-AI/Nanbeige4.2-3B-JANG_4M`;
+  `do_sample=true`, temperature `0.6`, top-p `0.95`, top-k `20`, EOS
+  `166101`, and no min-p or repetition-penalty override.
+- Ornith:
+  `/Users/eric/models/JANGQ-AI/Ornith-1.0-9B-JANG_4M`;
+  no temperature, top-p, top-k, min-p, repetition-penalty, or sampling
+  override; EOS `[248046, 248046]`.
+
+No forced thinking tags, prompt coercion, hidden sampler override, synthetic
+default, parser masking, or output-cap workaround was added.
+
+### Final automated and model-backed proof
+
+| Lane | Final result |
+| --- | ---: |
+| Focused unload, warm-up, adapter, runtime-policy, and chat-stop suites | `130/130` passed across 4 suites |
+| Complete `OsaurusEvals` Swift package harness | 299 tests passed across 36 suites, 0 failures; 3 host resource-sampler rows skipped by their platform/resource guards |
+| Deterministic Schema, ToolEnvelope, PrefixHash, ArgumentCoercion, ToolResultGrounding, AgentChannels, ComputerUse, and ScreenContext lanes | `101/101` passed |
+| Exact affected mixed-local model row | `1/1` passed |
+| Full Ornith `AgentLoop` | `32/40` passed, `5` failed, `3` skipped, `0` errored |
+| Full Ornith `AgentLoopFrontier` | `22/39` passed, `17` failed, `0` skipped, `0` errored |
+| Fresh isolated Release build and strict deep signature verification | passed |
+
+The exact affected
+`agent_loop.spawn-batch-two-different-local-workers` row used one
+`spawn_batch`, the exact Nanbeige and Ornith targets, nil sampler overrides,
+two ordered jobs, and returned both exact tokens. It passed with `2/2`
+children, no tool errors, 21.386 seconds latency, 31.4682 tok/s, 2719.703 ms
+TTFT, 9282.1621 prefill tok/s, and 3709.658 MB peak physical footprint. Disk
+L2 delta was `+1/+14/+10` hit/miss/store; SSM companion delta was `+1/+0`
+hit/rederive. The exact-row log and report SHA-256 values are
+`37f35ea6e6e484efd881544dc82e6efc83ad55840f06f7dcaa778de8eae74dbd`
+and
+`ec337fc9e42cc672d04ab562546e1f30dd2b8f9c1ed53a1a69a15901e4d680ad`.
+
+The same row also passed inside the full AgentLoop suite: one `spawn_batch`,
+`2/2` children, no tool errors, both exact tokens, 47.467 seconds latency,
+25.4186 tok/s, 4836.851 ms TTFT, 8991.8371 prefill tok/s, and 3726.330 MB
+peak physical footprint. Disk L2 delta was `+2/+54/+9`; SSM companion delta
+was `+2/+0`.
+
+AgentLoop's five failed rows were
+`clarify-before-destructive`, `compaction-stress`,
+`idempotent-already-satisfied`, `search-then-multi-file-edit`, and
+`todo-discipline-multistep`. The three AppleScript delegation rows skipped
+because no AppleScript model was installed. Across all 40 rows, disk L2
+totaled `+93/+1109/+177`, SSM companion totaled `+93/+0`, peak physical
+footprint was 4952.252 MB, and decode ranged 12.3113–35.0326 tok/s. Those are
+raw model-quality outcomes, not unload/telemetry regressions.
+
+AgentLoopFrontier's 17 failed rows were `audit-file-write`,
+`chart-from-data`, `compaction-under-load`,
+`constraint-retention-carry-token`, `constraint-retention-format-marker`,
+`constraint-retention-no-redo`, `constraint-retention-ordering-rule`,
+`data-analysis-artifact`, `debug-from-stack-trace`,
+`exact-bytes-version-contract`, `fix-failing-tests`,
+`long-horizon-project`, `multi-file-refactor-with-todo`,
+`no-false-clarify`, `ordered-procedure`, `ordered-sort-count-pipeline`, and
+`self-schedule-followup`. Across all 39 rows, disk L2 totaled
+`+209/+1171/+293`, SSM companion totaled `+209/+0`, peak physical footprint
+was 7748.487 MB, and decode ranged 12.9324–23.7129 tok/s. The database lane
+`frontier.agent-db-workflow` passed its persistent three-row and `SUM(qty)=60`
+assertions. The non-perfect Frontier score remains raw model-task evidence and
+is not described as a passing suite.
+
+No strong external judge key was present, so rubric-dependent model rows used
+the run model as self-judge. Deterministic assertions, exact markers, tool
+envelopes, disk state, runtime counters, and terminal lifecycle checks remain
+authoritative; the raw non-perfect broad scores are preserved rather than
+described as passing.
+
+Final raw artifact SHA-256 values:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `/private/tmp/osaurus-cache-telemetry-final-6b1f159c-focused.log` | `d5b2885a9fa0fa1ba15d28c02a69d3d74a7dab1ad944e65d25b156f421266940` |
+| `/private/tmp/osaurus-cache-telemetry-final-6b1f159c-evals-harness.log` | `95ab41d7d7ae764d0d7c3935590b9206feaeb18f91f8d5605aced5e4ec91c446` |
+| `/private/tmp/osaurus-cache-telemetry-final-6b1f159c-evals-deterministic.log` | `cd55e4219cbe117b22cf25ddae0f286c216491c19056fd2e4cea4717c70c5676` |
+| `/private/tmp/osaurus-cache-telemetry-final-6b1f159c-exact-row.log` | `37f35ea6e6e484efd881544dc82e6efc83ad55840f06f7dcaa778de8eae74dbd` |
+| `/private/tmp/osaurus-cache-telemetry-final-6b1f159c-agentloop/different-local-6b1f159c.json` | `ec337fc9e42cc672d04ab562546e1f30dd2b8f9c1ed53a1a69a15901e4d680ad` |
+| `/private/tmp/osaurus-cache-telemetry-final-6b1f159c-agentloop-full.log` | `ebf539c35c72f1df47ece35c992681236aa67dee02d6302d7952bb385661f12f` |
+| `/private/tmp/osaurus-cache-telemetry-final-6b1f159c-agentloop/final-AgentLoop.json` | `3527cd4d6a97aad83ce9771d18c3c8d10e5a10b8adf4a5cf7e0fe7ca542b12da` |
+| `/private/tmp/osaurus-cache-telemetry-final-6b1f159c-agentloop/final-AgentLoopFrontier.json` | `631106423ef64d80f1a1dbe6567464fd5aa89412f8fbdd5aa15dfd1736dd7b0a` |
+| `/private/tmp/osaurus-cache-telemetry-final-6b1f159c-release-build.log` | `92fe97aef4c92bc369a14070bdafe0e4599e626d119dc31f20c9666ebf6d1ba5` |
+| `/private/tmp/osaurus-cache-telemetry-final-6b1f159c-evidence.tar` (local-only, 21 MiB) | `a0d7c9af4efe299b35700c09d0b4e098d23af8136e3940dff1554bdf49c326d7` |
+
+### Final isolated Release-app visual proof
+
+Every applicable row was followed to terminal UI state. A side effect without
+finalization was counted as a failure.
+
+| Row | Final visual result |
+| --- | --- |
+| Nanbeige two-turn reasoning | PASS — thinking on; reasoning opened and closed; no inline fake `<think>` content; exact `TOKEN-ALPHA` memory and coherent arithmetic; Stop disappeared and input unlocked after each turn. |
+| Active unload trial 1 | PASS — unload cancelled/drained the active stream; model inspector and `/health` were empty immediately and after 12 seconds; coherent recovery and follow-up both finalized. |
+| Active unload trial 2 | PASS — independent repeat with the same immediate/12-second empty residency checks and terminal recovery/follow-up. |
+| Idle unload | PASS — the active 2.88 GB row disappeared and the inspector showed no cached models. |
+| Held-lease failure and retry | PASS — the row visibly entered disabled `Unloading…`; after the five-second bound it retained residency and showed the actionable still-in-use error; releasing the lease and retrying removed it. |
+| Telemetry continuity | PASS — process-lifetime disk counters remained monotonic/nonnegative across unload/reload/handoff (`6/19/18` → `12/33/31` → `17/43/42` → `18/43/44`), while final live occupancy/topology returned to zero. |
+| Main/server/custom-agent settings | PASS — allowed model pool, target notes, Always Allow, local handoff, RAM safety, max fan-out `2`, continuous batching, concurrent sessions `2`, and worker settings all persisted across navigation and relaunch. |
+| Clean mixed-model delegation | PASS — in a second cache-clean isolated app, the expanded tool card showed exactly one ordered `spawn_batch` with the requested Nanbeige/Ornith targets and exact child inputs; both children succeeded; parent restored and finalized with both exact tokens; Stop disappeared and input unlocked. |
+| Same-chat follow-up | PASS — exact `FOLLOWUP DIFFERENT_LOCAL_ALPHA DIFFERENT_LOCAL_BETA`, no extra tool call, 12.6 tok/s, 8.20 s TTFT, terminal input. |
+
+The clean mixed-model result card reported Nanbeige
+`DIFFERENT_LOCAL_ALPHA`, handoff true, 21.285 seconds, 23.3 tok/s; Ornith
+`DIFFERENT_LOCAL_BETA`, handoff false, 0.479 seconds, 28.4 tok/s; aggregate
+`2 succeeded, 0 failed`. Its cache delta was disk L2 `+0/+4/+4`, active and
+pending were zero before and after, and both execution waves were admitted.
+The clean app measured 2,821,131,744 bytes terminal physical footprint and
+4,714,646,960 bytes peak physical footprint.
+
+One earlier mixed-delegation UI attempt is explicitly discarded: it ran in
+the non-isolated app/root and the model substituted unrelated date-resolution
+job inputs. The expanded card and wrong final are retained as failure evidence;
+they are not part of the passing clean-row claim.
+
+Local-only visual evidence must not be uploaded to GitHub:
+
+- terminal clean mixed-model screenshot:
+  `/private/tmp/osaurus-cache-telemetry-final-6b1f159c/live-ui/43-clean-mixed-delegation-terminal-result.jpeg`,
+  SHA-256
+  `fab13eccccc58ee279b41037e808ff03348ba1778b46ea682b7ca89b3b76aff1`;
+- terminal same-chat follow-up screenshot:
+  `/private/tmp/osaurus-cache-telemetry-final-6b1f159c/live-ui/44-clean-mixed-delegation-followup-terminal.jpeg`,
+  SHA-256
+  `e0b9d1536c32d5fa4a63af40aec6f5ae774c3b1a4e130fe78501965b0fc759de`.
+
+### Named post-merge follow-up
+
+Run the full Osaurus benchmark campaign with the locally installed Raptor
+bundle, including AgentLoop, AgentLoopFrontier, database/AgentDB, sandbox and
+Seatbelt, and the remaining exposed runtime/tool lanes. Record exact raw
+scores and failed-row attribution, complete multi-turn visual lifecycle,
+token/s, physical footprint, bundle defaults, and cache counters. This is a
+named follow-up requested by the user; it is not used to broaden this focused
+unload/telemetry PR's merge gate.
+
 Status: `LOCAL VERIFIED` for the source, automated, real Release-app, and
 model-backed acceptance gates recorded below. The authoritative integrated
 runtime source is `58a3d35792df352556c0355ce06bc1759b9c9080`, which merges
