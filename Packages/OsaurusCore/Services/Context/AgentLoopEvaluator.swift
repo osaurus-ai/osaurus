@@ -131,36 +131,6 @@ public struct AgentLoopTranscript: Sendable, Codable {
         }
     }
 
-    /// Bounded structured evidence from file_read(web_smoke). This is scoring
-    /// data, unlike the 300-character result preview.
-    public struct WebVerificationObservation: Sendable, Codable, Equatable {
-        public let path: String
-        public let status: String
-        public let level: String?
-        public let runtimeErrors: [String]
-        public let boardElementCount: Int?
-        public let selectorCount: Int?
-        public let contentSHA256: String?
-
-        public init(
-            path: String,
-            status: String,
-            level: String?,
-            runtimeErrors: [String],
-            boardElementCount: Int?,
-            selectorCount: Int?,
-            contentSHA256: String?
-        ) {
-            self.path = path
-            self.status = status
-            self.level = level
-            self.runtimeErrors = runtimeErrors
-            self.boardElementCount = boardElementCount
-            self.selectorCount = selectorCount
-            self.contentSHA256 = contentSHA256
-        }
-    }
-
     /// One processed tool call, in model order across all iterations.
     public struct ToolInvocation: Sendable, Codable {
         public let name: String
@@ -175,8 +145,6 @@ public struct AgentLoopTranscript: Sendable, Codable {
         public let wasError: Bool
         /// Parsed only for successful `spawn_batch` results.
         public let spawnBatch: SpawnBatchObservation?
-        /// Parsed only for file_read(web_smoke) results.
-        public let webVerification: WebVerificationObservation?
 
         public init(
             name: String,
@@ -184,8 +152,7 @@ public struct AgentLoopTranscript: Sendable, Codable {
             resultPreview: String,
             wasDeduped: Bool,
             wasError: Bool = false,
-            spawnBatch: SpawnBatchObservation? = nil,
-            webVerification: WebVerificationObservation? = nil
+            spawnBatch: SpawnBatchObservation? = nil
         ) {
             self.name = name
             self.arguments = arguments
@@ -193,7 +160,6 @@ public struct AgentLoopTranscript: Sendable, Codable {
             self.wasDeduped = wasDeduped
             self.wasError = wasError
             self.spawnBatch = spawnBatch
-            self.webVerification = webVerification
         }
     }
 
@@ -352,26 +318,6 @@ public struct AgentLoopTranscript: Sendable, Codable {
             executionWaves: executionWaves,
             everyExecutionWaveWellFormed: everyExecutionWaveWellFormed,
             cacheAvailable: cacheAvailable
-        )
-    }
-
-    public static func webVerificationObservation(
-        from result: String
-    ) -> WebVerificationObservation? {
-        guard let payload = ToolEnvelope.successPayload(result) as? [String: Any],
-            let path = payload["path"] as? String,
-            let verification = payload["verification"] as? [String: Any],
-            let status = verification["status"] as? String
-        else { return nil }
-        let dom = verification["dom"] as? [String: Any]
-        return WebVerificationObservation(
-            path: path,
-            status: status,
-            level: verification["level"] as? String,
-            runtimeErrors: verification["errors"] as? [String] ?? [],
-            boardElementCount: dom?["board_element_count"] as? Int,
-            selectorCount: dom?["selector_count"] as? Int,
-            contentSHA256: verification["content_sha256"] as? String
         )
     }
 
@@ -932,8 +878,7 @@ public enum AgentLoopEvaluator {
                     resultPreview: String(result.prefix(300)),
                     wasDeduped: false,
                     wasError: isError,
-                    spawnBatch: AgentLoopTranscript.spawnBatchObservation(from: result),
-                    webVerification: AgentLoopTranscript.webVerificationObservation(from: result)
+                    spawnBatch: AgentLoopTranscript.spawnBatchObservation(from: result)
                 )
             )
             // Agent-loop intercepts, mirroring the chat surface: a
@@ -1263,9 +1208,6 @@ public enum AgentLoopEvaluator {
                     }
                 )
             },
-            prepareVerificationContinuation: {
-                finalText = ""
-            },
             onDedupedResult: { inv, callId, held in
                 if firstActionMs == nil {
                     firstActionMs = Date().timeIntervalSince(loopStarted) * 1000
@@ -1279,8 +1221,7 @@ public enum AgentLoopEvaluator {
                         arguments: inv.jsonArguments,
                         resultPreview: String(held.prefix(300)),
                         wasDeduped: true,
-                        spawnBatch: AgentLoopTranscript.spawnBatchObservation(from: held),
-                        webVerification: AgentLoopTranscript.webVerificationObservation(from: held)
+                        spawnBatch: AgentLoopTranscript.spawnBatchObservation(from: held)
                     )
                 )
             },

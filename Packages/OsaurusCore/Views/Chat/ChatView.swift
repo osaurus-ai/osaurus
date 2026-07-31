@@ -3521,53 +3521,6 @@ final class ChatSession: ObservableObject {
         }
     }
 
-    /// A later file_read(web_smoke) settles the earlier runnable write card.
-    /// Persist the state into that original envelope so reloads continue to
-    /// distinguish saved/pending/verified/failed.
-    private func applyArtifactVerificationToPriorDiff(from toolResult: String) {
-        guard let payload = ToolEnvelope.successPayload(toolResult) as? [String: Any],
-            let path = payload["path"] as? String,
-            let verification = payload["verification"] as? [String: Any],
-            let status = verification["status"] as? String,
-            status == "passed" || status == "failed"
-        else { return }
-        applyArtifactVerificationToPriorDiff(
-            path: path,
-            status: status,
-            level: verification["level"] as? String ?? "behavior_smoke",
-            errors: verification["errors"] as? [String] ?? []
-        )
-    }
-
-    private func applyArtifactVerificationToPriorDiff(
-        path: String,
-        status: String,
-        level: String,
-        errors: [String]
-    ) {
-        for turn in turns.reversed() where turn.role == .tool {
-            guard let data = turn.content.data(using: .utf8),
-                var envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                var result = envelope["result"] as? [String: Any],
-                result["path"] as? String == path,
-                result["diff"] is String
-            else { continue }
-            result["verification"] = [
-                "status": status,
-                "level": level,
-                "errors": errors,
-            ] as [String: Any]
-            envelope["result"] = result
-            guard let updated = try? JSONSerialization.data(
-                withJSONObject: envelope,
-                options: .osaurusCanonical
-            ), let text = String(data: updated, encoding: .utf8)
-            else { return }
-            turn.content = text
-            return
-        }
-    }
-
     /// Dispatch any queued send when the run ended naturally (no `stop()`
     /// in-flight, no streaming error). Cancelled or errored runs leave the
     /// queue in place so the user can re-decide via the chip or Send Now.
@@ -6056,18 +6009,6 @@ final class ChatSession: ObservableObject {
                             assistantTurn = nextAssistantTurn
                             self.rebuildVisibleBlocks()
                         },
-                        prepareVerificationContinuation: {
-                            debugLog(
-                                "send: runnable artifact remained unverified at model stop; "
-                                    + "discarding premature final and continuing once"
-                            )
-                            assistantTurn.modelContextExcluded = true
-                            assistantTurn.content = ""
-                            let nextAssistantTurn = ChatTurn(role: .assistant, content: "")
-                            self.turns.append(nextAssistantTurn)
-                            assistantTurn = nextAssistantTurn
-                            self.rebuildVisibleBlocks()
-                        },
                         willProcessCall: { inv, callId in
                             // Recorded history uses the secret-safe view;
                             // execution still receives the original `inv`.
@@ -6134,9 +6075,6 @@ final class ChatSession: ObservableObject {
                             // ids that already have a tool turn.
                             var appendedAny = false
                             for outcome in outcomes {
-                                self.applyArtifactVerificationToPriorDiff(
-                                    from: outcome.result
-                                )
                                 let exists = self.turns.contains {
                                     $0.role == .tool && $0.toolCallId == outcome.callId
                                 }
@@ -6145,14 +6083,6 @@ final class ChatSession: ObservableObject {
                                     recordToolTurn(outcome.result, callId: outcome.callId)
                                 )
                                 appendedAny = true
-                            }
-                            for settlement in self.taskState.consumeRunnableVerificationSettlements() {
-                                self.applyArtifactVerificationToPriorDiff(
-                                    path: settlement.path,
-                                    status: settlement.status,
-                                    level: settlement.level,
-                                    errors: settlement.errors
-                                )
                             }
                             if appendedAny {
                                 // One fresh assistant turn for subsequent

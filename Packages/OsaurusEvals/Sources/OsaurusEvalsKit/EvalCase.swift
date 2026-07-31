@@ -1949,11 +1949,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             public let minErrors: Int?
             public let argsMustContain: String?
             public let argsMustNotContain: String?
-            /// Structured file_read(web_smoke) assertions.
-            public let verificationStatus: String?
-            public let maxVerificationErrors: Int?
-            public let minBoardElements: Int?
-            public let minSelectorCount: Int?
 
             public init(
                 tool: String,
@@ -1962,11 +1957,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 maxErrors: Int? = nil,
                 minErrors: Int? = nil,
                 argsMustContain: String? = nil,
-                argsMustNotContain: String? = nil,
-                verificationStatus: String? = nil,
-                maxVerificationErrors: Int? = nil,
-                minBoardElements: Int? = nil,
-                minSelectorCount: Int? = nil
+                argsMustNotContain: String? = nil
             ) {
                 self.tool = tool
                 self.maxCalls = maxCalls
@@ -1975,10 +1966,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 self.minErrors = minErrors
                 self.argsMustContain = argsMustContain
                 self.argsMustNotContain = argsMustNotContain
-                self.verificationStatus = verificationStatus
-                self.maxVerificationErrors = maxVerificationErrors
-                self.minBoardElements = minBoardElements
-                self.minSelectorCount = minSelectorCount
             }
         }
     }

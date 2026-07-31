@@ -54,7 +54,6 @@
       "agent_loop.idempotent-already-satisfied",
       "agent_loop.impossible-task-declines",
       "agent_loop.listing-navigation-discipline",
-      "agent_loop.minesweeper-autonomous-web-smoke",
       "agent_loop.multi-file-create-trio",
       "agent_loop.no-clarify-when-default-obvious",
       "agent_loop.over-budget-hard-overflow",

@@ -5290,14 +5290,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     messages.append(ChatMessage(role: "assistant", content: responseContent))
                     return .finalResponse
                 },
-                prepareVerificationContinuation: {
-                    if messages.last?.role == "assistant",
-                        messages.last?.tool_calls == nil
-                    {
-                        messages.removeLast()
-                    }
-                    responseContent = ""
-                },
                 executeTool: { inv, callId in
                     // Single-call fallback; the batch executor below is the
                     // normal path for this surface. `isExternalSurface`

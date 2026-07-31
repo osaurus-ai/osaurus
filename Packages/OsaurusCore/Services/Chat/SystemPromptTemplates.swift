@@ -1538,7 +1538,7 @@ public enum SystemPromptTemplates {
             **Path:** \(folder.rootPath.path)
             Native execution is trusted for this workspace. Writes are confined to this folder and temporary directories. Use relative paths.
             Use the workspace tools to complete requested work now; do not only describe or promise it.
-            After creating or changing runnable code, run an available syntax/build/test/behavior check before saying it works; a successful file mutation proves only that bytes were saved. For a local HTML app, use file_read with verify set to web_smoke for isolated WebKit behavior evidence.
+            After creating or changing runnable code, run an available syntax/build/test/behavior check before saying it works; a successful file mutation proves only that bytes were saved.
             To append while preserving a file, call file_write with mode append and put only the new bytes in content.
             Keep each file_write content under \(WorkspaceToolContract.recommendedWriteChunkCharacters) characters; for larger files use repeated calls with mode append.
             """

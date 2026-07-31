@@ -1577,9 +1577,6 @@ final class PluginHostContext: @unchecked Sendable {
                     finalResponse = response
                     return .finalResponse
                 },
-                prepareVerificationContinuation: {
-                    finalResponse = nil
-                },
                 onDedupedResult: { _, callId, held in
                     // Dedupe a still-fresh re-read: replay the exact held
                     // envelope instead of re-running the read. The assistant
@@ -1998,15 +1995,6 @@ final class PluginHostContext: @unchecked Sendable {
                     } catch let inv as ServiceToolInvocation {
                         return .toolCalls([inv])
                     }
-                },
-                prepareVerificationContinuation: {
-                    if messages.last?.role == "assistant",
-                        messages.last?.tool_calls == nil
-                    {
-                        messages.removeLast()
-                    }
-                    terminalEnvelope = nil
-                    lastContent = ""
                 },
                 willProcessCall: { inv, callId in
                     // Surface the tool call to the plugin before the dedupe

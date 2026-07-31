@@ -20,7 +20,6 @@
 //  per-request / per-invocation instance (nothing to survive).
 //
 
-import CryptoKit
 import Foundation
 
 /// Classification of a tool result, derived from the canonical envelope.
@@ -83,13 +82,6 @@ public struct CallSignature: Hashable, Sendable {
 /// design: a single loop drives it sequentially. Each loop owns its own
 /// instance.
 public final class AgentTaskState {
-    public struct RunnableVerificationSettlement: Sendable, Equatable {
-        public let path: String
-        public let status: String
-        public let level: String
-        public let errors: [String]
-    }
-
 
     // MARK: Configuration
 
@@ -232,22 +224,9 @@ public final class AgentTaskState {
         let payload: [String: Any]
     }
 
-    private enum VerificationState: String {
-        case pending
-        case failed
-    }
-
-    private struct PendingRunnableVerification {
-        let canonicalPath: String
-        let displayPath: String
-        let contentSHA256: String?
-        let supportsLocalWebSmoke: Bool
-        var state: VerificationState
-        var failureMessage: String?
-    }
-
+    /// One-shot protection against a whole-file overwrite that exactly
+    /// restores the snapshot from before the most recent targeted edit.
     private struct SuccessfulEditSnapshot {
-        let canonicalPath: String
         let beforeSHA256: String
         let afterSHA256: String
     }
@@ -295,13 +274,9 @@ public final class AgentTaskState {
     /// `web_search` executions since the last concrete retrieval/processing
     /// action, regardless of argument changes or intervening meta tools.
     private var webDiscoveryRunCount = 0
-    /// Runnable artifacts changed in this logical run but not yet checked.
-    /// Reads do not clear this: persistence is not runtime evidence.
-    private var pendingRunnableVerifications: [String: PendingRunnableVerification] = [:]
-    /// Last successful targeted edit per path. Used to reject an immediate
-    /// whole-file write that exactly restores the stale pre-edit snapshot.
+    /// Armed only until the next same-path mutation attempt. This catches the
+    /// observed stale rewrite without becoming a persistent rollback policy.
     private var successfulEditSnapshots: [String: SuccessfulEditSnapshot] = [:]
-    private var runnableVerificationSettlements: [RunnableVerificationSettlement] = []
 
     public init(biasEnabled: Bool = true) {
         self.biasEnabled = biasEnabled
@@ -328,9 +303,7 @@ public final class AgentTaskState {
         planningRunName = nil
         planningRunCount = 0
         webDiscoveryRunCount = 0
-        pendingRunnableVerifications.removeAll(keepingCapacity: true)
         successfulEditSnapshots.removeAll(keepingCapacity: true)
-        runnableVerificationSettlements.removeAll(keepingCapacity: true)
     }
 
     // MARK: Dedupe
@@ -409,8 +382,11 @@ public final class AgentTaskState {
             let content = Self.stringArgument("content", argsJSON: argsJSON)
         {
             let canonical = Self.canonicalPath(target)
-            if let edit = successfulEditSnapshots[canonical],
-                Self.contentSHA256(content) == edit.beforeSHA256
+            // The guard is deliberately one-shot. A rejected stale attempt
+            // gets an actionable error; any other overwrite proceeds and
+            // supersedes the edit snapshot.
+            if let edit = successfulEditSnapshots.removeValue(forKey: canonical),
+                WorkspaceWriteSafety.contentSHA256(content) == edit.beforeSHA256
             {
                 return ToolEnvelope.failure(
                     kind: .rejected,
@@ -478,9 +454,6 @@ public final class AgentTaskState {
             heldErrorReplays.removeAll(keepingCapacity: true)
             transientFailureExecutions.removeAll(keepingCapacity: true)
             successfulEditSnapshots.removeAll(keepingCapacity: true)
-            if ToolEnvelope.isSuccess(result) {
-                markVerificationsSatisfiedByCommand(argsJSON)
-            }
         }
 
         // A write/edit invalidates any fresh read of the same path so the
@@ -514,23 +487,33 @@ public final class AgentTaskState {
                     payload: payload
                 )
             }
-            if ToolEnvelope.isSuccess(result), let payload = successPayload {
-                updateMutationState(
-                    name: name,
-                    target: target,
-                    canonicalPath: targetCanonical,
-                    payload: payload
-                )
+            if ToolEnvelope.isSuccess(result),
+                let payload = successPayload,
+                payload["dry_run"] as? Bool != true,
+                payload["applied"] as? Bool != false
+            {
+                let isTargetedEdit =
+                    name == "file_edit"
+                    || (name == "sandbox_write_file"
+                        && Self.stringArgument("old_string", argsJSON: argsJSON) != nil)
+                if isTargetedEdit,
+                    let before = payload["before_content_sha256"] as? String,
+                    let after = payload["content_sha256"] as? String
+                {
+                    successfulEditSnapshots[targetCanonical] = SuccessfulEditSnapshot(
+                        beforeSHA256: before,
+                        afterSHA256: after
+                    )
+                } else {
+                    // Any successful whole-file or append mutation supersedes
+                    // the targeted-edit snapshot for this path.
+                    successfulEditSnapshots[targetCanonical] = nil
+                }
             }
         }
 
-        if name == "file_undo", ToolEnvelope.isSuccess(result) {
-            pendingRunnableVerifications.removeAll(keepingCapacity: true)
-            successfulEditSnapshots.removeAll(keepingCapacity: true)
-        }
-
-        if name == "file_read", let payload = successPayload {
-            updateVerificationState(from: payload)
+        if name == "file_undo", let payload = successPayload {
+            clearEditSnapshotsUndone(by: payload)
         }
 
         // Capture (or clear) a held deterministic error for this signature.
@@ -658,166 +641,6 @@ public final class AgentTaskState {
         }
     }
 
-    // MARK: Runnable-artifact verification
-
-    public var hasPendingRunnableVerification: Bool {
-        !pendingRunnableVerifications.isEmpty
-    }
-
-    public var pendingRunnableVerificationPaths: [String] {
-        pendingRunnableVerifications.values
-            .map(\.displayPath)
-            .sorted()
-    }
-
-    public func consumeRunnableVerificationSettlements() -> [RunnableVerificationSettlement] {
-        defer { runnableVerificationSettlements.removeAll(keepingCapacity: true) }
-        return runnableVerificationSettlements
-    }
-
-    /// Exact bounded continuation instruction used when a model tries to
-    /// finish immediately after saving runnable code.
-    public func runnableVerificationCompletionNotice() -> String? {
-        guard let pending = pendingRunnableVerifications.values.sorted(by: {
-            $0.displayPath < $1.displayPath
-        }).first else { return nil }
-
-        let failurePrefix: String
-        if pending.state == .failed {
-            let detail = pending.failureMessage.map { " Previous check: \($0)" } ?? ""
-            failurePrefix = "The previous verification failed.\(detail) Fix the evidenced defect, then rerun it. "
-        } else {
-            failurePrefix = ""
-        }
-        let ext = (pending.displayPath as NSString).pathExtension.lowercased()
-        if pending.supportsLocalWebSmoke, ext == "html" || ext == "htm" {
-            return
-                "\(failurePrefix)Runnable artifact `\(pending.displayPath)` is not behavior-verified. Call `file_read` with {\"path\":\"\(Self.jsonEscaped(pending.displayPath))\",\"verify\":\"web_smoke\"} before claiming it works. A normal file_read or successful write proves only persistence."
-        }
-        return
-            "\(failurePrefix)Runnable artifact `\(pending.displayPath)` is not verified. Run a syntax/build/test command that checks this path before claiming it works."
-    }
-
-    private func updateMutationState(
-        name: String,
-        target: String,
-        canonicalPath: String,
-        payload: [String: Any]
-    ) {
-        if name == "file_edit",
-            let before = payload["before_content_sha256"] as? String,
-            let after = payload["content_sha256"] as? String
-        {
-            successfulEditSnapshots[canonicalPath] = SuccessfulEditSnapshot(
-                canonicalPath: canonicalPath,
-                beforeSHA256: before,
-                afterSHA256: after
-            )
-        } else if name == "file_write" || name == "sandbox_write_file" {
-            successfulEditSnapshots[canonicalPath] = nil
-        }
-
-        guard let verification = payload["verification"] as? [String: Any],
-            verification["status"] as? String == "not_run"
-        else {
-            if payload["applied"] as? Bool == false { return }
-            return
-        }
-        pendingRunnableVerifications[canonicalPath] = PendingRunnableVerification(
-            canonicalPath: canonicalPath,
-            displayPath: target,
-            contentSHA256: payload["content_sha256"] as? String,
-            supportsLocalWebSmoke:
-                name != "sandbox_write_file"
-                && !target.hasPrefix("/workspace/"),
-            state: .pending,
-            failureMessage: nil
-        )
-    }
-
-    private func updateVerificationState(from payload: [String: Any]) {
-        guard let verification = payload["verification"] as? [String: Any],
-            let status = verification["status"] as? String,
-            let path = payload["path"] as? String
-        else { return }
-        let canonical = Self.canonicalPath(path)
-        guard var pending = pendingRunnableVerifications[canonical] else { return }
-
-        if status == "passed" {
-            if let expected = pending.contentSHA256,
-                let checked = verification["content_sha256"] as? String,
-                expected != checked
-            {
-                pending.state = .failed
-                pending.failureMessage =
-                    "The file changed after the pending mutation; verify the current content."
-                pendingRunnableVerifications[canonical] = pending
-                runnableVerificationSettlements.append(
-                    .init(
-                        path: pending.displayPath,
-                        status: "failed",
-                        level: "behavior_smoke",
-                        errors: [pending.failureMessage ?? "Verification checked stale content."]
-                    )
-                )
-                return
-            }
-            pendingRunnableVerifications[canonical] = nil
-            runnableVerificationSettlements.append(
-                .init(
-                    path: pending.displayPath,
-                    status: "passed",
-                    level: verification["level"] as? String ?? "behavior_smoke",
-                    errors: []
-                )
-            )
-        } else if status == "failed" {
-            pending.state = .failed
-            let errors = verification["errors"] as? [String]
-            pending.failureMessage =
-                errors?.first ?? verification["message"] as? String ?? "Verification failed."
-            pendingRunnableVerifications[canonical] = pending
-            runnableVerificationSettlements.append(
-                .init(
-                    path: pending.displayPath,
-                    status: "failed",
-                    level: verification["level"] as? String ?? "behavior_smoke",
-                    errors: errors ?? [pending.failureMessage ?? "Verification failed."]
-                )
-            )
-        }
-    }
-
-    private func markVerificationsSatisfiedByCommand(_ argsJSON: String) {
-        guard let command = Self.stringArgument("command", argsJSON: argsJSON) else { return }
-        let lower = command.lowercased()
-        let checkMarkers = [
-            " test", "build", "check", "lint", "compile", "pytest", "swift test",
-            "npm test", "node --check", "py_compile", "shellcheck", "eslint", " tsc",
-            "cargo ", "go test", "ruby -c", "php -l", "bash -n", "sh -n", "grep ", "rg ",
-        ]
-        let isVerificationCommand = checkMarkers.contains { lower.contains($0) }
-        guard isVerificationCommand else { return }
-        var settled: [PendingRunnableVerification] = []
-        pendingRunnableVerifications = pendingRunnableVerifications.filter { _, pending in
-            let path = pending.displayPath.lowercased()
-            let basename = (pending.displayPath as NSString).lastPathComponent.lowercased()
-            let directlyReferenced = lower.contains(path) || lower.contains(basename)
-            let projectWideCheck =
-                lower.contains(" test") || lower.contains("build") || lower.contains("lint")
-            if directlyReferenced || projectWideCheck {
-                settled.append(pending)
-                return false
-            }
-            return true
-        }
-        runnableVerificationSettlements.append(
-            contentsOf: settled.map {
-                .init(path: $0.displayPath, status: "passed", level: "syntax_check", errors: [])
-            }
-        )
-    }
-
     // MARK: Next-step nudge (non-load-bearing)
 
     /// A short, system-attributed next-step nudge for the most recent result,
@@ -842,20 +665,7 @@ public final class AgentTaskState {
             let envelope = lastResultEnvelope,
             let notice = Self.runnableMutationNotice(tool: tool, envelope: envelope)
         {
-            if let completion = runnableVerificationCompletionNotice() {
-                return notice + " " + completion
-            }
             return notice
-        }
-
-        if lastToolName == "file_read",
-            let payload = lastResultEnvelope.flatMap({
-                ToolEnvelope.successPayload($0) as? [String: Any]
-            }),
-            let verification = payload["verification"] as? [String: Any],
-            verification["status"] as? String == "failed"
-        {
-            return runnableVerificationCompletionNotice()
         }
 
         // Repeated identical write/exec call: the strongest stuck signal we
@@ -1147,20 +957,16 @@ public final class AgentTaskState {
         return dict[key] as? String
     }
 
-    private static func contentSHA256(_ content: String) -> String {
-        SHA256.hash(data: Data(content.utf8))
-            .map { String(format: "%02x", $0) }
-            .joined()
-    }
-
-    private static func jsonEscaped(_ value: String) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: [value]),
-            let encoded = String(data: data, encoding: .utf8),
-            encoded.count >= 4
-        else {
-            return value.replacingOccurrences(of: "\"", with: "\\\"")
+    private func clearEditSnapshotsUndone(by payload: [String: Any]) {
+        guard let undone = payload["undone"] as? [[String: Any]] else { return }
+        for entry in undone {
+            if let path = entry["path"] as? String {
+                successfulEditSnapshots[Self.canonicalPath(path)] = nil
+            }
+            if let destination = entry["destination_path"] as? String {
+                successfulEditSnapshots[Self.canonicalPath(destination)] = nil
+            }
         }
-        return String(encoded.dropFirst(2).dropLast(2))
     }
 
     private func parseListing(_ envelope: String) -> ListingSnapshot? {

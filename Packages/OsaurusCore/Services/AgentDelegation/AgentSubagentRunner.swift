@@ -325,9 +325,6 @@ enum AgentSubagentRunner {
                 finalDigest = outcome.text
                 return .finalResponse
             },
-            prepareVerificationContinuation: {
-                finalDigest = ""
-            },
             onDedupedResult: { _, callId, held in
                 // Only fires when a child tool call short-circuits (tool kinds);
                 // text-only spawn never reaches here.

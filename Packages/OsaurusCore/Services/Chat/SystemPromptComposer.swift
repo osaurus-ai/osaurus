@@ -3021,9 +3021,7 @@ public struct SystemPromptComposer: Sendable {
         let required: [String]
         switch tool.function.name {
         case "file_read":
-            description =
-                "Read a file or list a directory in the working folder. Text lines use `N|` display prefixes. "
-                + "For a trusted local HTML app, verify=`web_smoke` runs one isolated WebKit behavior check."
+            description = "Read a file or list a directory in the working folder. Text lines use `N|` display prefixes."
             properties = [
                 "path": .object([
                     "type": .string("string"),
@@ -3036,20 +3034,6 @@ public struct SystemPromptComposer: Sendable {
                 "end_line": .object([
                     "type": .string("integer"),
                     "description": .string("Optional last line, inclusive"),
-                ]),
-                "verify": .object([
-                    "type": .string("string"),
-                    "enum": .array([.string("web_smoke")]),
-                    "description": .string("Optional isolated WebKit check for HTML/HTM"),
-                ]),
-                "verify_selector": .object([
-                    "type": .string("string"),
-                    "description": .string("Optional CSS selector expected after page load"),
-                ]),
-                "verify_min_count": .object([
-                    "type": .string("integer"),
-                    "minimum": .number(1),
-                    "description": .string("Minimum matches for verify_selector"),
                 ]),
             ]
             required = ["path"]
