@@ -492,6 +492,8 @@ struct FolderToolsResilienceTests {
 
         let payload = try #require(EnvelopeAssertions.successPayload(result))
         #expect(payload["content_write_complete"] as? Bool == true)
+        #expect(payload["content_sha256"] as? String == WorkspaceWriteSafety.contentSHA256(content))
+        #expect(payload["before_content_sha256"] == nil)
         #expect(payload["diff_truncated"] as? Bool == true)
         #expect(
             (payload["diff_truncation_note"] as? String)?

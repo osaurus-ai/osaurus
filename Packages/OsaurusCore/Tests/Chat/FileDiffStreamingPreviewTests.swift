@@ -6,6 +6,7 @@
 //  file-writing tool call whose JSON arguments are still streaming.
 //
 
+import Foundation
 import Testing
 
 @testable import OsaurusCore
@@ -171,5 +172,33 @@ struct FileDiffStreamingPreviewTests {
                 partialArgs: #"{"content": "not a file"#
             ) == nil
         )
+    }
+
+    @Test("settled mutation exposes verification state and preview truncation")
+    func settledVerificationState() throws {
+        for (status, expected) in [
+            ("not_run", FileDiff.VerificationState.pending),
+            ("passed", .verified),
+            ("failed", .failed),
+        ] {
+            let envelope = ToolEnvelope.success(
+                tool: "file_write",
+                result: [
+                    "path": "index.html",
+                    "diff": "--- a/index.html\n+++ b/index.html\n+<html>",
+                    "diff_truncated": true,
+                    "verification": [
+                        "status": status,
+                        "level": status == "not_run" ? NSNull() : "behavior_smoke",
+                    ],
+                ] as [String: Any]
+            )
+            let diff = try #require(FileDiff.from(toolResult: envelope))
+            #expect(diff.verificationState == expected)
+            #expect(diff.truncated)
+            if status != "not_run" {
+                #expect(diff.verificationLevel == "behavior_smoke")
+            }
+        }
     }
 }

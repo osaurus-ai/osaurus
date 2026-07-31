@@ -16,6 +16,17 @@ import Foundation
 /// for per-row tinting and `addedCount` / `removedCount` for the header
 /// badge; `rawDiff` backs the copy button.
 struct FileDiff: Equatable {
+    enum VerificationState: String, Equatable {
+        /// Bytes were applied, but this file type has no runnable verification contract.
+        case saved
+        /// Runnable bytes were applied and still require a check.
+        case pending
+        /// A matching syntax/build/behavior check passed.
+        case verified
+        /// A matching check ran and found a defect.
+        case failed
+    }
+
     enum LineKind: Equatable {
         case context
         case added
@@ -44,6 +55,11 @@ struct FileDiff: Equatable {
     let truncated: Bool
     /// The raw unified-diff text, used for the card's copy action.
     let rawDiff: String
+    /// Durable artifact status stamped into the mutation envelope and updated
+    /// when a later matching verification result settles.
+    var verificationState: VerificationState = .saved
+    /// `syntax_check` or `behavior_smoke` when a check has settled.
+    var verificationLevel: String? = nil
     /// True for the live card rendered while the tool call's arguments are
     /// still streaming — content is a partial prefix of the file, so the
     /// renderer skips syntax highlighting and shows a "writing" badge.
@@ -69,12 +85,24 @@ struct FileDiff: Equatable {
             !diffText.isEmpty
         else { return nil }
 
-        return fromUnifiedDiff(
+        var parsed = fromUnifiedDiff(
             diffText,
             path: (payload["path"] as? String) ?? "",
             isPreview: (payload["dry_run"] as? Bool) ?? false,
             truncated: (payload["diff_truncated"] as? Bool) ?? false
         )
+        if let verification = payload["verification"] as? [String: Any],
+            let status = verification["status"] as? String
+        {
+            switch status {
+            case "not_run": parsed.verificationState = .pending
+            case "passed": parsed.verificationState = .verified
+            case "failed": parsed.verificationState = .failed
+            default: break
+            }
+            parsed.verificationLevel = verification["level"] as? String
+        }
+        return parsed
     }
 
     /// Builds a `FileDiff` from raw unified-diff text (the format produced by

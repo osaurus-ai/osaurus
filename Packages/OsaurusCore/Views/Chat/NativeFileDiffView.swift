@@ -409,8 +409,34 @@ final class NativeFileDiffView: NSView {
             previewBadge.textColor = NSColor(theme.tertiaryText)
             previewBadge.isHidden = false
         } else {
-            previewBadge.stringValue = ""
-            previewBadge.isHidden = true
+            var status: String
+            switch diff.verificationState {
+            case .saved: status = L("Saved")
+            case .pending: status = L("Pending")
+            case .verified: status = L("Verified")
+            case .failed: status = L("Failed")
+            }
+            if diff.verificationState == .verified || diff.verificationState == .failed {
+                if diff.verificationLevel == "behavior_smoke" {
+                    status += " · WebKit"
+                } else if diff.verificationLevel == "syntax_check" {
+                    status += " · syntax"
+                }
+            }
+            previewBadge.stringValue =
+                diff.truncated ? status + " · " + L("preview") + " ⚠" : status
+            previewBadge.toolTip =
+                diff.truncated
+                ? "Full content was saved; the displayed diff is only a truncated review preview."
+                : nil
+            previewBadge.font = NSFont.systemFont(
+                ofSize: CGFloat(theme.captionSize) - 2,
+                weight: .medium
+            )
+            previewBadge.textColor =
+                diff.verificationState == .failed
+                ? NSColor(theme.errorColor) : NSColor(theme.tertiaryText)
+            previewBadge.isHidden = false
         }
 
         copyButton.contentTintColor = NSColor(theme.tertiaryText)

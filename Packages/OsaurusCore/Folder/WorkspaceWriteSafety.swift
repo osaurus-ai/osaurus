@@ -5,6 +5,7 @@
 //  Shared guardrails for host-folder write tools.
 //
 
+import CryptoKit
 import Foundation
 
 /// Shared source-vs-document routing for workspace tools.
@@ -282,7 +283,11 @@ enum WorkspaceWriteSafety {
             "risk_level": riskLevel,
             "diff": diff.text,
             "diff_truncated": diff.truncated,
+            "content_sha256": contentSHA256(proposedContent),
         ]
+        if let previousContent {
+            payload["before_content_sha256"] = contentSHA256(previousContent)
+        }
         annotateMutationResult(
             &payload,
             path: path,
@@ -321,6 +326,12 @@ enum WorkspaceWriteSafety {
                     "Run an available syntax, build, test, or behavior check before claiming the artifact works.",
             ]
         }
+    }
+
+    static func contentSHA256(_ content: String) -> String {
+        SHA256.hash(data: Data(content.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 
     /// Capped unified-diff text for callers that only need the diff (e.g. the

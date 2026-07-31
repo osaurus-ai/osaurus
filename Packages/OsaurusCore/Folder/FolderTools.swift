@@ -756,7 +756,9 @@ struct FileReadTool: OsaurusTool {
         + "binary text-extractable documents — PDF, Word, PowerPoint — "
         + "and a bounded XLSX preview are supported; binaries are not); bound large reads with "
         + "start_line/end_line, tail_lines, or max_chars. Directories return a listing; bound with "
-        + "max_depth. Example: {\"path\": \"src/app.py\", \"start_line\": 1, \"end_line\": 120}"
+        + "max_depth. For a saved local HTML app, set verify=`web_smoke` to load it once in isolated, "
+        + "nonpersistent WebKit with external network blocked; ordinary reads remain raw source. "
+        + "Example: {\"path\": \"src/app.py\", \"start_line\": 1, \"end_line\": 120}"
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -799,6 +801,25 @@ struct FileReadTool: OsaurusTool {
                 "type": .string("integer"),
                 "description": .string("Optional XLSX preview column cap per row (default 8, max 30)"),
             ]),
+            "verify": .object([
+                "type": .string("string"),
+                "enum": .array([.string("web_smoke")]),
+                "description": .string(
+                    "Optional isolated runtime verification. `web_smoke` is supported only for local HTML/HTM files."
+                ),
+            ]),
+            "verify_selector": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Optional CSS selector whose rendered element count must meet verify_min_count during web_smoke."
+                ),
+            ]),
+            "verify_min_count": .object([
+                "type": .string("integer"),
+                "minimum": .number(1),
+                "maximum": .number(10_000),
+                "description": .string("Minimum verify_selector match count (default: 1)."),
+            ]),
         ]),
         "required": .array([.string("path")]),
     ])
@@ -820,6 +841,7 @@ struct FileReadTool: OsaurusTool {
             let relativePath = args["path"] as? String,
             combinedFileRoute(path: relativePath) == .host,
             args["sheet_name"] == nil,
+            args["verify"] == nil,
             let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath),
             let fileURL = try? FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
         else {
@@ -893,6 +915,28 @@ struct FileReadTool: OsaurusTool {
         guard case .value(let relativePath) = pathReq else {
             return pathReq.failureEnvelope ?? ""
         }
+        let verificationMode = args["verify"] as? String
+        if verificationMode != nil, verificationMode != "web_smoke" {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Invalid verify mode.",
+                field: "verify",
+                expected: "`web_smoke` or omit the field",
+                tool: name,
+                retryable: false
+            )
+        }
+        if verificationMode != nil, combinedFileRoute(path: relativePath) == .sandbox {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message:
+                    "Local WebKit verification is available only for a trusted workspace HTML file, not a VM path.",
+                field: "verify",
+                expected: "omit verify for VM reads, or select a trusted workspace HTML file",
+                tool: name,
+                retryable: false
+            )
+        }
 
         // Combined mode: an absolute `/workspace/...` path is the Linux
         // sandbox — serve it from the sandbox bridge, translating the
@@ -936,6 +980,16 @@ struct FileReadTool: OsaurusTool {
             throw FolderToolError.fileNotFound(relativePath)
         }
         let ext = fileURL.pathExtension.lowercased()
+        if verificationMode == "web_smoke", ext != "html", ext != "htm" {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message: "web_smoke verification supports only local HTML/HTM files.",
+                field: "verify",
+                expected: "an HTML/HTM path",
+                tool: name,
+                retryable: false
+            )
+        }
 
         // A directory path lists rather than reads (the path carries the
         // decision — no separate `file_tree` tool to mis-select). Reuse the
@@ -985,6 +1039,17 @@ struct FileReadTool: OsaurusTool {
             relativePath: relativePath,
             ext: ext
         )
+        let verificationPayload: [String: Any]?
+        if verificationMode == "web_smoke" {
+            verificationPayload = await WorkspaceWebSmokeVerifier.verify(
+                fileURL: fileURL,
+                displayPath: relativePath,
+                selector: args["verify_selector"] as? String,
+                minimumCount: coerceInt(args["verify_min_count"]) ?? 1
+            ).payload
+        } else {
+            verificationPayload = nil
+        }
         let lines = content.text.components(separatedBy: .newlines)
 
         // `tail_lines` (last N lines, for logs) overrides an explicit
@@ -1037,7 +1102,17 @@ struct FileReadTool: OsaurusTool {
         }
 
         if output.isEmpty {
-            return ToolEnvelope.success(tool: name, text: "(empty file)")
+            var emptyResult: [String: Any] = [
+                "kind": "file",
+                "text": "(empty file)",
+                "path": relativePath,
+                "total_lines": lines.count,
+                "truncated": false,
+            ]
+            if let verificationPayload {
+                emptyResult["verification"] = verificationPayload
+            }
+            return ToolEnvelope.success(tool: name, result: emptyResult)
         }
 
         let renderedTruncated = outputTruncated || lastLineIncluded < validEnd
@@ -1138,6 +1213,9 @@ struct FileReadTool: OsaurusTool {
             if let fileSize = rawRead.fileSize {
                 result["file_size"] = fileSize
             }
+        }
+        if let verificationPayload {
+            result["verification"] = verificationPayload
         }
         return ToolEnvelope.success(
             tool: name,

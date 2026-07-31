@@ -321,6 +321,10 @@ struct AgentLoopHooks {
     /// surfaces keep their existing terminal behavior.
     var prepareTrackedTaskContinuation: (() async -> Void)?
 
+    /// Discard an ungrounded terminal attempt and prepare a fresh assistant
+    /// buffer for one bounded runnable-artifact verification continuation.
+    var prepareVerificationContinuation: (() async -> Void)?
+
     /// Called for every parsed invocation before the dedupe check, so the
     /// chat surface can materialise its tool-call row (and UI timers)
     /// regardless of whether the call short-circuits. Headless surfaces
@@ -380,6 +384,7 @@ struct AgentLoopHooks {
         modelStep: @escaping (_ messages: [ChatMessage], _ iteration: Int) async throws -> AgentLoopModelStep,
         prepareIncompleteReasoningContinuation: (() async -> Void)? = nil,
         prepareTrackedTaskContinuation: (() async -> Void)? = nil,
+        prepareVerificationContinuation: (() async -> Void)? = nil,
         willProcessCall: @escaping (_ invocation: ServiceToolInvocation, _ callId: String) async -> Void = { _, _ in },
         onDedupedResult:
             @escaping (_ invocation: ServiceToolInvocation, _ callId: String, _ heldResult: String) async -> Void = {
@@ -401,6 +406,7 @@ struct AgentLoopHooks {
         self.modelStep = modelStep
         self.prepareIncompleteReasoningContinuation = prepareIncompleteReasoningContinuation
         self.prepareTrackedTaskContinuation = prepareTrackedTaskContinuation
+        self.prepareVerificationContinuation = prepareVerificationContinuation
         self.willProcessCall = willProcessCall
         self.onDedupedResult = onDedupedResult
         self.executeTool = executeTool
@@ -1698,6 +1704,10 @@ enum AgentToolLoop {
         // Separate from ordinary length exhaustion: only a stream that began
         // a real tool envelope receives this bounded protocol retry.
         var truncatedToolCallRetries = 0
+        // A model may stop immediately after saving runnable code. Permit one
+        // bounded continuation to obtain real verification evidence; never
+        // regenerate finals indefinitely.
+        var runnableVerificationContinuations = 0
         // Session Todo state persists for the UI, while terminal semantics are
         // per logical run. Bind this same marker around every serial or batched
         // tool dispatch so TodoTool and CompleteTool agree even when a batch
@@ -1789,6 +1799,20 @@ enum AgentToolLoop {
             }
             switch step {
             case .finalResponse:
+                if let notice = state.runnableVerificationCompletionNotice(),
+                    runnableVerificationContinuations < 1,
+                    let prepare = hooks.prepareVerificationContinuation
+                {
+                    runnableVerificationContinuations += 1
+                    pendingStateNotice = "[System Notice] " + notice
+                    await prepare()
+                    continue
+                }
+                if state.hasPendingRunnableVerification {
+                    await hooks.emitFallbackText?(
+                        "\n\nVerification status: saved, but runtime verification was not completed."
+                    )
+                }
                 // An ordinary model final is authoritative. Todo is visible
                 // progress metadata; it must never override EOS/stop and make
                 // the driver regenerate the same answer until the step cap.
@@ -1991,13 +2015,16 @@ enum AgentToolLoop {
                         if invocationHasParseableTodo {
                             batchHasPrecedingParseableTodo = true
                         }
-                        if let guarded = state.guardedResult(name: invocation.toolName) {
+                        if let guarded = state.guardedResult(
+                            name: invocation.toolName,
+                            argsJSON: invocation.jsonArguments
+                        ) {
                             slotted[slot] = AgentLoopToolOutcome(
                                 invocation: invocation,
                                 callId: callId,
                                 result: guarded,
                                 wasDeduped: false,
-                                wasError: false
+                                wasError: ToolEnvelope.isError(guarded)
                             )
                             continue
                         }
@@ -2300,7 +2327,10 @@ enum AgentToolLoop {
                         // transition result instead of paying for another
                         // rephrased provider call. The outcome still lands in
                         // surface history through `onBatchComplete` below.
-                        if let guarded = state.guardedResult(name: invocation.toolName) {
+                        if let guarded = state.guardedResult(
+                            name: invocation.toolName,
+                            argsJSON: invocation.jsonArguments
+                        ) {
                             state.record(
                                 name: invocation.toolName,
                                 argsJSON: invocation.jsonArguments,
@@ -2309,15 +2339,20 @@ enum AgentToolLoop {
                             if let bias = state.nextStepBias() {
                                 pendingStateNotice = "[System Notice] " + bias
                             }
-                            outcomes.append(
-                                AgentLoopToolOutcome(
-                                    invocation: invocation,
-                                    callId: callId,
-                                    result: guarded,
-                                    wasDeduped: false,
-                                    wasError: false
-                                )
+                            let guardedOutcome = AgentLoopToolOutcome(
+                                invocation: invocation,
+                                callId: callId,
+                                result: guarded,
+                                wasDeduped: false,
+                                wasError: ToolEnvelope.isError(guarded)
                             )
+                            outcomes.append(guardedOutcome)
+                            if policy.stopOnToolRejection,
+                                Self.shouldStopAfterToolOutcome(guardedOutcome)
+                            {
+                                await hooks.onBatchComplete(outcomes)
+                                return RunResult(exit: .toolRejected, iterations: iteration)
+                            }
                             continue
                         }
 

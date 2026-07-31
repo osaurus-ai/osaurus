@@ -1998,6 +1998,11 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             diffTruncated = diff.truncated
             dict["dry_run"] = false
             dict["action"] = before.existed ? "update" : "create"
+            dict["content_sha256"] = WorkspaceWriteSafety.contentSHA256(after)
+            if before.existed {
+                dict["before_content_sha256"] =
+                    WorkspaceWriteSafety.contentSHA256(before.content)
+            }
         }
         WorkspaceWriteSafety.annotateMutationResult(
             &dict,

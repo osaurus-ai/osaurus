@@ -225,6 +225,72 @@ struct FileReadDocumentFormatsTests {
         let payload = EnvelopeAssertions.successPayload(result)
         #expect(payload?["total_lines"] as? Int == 3)
     }
+
+    @Test @MainActor
+    func fileReadWebSmokePreservesRawSourceAndReportsPopulatedBoard() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let html = """
+            <!doctype html><html><body><div id="board"></div><script>
+            const board = document.querySelector('#board');
+            for (let i = 0; i < 4; i++) {
+              const cell = document.createElement('button');
+              cell.className = 'cell';
+              board.appendChild(cell);
+            }
+            </script></body></html>
+            """
+        try html.write(
+            to: root.appendingPathComponent("minesweeper.html"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let result = try await FileReadTool(rootPath: root).execute(
+            argumentsJSON:
+                ##"{"path":"minesweeper.html","verify":"web_smoke","verify_selector":"#board .cell","verify_min_count":4}"##
+        )
+
+        #expect(ToolEnvelope.isSuccess(result))
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
+        #expect((payload["text"] as? String)?.contains("document.createElement") == true)
+        let verification = try #require(payload["verification"] as? [String: Any])
+        #expect(verification["status"] as? String == "passed")
+        #expect(verification["level"] as? String == "behavior_smoke")
+        #expect(verification["network"] as? String == "blocked")
+        let dom = try #require(verification["dom"] as? [String: Any])
+        #expect(dom["selector_count"] as? Int == 4)
+        #expect((dom["board_width"] as? Int ?? 0) > 0)
+    }
+
+    @Test @MainActor
+    func fileReadWebSmokeCapturesMinesweeperRuntimeErrorAndEmptyBoard() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let html = """
+            <!doctype html><html><body><div id="board"></div><script>
+            const board = document.querySelector('#board');
+            const cells = board.children;
+            cells.appendChild(document.createElement('button'));
+            </script></body></html>
+            """
+        try html.write(
+            to: root.appendingPathComponent("broken.html"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let result = try await FileReadTool(rootPath: root).execute(
+            argumentsJSON: #"{"path":"broken.html","verify":"web_smoke"}"#
+        )
+
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
+        let verification = try #require(payload["verification"] as? [String: Any])
+        #expect(verification["status"] as? String == "failed")
+        let errors = try #require(verification["errors"] as? [String])
+        #expect(errors.contains(where: { $0.localizedCaseInsensitiveContains("script error") }))
+        #expect(errors.contains(where: { $0.contains("no rendered child") }))
+    }
 }
 
 /// Minimal in-memory PowerPoint (.pptx) package writer. Emits just enough

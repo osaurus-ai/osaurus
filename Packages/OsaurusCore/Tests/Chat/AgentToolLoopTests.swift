@@ -41,6 +41,7 @@ private final class ScriptedLoopSurface {
     var incompleteContinuationPreparations = 0
     var cancelOnIncompleteContinuation = false
     var trackedTaskContinuationPreparations = 0
+    var verificationContinuationPreparations = 0
     var cancelOnTrackedTaskContinuation = false
     var todoProgressSnapshotCalls = 0
     var cancelOnTodoProgressSnapshotCall: Int?
@@ -51,7 +52,8 @@ private final class ScriptedLoopSurface {
 
     func makeHooks(
         includeFallbackText: Bool = true,
-        includeTrackedTaskContinuation: Bool = false
+        includeTrackedTaskContinuation: Bool = false,
+        includeVerificationContinuation: Bool = false
     ) -> AgentLoopHooks {
         var hooks = AgentLoopHooks(
             isCancelled: { self.cancelled },
@@ -78,6 +80,11 @@ private final class ScriptedLoopSurface {
                     if self.cancelOnTrackedTaskContinuation {
                         self.cancelled = true
                     }
+                }
+                : nil,
+            prepareVerificationContinuation: includeVerificationContinuation
+                ? {
+                    self.verificationContinuationPreparations += 1
                 }
                 : nil,
             willProcessCall: { _, callId in
@@ -534,6 +541,133 @@ struct AgentToolLoopTests {
         #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 1))
         #expect(surface.executedCalls.isEmpty)
         #expect(surface.builtNotices == [[]])
+    }
+
+    @Test func runnableWriteGetsOneVerificationContinuationAndSettles() async throws {
+        let source = "<html><div id=\"board\"><button></button></div></html>"
+        let hash = WorkspaceWriteSafety.contentSHA256(source)
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([
+                inv(
+                    "file_write",
+                    #"{"path":"index.html","content":"<html><div id=\"board\"><button></button></div></html>"}"#
+                )
+            ]),
+            .finalResponse,
+            .toolCalls([
+                inv("file_read", #"{"path":"index.html","verify":"web_smoke"}"#)
+            ]),
+            .finalResponse,
+        ])
+        surface.toolResults["file_write"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(
+                tool: "file_write",
+                result: [
+                    "path": "index.html",
+                    "content_sha256": hash,
+                    "verification": ["status": "not_run"],
+                ] as [String: Any]
+            )
+        )
+        surface.toolResults["file_read"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(
+                tool: "file_read",
+                result: [
+                    "path": "index.html",
+                    "verification": [
+                        "status": "passed",
+                        "content_sha256": hash,
+                        "errors": [String](),
+                    ],
+                ] as [String: Any]
+            )
+        )
+        let state = AgentTaskState()
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(maxIterations: 6),
+            state: state,
+            hooks: surface.makeHooks(includeVerificationContinuation: true)
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 4))
+        #expect(surface.verificationContinuationPreparations == 1)
+        #expect(surface.builtNotices[2].contains(where: { $0.contains("web_smoke") }))
+        #expect(!state.hasPendingRunnableVerification)
+        #expect(surface.emittedFinalTexts.isEmpty)
+    }
+
+    @Test func runnableVerificationCompletionGateIsBoundedAndReportsUnverified() async throws {
+        let source = "<html></html>"
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("file_write", #"{"path":"index.html","content":"<html></html>"}"#)]),
+            .finalResponse,
+            .finalResponse,
+            .finalResponse,
+        ])
+        surface.toolResults["file_write"] = AgentLoopToolExecution(
+            result: ToolEnvelope.success(
+                tool: "file_write",
+                result: [
+                    "path": "index.html",
+                    "content_sha256": WorkspaceWriteSafety.contentSHA256(source),
+                    "verification": ["status": "not_run"],
+                ] as [String: Any]
+            )
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(maxIterations: 6),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks(includeVerificationContinuation: true)
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 3))
+        #expect(surface.verificationContinuationPreparations == 1)
+        #expect(surface.emittedFinalTexts.count == 1)
+        #expect(surface.emittedFinalTexts[0].contains("saved"))
+        #expect(surface.emittedFinalTexts[0].contains("not completed"))
+    }
+
+    @Test func stalePreEditRewriteIsRejectedBeforeToolExecution() async throws {
+        let before = "const cells = board;"
+        let after = "const cells = board.children;"
+        let state = AgentTaskState()
+        state.record(
+            name: "file_edit",
+            argsJSON:
+                #"{"path":"index.html","old_string":"const cells = board;","new_string":"const cells = board.children;"}"#,
+            result: ToolEnvelope.success(
+                tool: "file_edit",
+                result: [
+                    "path": "index.html",
+                    "before_content_sha256": WorkspaceWriteSafety.contentSHA256(before),
+                    "content_sha256": WorkspaceWriteSafety.contentSHA256(after),
+                    "verification": ["status": "not_run"],
+                ] as [String: Any]
+            )
+        )
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([
+                inv(
+                    "file_write",
+                    #"{"path":"index.html","content":"const cells = board;"}"#
+                )
+            ])
+        ])
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: state,
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .toolRejected, iterations: 1))
+        #expect(surface.executedCalls.isEmpty)
+        let guarded = try #require(surface.batchOutcomes.last?.first)
+        #expect(guarded.wasError)
+        #expect(guarded.result.contains("stale_pre_edit_rewrite"))
+        #expect(guarded.result.contains("file_undo"))
     }
 
     @Test func reasoningOnlyLengthIsNotClassifiedAsFinalResponse() {

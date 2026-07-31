@@ -7,15 +7,23 @@
   "fixtures": {},
   "expect": {
     "agentLoop": {
-      "maxIterations": 3,
+      "maxIterations": 4,
       "maxTokens": 4096,
-      "maxModelSteps": 3,
-      "maxToolCalls": 3,
+      "maxModelSteps": 4,
+      "maxToolCalls": 4,
       "noDuplicateExecutedCalls": true,
       "mustCallTools": ["file_write", "file_read"],
       "toolUsageAudit": [
         { "tool": "file_write", "minCalls": 1, "maxCalls": 1, "maxErrors": 0 },
-        { "tool": "file_read", "minCalls": 1, "maxCalls": 2, "maxErrors": 0 }
+        {
+          "tool": "file_read",
+          "minCalls": 1,
+          "maxCalls": 2,
+          "maxErrors": 0,
+          "argsMustContain": "web_smoke",
+          "verificationStatus": "passed",
+          "maxVerificationErrors": 0
+        }
       ],
       "files": [
         { "path": "index.html", "contains": "<script>" },

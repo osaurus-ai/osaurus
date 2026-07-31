@@ -1,0 +1,46 @@
+{
+  "id": "agent_loop.minesweeper-autonomous-web-smoke",
+  "domain": "agent_loop",
+  "label": "agent loop • Minesweeper autonomously behavior-verified",
+  "query": "Create a polished single-file Minesweeper game at minesweeper.html. It must render a visible 12 by 12 board on initial page load, use exactly 20 mines, support reveal and flag interactions, show remaining mines and elapsed time, and include a New Game button. Use only embedded HTML, CSS, and JavaScript with no external dependencies. The workspace file is the deliverable.",
+  "notes": "User-realistic regression: the prompt deliberately does not ask for verification. The harness must retain pending runnable state, require one isolated WebKit smoke check, avoid recreating the file, capture runtime failures, and expose a populated board before accepting completion.",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "maxTokens": 8192,
+      "maxModelSteps": 6,
+      "maxToolCalls": 5,
+      "noDuplicateExecutedCalls": true,
+      "mustCallTools": ["file_write", "file_read"],
+      "mustNotCallTools": [
+        "todo",
+        "complete",
+        "clarify",
+        "share_artifact",
+        "capabilities_discover"
+      ],
+      "toolUsageAudit": [
+        { "tool": "file_write", "minCalls": 1, "maxCalls": 1, "maxErrors": 0 },
+        { "tool": "file_edit", "maxCalls": 1, "maxErrors": 0 },
+        {
+          "tool": "file_read",
+          "minCalls": 1,
+          "maxCalls": 2,
+          "maxErrors": 0,
+          "argsMustContain": "web_smoke",
+          "verificationStatus": "passed",
+          "maxVerificationErrors": 0,
+          "minBoardElements": 144
+        }
+      ],
+      "files": [
+        { "path": "minesweeper.html", "contains": "12" },
+        { "path": "minesweeper.html", "contains": "20" },
+        { "path": "minesweeper.html", "contains": "New Game" },
+        { "path": "minesweeper.html", "contains": "contextmenu" },
+        { "path": "minesweeper.html", "contains": "setInterval" }
+      ]
+    }
+  }
+}

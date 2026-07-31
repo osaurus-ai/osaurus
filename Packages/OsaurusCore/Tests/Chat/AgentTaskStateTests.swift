@@ -1284,4 +1284,173 @@ struct AgentTaskStateTests {
 
         #expect(state.nextStepBias() == nil)
     }
+
+    @Test func runnableVerificationLedgerSurvivesReadsAndClearsOnMatchingPass() throws {
+        let state = AgentTaskState()
+        let hash = WorkspaceWriteSafety.contentSHA256("<html></html>")
+        let write = ToolEnvelope.success(
+            tool: "file_write",
+            result: [
+                "path": "index.html",
+                "content_sha256": hash,
+                "verification": ["status": "not_run"],
+            ] as [String: Any]
+        )
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"index.html","content":"<html></html>"}"#,
+            result: write
+        )
+        #expect(state.pendingRunnableVerificationPaths == ["index.html"])
+
+        state.record(
+            name: "file_read",
+            argsJSON: #"{"path":"index.html"}"#,
+            result: fileContentEnvelope(path: "index.html")
+        )
+        #expect(state.hasPendingRunnableVerification)
+
+        let failed = ToolEnvelope.success(
+            tool: "file_read",
+            result: [
+                "path": "index.html",
+                "verification": [
+                    "status": "failed",
+                    "content_sha256": hash,
+                    "errors": ["ReferenceError: cells is not defined"],
+                ],
+            ] as [String: Any]
+        )
+        state.record(
+            name: "file_read",
+            argsJSON: #"{"path":"index.html","verify":"web_smoke"}"#,
+            result: failed
+        )
+        #expect(state.hasPendingRunnableVerification)
+        #expect(state.runnableVerificationCompletionNotice()?.contains("ReferenceError") == true)
+
+        let passed = ToolEnvelope.success(
+            tool: "file_read",
+            result: [
+                "path": "index.html",
+                "verification": [
+                    "status": "passed",
+                    "content_sha256": hash,
+                    "errors": [String](),
+                ],
+            ] as [String: Any]
+        )
+        state.record(
+            name: "file_read",
+            argsJSON: #"{"path":"index.html","verify":"web_smoke"}"#,
+            result: passed
+        )
+        #expect(!state.hasPendingRunnableVerification)
+    }
+
+    @Test func successfulVerificationForStaleHashDoesNotClearPendingArtifact() {
+        let state = AgentTaskState()
+        let currentHash = WorkspaceWriteSafety.contentSHA256("current")
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"app.js","content":"current"}"#,
+            result: ToolEnvelope.success(
+                tool: "file_write",
+                result: [
+                    "path": "app.js",
+                    "content_sha256": currentHash,
+                    "verification": ["status": "not_run"],
+                ] as [String: Any]
+            )
+        )
+        state.record(
+            name: "file_read",
+            argsJSON: #"{"path":"app.js"}"#,
+            result: ToolEnvelope.success(
+                tool: "file_read",
+                result: [
+                    "path": "app.js",
+                    "verification": [
+                        "status": "passed",
+                        "content_sha256": WorkspaceWriteSafety.contentSHA256("stale"),
+                    ],
+                ] as [String: Any]
+            )
+        )
+        #expect(state.hasPendingRunnableVerification)
+    }
+
+    @Test func shellVerificationRequiresCheckCommandAndReportsSyntaxLevel() throws {
+        let state = AgentTaskState()
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"app.py","content":"print('ok')"}"#,
+            result: ToolEnvelope.success(
+                tool: "file_write",
+                result: [
+                    "path": "app.py",
+                    "content_sha256": WorkspaceWriteSafety.contentSHA256("print('ok')"),
+                    "verification": ["status": "not_run"],
+                ] as [String: Any]
+            )
+        )
+        state.record(
+            name: "shell_run",
+            argsJSON: #"{"command":"ls -l app.py"}"#,
+            result: ToolEnvelope.success(tool: "shell_run", text: "app.py")
+        )
+        #expect(state.hasPendingRunnableVerification)
+
+        state.record(
+            name: "shell_run",
+            argsJSON: #"{"command":"python3 -m py_compile app.py"}"#,
+            result: ToolEnvelope.success(tool: "shell_run", text: "")
+        )
+        #expect(!state.hasPendingRunnableVerification)
+        let settlement = try #require(state.consumeRunnableVerificationSettlements().last)
+        #expect(settlement.path == "app.py")
+        #expect(settlement.status == "passed")
+        #expect(settlement.level == "syntax_check")
+    }
+
+    @Test func stalePreEditWholeRewriteIsRejectedButUndoClearsGuard() throws {
+        let state = AgentTaskState()
+        let before = "const cells = board;"
+        let after = "const cells = board.children;"
+        state.record(
+            name: "file_edit",
+            argsJSON:
+                #"{"path":"index.html","old_string":"const cells = board;","new_string":"const cells = board.children;"}"#,
+            result: ToolEnvelope.success(
+                tool: "file_edit",
+                result: [
+                    "path": "index.html",
+                    "before_content_sha256": WorkspaceWriteSafety.contentSHA256(before),
+                    "content_sha256": WorkspaceWriteSafety.contentSHA256(after),
+                    "verification": ["status": "not_run"],
+                ] as [String: Any]
+            )
+        )
+
+        let rejected = try #require(
+            state.guardedResult(
+                name: "file_write",
+                argsJSON: #"{"path":"index.html","content":"const cells = board;"}"#
+            )
+        )
+        #expect(ToolEnvelope.isError(rejected))
+        #expect(rejected.contains("stale_pre_edit_rewrite"))
+
+        state.record(
+            name: "file_undo",
+            argsJSON: #"{"steps":1}"#,
+            result: ToolEnvelope.success(tool: "file_undo", text: "undone")
+        )
+        #expect(
+            state.guardedResult(
+                name: "file_write",
+                argsJSON: #"{"path":"index.html","content":"const cells = board;"}"#
+            ) == nil
+        )
+    }
 }

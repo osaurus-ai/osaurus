@@ -1306,6 +1306,38 @@ extension EvalRunner {
                 failures.append("\(offenders.count) call(s) args contain forbidden '\(forbidden)'")
             }
         }
+        let verifications = calls.compactMap(\.webVerification)
+        if let expected = audit.verificationStatus,
+            !verifications.contains(where: { $0.status == expected })
+        {
+            failures.append("no web verification has status '\(expected)'")
+        }
+        if let maxErrors = audit.maxVerificationErrors {
+            guard let latest = verifications.last else {
+                failures.append("no structured web verification evidence")
+                return (
+                    false,
+                    "toolUsageAudit \(audit.tool): \(failures.joined(separator: "; "))"
+                )
+            }
+            if latest.runtimeErrors.count > maxErrors {
+                failures.append(
+                    "verification errors \(latest.runtimeErrors.count) > max \(maxErrors)"
+                )
+            }
+        }
+        if let minimum = audit.minBoardElements {
+            let observed = verifications.last?.boardElementCount ?? 0
+            if observed < minimum {
+                failures.append("board elements \(observed) < min \(minimum)")
+            }
+        }
+        if let minimum = audit.minSelectorCount {
+            let observed = verifications.last?.selectorCount ?? 0
+            if observed < minimum {
+                failures.append("selector count \(observed) < min \(minimum)")
+            }
+        }
         if failures.isEmpty {
             return (true, "toolUsageAudit ok: \(audit.tool) (\(calls.count) calls)")
         }
