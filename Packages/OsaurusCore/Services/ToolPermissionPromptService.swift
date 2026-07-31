@@ -12,6 +12,9 @@ import SwiftUI
 @MainActor
 enum ToolPermissionPromptService {
     private static var permissionWindow: NSPanel?
+    /// Card size reported by `onGeometryChange` during the sizing layout
+    /// pass, applied once the panel is registered.
+    private static var lastRenderedCardSize: CGSize?
     private static var localKeyMonitor: Any?
     private static var closeObserver: NSObjectProtocol?
     /// Identity + cancellation hook for the currently presented policy prompt.
@@ -205,7 +208,23 @@ enum ToolPermissionPromptService {
         onAllow: @escaping () -> Void,
         onDeny: @escaping () -> Void
     ) {
-        let hostingController = NSHostingController(rootView: view)
+        // `fittingSize` measures the card at its ideal size, but the
+        // description/arguments ScrollViews report their full content height
+        // as ideal while rendering capped. Sizing the window from that
+        // measurement leaves transparent slack around the card whose edge
+        // shows as a scribbled outline. Track the rendered size instead and
+        // keep the window glued to it.
+        let sizedView = view.onGeometryChange(for: CGSize.self, of: \.size) { size in
+            // The first report arrives during the sizing layout pass, before
+            // the panel is registered; stash it so presentation can apply it.
+            lastRenderedCardSize = size
+            resizePanelToRenderedContent(size)
+        }
+        let hostingController = NSHostingController(rootView: sizedView)
+        // The hidden title bar must not become a SwiftUI safe-area inset:
+        // it pushes the card down and leaves a transparent strip at the top
+        // of the panel where the window edge shows through.
+        hostingController.safeAreaRegions = []
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 480, height: 300),
             styleMask: [.titled, .fullSizeContentView],
@@ -230,7 +249,7 @@ enum ToolPermissionPromptService {
 
         hostingController.view.layoutSubtreeIfNeeded()
         let fittingSize = hostingController.view.fittingSize
-        var windowSize = NSSize(
+        let windowSize = NSSize(
             width: max(fittingSize.width, 480),
             height: max(fittingSize.height, 300)
         )
@@ -250,14 +269,17 @@ enum ToolPermissionPromptService {
         if let screen = targetScreen {
             let vf = screen.visibleFrame
             // The approval buttons must stay reachable: never size the panel
-            // taller (or wider) than the visible screen area.
-            windowSize = clampedWindowSize(windowSize, to: vf.size)
+            // taller (or wider) than the visible screen area. With
+            // .fullSizeContentView the content fills the whole frame, so the
+            // fitting size is the frame size; adding a title-bar conversion
+            // here over-sizes the window and leaves empty strips.
+            let frameSize = clampedWindowSize(windowSize, to: vf.size)
             panel.setFrame(
                 NSRect(
-                    x: vf.origin.x + (vf.width - windowSize.width) / 2,
-                    y: vf.origin.y + (vf.height - windowSize.height) / 2,
-                    width: windowSize.width,
-                    height: windowSize.height
+                    x: vf.origin.x + (vf.width - frameSize.width) / 2,
+                    y: vf.origin.y + (vf.height - frameSize.height) / 2,
+                    width: frameSize.width,
+                    height: frameSize.height
                 ),
                 display: false
             )
@@ -266,6 +288,11 @@ enum ToolPermissionPromptService {
             panel.center()
         }
         permissionWindow = panel
+        // Apply the card size reported during the sizing layout pass, when
+        // the panel was not yet registered and the callback could not act.
+        if let renderedSize = lastRenderedCardSize {
+            resizePanelToRenderedContent(renderedSize)
+        }
 
         nonisolated(unsafe) let onDenyForClose = onDeny
         closeObserver = NotificationCenter.default.addObserver(
@@ -295,6 +322,31 @@ enum ToolPermissionPromptService {
             panel.makeKey()
             if let contentView = panel.contentView { panel.makeFirstResponder(contentView) }
         }
+    }
+
+    /// Snaps the panel to the card's actually rendered size, recentered on
+    /// its screen and clamped to the visible frame so the approval buttons
+    /// stay reachable. Called from `onGeometryChange`, so the window follows
+    /// the card if its layout settles differently than first measured.
+    private static func resizePanelToRenderedContent(_ size: CGSize) {
+        guard let panel = permissionWindow, size.width > 1, size.height > 1 else { return }
+        var target = NSSize(width: size.width, height: size.height)
+        let vf = (panel.screen ?? NSScreen.main)?.visibleFrame
+        if let vf { target = clampedWindowSize(target, to: vf.size) }
+        guard abs(panel.frame.width - target.width) > 0.5
+            || abs(panel.frame.height - target.height) > 0.5
+        else { return }
+        let origin: NSPoint
+        if let vf {
+            origin = NSPoint(
+                x: vf.origin.x + (vf.width - target.width) / 2,
+                y: vf.origin.y + (vf.height - target.height) / 2
+            )
+        } else {
+            origin = panel.frame.origin
+        }
+        panel.setFrame(NSRect(origin: origin, size: target), display: true)
+        panel.invalidateShadow()
     }
 
     /// Pure seams keep the security-sensitive screen and key-event policy
@@ -334,6 +386,7 @@ enum ToolPermissionPromptService {
         }
         permissionWindow?.orderOut(nil)
         permissionWindow = nil
+        lastRenderedCardSize = nil
     }
 
     private static func cancelPolicyPrompt(id: UUID) {
