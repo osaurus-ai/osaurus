@@ -251,7 +251,7 @@ struct ChatChangesView: View {
             change.entryType == .file
         else { return }
         let panel = NSSavePanel()
-        panel.title = L("Export File")
+        panel.title = L("Export")
         panel.prompt = L("Export")
         panel.nameFieldStringValue = change.filename
         panel.canCreateDirectories = true
@@ -259,7 +259,7 @@ struct ChatChangesView: View {
         do {
             try WorkspaceFileExporter.export(source: change.hostURL, destination: destination)
         } catch {
-            statusMessage = L("Couldn't export \(change.filename): \(error.localizedDescription)")
+            statusMessage = L("Export failed: \(error.localizedDescription)")
         }
     }
 
