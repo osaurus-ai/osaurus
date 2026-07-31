@@ -2064,6 +2064,19 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// Put this session on the same cancellation path as its visible Stop
+    /// control before an explicit model-cache unload tears down the runtime.
+    /// Cancelling only the runtime producer ends its stream without telling
+    /// the chat lifecycle that the run was stopped; cleanup can then classify
+    /// the partial response as successful and immediately warm-load the model
+    /// the user just unloaded.
+    func prepareForExplicitModelUnload() {
+        warmupController.cancelPendingWorkForExplicitModelUnload()
+        if isSendActiveForComposer {
+            stop()
+        }
+    }
+
     /// Cancel a send that is still waiting on the pre-send warm-up handshake
     /// and invalidate its captured chat identity. Cancellation alone is not a
     /// sufficient guard because the model-switch/warm-up operation being

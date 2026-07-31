@@ -189,6 +189,30 @@ struct ChatSessionStopTests {
     }
 
     @Test
+    func explicitModelUnloadPreparationUsesStopLifecycle() async throws {
+        try await ChatHistoryTestStorage.run {
+            let session = ChatSession()
+            let engine = CancellationObservingChatEngine()
+            session.chatEngineFactory = { _ in engine }
+
+            session.send("Keep this partial turn")
+            try await waitUntilAsync(timeout: Self.asyncTimeout) {
+                await engine.started
+            }
+
+            session.prepareForExplicitModelUnload()
+
+            try await waitUntilAsync(timeout: Self.asyncTimeout) {
+                await engine.cancelled
+            }
+            #expect(session.isSendActiveForComposer == false)
+            #expect(session.turns.count == 1)
+            #expect(session.turns.first?.role == .user)
+            #expect(session.turns.first?.content == "Keep this partial turn")
+        }
+    }
+
+    @Test
     func send_ignoresReentrantSendBeforeStreamingFlagFlips() async throws {
         try await ChatHistoryTestStorage.run {
             let session = ChatSession()

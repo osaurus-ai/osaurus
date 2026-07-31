@@ -781,7 +781,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "958eb6bed2e2fd4fde30574141e17a1dce773895"
+        let expectedRuntimeHardenedRevision = "2150903b0890bae14f2990f9f167c70cfabf8747"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -1997,11 +1997,25 @@ struct RuntimePolicySourceTests {
     @Test("model cache unload UI exposes progress and fail-closed result")
     func modelCacheUnloadUIExposesProgressAndFailure() throws {
         let service = try Self.source("Services/Inference/MLXService.swift")
+        let windows = try Self.source("Managers/Chat/ChatWindowManager.swift")
+        let chat = try Self.source("Views/Chat/ChatView.swift")
+        let warmup = try Self.source("Services/Chat/ChatWarmupController.swift")
         let view = try Self.source("Views/Model/ModelCacheInspectorView.swift")
 
         #expect(service.contains("leaseDrainTimeoutSeconds: Double = 5"))
         #expect(service.contains(") async -> Bool"))
         #expect(service.contains("leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds"))
+        #expect(
+            service.contains(
+                "ChatWindowManager.shared.prepareSessionsForExplicitModelUnload(named: name)"
+            )
+        )
+        #expect(windows.contains("func prepareSessionsForExplicitModelUnload(named name: String)"))
+        #expect(windows.contains("session.prepareForExplicitModelUnload()"))
+        #expect(chat.contains("func prepareForExplicitModelUnload()"))
+        #expect(chat.contains("if isSendActiveForComposer"))
+        #expect(chat.contains("stop()"))
+        #expect(warmup.contains("func cancelPendingWorkForExplicitModelUnload()"))
         #expect(view.contains("isUnloading: unloadingNames.contains(item.name)"))
         #expect(view.contains("Text(isUnloading ? \"Unloading…\" : \"Unload\", bundle: .module)"))
         #expect(view.contains(".disabled(isUnloading)"))

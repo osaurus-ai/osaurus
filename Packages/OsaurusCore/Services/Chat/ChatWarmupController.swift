@@ -740,6 +740,19 @@ final class ChatWarmupController: ObservableObject {
         state = .cold
     }
 
+    /// Cancel every speculative load owned by this chat before the user
+    /// explicitly unloads its selected model. Unlike an idle-policy eviction,
+    /// an explicit unload is a durable user action for the current idle
+    /// lifecycle: a scheduled activation, model-switch warm-up, or post-run
+    /// re-warm must not immediately load the model again behind the inspector.
+    ///
+    /// `reset()` keeps any cancellation unwind tracked in `retiringWork`, so a
+    /// later real send still waits for the old warm-up's generation lease
+    /// before loading the model on demand.
+    func cancelPendingWorkForExplicitModelUnload() {
+        reset()
+    }
+
     /// Wait for an in-flight warm-up generation to finish. Called before a
     /// real send: cancelling a running warm-up would discard its partial
     /// prefill (vmlx stores the cache post-generation), so waiting is what

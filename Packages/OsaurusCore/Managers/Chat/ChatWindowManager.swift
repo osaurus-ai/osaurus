@@ -486,6 +486,34 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         )
     }
 
+    /// Stop visible and detached chat work that owns `name`, and cancel every
+    /// matching session's speculative warm-up before an explicit cache unload.
+    /// The runtime remains authoritative for HTTP/plugin consumers; this
+    /// bridge exists so chat-owned cancellation also updates chat lifecycle
+    /// state (`stopRequested`, terminal controls, and post-run warm-up policy).
+    @discardableResult
+    func prepareSessionsForExplicitModelUnload(named name: String) -> Int {
+        let sessions =
+            windowStates.values.map { $0.session }
+            + BackgroundTaskManager.shared.activeTaskSessions()
+        var seen: Set<ObjectIdentifier> = []
+        var prepared = 0
+
+        for session in sessions {
+            guard seen.insert(ObjectIdentifier(session)).inserted,
+                let selectedModel = session.selectedModel,
+                ChatWarmupController.isSelectedModelResident(
+                    selectedModel,
+                    in: [name]
+                )
+            else { continue }
+
+            session.prepareForExplicitModelUnload()
+            prepared += 1
+        }
+        return prepared
+    }
+
     /// True only for the visible key chat while Osaurus is frontmost. Runtime
     /// residency notifications use this stronger predicate instead of
     /// `lastFocusedWindowId`, which can still refer to a hidden/background

@@ -216,7 +216,14 @@ actor MLXService: ToolCapableService {
         named name: String,
         leaseDrainTimeoutSeconds: Double = 5
     ) async -> Bool {
-        await ModelRuntime.shared.unload(
+        // Route chat-owned work through the same lifecycle cancellation as the
+        // visible Stop control before cancelling the runtime producer. Without
+        // this bridge, ChatSession sees a normal end-of-stream, schedules its
+        // successful-run warm-up, and immediately reloads the model.
+        await MainActor.run {
+            ChatWindowManager.shared.prepareSessionsForExplicitModelUnload(named: name)
+        }
+        return await ModelRuntime.shared.unload(
             name: name,
             leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds
         )

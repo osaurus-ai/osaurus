@@ -1375,6 +1375,38 @@ struct ChatWarmupControllerShutdownTests {
         #expect(engine.lastRequest == nil)
         #expect(controller.state == .cold)
     }
+
+    @Test("explicit model unload cancels scheduled warm-up without shutting down the chat")
+    func explicitUnloadCancelsScheduledWarmup() async {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|explicit-unload"
+        )
+
+        let controller = ChatWarmupController()
+        controller.scheduleWarmup(session: session, debounce: .milliseconds(80))
+        controller.cancelPendingWorkForExplicitModelUnload()
+
+        try? await Task.sleep(for: .milliseconds(200))
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.lastRequest == nil)
+        #expect(controller.state == .cold)
+
+        // Explicit unload leaves the chat usable: a later user interaction may
+        // intentionally warm/load the selected model again.
+        controller.scheduleWarmup(session: session, debounce: .zero)
+        await controller.scheduledWarmupTaskForTests?.value
+        await controller.awaitInFlightWarmup()
+        #expect(engine.requestCount == 1)
+        #expect(controller.state == .warm)
+    }
 }
 
 @Suite("ChatWarmupController residency-backed dot state")
