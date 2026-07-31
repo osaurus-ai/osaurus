@@ -165,7 +165,7 @@ struct PerChatFolderIsolationTests {
     /// The fingerprint forks per folder identity: same mode + different
     /// root must invalidate cached tool state (the composed folder
     /// sections depend on which root is mounted).
-    @Test func fingerprintForksPerFolderRoot() throws {
+    @Test func fingerprintForksPerTrustedFolderAndIgnoresLegacySandboxBridge() throws {
         let rootA = try makeRoot("fp-a")
         let rootB = try makeRoot("fp-b")
         defer {
@@ -184,16 +184,16 @@ struct PerChatFolderIsolationTests {
         // The raw path must not appear (non-sensitive identity).
         #expect(!a.contains(rootA.path))
 
-        let combinedA = SessionToolState.fingerprint(
+        let legacySandboxA = SessionToolState.fingerprint(
             executionMode: .sandbox(hostRead: makeContext(root: rootA), hostWrite: false),
             toolMode: .auto)
-        let combinedB = SessionToolState.fingerprint(
+        let legacySandboxB = SessionToolState.fingerprint(
             executionMode: .sandbox(hostRead: makeContext(root: rootB), hostWrite: false),
             toolMode: .auto)
-        #expect(combinedA != combinedB, "combined mode forks per root too")
-
         let plainSandbox = SessionToolState.fingerprint(
             executionMode: .sandbox(hostRead: nil, hostWrite: false), toolMode: .auto)
+        #expect(legacySandboxA == plainSandbox)
+        #expect(legacySandboxB == plainSandbox)
         #expect(plainSandbox == "sandbox/auto", "no folder -> no identity suffix")
     }
 
