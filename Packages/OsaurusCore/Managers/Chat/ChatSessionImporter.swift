@@ -54,9 +54,15 @@ public enum ChatSessionImporter {
     /// failing the whole import. Zip archives (how ChatGPT and Google
     /// Takeout deliver exports) are unpacked and every recognizable JSON
     /// entry inside is imported.
-    public static func parse(data: Data) throws -> [ImportedConversation] {
+    /// `onProgress` receives short, localized status lines ("Unpacking
+    /// conversations.json…") as parsing works through a large export. It
+    /// may be called from whatever thread parsing runs on.
+    public static func parse(
+        data: Data,
+        onProgress: (@Sendable (String) -> Void)? = nil
+    ) throws -> [ImportedConversation] {
         if ZipArchive.isArchive(data) {
-            return try parseArchive(data)
+            return try parseArchive(data, onProgress: onProgress)
         }
         guard let root = try? JSONSerialization.jsonObject(with: data) else {
             throw ImportError.invalidJSON
@@ -64,6 +70,7 @@ public enum ChatSessionImporter {
 
         let conversations: [ImportedConversation]
         if let array = root as? [[String: Any]] {
+            onProgress?(L("Processing \(array.count) conversations…"))
             if array.contains(where: { $0["mapping"] is [String: Any] }) {
                 conversations = array.compactMap { parseChatGPT($0) }
             } else if array.contains(where: { $0["chat_messages"] is [Any] }) {
@@ -109,7 +116,10 @@ public enum ChatSessionImporter {
     /// `message_feedback.json`, etc. — entries that don't look like a
     /// conversation export are skipped, not fatal. Fails only when no
     /// entry yields conversations.
-    private static func parseArchive(_ data: Data) throws -> [ImportedConversation] {
+    private static func parseArchive(
+        _ data: Data,
+        onProgress: (@Sendable (String) -> Void)? = nil
+    ) throws -> [ImportedConversation] {
         let jsonEntries = try ZipArchive.entries(in: data).filter { entry in
             let name = entry.name.lowercased()
             // AppleDouble metadata ("__MACOSX/…", "._foo.json") isn't JSON.
@@ -120,8 +130,10 @@ public enum ChatSessionImporter {
 
         var all: [ImportedConversation] = []
         for entry in jsonEntries {
+            let shortName = entry.name.split(separator: "/").last.map(String.init) ?? entry.name
+            onProgress?(L("Unpacking \(shortName)…"))
             let entryData = try ZipArchive.extract(entry, from: data)
-            if let conversations = try? parse(data: entryData) {
+            if let conversations = try? parse(data: entryData, onProgress: onProgress) {
                 all.append(contentsOf: conversations)
             }
         }

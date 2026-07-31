@@ -9,7 +9,44 @@
 
 import AppKit
 import Foundation
+import SwiftUI
 import UniformTypeIdentifiers
+
+/// Live status line for the import progress alert. Large exports (a
+/// multi-GB ChatGPT dump) parse for a long time; without visible
+/// progress the app looks frozen even though the work is off-main.
+@MainActor
+private final class ImportProgressState: ObservableObject {
+    @Published var message: String
+
+    init(message: String) {
+        self.message = message
+    }
+}
+
+/// Themed-alert custom content: an indeterminate spinner next to the
+/// current parsing status. No buttons — the import isn't cancellable
+/// once parsing starts.
+private struct ImportProgressContent: View {
+    @ObservedObject var state: ImportProgressState
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+
+            Text(state.message)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.top, 2)
+        .frame(width: 300)
+    }
+}
 
 extension Notification.Name {
     /// Posted after an import saves sessions, so every open chat window
@@ -76,6 +113,23 @@ enum ChatSessionImportCoordinator {
             guard await panel.beginModal() == .OK, !panel.urls.isEmpty else { return }
             let urls = panel.urls
 
+            let progress = ImportProgressState(message: L("Reading files…"))
+            let progressAlertId = UUID()
+            ThemedAlertCenter.shared.present(
+                ThemedAlertRequest(
+                    id: progressAlertId,
+                    title: "Importing Conversations",
+                    message: nil,
+                    buttons: [],
+                    customContent: AnyView(ImportProgressContent(state: progress)),
+                    onDismiss: {}
+                ),
+                scope: scope
+            )
+            let onProgress: @Sendable (String) -> Void = { message in
+                Task { @MainActor in progress.message = message }
+            }
+
             // Parsing large exports (ChatGPT dumps run to hundreds of MB)
             // must not block the main thread.
             let parsed: Result<[ChatSessionImporter.ImportedConversation], Error> =
@@ -83,14 +137,19 @@ enum ChatSessionImportCoordinator {
                     do {
                         var all: [ChatSessionImporter.ImportedConversation] = []
                         for url in urls {
+                            onProgress(L("Reading \(url.lastPathComponent)…"))
                             let data = try Data(contentsOf: url)
-                            all.append(contentsOf: try ChatSessionImporter.parse(data: data))
+                            all.append(
+                                contentsOf: try ChatSessionImporter.parse(
+                                    data: data, onProgress: onProgress))
                         }
                         return .success(all)
                     } catch {
                         return .failure(error)
                     }
                 }.value
+
+            ThemedAlertCenter.shared.dismiss(scope: scope, id: progressAlertId)
 
             switch parsed {
             case .failure(let error):
