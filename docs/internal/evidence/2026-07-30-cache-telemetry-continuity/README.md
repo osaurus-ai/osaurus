@@ -1,11 +1,13 @@
 # Cache telemetry continuity and explicit model unload — 2026-07-30
 
 Status: `LOCAL VERIFIED` for the source, automated, real Release-app, and
-model-backed acceptance gates recorded below. The tested runtime source is
-`49132a96e73a759708e8ae056c50b8d3ab7f2675`; this evidence-only update does
-not change that runtime. GitHub final-head checks and merge state remain
-separate external gates and must be reported on the PR without converting the
-non-perfect model scores below into passes.
+model-backed acceptance gates recorded below. The authoritative integrated
+runtime source is `58a3d35792df352556c0355ce06bc1759b9c9080`, which merges
+current `main` at `11239f4079bd8f3f5410cd55869561eaebefb323` into the fix
+branch. This evidence-only update does not change that tested runtime. GitHub
+final-head checks and merge state remain separate external gates and must be
+reported on the PR without converting the non-perfect model scores below into
+passes.
 
 ## Result
 
@@ -29,7 +31,144 @@ reasoning, two-model delegation, parent continuation, and a coherent follow-up.
 The exact mixed-local eval row passed twice and reported no negative cache or
 SSM counter.
 
-## Exact source and environment
+## Authoritative post-main integration proof
+
+This round was run after merging the then-current `osaurus/main`, including PR
+#2244, into the fix branch. It supersedes the initial runtime round below for
+merge gating while retaining that earlier round as independent reproduction.
+
+### Exact integrated source and environment
+
+- Integrated Osaurus runtime:
+  `58a3d35792df352556c0355ce06bc1759b9c9080`.
+- Integrated `main` parent:
+  `11239f4079bd8f3f5410cd55869561eaebefb323`.
+- Fix commit:
+  `49132a96e73a759708e8ae056c50b8d3ab7f2675`.
+- Pinned vMLX in every resolved package graph:
+  `958eb6bed2e2fd4fde30574141e17a1dce773895`.
+- Host: Apple M5 Max, 128 GiB unified memory, macOS 26.4.
+- Fresh Release app:
+  `/Users/eric/osaurus-cache-telemetry-final-20260730/build/DerivedData-cache-unload-release-58a3d357/Build/Products/Release/osaurus.app`.
+- Release executable SHA-256:
+  `6f8498c65d26152bd37675da9eb828632da6ec994ec8d5dba5f30a70b0465104`.
+- Isolated bundle/defaults domain:
+  `com.dinoki.osaurus.cacheunload58a3d357`.
+- Isolated test root:
+  `/private/tmp/osaurus-cache-telemetry-ui-58a3d357-root`.
+- Model root: `/Users/eric/models`.
+- Live process during proof: PID `98500`, HTTP server
+  `127.0.0.1:1337`.
+- Paged RAM KV: off. Disk block L2 and prefix cache: on. SSM rederive:
+  on. Continuous batching: on with two configured sequences.
+
+The exact Nanbeige and Ornith bundle identities, generation defaults, and
+bundle hashes are unchanged from the retained initial-round table below. The
+integrated app persisted:
+
+- `config/agent-delegation.json`, SHA-256
+  `4e46a6dc77387149e41dacfc3307b14cda11acd9ba8b7e388f25812c6fe7ca2b`;
+- `config/server-runtime.json`, SHA-256
+  `916df043a4e0446591820aaea437ed406528d7f234d9dc0bad796451c0719dfa`;
+- `config/default-agent.json`, SHA-256
+  `ceb1253079dbe918b2a61d39264f6635fa17d32e5f56d28d0e499c78f8896cb0`.
+
+### Integrated automated and model-backed proof
+
+| Lane | Integrated result |
+| --- | ---: |
+| Focused unload/telemetry source and behavior regressions | `4/4` passed in 2 suites |
+| Complete `OsaurusEvals` Swift package test harness | 299 tests in 36 suites, 0 failures; 3 host resource-sampler tests explicitly skipped |
+| Deterministic eval lanes | `101/101` passed across 8 suites |
+| Exact affected mixed-local row, isolated run | `1/1` passed |
+| Full model-backed `AgentLoop` | `32/40` passed, 5 failed, 3 skipped, 0 errored |
+| Full model-backed `AgentLoopFrontier` | `22/39` passed, 17 failed, 0 skipped, 0 errored |
+| Fresh isolated Release build | passed |
+
+The exact affected
+`agent_loop.spawn-batch-two-different-local-workers` row passed both times:
+
+| Trial | Result | Latency | Decode | TTFT | Prefill | Peak physical footprint | Disk L2 delta | SSM delta |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Isolated | pass; 2/2 children, one `spawn_batch`, parent final | 27.257 s | 32.2777 tok/s | 3846.022 ms | 9383.9551 tok/s | 3697.127 MB | `+1/+14/+10` hit/miss/store | `+1` hit, `+0` rederive |
+| Full AgentLoop | pass; 2/2 children, one `spawn_batch`, parent final | 31.005 s | 32.3313 tok/s | 3763.604 ms | 9330.4722 tok/s | 3698.627 MB | `+2/+53/+9` hit/miss/store | `+2` hit, `+0` rederive |
+
+The full integrated AgentLoop failures were
+`clarify-before-destructive`, `compaction-stress`,
+`no-clarify-when-default-obvious`, `search-then-multi-file-edit`, and
+`todo-discipline-multistep`. Suite telemetry totaled disk L2
+`+88/+1155/+172`, SSM `+88/+0`, peak physical footprint 4965.127 MB, and
+decode 16.9841–35.6475 tok/s.
+
+The full integrated AgentLoopFrontier failures were `audit-file-write`,
+`code-review-findings`, `compaction-under-load`,
+`constraint-retention-carry-token`, `constraint-retention-do-not-touch`,
+`constraint-retention-format-marker`, `constraint-retention-no-redo`,
+`constraint-retention-ordering-rule`, `csv-aggregate-by-region`,
+`data-analysis-artifact`, `exact-bytes-version-contract`,
+`fix-failing-tests`, `kitchen-sink`, `multi-file-refactor-with-todo`,
+`no-false-clarify`, `ordered-sort-count-pipeline`, and
+`self-schedule-followup`. Suite telemetry totaled disk L2
+`+232/+1167/+318`, SSM `+232/+0`, peak physical footprint 7687.894 MB, and
+decode 22.2499–29.4055 tok/s.
+
+No strong external judge key was available, so rubric-dependent rows used the
+run model as self-judge. The deterministic tool, disk, exit, cache, and exact
+marker assertions remain authoritative. Every cache/SSM delta in both full
+reports was nonnegative. The non-perfect broad scores remain model-quality
+evidence and are not described as passes.
+
+### Integrated live Release-app visual proof
+
+Every row below was inspected to terminal state in the fresh integrated
+Release app. A side effect without finalization was not counted as a pass.
+
+| Row | Integrated result and visible evidence |
+| --- | --- |
+| Nanbeige turn 1, thinking on | PASS — reasoning visibly opened with Stop present and closed as `Thought for 4.0s`; final contained `TOKEN-ALPHA` and `2 + 3 = 5`; 78.7 tok/s, 0.62 s TTFT, 380 tokens; Stop disappeared and input unlocked. One irrelevant time-resolution sentence is retained as a quality note. |
+| Nanbeige turn 2 | PASS — remembered `TOKEN-ALPHA` exactly; reasoning closed after 1.5 s; 77.2 tok/s, 0.28 s TTFT, 114 tokens; terminal UI. |
+| Idle unload | PASS — inspector showed Nanbeige Active at 2.88 GB and count 1. Clicking Unload removed the row, changed the badge to 0, and displayed no cached models. |
+| Post-unload reload | PASS — selected-model reload returned exact `POST-UNLOAD-OK`; reasoning closed after 464 ms; 87.3 tok/s, 0.28 s TTFT, 40 tokens; terminal UI. |
+| Active-stream unload | PASS — a repeated integer stream was visibly active with Nanbeige resident. Unload cancelled/drained it at integer 176; final stats were 838 tokens, 30.7 tok/s, 0.31 s TTFT. Stop disappeared and input unlocked. The selected-chat prewarm then reloaded Nanbeige, as expected. |
+| Active-unload recovery | PASS — immediate follow-up returned exact `ACTIVE-UNLOAD-RECOVERED`; reasoning closed after 569 ms; 77.6 tok/s, 0.32 s TTFT, 44 tokens; terminal UI. |
+| Two-model delegation settings | PASS — Settings visibly stored Nanbeige and Ornith as allowed local models, permission `Always Allow`, local handoff on, RAM safety on, and max parallel spawns 2. |
+| Mixed-local delegation | PASS — Ornith parent made exactly one `spawn_batch`; both jobs succeeded; final was exact `PARENT-CONTINUED CHILD-NANBEIGE CHILD-ORNITH`; 52.8 tok/s, 4.52 s TTFT, 51 tokens; tool card settled, Stop disappeared, input unlocked. |
+| Expanded delegation telemetry | PASS — Nanbeige returned `CHILD-NANBEIGE`, handoff true, 6.829 s, 66.3 tok/s. Ornith returned `CHILD-ORNITH`, handoff false, 0.277 s, 43.9 tok/s. Disk L2 moved `17/116/44` to `17/120/48`, delta `+0/+4/+4`; SSM delta stayed `0/0/0`. The models ran in two admitted local waves and process high watermark was 2. |
+| Delegation follow-up | PASS — exact `FOLLOWUP CHILD-NANBEIGE CHILD-ORNITH`; 52.4 tok/s, 2.23 s TTFT, 12 tokens; terminal UI. |
+| Held-lease failure | PASS — a test-only lease held Ornith resident at 6.23 GB. Clicking Unload visibly entered disabled `Unloading…`; after the five-second deadline the row remained with the actionable still-in-use error. |
+| Retry after lease release | PASS — releasing the test lease and clicking the same row's Unload removed it and displayed no cached models. |
+| Zero-residency telemetry | PASS — final `/health` was healthy with `loaded=[]`, `resident_models=[]`, `inflight={}`, HTTP/chat active 0, and live capacity 0, while retired counters remained disk L2 `19/130/51`, SSM `2/0/0`, and high watermark 2. |
+
+The held-lease path used Xcode 26 LLDB against PID `98500` and the production
+`ModelLease` actor, first calling `acquire("ornith-1.0-9b-jang_4m")` and then
+`release("ornith-1.0-9b-jang_4m")`. No runtime source, timeout, UI
+implementation, database, or bundle defaults were modified during live proof.
+
+### Integrated local evidence and hashes
+
+Screenshots are local-only and must not be committed or uploaded to GitHub.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Release executable | `6f8498c65d26152bd37675da9eb828632da6ec994ec8d5dba5f30a70b0465104` |
+| `/private/tmp/osaurus-cache-telemetry-final-58a3d357-focused-4.log` | `ee847660a2560aa046d3694aed7b9b8b7422d74cb0f7e41d02ed8abefd33fb6f` |
+| `/private/tmp/osaurus-cache-telemetry-final-58a3d357-evals-harness.log` | `86efadaf5d25c2e734caa64d9a0db002dd090f3b7c967b86891bec2a9ab5bc66` |
+| `/private/tmp/osaurus-cache-telemetry-final-58a3d357-evals-deterministic.log` | `29a8a0b6cccd41d61062de4b1a74bc8752815d7791a61395dc28ac586033660e` |
+| `/private/tmp/osaurus-cache-telemetry-final-58a3d357-exact-row.log` | `ddf989c006ffabd8b92b0a303f204cdce0e22d14b05886a24a99242fc2702a0d` |
+| `/private/tmp/osaurus-cache-telemetry-final-58a3d357-agentloop-full.log` | `cfb40a1376635f381b47b91b196b51bbd4469a04d973b6a6f2ff1f625264a1e3` |
+| `/private/tmp/osaurus-cache-telemetry-final-58a3d357-agentloop/different-local-58a3d357.json` | `aa7d8698428ca714ed76ef8500b8c15dc6812b965f3287725586c0431826ed83` |
+| `/private/tmp/osaurus-cache-telemetry-final-58a3d357-agentloop/integrated-AgentLoop.json` | `7aba96fa43af87e59a06c5c7cc4383f6391d5f77d8061c7ba495bcf3ba14eb97` |
+| `/private/tmp/osaurus-cache-telemetry-final-58a3d357-agentloop/integrated-AgentLoopFrontier.json` | `59e51ebb6b54e9cea87e24878abd34f666e3215a17007c0125ec8e03a07d0811` |
+| `/private/tmp/osaurus-cache-telemetry-final-58a3d357-release-build.log` | `73504ca6c73554a6721425ebb486260ca5aab276aca9e6aeb134cde79b33dc14` |
+| `/private/tmp/osaurus-cache-telemetry-final-58a3d357/live-ui/health-final.json` | `ebd025f0c32cc6c19e6755181d3648a09274c1d84ae1b1fd5c0e732c3af2ae20` |
+| `/private/tmp/osaurus-cache-telemetry-final-58a3d357/live-ui-evidence-58a3d357.tar` (22 PNGs plus final health) | `ba103b0dd9c2f01dadf2239655de5871d1132e2bc1ac2fb188eddbacab4a5510` |
+
+The local-only archive includes open/closed reasoning, both multi-turn terminal
+rows, idle and active unload, active recovery, delegation settings, running and
+settled tool cards, expanded child/cache telemetry, delegation follow-up, and
+the held-lease pending/failure/retry sequence.
+
+## Initial runtime round — exact source and environment
 
 - Osaurus base: `c81491b4b9d78c846a45ac7adccb6b9227137dbc`
   (merged PR #2235, “four fixes”).
@@ -107,7 +246,7 @@ or synthetic output cap was added by this change.
   keeping pending, active, capacity, loaded-model, native-MTP, and cache
   topology fields live-only.
 
-## Automated proof
+## Initial runtime round — automated proof
 
 | Lane | Result |
 | --- | ---: |
@@ -183,7 +322,7 @@ errors, or raw `<think>`/tool-protocol/replacement-character matches in either
 report. The exact source diff does not alter prompts, generation, tool choice,
 parsers, or scoring.
 
-## Live Release-app visual proof
+## Initial runtime round — live Release-app visual proof
 
 Every row below used the exact isolated Release app and was visually inspected
 through terminal state: reasoning/card closure, final text, Stop disappearance,
@@ -233,7 +372,7 @@ Persisted live-test settings are retained at:
   SHA-256
   `ceb1253079dbe918b2a61d39264f6635fa17d32e5f56d28d0e499c78f8896cb0`.
 
-## Local evidence and hashes
+## Initial runtime round — local evidence and hashes
 
 Screenshots are local-only and must not be committed or uploaded to GitHub.
 
