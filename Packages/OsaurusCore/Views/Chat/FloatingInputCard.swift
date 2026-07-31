@@ -3073,11 +3073,8 @@ extension FloatingInputCard {
         let agentId = effectiveAgentId
         let manager = agentManager
         Task {
-            // Sandbox and folder backends now compose: enabling sandbox
-            // while a folder is selected yields combined mode (read-only
-            // host workspace + sandbox exec), so we keep the folder
-            // instead of clearing it. On a provision failure we roll the
-            // sandbox flag back below.
+            // The selected folder stays visible but is suspended while the VM
+            // is active. Execution never combines host and sandbox access.
             do {
                 try await manager.updateAutonomousExec(newConfig, for: agentId)
             } catch {
@@ -3095,55 +3092,46 @@ extension FloatingInputCard {
         }
     }
 
-    /// Open the system folder picker. Sandbox and folder now compose
-    /// (combined mode), so selecting a folder no longer disables the
-    /// sandbox — picking a folder while sandbox is on yields a read-only
-    /// host workspace alongside sandbox exec. Presented as a sheet on this
-    /// chat's window (folder ownership is per chat) so the picker can't
-    /// flicker against the floating chat panel and it's obvious which chat
-    /// the folder attaches to.
+    /// Selecting a trusted folder makes native execution authoritative and
+    /// disables the VM for this agent. The folder picker is presented as a
+    /// sheet on this chat's window so ownership remains unambiguous.
     private func selectFolder() {
         let window = windowId.flatMap { ChatWindowManager.shared.getNSWindow(id: $0) }
+        let agentId = effectiveAgentId
+        let manager = agentManager
         Task {
-            _ = await folderState.selectFolder(from: window)
+            guard await folderState.selectFolder(from: window) != nil else { return }
+            var config = manager.effectiveAutonomousExec(for: agentId) ?? .default
+            guard config.enabled else { return }
+            config.enabled = false
+            config.allowHostFolderWrites = false
+            do {
+                try await manager.updateAutonomousExec(config, for: agentId)
+            } catch {
+                // Fail closed: do not leave a UI state that appears trusted
+                // while the VM boundary is still authoritative.
+                folderState.clearFolder()
+                debugLog(
+                    "[Workspace] Could not disable sandbox after folder selection: "
+                        + error.localizedDescription
+                )
+            }
         }
     }
 
-    /// True when sandbox is on AND a folder is selected — combined mode,
-    /// where exec runs in the VM and the host workspace is read-only
-    /// unless the agent's folder-writes opt-in is on.
-    private var isCombinedMode: Bool {
+    /// A selected folder may remain visible while the VM is active, but it is
+    /// fully suspended and contributes neither tools nor paths to the run.
+    private var isFolderSuspended: Bool {
         isSandboxEnabled && folderState.hasActiveFolder
     }
 
-    /// The `allowHostFolderWrites` opt-in for the current agent: in
-    /// combined mode, `file_write` / `file_edit` may mutate the selected
-    /// folder (tracked + undoable). Drives the chip's lock badge and the
-    /// context-menu toggle.
-    private var allowsFolderWritesInSandboxMode: Bool {
-        agentManager.effectiveAutonomousExec(for: effectiveAgentId)?
-            .allowHostFolderWrites == true
-    }
-
-    /// Combined mode with the folder still read-only — the state the
-    /// chip's lock badge makes visible.
-    private var isFolderReadOnly: Bool {
-        isCombinedMode && !allowsFolderWritesInSandboxMode
-    }
-
-    /// Folder chip tooltip. In combined mode it spells out the read-only
-    /// (or tracked-writes) contract so users know what to expect.
+    /// Folder chip tooltip makes the active execution boundary explicit.
     private func folderChipHelp(hasFolder: Bool) -> Text {
-        if hasFolder && isSandboxEnabled {
-            return allowsFolderWritesInSandboxMode
-                ? Text(
-                    localized:
-                        "Sandbox mode: folder edits are allowed, tracked, and undoable — code runs in the sandbox"
-                )
-                : Text(
-                    localized:
-                        "Working folder is read-only in sandbox mode — code runs in the sandbox. Right-click to allow writes."
-                )
+        if hasFolder && isFolderSuspended {
+            return Text(
+                localized:
+                    "Working folder is paused while Sandbox is active. Disable Sandbox to resume trusted workspace access."
+            )
         }
         // Lead with the full path when a folder is active — the chip label
         // middle-truncates long names, so the tooltip is where the complete
@@ -3158,16 +3146,6 @@ extension FloatingInputCard {
         return Text(localized: "Select a working folder")
     }
 
-    /// Flip the agent's `allowHostFolderWrites` opt-in from the chip's
-    /// context menu — recovery is one click at the point of confusion.
-    private func toggleFolderWritesInSandboxMode() {
-        let agentId = effectiveAgentId
-        let manager = agentManager
-        var config = manager.effectiveAutonomousExec(for: agentId) ?? .default
-        config.allowHostFolderWrites.toggle()
-        Task { try? await manager.updateAutonomousExec(config, for: agentId) }
-    }
-
     private var sandboxHelpText: String {
         let base: String
         if let failure = sandboxFailure, isSandboxEnabled {
@@ -3178,11 +3156,9 @@ extension FloatingInputCard {
                 return "\(phase) — click to view progress."
             }
             return "Sandbox is starting up — click to view progress."
-        } else if isCombinedMode {
+        } else if isFolderSuspended {
             base =
-                allowsFolderWritesInSandboxMode
-                ? "Combined mode: folder edits are tracked and undoable; all code runs in the sandbox. Click to disable."
-                : "Combined mode: the selected folder is read-only and all code runs in the sandbox. Click to disable."
+                "Sandbox is active; the selected working folder is paused and inaccessible. Click to resume trusted workspace mode."
         } else if isSandboxEnabled && isSandboxRunning {
             base = "Sandbox is active — click to disable. Right-click for settings."
         } else if isSandboxEnabled {
@@ -3907,19 +3883,6 @@ extension FloatingInputCard {
                             Image(systemName: "arrow.clockwise")
                         }
                     }
-                    // Combined mode only: the read-only default is the
-                    // confusing state, so the opt-out lives right on the
-                    // chip. Plain folder mode is always writable — no
-                    // toggle to show.
-                    if isCombinedMode {
-                        Divider()
-                        Toggle(isOn: Binding(
-                            get: { allowsFolderWritesInSandboxMode },
-                            set: { _ in toggleFolderWritesInSandboxMode() }
-                        )) {
-                            Text("Allow Writes in Sandbox Mode", bundle: .module)
-                        }
-                    }
                     Divider()
                     Button(role: .destructive) {
                         folderState.clearFolder()
@@ -3977,11 +3940,10 @@ extension FloatingInputCard {
                     // stays available via the chip's help tooltip.
                     .frame(maxWidth: 150)
 
-                // Visible read-only state for combined mode — the tooltip
-                // alone wasn't discoverable. No badge when writes are
-                // allowed (writable is the unmarked, expected state).
-                if isFolderReadOnly {
-                    Image(systemName: "lock.fill")
+                // Make the suspended host boundary visible while VM execution
+                // is active; no host access is available in this state.
+                if isFolderSuspended {
+                    Image(systemName: "pause.circle.fill")
                         .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
                         .foregroundColor(theme.tertiaryText)
                 }

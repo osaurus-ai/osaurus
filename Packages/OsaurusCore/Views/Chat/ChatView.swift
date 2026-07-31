@@ -3348,10 +3348,9 @@ final class ChatSession: ObservableObject {
         // Optimistic estimate: when autonomous is on but sandbox tools haven't
         // registered yet, report `.sandbox` so the budget preview matches what
         // the next send will most likely produce after `registerTools` runs.
-        // Thread the folder through so the combined sandbox + host-read mode
-        // is estimated correctly when a folder is also mounted.
+        // A selected host folder is suspended while sandbox is enabled.
         if autonomous && resolved.usesSandboxTools == false {
-            return .sandbox(hostRead: folder, hostWrite: folder != nil && hostWrites)
+            return .sandbox(hostRead: nil, hostWrite: false)
         }
         return resolved
     }
@@ -3907,6 +3906,14 @@ final class ChatSession: ObservableObject {
                     if currentTurn.pendingToolName == nil {
                         currentTurn.pendingToolName = ToolDisplayName.pendingToolSentinel
                     }
+                    if currentTurn.pendingToolArgSize
+                        > AgentToolLoop.maxStreamingToolArgumentCharacters
+                    {
+                        throw OversizedStreamingToolCall(
+                            toolName: currentTurn.pendingToolName,
+                            argumentCharacters: currentTurn.pendingToolArgSize
+                        )
+                    }
                     let count = currentTurn.pendingToolArgFragmentCount
                     let now = Date()
                     if count <= 3 || now.timeIntervalSince(lastToolArgRebuildAt) >= 0.08 {
@@ -3936,6 +3943,14 @@ final class ChatSession: ObservableObject {
                         let name = FileDiff.partialToolName(inArgs: full)
                     {
                         currentTurn.pendingToolName = name
+                    }
+                    if currentTurn.pendingToolArgSize
+                        > AgentToolLoop.maxStreamingToolArgumentCharacters
+                    {
+                        throw OversizedStreamingToolCall(
+                            toolName: currentTurn.pendingToolName,
+                            argumentCharacters: currentTurn.pendingToolArgSize
+                        )
                     }
                     // Always rebuild for the first few fragments so the chip
                     // appears immediately; afterwards cap at ~12 rebuilds/sec
@@ -4649,13 +4664,14 @@ final class ChatSession: ObservableObject {
                 _ = await self.folderState.contextWaitingForRestore()
             }
             guard self.isRunActive(runId) else { return }
-            // Bind THIS session's folder root for the whole turn. Folder
-            // tools, undo roots, combined-mode policy, and external-tool
-            // context all resolve the root from this TaskLocal, so a folder
-            // picked in another chat window mid-run can never redirect this
-            // chat's tools. Resolved AFTER the restore wait so the bound
-            // root and the composed prompt always agree.
-            let turnFolderRoot = self.activeFolderContext(for: turnAgentId)?.rootPath
+            // Bind THIS session's trusted root for the whole turn. A selected
+            // folder is intentionally suspended while VM execution is enabled,
+            // so sandbox tools cannot inherit a host path even if the user
+            // switches modes in another window midway through the run.
+            let sandboxEnabled =
+                AgentManager.shared.effectiveAutonomousExec(for: turnAgentId)?.enabled == true
+            let turnFolderRoot =
+                sandboxEnabled ? nil : self.activeFolderContext(for: turnAgentId)?.rootPath
             await ChatExecutionContext.$currentFolderRoot.withValue(turnFolderRoot) { [self] in
             // Typed run provenance for the whole turn. The session's own
             // persisted `source` is authoritative here (a dispatched
@@ -5227,6 +5243,7 @@ final class ChatSession: ObservableObject {
                         // names persist into the session's tool union so the NEXT
                         // user turn composes their full schemas into `<tools>`.
                         if inv.toolName == "capabilities_load"
+                            || inv.toolName == "capabilities"
                             || inv.toolName == "sandbox_plugin_register"
                         {
                             // Always drain so a buffered spec can't leak into an
@@ -5281,6 +5298,15 @@ final class ChatSession: ObservableObject {
                                     await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
                                 }
                             }
+                        }
+                        if let fileCard = WorkspaceFileReference.cardResult(
+                            toolResult: resultText,
+                            toolName: inv.toolName
+                        ) {
+                            // Keep the compact typed reference in model history,
+                            // but make its Open/Reveal or Export path explicit
+                            // on the user-facing tool card.
+                            toolCardOverrides[callId] = fileCard
                         }
 
                         if inv.toolName == "sandbox_secret_set",
@@ -5866,6 +5892,22 @@ final class ChatSession: ObservableObject {
                                 // allowance.
                                 if invocations.isEmpty {
                                     transientRetries = 0
+                                    if assistantTurn.terminalStopReason == "length",
+                                        assistantTurn.pendingToolArgSize > 0
+                                    {
+                                        let pendingName =
+                                            assistantTurn.pendingToolName
+                                            == ToolDisplayName.pendingToolSentinel
+                                            ? nil : assistantTurn.pendingToolName
+                                        let argumentCharacters = assistantTurn.pendingToolArgSize
+                                        assistantTurn.pendingToolName = nil
+                                        assistantTurn.clearPendingToolArgs()
+                                        self.rebuildVisibleBlocks()
+                                        return .truncatedToolCall(
+                                            toolName: pendingName,
+                                            argumentCharacters: argumentCharacters
+                                        )
+                                    }
                                     return AgentLoopModelStep.classifyTerminal(
                                         contentIsBlank: assistantTurn.contentIsBlank,
                                         thinkingIsBlank: assistantTurn.thinkingIsBlank,
@@ -5883,6 +5925,19 @@ final class ChatSession: ObservableObject {
                                 }
                                 hasStructuredToolWorkThisRun = true
                                 return .toolCalls(invocations)
+                            } catch let oversized as OversizedStreamingToolCall {
+                                print(
+                                    "[Osaurus] Oversized streamed tool call "
+                                        + "tool=\(oversized.toolName ?? "unknown") "
+                                        + "chars=\(oversized.argumentCharacters); retrying with chunking notice"
+                                )
+                                assistantTurn.pendingToolName = nil
+                                assistantTurn.clearPendingToolArgs()
+                                self.rebuildVisibleBlocks()
+                                return .oversizedToolCall(
+                                    toolName: oversized.toolName,
+                                    argumentCharacters: oversized.argumentCharacters
+                                )
                             } catch let error as RemoteProviderServiceError {
                                 // Transient provider-side stream errors — most commonly
                                 // mid-tool-args truncation flagged by
@@ -6084,28 +6139,12 @@ final class ChatSession: ObservableObject {
                     let runResult = try await AgentToolLoop.run(
                         policy: AgentLoopPolicy(
                             maxIterations: maxAttempts,
+                            budgetWarningThreshold: 0,
                             stopOnToolRejection: true,
-                            dedupeNoticeEnabled: true,
+                            dedupeNoticeEnabled: false,
+                            todoStalenessThreshold: .max,
                             maxDataMovementSteps: min(16, maxAttempts),
-                            // Only the locally proven Gemma/Qwen-family rows
-                            // receive the third-action Todo precondition.
-                            // Bundle model_type is authoritative, so renamed
-                            // Ornith/Bonsai bundles do not depend on display
-                            // names. Remote and unrelated local families keep
-                            // their existing behavior.
-                            todoRequiredBeforeToolCallCount:
-                                AgentToolLoop.chatTodoPreconditionThreshold(
-                                    hasTodoTool: toolSpecs.contains {
-                                        $0.function.name == "todo"
-                                    },
-                                    // Catalog lookup remains authoritative
-                                    // even while picker rows are refreshing.
-                                    // It also covers externally registered
-                                    // bundles reconstructed from the persisted
-                                    // id -> path registry.
-                                    isLocalModel: selectedModelIsLocal,
-                                    modelType: selectedPickerItem?.modelType
-                                )
+                            todoRequiredBeforeToolCallCount: 0
                         ),
                         state: taskState,
                         hooks: loopHooks

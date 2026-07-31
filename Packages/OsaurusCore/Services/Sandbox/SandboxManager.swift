@@ -16,6 +16,7 @@
     import ContainerizationError
     import ContainerizationExtras
     import CryptoKit
+    import Darwin
     import Foundation
     import vmnet
 
@@ -141,6 +142,9 @@
         /// caller drives a single attempt and every other caller awaits the
         /// same task.
         private var inFlightStartTask: Task<Void, Error>?
+        /// Cross-process vmnet ownership. Held for the complete VM lifetime,
+        /// including warm running state, and released on stop or failed boot.
+        private var vmOwnershipLease: SandboxVMOwnershipLease?
 
         /// True once the guest has confirmed outbound network reachability
         /// after the most recent boot. Cleared on every `stopContainer` /
@@ -1347,11 +1351,13 @@
                 await cleanupAfterFailure()
                 fallthrough
             case .stopped, .notProvisioned:
+                try acquireVMOwnershipIfNeeded()
                 _status = .starting
                 syncStatus()
                 do {
                     try await provision()
                 } catch {
+                    releaseVMOwnership()
                     _status = .stopped
                     syncStatus()
                     throw Self.friendlyError(from: error)
@@ -1409,6 +1415,7 @@
             // mints fresh ones. Leaving stale tokens in memory could falsely
             // authenticate a request to a guest that no longer exists.
             await SandboxBridgeTokenStore.shared.revokeAll()
+            releaseVMOwnership()
             if publishStoppedStatus {
                 _status = .stopped
                 syncStatus()
@@ -1427,11 +1434,13 @@
         public func restartContainer() async throws {
             try await stopContainer(publishStoppedStatus: false)
             _removedByUser = false
+            try acquireVMOwnershipIfNeeded()
             _status = .starting
             syncStatus()
             do {
                 try await provision()
             } catch {
+                releaseVMOwnership()
                 _status = .stopped
                 syncStatus()
                 throw Self.friendlyError(from: error)
@@ -2971,6 +2980,25 @@
             try? await Self.forciblyRemoveAsync(at: staleContainerDir)
             await HostAPIBridgeServer.shared.stop()
             await teardownEgressProxy()
+            releaseVMOwnership()
+        }
+
+        private func acquireVMOwnershipIfNeeded() throws {
+            guard SandboxBackend.current == .virtualMachine, vmOwnershipLease == nil else {
+                return
+            }
+            do {
+                vmOwnershipLease = try SandboxVMOwnershipLease.acquire()
+            } catch let conflict as SandboxVMOwnershipLease.OwnershipConflict {
+                throw SandboxError.ownershipConflict(
+                    conflict.errorDescription ?? "Sandbox VM is owned by another process"
+                )
+            }
+        }
+
+        private func releaseVMOwnership() {
+            vmOwnershipLease?.release()
+            vmOwnershipLease = nil
         }
 
         /// `forciblyRemove` wrapped in a detached task. Lets actor-isolated
@@ -3863,6 +3891,117 @@
 
     }
 
+    // MARK: - Cross-process VM ownership
+
+    /// A process-lifetime advisory lock around the single vmnet-backed
+    /// sandbox. The app and eval CLI can use different Osaurus data roots, so
+    /// the lock lives in the per-user temporary directory. Owner metadata
+    /// makes contention actionable before vmnet is touched.
+    final class SandboxVMOwnershipLease: @unchecked Sendable {
+        struct Owner: Sendable, Codable, Equatable {
+            let pid: Int32
+            let processName: String
+            let executablePath: String?
+            let acquiredAt: String
+
+            var diagnostic: String {
+                var value = "PID \(pid) (\(processName))"
+                if let executablePath, !executablePath.isEmpty {
+                    value += " at \(executablePath)"
+                }
+                return value
+            }
+        }
+
+        struct OwnershipConflict: Error, LocalizedError, Sendable, Equatable {
+            let owner: Owner?
+
+            var errorDescription: String? {
+                if let owner {
+                    return
+                        "Sandbox VM is already owned by \(owner.diagnostic). "
+                        + "Stop that Osaurus app or eval process before starting another vmnet sandbox."
+                }
+                return
+                    "Sandbox VM is already owned by another process. "
+                    + "Stop other Osaurus app or eval processes before starting vmnet."
+            }
+        }
+
+        private let descriptor: Int32
+        private let lock = NSLock()
+        private var released = false
+
+        static var defaultURL: URL {
+            FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-sandbox-vmnet-\(getuid()).lock"
+            )
+        }
+
+        static func acquire(at url: URL = defaultURL) throws -> SandboxVMOwnershipLease {
+            let descriptor = Darwin.open(url.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+            guard descriptor >= 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+                let owner = readOwner(at: url)
+                Darwin.close(descriptor)
+                throw OwnershipConflict(owner: owner)
+            }
+
+            let lease = SandboxVMOwnershipLease(descriptor: descriptor)
+            do {
+                try lease.publishCurrentOwner()
+                return lease
+            } catch {
+                lease.release()
+                throw error
+            }
+        }
+
+        static func readOwner(at url: URL = defaultURL) -> Owner? {
+            guard let data = try? Data(contentsOf: url), !data.isEmpty else { return nil }
+            return try? JSONDecoder().decode(Owner.self, from: data)
+        }
+
+        private init(descriptor: Int32) {
+            self.descriptor = descriptor
+        }
+
+        deinit {
+            release()
+        }
+
+        func release() {
+            lock.withLock {
+                guard !released else { return }
+                released = true
+                _ = flock(descriptor, LOCK_UN)
+                Darwin.close(descriptor)
+            }
+        }
+
+        private func publishCurrentOwner() throws {
+            let owner = Owner(
+                pid: getpid(),
+                processName: ProcessInfo.processInfo.processName,
+                executablePath: Bundle.main.executableURL?.path,
+                acquiredAt: ISO8601DateFormatter().string(from: Date())
+            )
+            let data = try JSONEncoder().encode(owner)
+            guard ftruncate(descriptor, 0) == 0, lseek(descriptor, 0, SEEK_SET) >= 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            let written = data.withUnsafeBytes { bytes in
+                Darwin.write(descriptor, bytes.baseAddress, bytes.count)
+            }
+            guard written == data.count else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            _ = fsync(descriptor)
+        }
+    }
+
     // MARK: - Errors
 
     public enum SandboxError: Error, LocalizedError {
@@ -3875,6 +4014,8 @@
         case userCreationFailed(String)
         case execFailed(String)
         case timeout
+        /// Another Osaurus process owns the single vmnet-backed VM.
+        case ownershipConflict(String)
         /// A downloaded artifact failed SHA-256 verification — fail-closed.
         /// Don't dress this up: if the kernel/initfs we just pulled doesn't
         /// match the expected digest, refuse to boot it.
@@ -3891,6 +4032,7 @@
             case .userCreationFailed(let msg): "User creation failed: \(msg)"
             case .execFailed(let msg): "Execution failed: \(msg)"
             case .timeout: "Command timed out"
+            case .ownershipConflict(let msg): msg
             case .integrityCheckFailed(let msg): "Sandbox artifact integrity check failed: \(msg)"
             }
         }

@@ -31,6 +31,7 @@ public final class SandboxToolRegistrar {
             case containerUnavailable
             case provisioningFailed
             case startupFailed
+            case vmnetOwnedByOtherProcess
         }
         public let kind: Kind
         public let message: String
@@ -349,6 +350,19 @@ public final class SandboxToolRegistrar {
             do {
                 try await ensureContainerStartedCoalesced()
             } catch {
+                if let sandboxError = error as? SandboxError,
+                    case .ownershipConflict = sandboxError
+                {
+                    // This is an actionable cross-process blocker, not a
+                    // failed boot. Do not increment attempts, arm cool-down,
+                    // or scrub another process's shared sandbox state.
+                    recordUnavailability(
+                        for: agent.id,
+                        kind: .vmnetOwnedByOtherProcess,
+                        message: error.localizedDescription
+                    )
+                    return
+                }
                 await recordStartupFailure(
                     for: agent.id,
                     kind: preStartKind,

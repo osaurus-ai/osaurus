@@ -52,33 +52,30 @@ struct ResolveExecutionModeTests {
             )
             #expect(mode.usesSandboxTools)
             #expect(!mode.usesHostFolderTools)
-            // Combined mode: the folder rides along read-only on the
-            // sandbox case instead of being dropped. Host-native folder
-            // tools (`folderContext`) stay nil; the read-only host folder
-            // is exposed via `hostReadContext` / `allowsHostReadTools`.
-            #expect(mode.allowsHostReadTools)
-            #expect(mode.hostReadContext?.rootPath == folder.rootPath)
+            // The selected folder is suspended rather than bridged into the
+            // VM. Disabling sandbox resumes the same folder separately.
+            #expect(!mode.allowsHostReadTools)
+            #expect(mode.hostReadContext == nil)
             #expect(mode.folderContext == nil)
-            // Default is read-only: no write grant unless opted in.
             #expect(!mode.allowsHostWriteTools)
         }
     }
 
     @Test
-    func writeGrant_flowsIntoCombinedModeOnlyWithAFolder() async {
+    func legacyWriteGrant_neverBridgesFolderIntoSandbox() async {
         await SandboxTestLock.shared.run {
             registerSandboxExec()
             defer { ToolRegistry.shared.unregisterAllSandboxTools() }
 
-            // Folder + grant → writable combined mode.
+            // A legacy host-write grant is inert in sandbox mode.
             let writable = ToolRegistry.shared.resolveExecutionMode(
                 folderContext: sampleFolderContext(),
                 autonomousEnabled: true,
                 allowHostFolderWrites: true
             )
             #expect(writable.usesSandboxTools)
-            #expect(writable.allowsHostReadTools)
-            #expect(writable.allowsHostWriteTools)
+            #expect(!writable.allowsHostReadTools)
+            #expect(!writable.allowsHostWriteTools)
 
             // Grant without a folder is inert (nothing to write).
             let noFolder = ToolRegistry.shared.resolveExecutionMode(
@@ -173,6 +170,22 @@ struct ResolveExecutionModeTests {
             case .none: break
             default: Issue.record("expected .none when sandbox_exec missing, got \(mode)")
             }
+        }
+    }
+
+    @Test
+    func folderDoesNotBecomeFallback_whenRequestedSandboxIsUnavailable() async {
+        await SandboxTestLock.shared.run {
+            ToolRegistry.shared.unregisterAllSandboxTools()
+            let mode = ToolRegistry.shared.resolveExecutionMode(
+                folderContext: sampleFolderContext(),
+                autonomousEnabled: true
+            )
+            switch mode {
+            case .none: break
+            default: Issue.record("expected fail-closed .none, got \(mode)")
+            }
+            #expect(mode.folderContext == nil)
         }
     }
 }

@@ -34,6 +34,22 @@ final class AgentTodoRunScope: @unchecked Sendable {
     }
 }
 
+/// User-granted approval lease scoped to one canonical agent-loop run.
+/// A choice such as “Allow for this task” avoids repeated shell panels while
+/// expiring automatically before the next user message.
+final class ToolPermissionRunScope: @unchecked Sendable {
+    private let lock = NSLock()
+    private var allowedToolNames: Set<String> = []
+
+    func allows(_ toolName: String) -> Bool {
+        lock.withLock { allowedToolNames.contains(toolName) }
+    }
+
+    func allow(_ toolName: String) {
+        lock.withLock { _ = allowedToolNames.insert(toolName) }
+    }
+}
+
 /// TaskLocal storage carrying the active chat session / agent / batch ids
 /// down through tool execution. The chat engine seeds these in
 /// `ChatSession.send` (and equivalent headless paths) so any tool reading
@@ -47,6 +63,9 @@ public enum ChatExecutionContext {
     /// One logical AgentToolLoop run's Todo marker. Nil outside the canonical
     /// loop preserves direct/bare tool-call compatibility.
     @TaskLocal static var agentTodoRunScope: AgentTodoRunScope?
+
+    /// One logical agent run's interactive approval lease.
+    @TaskLocal static var toolPermissionRunScope: ToolPermissionRunScope?
 
     /// The current batch ID for grouped operations (nil for non-batch operations).
     @TaskLocal public static var currentBatchId: UUID?

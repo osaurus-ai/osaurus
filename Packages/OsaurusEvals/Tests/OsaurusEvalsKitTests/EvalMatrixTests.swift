@@ -123,6 +123,184 @@ struct EvalMatrixTests {
         #expect(!EvalMatrixBuilder.isSubsystemCase(id: "apple_script.scripted-value-query", domain: "apple_script"))
     }
 
+    @Test func marketHarnessMetricsAggregateAgentLoopEfficiencyAndDelivery() {
+        let cases: [EvalCaseReport] = [
+            .init(
+                id: "agent_loop.delivery-ok", label: "ok", domain: "agent_loop", query: nil,
+                outcome: .passed,
+                notes: ["summary: toolCalls=[file_write] iters=2 exit=finalResponse"],
+                modelId: "m", latencyMs: 1_000,
+                toolUsage: [.init(tool: "file_write", calls: 1, errors: 0, deduped: 0)],
+                telemetry: .init(firstActionMs: 100, modelSteps: 2)
+            ),
+            .init(
+                id: "agent_loop.delivery-loop", label: "loop", domain: "agent_loop", query: nil,
+                outcome: .failed,
+                notes: ["summary: toolCalls=[todo,file_write,file_read] iters=4 exit=iterationCapReached"],
+                modelId: "m", latencyMs: 500,
+                toolUsage: [
+                    .init(tool: "todo", calls: 1, errors: 0, deduped: 0),
+                    .init(tool: "file_write", calls: 1, errors: 0, deduped: 0),
+                    .init(tool: "file_read", calls: 2, errors: 0, deduped: 1),
+                ],
+                telemetry: .init(firstActionMs: 200, modelSteps: 4)
+            ),
+        ]
+
+        let col = EvalMatrixBuilder.build(from: [
+            EvalReport(modelId: "m", startedAt: "2026-06-19T00:00:00Z", cases: cases)
+        ]).models[0]
+
+        #expect(col.meanFirstActionMs == 150)
+        #expect(col.actionCompletionCoverage == 1)
+        #expect(col.medianModelSteps == 3)
+        #expect(col.loopFreeRate == 0.5)
+        #expect(col.meanAgentLoopWallTimeMs == 750)
+        #expect(col.correctFileDeliveryRate == 0.5)
+        #expect(col.meanFrictionCalls == 1)
+        #expect(col.totalPassed == 1)
+        #expect(col.totalScored == 2)
+    }
+
+    @Test func loopMetricsPenalizeNoActionOversizedAndExecutedDuplicates() {
+        let cases: [EvalCaseReport] = [
+            .init(
+                id: "agent_loop.clean", label: "clean", domain: "agent_loop", query: nil,
+                outcome: .passed,
+                notes: ["summary: toolCalls=[file_write] iters=2 exit=finalResponse"],
+                modelId: "m", latencyMs: 1,
+                toolUsage: [.init(tool: "file_write", calls: 1, errors: 0, deduped: 0)]
+            ),
+            .init(
+                id: "agent_loop.no-action", label: "no action", domain: "agent_loop", query: nil,
+                outcome: .failed,
+                notes: ["summary: toolCalls=[] iters=1 exit=lengthExhausted"],
+                modelId: "m", latencyMs: 1, toolUsage: []
+            ),
+            .init(
+                id: "agent_loop.recovered", label: "recovered", domain: "agent_loop", query: nil,
+                outcome: .passed,
+                notes: [
+                    "summary: toolCalls=[file_write] iters=2 exit=finalResponse",
+                    "oversized tool call recoveries: 1",
+                ],
+                modelId: "m", latencyMs: 1,
+                toolUsage: [.init(tool: "file_write", calls: 1, errors: 0, deduped: 0)]
+            ),
+            .init(
+                id: "agent_loop.exhausted", label: "exhausted", domain: "agent_loop", query: nil,
+                outcome: .failed,
+                notes: [
+                    "summary: toolCalls=[] iters=1 exit=oversizedToolCallExhausted"
+                ],
+                modelId: "m", latencyMs: 1, toolUsage: []
+            ),
+            .init(
+                id: "agent_loop.duplicate", label: "duplicate", domain: "agent_loop", query: nil,
+                outcome: .failed,
+                notes: [
+                    "1 duplicate call(s)",
+                    "summary: toolCalls=[file_read,file_read] iters=3 exit=finalResponse",
+                ],
+                modelId: "m", latencyMs: 1,
+                toolUsage: [.init(tool: "file_read", calls: 2, errors: 0, deduped: 0)]
+            ),
+        ]
+
+        let col = EvalMatrixBuilder.build(from: [
+            EvalReport(modelId: "m", startedAt: "2026-06-19T00:00:00Z", cases: cases)
+        ]).models[0]
+        #expect(col.actionCompletionCoverage == 0.6)
+        #expect(col.loopFreeRate == 0.2)
+    }
+
+    @Test func missingRequiredFileCountsAsFailedDeliveryWithoutWriteCall() {
+        let cases: [EvalCaseReport] = [
+            .init(
+                id: "agent_loop.delivered", label: "delivered", domain: "agent_loop",
+                query: nil, outcome: .passed,
+                notes: ["file 'report.md' contains 'done'"], modelId: "m", latencyMs: 1
+            ),
+            .init(
+                id: "agent_loop.missing", label: "missing", domain: "agent_loop",
+                query: nil, outcome: .failed,
+                notes: ["file 'index.html' missing"], modelId: "m", latencyMs: 1,
+                toolUsage: []
+            ),
+            .init(
+                id: "agent_loop.escape", label: "escape", domain: "agent_loop",
+                query: nil, outcome: .passed, notes: [], modelId: "m", latencyMs: 1,
+                toolUsage: [.init(tool: "file_write", calls: 1, errors: 1, deduped: 0)]
+            ),
+        ]
+
+        let col = EvalMatrixBuilder.build(from: [
+            EvalReport(modelId: "m", startedAt: "2026-06-19T00:00:00Z", cases: cases)
+        ]).models[0]
+
+        #expect(col.correctFileDeliveryRate == 0.5)
+    }
+
+    @Test func sameModelDifferentHarnessesRemainSeparateColumns() {
+        func report(harness: String, outcome: EvalCaseOutcome) -> EvalReport {
+            EvalReport(
+                modelId: "provider/same-model",
+                startedAt: "2026-06-19T00:00:00Z",
+                cases: [
+                    .init(
+                        id: "agent_loop.task", label: "task", domain: "agent_loop",
+                        query: nil, outcome: outcome, notes: [], modelId: "provider/same-model",
+                        latencyMs: 1
+                    )
+                ],
+                environment: RunEnvironment(
+                    runModel: "provider/same-model",
+                    harness: harness,
+                    catalogHash: "same"
+                )
+            )
+        }
+
+        let matrix = EvalMatrixBuilder.build(from: [
+            report(harness: "osaurus", outcome: .passed),
+            report(harness: "pi", outcome: .failed),
+        ])
+
+        #expect(matrix.models.count == 2)
+        #expect(Set(matrix.models.compactMap(\.harness)) == ["osaurus", "pi"])
+        #expect(matrix.formatMarkdown().contains("same-model [pi]"))
+    }
+
+    @Test func sparseExternalTelemetryWarnsWithoutInventingMeasurements() {
+        let report = EvalReport(
+            modelId: "shared-model",
+            startedAt: "2026-06-19T00:00:00Z",
+            cases: [
+                EvalCaseReport(
+                    id: "agent_loop.external",
+                    label: "external",
+                    domain: "agent_loop",
+                    outcome: .passed,
+                    notes: [],
+                    modelId: "shared-model",
+                    latencyMs: nil
+                )
+            ],
+            environment: RunEnvironment(runModel: "shared-model", harness: "pi")
+        )
+
+        let matrix = EvalMatrixBuilder.build(from: [report])
+        #expect(
+            matrix.comparabilityWarnings.contains {
+                $0.contains("runtime telemetry is incomplete")
+                    && $0.contains("remain BLOCKED")
+                    && $0.contains("no values were estimated")
+            }
+        )
+        #expect(matrix.models[0].meanDecodeTokensPerSecond == nil)
+        #expect(matrix.models[0].peakPhysFootprintMb == nil)
+    }
+
     // MARK: - skip-reason histogram
 
     @Test func skipReasonsBuildFromSkippedCaseNotes() throws {
@@ -149,9 +327,69 @@ struct EvalMatrixTests {
         ]).models[0]
         let cell = try #require(col.perDomain["agent_loop"])
         #expect(cell.skipped == 3)
-        #expect(cell.skipReasons == ["sandbox unavailable: OS too old": 2, "unspecified": 1])
+        #expect(
+            cell.skipReasons == [
+                "sandboxUnavailable: sandbox unavailable: OS too old": 2,
+                "unspecified": 1,
+            ]
+        )
         // Domains with no skips carry no histogram.
         #expect(cell.passed == 1)
+    }
+
+    @Test func repeatMetricsUseEveryRawTrialInsteadOfRepresentativeRow() {
+        let trials: [EvalCaseReport.TrialSummary] = [
+            .init(
+                outcome: .passed,
+                notes: [
+                    "file 'index.html' contains 'done'",
+                    "summary: toolCalls=[file_write] iters=2 exit=finalResponse",
+                ],
+                latencyMs: 100,
+                toolUsage: [.init(tool: "file_write", calls: 1, errors: 0, deduped: 0)],
+                telemetry: .init(firstActionMs: 50, totalModelTokens: 1_000, modelSteps: 2),
+                context: nil
+            ),
+            .init(
+                outcome: .failed,
+                notes: [
+                    "file 'index.html' missing",
+                    "summary: toolCalls=[] iters=10 exit=iterationCapReached",
+                ],
+                latencyMs: 500,
+                toolUsage: [],
+                telemetry: .init(totalModelTokens: 5_000, modelSteps: 10),
+                context: nil
+            ),
+        ]
+        let merged = EvalCaseReport(
+            id: "agent_loop.flaky",
+            label: "flaky",
+            domain: "agent_loop",
+            outcome: .failed,
+            notes: ["trials: 1/2 passed — FLAKY"],
+            modelId: "m",
+            latencyMs: 500,
+            toolUsage: [],
+            telemetry: .init(totalModelTokens: 5_000, modelSteps: 10),
+            trials: 2,
+            trialsPassed: 1,
+            trialSummaries: trials
+        )
+
+        let col = EvalMatrixBuilder.build(from: [
+            EvalReport(modelId: "m", startedAt: "2026-06-19T00:00:00Z", cases: [merged])
+        ]).models[0]
+
+        #expect(col.totalPassed == 1)
+        #expect(col.totalScored == 2)
+        #expect(col.meanAgentLoopWallTimeMs == 300)
+        #expect(col.medianModelSteps == 6)
+        #expect(col.actionCompletionCoverage == 0.5)
+        #expect(col.loopFreeRate == 0.5)
+        #expect(col.correctFileDeliveryRate == 0.5)
+        #expect(col.meanTotalTokensPerTask == 3_000)
+        #expect(col.flakyCases == 1)
     }
 
     @Test func preSchemaDomainCellDecodesWithNilSkipReasons() throws {

@@ -10,6 +10,22 @@
 
 import Foundation
 
+enum EvalCaseFilter {
+    /// Match one substring or a `|`-separated list of alternatives.
+    ///
+    /// Keeping this as substring matching preserves the existing CLI contract
+    /// while allowing small benchmark lanes to select several named rows in
+    /// one warm-model process.
+    static func matches(caseID: String, filter: String?) -> Bool {
+        guard let filter else { return true }
+        let alternatives = filter.split(separator: "|", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !alternatives.isEmpty else { return true }
+        return alternatives.contains { caseID.contains($0) }
+    }
+}
+
 public struct EvalSuite: Sendable {
     public let directory: URL
     public let cases: [EvalCase]

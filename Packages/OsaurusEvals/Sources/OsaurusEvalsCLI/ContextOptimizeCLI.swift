@@ -29,6 +29,11 @@ import OsaurusEvalsKit
 
 extension OsaurusEvalsCLI {
 
+    /// Ambient tool-schema snapshot pinned after bootstrap; re-applied
+    /// before every paired run. Set once per `optimize-context` process.
+    @MainActor
+    private static var ambientPin: EvalPairedRunIsolation.AmbientSnapshot?
+
     @MainActor
     static func runOptimizeContext(_ args: [String]) async -> Int32 {
         // Headless-harness hooks (mirrors runCommand).
@@ -80,6 +85,12 @@ extension OsaurusEvalsCLI {
         )
         defer { EvalRemoteProviderBootstrap.teardown(ephemeralProviderIds) }
 
+        // Pin the ambient tool-schema state NOW, after bootstrap + provider
+        // connect settled. `runMergedReport` re-applies this snapshot and
+        // resets runtime warm state before every paired run — see
+        // `EvalPairedRunIsolation` for the live contamination this fixes.
+        ambientPin = EvalPairedRunIsolation.capture()
+
         // Census model id: the explicit --model, or the configured local
         // model when `auto` (same resolution the composer itself uses).
         let censusModelId: String
@@ -90,6 +101,32 @@ extension OsaurusEvalsCLI {
             censusModelId = "foundation"
         case .keepCurrent:
             censusModelId = ChatConfigurationStore.load().coreModelIdentifier ?? "foundation"
+        }
+
+        // ── Finalists-only lane (`--finalist-profile`) ──────────────
+        // Re-verify already-searched candidate profiles against a FRESH
+        // same-process baseline (e.g. after main moved, or to rerun a
+        // gate-blocked flaky finalist at higher trials) without paying
+        // for the census/search stages again.
+        if !opts.finalistProfiles.isEmpty {
+            let profiles: [ExperimentProfile]
+            do {
+                profiles = try opts.finalistProfiles.map { try ExperimentProfile.load(from: $0) }
+            } catch {
+                FileHandle.standardError.write(
+                    Data(("failed to load --finalist-profile: \(error.localizedDescription)\n").utf8)
+                )
+                return 2
+            }
+            await runFinalistLane(
+                profiles: profiles,
+                suites: suites,
+                opts: opts,
+                censusModelId: censusModelId,
+                outDir: outDir
+            )
+            status("artifacts: \(outDir.path)")
+            return 0
         }
 
         // ── Stage 1–3: deterministic search plan ────────────────────
@@ -218,57 +255,86 @@ extension OsaurusEvalsCLI {
         // of both the baseline and every frontier candidate (paired: same
         // process, same trial count).
         if !opts.skipFinalists && !ranking.frontier.isEmpty {
-            let finalistRepeat = max(opts.finalistRepeat, opts.repeatCount)
-            status(
-                "finalists: rerunning baseline + \(ranking.frontier.count) frontier "
-                    + "candidate(s) ×\(finalistRepeat) trial(s)"
-            )
-            let finalistOpts = opts.withRepeat(finalistRepeat)
-            PromptComposerExperimentScope.current = nil
-            let finalBaseline = await runMergedReport(
-                name: "finalist-baseline",
-                profile: .baseline,
+            let frontierProfiles = ranking.frontier.compactMap { name in
+                plan.candidates.first(where: { $0.profile.name == name })?.profile
+            }
+            await runFinalistLane(
+                profiles: frontierProfiles,
                 suites: suites,
-                opts: finalistOpts,
+                opts: opts,
                 censusModelId: censusModelId,
                 outDir: outDir
             )
-            var promotions: [String: PromotionGateResult] = [:]
-            for name in ranking.frontier {
-                guard let candidate = plan.candidates.first(where: { $0.profile.name == name })
-                else { continue }
-                PromptComposerExperimentScope.current = candidate.profile.experiment
-                let finalReport = await runMergedReport(
-                    name: "finalist-\(name)",
-                    profile: candidate.profile,
-                    suites: suites,
-                    opts: finalistOpts,
-                    censusModelId: censusModelId,
-                    outDir: outDir
-                )
-                PromptComposerExperimentScope.current = nil
-                let verdict = PromotionGate.evaluate(
-                    baseline: finalBaseline,
-                    candidate: finalReport,
-                    maxFirstStepContextTokens: opts.contextBudget
-                )
-                promotions[name] = verdict
-                status(
-                    "finalist \(name): \(verdict.promotable ? "PROMOTABLE" : "BLOCKED")"
-                        + (verdict.blocking.isEmpty
-                            ? "" : " — \(verdict.blocking.joined(separator: "; "))")
-                )
-            }
-            writePromotionArtifacts(promotions, outDir: outDir)
         }
 
         status("artifacts: \(outDir.path)")
         return 0
     }
 
+    /// Stage 6: rerun the baseline + every given profile at
+    /// `max(finalistRepeat, repeat)` trials in this same process, apply
+    /// the STRICT `PromotionGate` to each, and write the promotion
+    /// artifacts. Shared by the staged search (frontier candidates) and
+    /// the `--finalist-profile` lane (explicit profiles).
+    @MainActor
+    private static func runFinalistLane(
+        profiles: [ExperimentProfile],
+        suites: [EvalSuite],
+        opts: OptimizeOptions,
+        censusModelId: String,
+        outDir: URL
+    ) async {
+        let finalistRepeat = max(opts.finalistRepeat, opts.repeatCount)
+        status(
+            "finalists: rerunning baseline + \(profiles.count) "
+                + "candidate(s) ×\(finalistRepeat) trial(s)"
+        )
+        let finalistOpts = opts.withRepeat(finalistRepeat)
+        PromptComposerExperimentScope.current = nil
+        let finalBaseline = await runMergedReport(
+            name: "finalist-baseline",
+            profile: .baseline,
+            suites: suites,
+            opts: finalistOpts,
+            censusModelId: censusModelId,
+            outDir: outDir
+        )
+        status(
+            "finalist baseline: \(finalBaseline.counts.passed)/\(finalBaseline.counts.total) passed"
+        )
+        var promotions: [String: PromotionGateResult] = [:]
+        for profile in profiles {
+            PromptComposerExperimentScope.current = profile.experiment
+            let finalReport = await runMergedReport(
+                name: "finalist-\(profile.name)",
+                profile: profile,
+                suites: suites,
+                opts: finalistOpts,
+                censusModelId: censusModelId,
+                outDir: outDir
+            )
+            PromptComposerExperimentScope.current = nil
+            let verdict = PromotionGate.evaluate(
+                baseline: finalBaseline,
+                candidate: finalReport,
+                maxFirstStepContextTokens: opts.contextBudget
+            )
+            promotions[profile.name] = verdict
+            status(
+                "finalist \(profile.name): \(verdict.promotable ? "PROMOTABLE" : "BLOCKED")"
+                    + (verdict.blocking.isEmpty
+                        ? "" : " — \(verdict.blocking.joined(separator: "; "))")
+            )
+        }
+        writePromotionArtifacts(promotions, outDir: outDir)
+    }
+
     /// Run every scoped suite under the CURRENT experiment scope and
     /// merge rows into one env-stamped report written to `<name>.json`.
-    /// Resumable: an existing decodable report is reused.
+    /// Resumable at TWO granularities: an existing decodable report is
+    /// reused whole, and otherwise completed case rows are carried from
+    /// the `<name>.json.partial.jsonl` crash sidecar (written after every
+    /// case), so a killed multi-hour run re-runs only what's missing.
     @MainActor
     private static func runMergedReport(
         name: String,
@@ -287,6 +353,32 @@ extension OsaurusEvalsCLI {
             status("\(name): resume — reusing \(url.lastPathComponent)")
             return report
         }
+        var resumeRows: [EvalCaseReport] = []
+        if opts.resume {
+            resumeRows = EvalResume.completedRows(EvalResume.loadPriorRows(outPath: url.path))
+            if !resumeRows.isEmpty {
+                status(
+                    "\(name): resume — carrying \(resumeRows.count) completed case row(s) "
+                        + "from the crash sidecar"
+                )
+            }
+        }
+        // Paired-run isolation: every run (baseline and candidates alike)
+        // starts from the SAME world — the pinned ambient tool schemas and
+        // a cold runtime (no resident model, empty in-memory caches). The
+        // per-run model reload costs minutes; unpaired runs cost verdicts.
+        if let pin = ambientPin {
+            EvalPairedRunIsolation.reapply(pin)
+        }
+        await EvalPairedRunIsolation.resetRuntime()
+
+        let partialSink = EvalPartialRowSink(outPath: url.path)
+        // Re-seed the fresh sidecar with every carried row up front: the
+        // sink truncates on first append, and the runner only re-emits a
+        // resumed row when its suite runs — without this, dying during
+        // suite 1 would drop carried rows that belong to later suites.
+        // Duplicates are harmless (resume dedupes by case id, first wins).
+        for row in resumeRows { partialSink?.append(row) }
         var rows: [EvalCaseReport] = []
         var startedAt: String?
         for suite in suites {
@@ -295,7 +387,9 @@ extension OsaurusEvalsCLI {
                 model: opts.model,
                 filter: opts.filter,
                 bootstrapMode: .alreadyLoaded,
-                repeatCount: opts.repeatCount
+                repeatCount: opts.repeatCount,
+                resumeRows: resumeRows,
+                onCaseCompleted: { partialSink?.append($0) }
             )
             startedAt = startedAt ?? report.startedAt
             rows.append(contentsOf: report.cases)
@@ -315,8 +409,10 @@ extension OsaurusEvalsCLI {
         )
         do {
             try merged.toJSON().write(to: url)
+            partialSink?.finalizeSuccess()
         } catch {
             status("WARN: failed to write \(name).json: \(error.localizedDescription)")
+            partialSink?.close()
         }
         return merged
     }
@@ -375,6 +471,9 @@ extension OsaurusEvalsCLI {
         let skipFinalists: Bool
         /// Hard mean first-step context budget for the promotion gate.
         let contextBudget: Int?
+        /// Finalists-only lane: skip the census/search stages and run the
+        /// strict promotion gate over exactly these profile files.
+        let finalistProfiles: [URL]
 
         /// Same options with a different trial count (finalist reruns).
         func withRepeat(_ count: Int) -> OptimizeOptions {
@@ -390,7 +489,8 @@ extension OsaurusEvalsCLI {
                 censusOnly: censusOnly,
                 finalistRepeat: finalistRepeat,
                 skipFinalists: skipFinalists,
-                contextBudget: contextBudget
+                contextBudget: contextBudget,
+                finalistProfiles: finalistProfiles
             )
         }
 
@@ -407,6 +507,7 @@ extension OsaurusEvalsCLI {
             var finalistRepeat = 5
             var skipFinalists = false
             var contextBudget: Int?
+            var finalistProfiles: [URL] = []
 
             var i = 0
             while i < args.count {
@@ -461,6 +562,9 @@ extension OsaurusEvalsCLI {
                 case "--skip-finalists":
                     skipFinalists = true
                     i += 1
+                case "--finalist-profile":
+                    finalistProfiles.append(try urlForArg(args, after: i, flag: arg))
+                    i += 2
                 case "--context-budget":
                     let raw = try valueForArg(args, after: i, flag: arg)
                     guard let value = Int(raw), value >= 1 else {
@@ -490,7 +594,8 @@ extension OsaurusEvalsCLI {
                 censusOnly: censusOnly,
                 finalistRepeat: finalistRepeat,
                 skipFinalists: skipFinalists,
-                contextBudget: contextBudget
+                contextBudget: contextBudget,
+                finalistProfiles: finalistProfiles
             )
         }
     }

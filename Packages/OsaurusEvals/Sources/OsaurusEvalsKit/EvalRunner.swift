@@ -117,7 +117,9 @@ public enum EvalRunner {
                     Data("[evals] warm-up DISABLED (OSAURUS_EVALS_DISABLE_WARMUP=1)\n".utf8)
                 )
             }
-            let scoredCases = suite.cases.filter { filter == nil || $0.id.contains(filter!) }
+            let scoredCases = suite.cases.filter {
+                EvalCaseFilter.matches(caseID: $0.id, filter: filter)
+            }
             // Ordered descriptors + a thread-safe sink of completed rows. The
             // per-case watchdog (which runs on an OS thread, off the wedged
             // cooperative runtime) uses these to assemble a COMPLETE report —
@@ -176,6 +178,10 @@ public enum EvalRunner {
                         thresholdOverride: thresholdOverride,
                         embedCosineFloorOverride: embedCosineFloorOverride,
                         suiteDirectory: suite.directory,
+                        trialIdentity: EvalTrialIdentity(
+                            ordinal: trial,
+                            total: trialsForCase
+                        ),
                         watchdogContext: EvalWatchdogContext(
                             sink: rowSink,
                             outPath: outPath,
@@ -238,6 +244,8 @@ public enum EvalRunner {
             telemetry: row.telemetry,
             trials: row.trials,
             trialsPassed: row.trialsPassed,
+            trialSummaries: row.trialSummaries,
+            blocker: row.blocker,
             judge: row.judge,
             context: row.context
         )
@@ -325,17 +333,20 @@ public enum EvalRunner {
         thresholdOverride: Float? = nil,
         embedCosineFloorOverride: Float? = nil,
         suiteDirectory: URL,
+        trialIdentity: EvalTrialIdentity,
         watchdogContext: EvalWatchdogContext
     ) async -> EvalCaseReport {
         let timeout = Self.caseTimeoutSeconds
         guard timeout > 0 else {
-            return await runOne(
-                testCase,
-                modelId: modelId,
-                thresholdOverride: thresholdOverride,
-                embedCosineFloorOverride: embedCosineFloorOverride,
-                suiteDirectory: suiteDirectory
-            )
+            return await EvalTrialExecutionContext.$current.withValue(trialIdentity) {
+                await runOne(
+                    testCase,
+                    modelId: modelId,
+                    thresholdOverride: thresholdOverride,
+                    embedCosineFloorOverride: embedCosineFloorOverride,
+                    suiteDirectory: suiteDirectory
+                )
+            }
         }
         // Snapshot only Sendable scalars for the watchdog thread (never the
         // non-Sendable EvalCase).
@@ -384,13 +395,15 @@ public enum EvalRunner {
         watchdog.start()
 
         let work = Task { @MainActor in
-            let r = await runOne(
-                testCase,
-                modelId: modelId,
-                thresholdOverride: thresholdOverride,
-                embedCosineFloorOverride: embedCosineFloorOverride,
-                suiteDirectory: suiteDirectory
-            )
+            let r = await EvalTrialExecutionContext.$current.withValue(trialIdentity) {
+                await runOne(
+                    testCase,
+                    modelId: modelId,
+                    thresholdOverride: thresholdOverride,
+                    embedCosineFloorOverride: embedCosineFloorOverride,
+                    suiteDirectory: suiteDirectory
+                )
+            }
             _ = latch.resume(r)
         }
 
@@ -526,6 +539,7 @@ public enum EvalRunner {
             decodeTokensPerSecond: existing?.decodeTokensPerSecond,
             prefillTokensPerSecond: existing?.prefillTokensPerSecond,
             ttftMs: existing?.ttftMs,
+            firstActionMs: existing?.firstActionMs,
             completionTokens: existing?.completionTokens,
             promptTokensTotal: existing?.promptTokensTotal,
             peakContextTokens: existing?.peakContextTokens,
@@ -558,6 +572,8 @@ public enum EvalRunner {
             telemetry: merged,
             trials: row.trials,
             trialsPassed: row.trialsPassed,
+            trialSummaries: row.trialSummaries,
+            blocker: row.blocker,
             judge: row.judge,
             context: row.context
         )

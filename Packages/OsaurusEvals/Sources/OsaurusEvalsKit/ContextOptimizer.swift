@@ -16,10 +16,9 @@
 //             candidates (all-sections, all-tools, everything) so
 //             interaction effects get measured too, plus the named
 //             architecture candidates from the plan (hot tool set,
-//             lean guidance, manifest replacement via the exact
-//             capabilities_discover list mode, loaded-result
-//             compaction) — those skip the savings floor because
-//             their cost/benefit is only visible in model runs.
+//             lean guidance, manifest replacement, and compact-gateway
+//             variants) — those skip the savings floor because their
+//             cost/benefit is only visible in model runs.
 //    stage 4  quality proof (model runs, driven by the CLI): baseline
 //             and each candidate run the SAME scoped suites in one
 //             process, sequential and warm; every candidate report is
@@ -328,18 +327,72 @@ public enum ContextOptimizerSearch {
             )
         }
 
-        // Loaded-result compaction: smaller skill-reference budget +
-        // skeleton schemas for capabilities_load results. Zero surface
-        // delta by construction — the win (if any) is cumulative.
-        await considerArch(
-            ExperimentProfile(
-                name: "arch-compact-loaded-results",
-                description:
-                    "Compact capabilities_load results (skill references + loaded "
-                    + "schemas) in history.",
-                compactLoadedResults: true
+        // Aggressive minimal-harness candidates. These intentionally test
+        // lifecycle and gateway removal rather than treating the legacy
+        // orchestration surface as protected.
+        let fiveToolNames = PromptComposerExperiment.protectedToolNames
+        let fiveToolDeferred = baseline.toolNames.filter {
+            !fiveToolNames.contains($0)
+        }.sorted()
+        if !fiveToolDeferred.isEmpty {
+            await considerArch(
+                ExperimentProfile(
+                    name: "arch-five-tool-only",
+                    description: "Keep only file_read/search/write/edit and shell_run.",
+                    deferTools: fiveToolDeferred
+                )
             )
-        )
+        }
+
+        let allGuidance = baseline.sectionIds.filter {
+            !PromptComposerExperiment.protectedSectionIds.contains($0)
+                && $0 != "folderContext"
+                && $0 != "sandbox"
+        }.sorted()
+        if !allGuidance.isEmpty {
+            await considerArch(
+                ExperimentProfile(
+                    name: "arch-no-guidance",
+                    description: "Keep identity and execution context; drop all other prompt guidance.",
+                    dropSections: allGuidance
+                )
+            )
+        }
+
+        let lifecycle = ["todo", "complete", "clarify", "share_artifact"].filter {
+            baseline.toolNames.contains($0)
+        }
+        if !lifecycle.isEmpty {
+            await considerArch(
+                ExperimentProfile(
+                    name: "arch-no-lifecycle",
+                    description: "Plain assistant text ends or clarifies; no lifecycle tools.",
+                    deferTools: lifecycle
+                )
+            )
+        }
+
+        let gateways = ["capabilities", "capabilities_discover", "capabilities_load"].filter {
+            baseline.toolNames.contains($0)
+        }
+        if !gateways.isEmpty {
+            await considerArch(
+                ExperimentProfile(
+                    name: "arch-no-gateway",
+                    description: "Remove capability gateway tools.",
+                    deferTools: gateways
+                )
+            )
+        }
+        if baseline.toolNames.contains("capabilities") {
+            await considerArch(
+                ExperimentProfile(
+                    name: "arch-single-gateway",
+                    description: "Use the compact capabilities tool as the sole fallback gateway.",
+                    deferTools: ["capabilities_discover", "capabilities_load"]
+                )
+            )
+        }
 
         // Cap the model-tested set: architecture designs and combos first
         // (they answer the headline questions), then the largest

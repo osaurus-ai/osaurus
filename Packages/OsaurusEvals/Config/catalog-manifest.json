@@ -63,9 +63,11 @@
       "agent_loop.search-then-multi-file-edit",
       "agent_loop.spawn-batch-two-configured-workers",
       "agent_loop.spawn-batch-two-different-local-workers",
+      "agent_loop.substantial-single-file-app",
       "agent_loop.targeted-read-and-report",
       "agent_loop.todo-discipline-multistep",
       "agent_loop.wrap-up-on-budget",
+      "agent_loop.workspace-escape-refused",
       "agent_loop.write-new-file",
       "agent_loop.write-then-verify-with-shell"
     ],
@@ -326,6 +328,10 @@
       "judge_calibration.partial-completion",
       "judge_calibration.verbatim-quote"
     ],
+    "LegacyCapabilities" : [
+      "legacy_capabilities.compact-loaded-results-compatible",
+      "prompt_surface.manifest-replacement-saves"
+    ],
     "Memory" : [
       "memory.distractor-not-surfaced",
       "memory.episode-recall",
@@ -376,11 +382,8 @@
     "PromptSurface" : [
       "prompt_surface.baseline-census",
       "prompt_surface.compact-forced",
-      "prompt_surface.defer-tool-strips-schema",
       "prompt_surface.drop-code-style-saves",
-      "prompt_surface.manifest-replacement-saves",
       "prompt_surface.protected-section-refused",
-      "prompt_surface.protected-tool-refused",
       "prompt_surface.unknown-section-refused"
     ],
     "ReasoningChannel" : [
@@ -415,26 +418,20 @@
     "SandboxFrontier" : [
       "sandbox.artifact-from-sandbox",
       "sandbox.background-process",
-      "sandbox.binary-bridge-roundtrip",
-      "sandbox.binary-bridge-stage",
       "sandbox.code-exec-basics",
       "sandbox.exec-discipline",
       "sandbox.fix-failing-tests",
-      "sandbox.host-folder-combined",
-      "sandbox.host-folder-writable",
-      "sandbox.host-secret-refusal",
       "sandbox.install-and-use",
       "sandbox.json-sum-values",
       "sandbox.line-count",
       "sandbox.live-fetch",
-      "sandbox.path-discipline",
       "sandbox.plugin-create-and-call",
       "sandbox.reverse-string",
       "sandbox.secrets-roundtrip",
       "sandbox.sum-range-stdout",
       "sandbox.two-module-import",
-      "sandbox.writable-path-discipline",
-      "sandbox.writable-secret-write-refusal"
+      "sandbox.vm-file-export",
+      "sandbox.vm-host-isolation"
     ],
     "Schema" : [
       "schema.additional-properties-rejected",

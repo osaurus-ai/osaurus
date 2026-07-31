@@ -13,6 +13,20 @@
 import AppKit
 import SwiftUI
 
+enum WorkspaceFileExporter {
+    static func export(source: URL, destination: URL) throws {
+        let temporary = destination.deletingLastPathComponent()
+            .appendingPathComponent(".osaurus-export-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: source, to: temporary)
+        if FileManager.default.fileExists(atPath: destination.path) {
+            _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary)
+        } else {
+            try FileManager.default.moveItem(at: temporary, to: destination)
+        }
+    }
+}
+
 struct ChatChangesView: View {
     let sessionId: UUID
     let onClose: () -> Void
@@ -130,7 +144,8 @@ struct ChatChangesView: View {
                                 onToggle: { toggleExpanded(change) },
                                 onUndo: { Task { await undo(change) } },
                                 onOpen: { open(change) },
-                                onReveal: { reveal(change) }
+                                onReveal: { reveal(change) },
+                                onExport: { export(change) }
                             )
                             if change.id != changes.last?.id {
                                 Divider()
@@ -228,6 +243,26 @@ struct ChatChangesView: View {
         NSWorkspace.shared.activateFileViewerSelecting([change.hostURL])
     }
 
+    /// Save a VM-created file to a user-selected host location without
+    /// requiring another model/tool turn.
+    private func export(_ change: SandboxWorkspaceChange) {
+        guard change.root != .hostFolder,
+            change.kind != .deleted,
+            change.entryType == .file
+        else { return }
+        let panel = NSSavePanel()
+        panel.title = L("Export File")
+        panel.prompt = L("Export")
+        panel.nameFieldStringValue = change.filename
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        do {
+            try WorkspaceFileExporter.export(source: change.hostURL, destination: destination)
+        } catch {
+            statusMessage = L("Couldn't export \(change.filename): \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Actions
 
     private func reload() async {
@@ -297,6 +332,7 @@ private struct ChangeRow: View {
     let onUndo: () -> Void
     let onOpen: () -> Void
     let onReveal: () -> Void
+    let onExport: () -> Void
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
@@ -306,6 +342,9 @@ private struct ChangeRow: View {
 
     /// Deleted entries have nothing on disk to open or reveal.
     private var canOpen: Bool { change.kind != .deleted }
+    private var canExport: Bool {
+        change.root != .hostFolder && change.kind != .deleted && change.entryType == .file
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -370,6 +409,14 @@ private struct ChangeRow: View {
                 )
             }
 
+            if canExport {
+                HeaderActionButton(
+                    icon: "square.and.arrow.down",
+                    help: "Export file…",
+                    action: onExport
+                )
+            }
+
             HeaderActionButton(
                 icon: "arrow.uturn.backward",
                 help: "Undo this change",
@@ -395,6 +442,11 @@ private struct ChangeRow: View {
                 }
                 Button(action: onReveal) {
                     Label(L("Reveal in Finder"), systemImage: "folder")
+                }
+                if canExport {
+                    Button(action: onExport) {
+                        Label(L("Export…"), systemImage: "square.and.arrow.down")
+                    }
                 }
                 Divider()
             }

@@ -65,8 +65,9 @@ public struct PromptComposerExperiment: Sendable, Equatable {
 
     // MARK: - Contract guards
 
-    /// Section ids that can never be ablated. Platform/persona are the
-    /// identity contract; grounding is a quality non-negotiable.
+    /// Only the identity boundary is protected. Operational guidance,
+    /// grounding, manifests, and lifecycle prose must earn their place in
+    /// paired evaluations.
     ///
     /// `enabledManifest` is deliberately NOT protected anymore: the exact
     /// paginated listing replacement the plan requires now exists
@@ -75,7 +76,7 @@ public struct PromptComposerExperiment: Sendable, Equatable {
     /// promotable only when it survives the capability-claim and tool-use
     /// eval gates. Keep the manifest in production until then.
     public static let protectedSectionIds: Set<String> = [
-        "platform", "persona", "grounding",
+        "platform", "persona",
     ]
 
     /// Every section id the composer can emit — the validation census.
@@ -91,13 +92,11 @@ public struct PromptComposerExperiment: Sendable, Equatable {
         "sandboxState", "sandboxUnavailable", "memory",
     ]
 
-    /// Tool names that can never be deferred: the discovery gateway
-    /// (`capabilities_discover` / `capabilities_load`) is what makes
-    /// deferral safe at all, and the constrained agent-loop schema is a
-    /// scored contract.
+    /// The five mode-invariant workspace primitives are the only protected
+    /// tools. Lifecycle, delivery, and capability-gateway tools are all valid
+    /// ablation candidates.
     public static let protectedToolNames: Set<String> = [
-        "capabilities_discover", "capabilities_load",
-        "todo", "complete", "clarify", "share_artifact",
+        "file_read", "file_search", "file_write", "file_edit", "shell_run",
     ]
 
     /// The immutable hot set for the hot-set architecture experiment
@@ -107,8 +106,7 @@ public struct PromptComposerExperiment: Sendable, Equatable {
     /// more than the schema saves. Everything outside this set defers to
     /// `capabilities_load` under the `arch-hot-set` candidate.
     public static let hotSetToolNames: Set<String> = protectedToolNames.union([
-        "sandbox_exec", "sandbox_read_file", "sandbox_write_file",
-        "sandbox_search_files", "web_search", "get_current_time",
+        "web_search", "get_current_time",
     ])
 
     /// Human-readable validation problems, empty when the experiment is

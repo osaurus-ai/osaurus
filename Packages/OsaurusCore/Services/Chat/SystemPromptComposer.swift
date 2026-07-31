@@ -616,6 +616,7 @@ public struct SystemPromptComposer: Sendable {
             snapshot: snapshot,
             executionMode: executionMode,
             toolsDisabled: effectiveToolsOff,
+            query: query,
             additionalToolNames: additionalToolNames,
             frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
             frozenToolSpecs: frozenToolSpecs,
@@ -818,6 +819,89 @@ public struct SystemPromptComposer: Sendable {
         let tools = toolset.tools
         let effectiveToolsOff = toolset.effectiveToolsOff
         let resolvedNames = Set(tools.map { $0.function.name })
+
+        // Production's default harness contract is intentionally small.
+        // Tool schemas are the operational source of truth; security is
+        // enforced by path validation, Seatbelt, and the VM boundary rather
+        // than repeated prompt policy. Rich feature guidance remains
+        // schema-gated on non-workspace/configuration surfaces.
+        if snapshot.agentId != Agent.defaultId
+            || executionMode.usesHostFolderTools
+            || executionMode.usesSandboxTools
+        {
+            if executionMode.usesSandboxTools, let soulSection {
+                composer.append(
+                    .static(
+                        id: "soul",
+                        label: "Soul",
+                        content: SystemPromptTemplates.soulSection(soulSection)
+                    )
+                )
+            }
+            if !effectiveToolsOff, executionMode.usesSandboxTools {
+                let home = OsaurusPaths.inContainerAgentHome(
+                    SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
+                )
+                composer.append(
+                    .static(
+                        id: "sandbox",
+                        label: L("Working Directory"),
+                        content:
+                            "## Working directory\n**Path:** \(home)\n"
+                            + "This run is isolated in the VM. Host folders are unavailable. "
+                            + "Use paths relative to this directory. "
+                            + "Use the workspace tools to complete requested work now; "
+                            + "do not only describe or promise it. "
+                            + "To append while preserving a file, call file_write with mode "
+                            + "append and put only the new bytes in content. "
+                            + "Keep each file_write content under 18,000 characters; "
+                            + "for larger files use repeated calls with mode append."
+                    )
+                )
+                let state = SystemPromptTemplates.sandboxState(
+                    secretNames: AgentSecretsKeychain.secretIDs(agentId: agentId),
+                    installedPackages: SandboxPackageManifest.shared.installed(
+                        agentId: agentId.uuidString
+                    )
+                )
+                if !state.isEmpty {
+                    composer.append(
+                        .dynamic(
+                            id: "sandboxState",
+                            label: L("Sandbox State"),
+                            content: state
+                        )
+                    )
+                }
+            } else if !effectiveToolsOff, let folder = executionMode.folderContext {
+                composer.append(
+                    .static(
+                        id: "folderContext",
+                        label: L("Working Directory"),
+                        content: SystemPromptTemplates.leanFolderContext(from: folder)
+                    )
+                )
+            }
+            if !effectiveToolsOff,
+                snapshot.dbEnabled,
+                !resolvedNames.isDisjoint(with: agentDBToolNames)
+            {
+                let schema = Self.renderSchemaSnapshot(
+                    agentId: agentId,
+                    allowOpen: allowBlockingDBOpen
+                )
+                if !schema.isEmpty {
+                    composer.append(
+                        .dynamic(
+                            id: "agentDBSchema",
+                            label: L("Agent DB Schema"),
+                            content: schema
+                        )
+                    )
+                }
+            }
+            return
+        }
 
         // Mid-session-mutable content captured while building the static
         // framing, but emitted LATER as dynamic sections (after the static
@@ -2167,6 +2251,14 @@ public struct SystemPromptComposer: Sendable {
                         + "Sandbox settings panel to retry or inspect the failure. Then "
                         + "help with whatever doesn't need sandbox tools."
                 )
+            case .vmnetOwnedByOtherProcess:
+                return (
+                    "The sandbox VM is currently owned by another Osaurus process. "
+                        + "Detail: \(reason.message)",
+                    "Tell the user which process owns the sandbox and ask them to stop "
+                        + "that app or eval run before retrying. Do not repeatedly retry "
+                        + "sandbox startup in this task."
+                )
             case .provisioningFailed:
                 return (
                     "The sandbox container is running, but provisioning this agent "
@@ -2315,6 +2407,7 @@ public struct SystemPromptComposer: Sendable {
         agentId: UUID,
         executionMode: ExecutionMode,
         toolsDisabled: Bool = false,
+        query: String = "",
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
         frozenToolSpecs: [Tool]? = nil,
@@ -2328,6 +2421,7 @@ public struct SystemPromptComposer: Sendable {
             snapshot: snapshot,
             executionMode: executionMode,
             toolsDisabled: toolsDisabled,
+            query: query,
             additionalToolNames: additionalToolNames,
             frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
             frozenToolSpecs: frozenToolSpecs,
@@ -2340,6 +2434,7 @@ public struct SystemPromptComposer: Sendable {
         snapshot: AgentConfigSnapshot,
         executionMode: ExecutionMode,
         toolsDisabled: Bool = false,
+        query: String = "",
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
         frozenToolSpecs: [Tool]? = nil,
@@ -2655,6 +2750,14 @@ public struct SystemPromptComposer: Sendable {
             byName["image"] = imageLoadedExplicitly ? genOnly : compactBootstrapSpec(genOnly)
         }
 
+        // The chat contract exposes one compact capability gateway. Keep the
+        // legacy discover/load registrations executable for non-chat callers,
+        // but never publish both concepts to a custom agent.
+        if snapshot.agentId != Agent.defaultId {
+            byName.removeValue(forKey: "capabilities_discover")
+            byName.removeValue(forKey: "capabilities_load")
+        }
+
         // Freeze the exact first-compose payload for every baseline tool that
         // remains visible after the current permission/feature gates. Names
         // alone are not sufficient: a schema can change while its registration
@@ -2762,6 +2865,71 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
+        // In an execution workspace, keep the model-facing contract to five
+        // stable primitives. Optional capabilities are admitted only when the
+        // current query names a clear need, when the user selected them
+        // manually, or when they were explicitly loaded earlier in-session.
+        let hasExecutionWorkspace =
+            executionMode.usesHostFolderTools || executionMode.usesSandboxTools
+        if snapshot.agentId != Agent.defaultId || hasExecutionWorkspace {
+            var allowed = additionalToolNames
+            if hasExecutionWorkspace {
+                add(
+                    ToolRegistry.shared.specs(
+                        forTools: Array(ToolRegistry.coreWorkspaceToolNames)
+                    ),
+                    replacingExisting: true
+                )
+                allowed.formUnion(ToolRegistry.coreWorkspaceToolNames)
+            }
+            // Enabled optional capabilities remain executable and discoverable,
+            // but do not pay schema cost on unrelated workspace turns. The
+            // deterministic query preflight below admits the clear matches;
+            // manual pins and session-loaded tools are already in `allowed`.
+            if !hasExecutionWorkspace {
+                if snapshot.dbEnabled { allowed.formUnion(agentDBToolNames) }
+                if snapshot.renderChartEnabled { allowed.insert("render_chart") }
+                if snapshot.speakEnabled { allowed.insert("speak") }
+                if snapshot.searchMemoryEnabled { allowed.insert("search_memory") }
+                if snapshot.webSearchEnabled {
+                    allowed.formUnion(["web_search", "search_and_extract"])
+                }
+                if snapshot.selfSchedulingEnabled { allowed.formUnion(schedulerToolNames) }
+                if snapshot.knowledgeEnabled { allowed.formUnion(knowledgeToolNames) }
+                if snapshot.knowledgeCuratorEnabled {
+                    allowed.formUnion(knowledgeCuratorToolNames)
+                }
+                allowed.formUnion(visibleDelegation)
+                if snapshot.computerUseEnabled { allowed.insert(ComputerUseTool.toolName) }
+                if snapshot.browserUseEnabled { allowed.insert(BrowserUseTool.toolName) }
+                if byName["capabilities"] != nil { allowed.insert("capabilities") }
+                if snapshot.hasChannelPublishDestinations {
+                    allowed.insert(AgentChannelPublishTool.toolName)
+                }
+            }
+            if let shell = byName["shell_run"],
+                !(executionMode.usesSandboxTools
+                    && snapshot.autonomousConfig?.backgroundProcessEnabled == true)
+            {
+                byName["shell_run"] = removingProperty("background", from: shell)
+            }
+            if isManual, let manualNames = snapshot.manualToolNames {
+                allowed.formUnion(manualNames)
+            }
+            allowed.formUnion(querySelectedToolNames(query: query, available: Set(byName.keys)))
+            byName = byName.filter { allowed.contains($0.key) }
+
+            // The implementation keeps its full argument compatibility, while
+            // ordinary chat publishes only the common five-tool contract.
+            // Explicit manual/session loads retain the full schema.
+            let explicitlyFull = additionalToolNames.union(snapshot.manualToolNames ?? [])
+            for name in ToolRegistry.coreWorkspaceToolNames
+            where !explicitlyFull.contains(name) {
+                guard let full = byName[name] else { continue }
+                byName[name] = compactWorkspaceSpec(full)
+            }
+        }
+
         // Eval-scoped ablation hook (nil in production): strip deferred
         // tool names from the request schema. The tools stay registered and
         // reachable via `capabilities_load`, so this measures the
@@ -2789,6 +2957,179 @@ public struct SystemPromptComposer: Sendable {
         return resolved
     }
 
+    /// Cheap deterministic preflight for optional capabilities. This is not a
+    /// workflow tutorial: it only prevents an obvious feature request from
+    /// paying a discovery round-trip before the first useful action.
+    private static func querySelectedToolNames(
+        query: String,
+        available: Set<String>
+    ) -> Set<String> {
+        let q = query.lowercased()
+        guard !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+        var selected: Set<String> = []
+        let words = Set(
+            q.components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }
+        )
+
+        func containsNeedle(_ needle: String) -> Bool {
+            if needle.contains(" ") || needle.contains("://") {
+                return q.contains(needle)
+            }
+            return words.contains(needle)
+        }
+
+        func select(_ names: [String], when needles: [String]) {
+            guard needles.contains(where: containsNeedle) else { return }
+            selected.formUnion(names.filter(available.contains))
+        }
+
+        select(["web_search", "search_and_extract"], when: [
+            "search the web", "search web", "search online", "look up online",
+            "latest", "current news", "http://", "https://",
+        ])
+        select(["render_chart"], when: ["chart", "plot", "graph"])
+        select(["get_current_time"], when: ["time", "date", "today", "timezone"])
+        select(["speak"], when: ["speak", "read aloud", "say this"])
+        select(["search_memory"], when: ["memory", "remember", "previous conversation"])
+        select(Array(agentDBToolNames), when: ["database", "table", "sql", "query rows"])
+        select(Array(schedulerToolNames), when: ["schedule", "remind", "recurring"])
+        select(Array(knowledgeToolNames), when: ["knowledge base", "collection"])
+        select(["image"], when: ["generate image", "create image", "edit image"])
+        select(
+            Array(SubagentCapabilityRegistry.spawn.toolNames),
+            when: ["delegate", "subagent", "parallel agent"]
+        )
+        select([ComputerUseTool.toolName], when: ["computer use", "use the screen", "click"])
+        select([BrowserUseTool.toolName], when: ["browse", "browser", "open website"])
+        select(["sandbox_process"], when: ["background process", "server", "watcher"])
+        select([AgentChannelPublishTool.toolName], when: ["publish", "send message", "post to"])
+
+        // One compact fallback gateway replaces the discover→load pair when
+        // the user explicitly asks for an installed plugin/tool/capability.
+        select(["capabilities"], when: ["plugin", "capability", "installed tool"])
+        return selected
+    }
+
+    private static func compactWorkspaceSpec(_ tool: Tool) -> Tool {
+        let description: String
+        let properties: [String: JSONValue]
+        let required: [String]
+        switch tool.function.name {
+        case "file_read":
+            description = "Read a file or list a directory in the working folder. Text lines use `N|` display prefixes."
+            properties = [
+                "path": .object([
+                    "type": .string("string"),
+                    "description": .string("Relative file or directory path"),
+                ]),
+                "start_line": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional first line, 1-indexed"),
+                ]),
+                "end_line": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional last line, inclusive"),
+                ]),
+            ]
+            required = ["path"]
+        case "file_write":
+            description = "Create, replace, or append a UTF-8 file. To preserve existing bytes, choose append and send only new content."
+            properties = [
+                "path": .object([
+                    "type": .string("string"),
+                    "description": .string("Relative file path"),
+                ]),
+                "content": .object([
+                    "type": .string("string"),
+                    "maxLength": .number(Double(WorkspaceToolContract.maxWriteContentCharacters)),
+                    "description": .string("File content, at most 7000 characters"),
+                ]),
+                "mode": .object([
+                    "type": .string("string"),
+                    "enum": .array([.string("overwrite"), .string("append")]),
+                    "description": .string("Default overwrite; append adds content without replacing the file"),
+                ]),
+            ]
+            required = ["path", "content"]
+        case "file_edit":
+            description = "Replace one exact, unique text occurrence. For additive changes, use file_write append."
+            properties = [
+                "path": .object([
+                    "type": .string("string"),
+                    "description": .string("Relative file path"),
+                ]),
+                "old_string": .object([
+                    "type": .string("string"),
+                    "description": .string("Exact unique text; omit `N|` display prefixes"),
+                ]),
+                "new_string": .object([
+                    "type": .string("string"),
+                    "description": .string("Replacement text"),
+                ]),
+            ]
+            required = ["path", "old_string", "new_string"]
+        case "file_search":
+            description = "Search file contents or names in the working folder."
+            properties = [
+                "pattern": .object([
+                    "type": .string("string"),
+                    "description": .string("Text or filename pattern"),
+                ]),
+                "path": .object([
+                    "type": .string("string"),
+                    "description": .string("Optional relative search root"),
+                ]),
+                "target": .object([
+                    "type": .string("string"),
+                    "enum": .array([.string("content"), .string("files")]),
+                    "description": .string("Default content; files searches names"),
+                ]),
+            ]
+            required = ["pattern"]
+        case "shell_run":
+            description = "Run a build, test, git, process, network, or filesystem-mutation command in the working folder. Requires approval."
+            properties = [
+                "command": .object([
+                    "type": .string("string"),
+                    "description": .string("Shell command; do not `cd` to the working folder first"),
+                ])
+            ]
+            required = ["command"]
+        default:
+            return tool
+        }
+        return Tool(
+            type: tool.type,
+            function: ToolFunction(
+                name: tool.function.name,
+                description: description,
+                parameters: .object([
+                    "type": .string("object"),
+                    "additionalProperties": .bool(false),
+                    "properties": .object(properties),
+                    "required": .array(required.map { .string($0) }),
+                ])
+            )
+        )
+    }
+
+    private static func removingProperty(_ property: String, from tool: Tool) -> Tool {
+        guard case .object(var schema)? = tool.function.parameters,
+            case .object(var properties)? = schema["properties"]
+        else { return tool }
+        properties.removeValue(forKey: property)
+        schema["properties"] = .object(properties)
+        return Tool(
+            type: tool.type,
+            function: ToolFunction(
+                name: tool.function.name,
+                description: tool.function.description,
+                parameters: .object(schema)
+            )
+        )
+    }
+
     /// Stable order:
     ///   0. Agent-loop tools (`todo`, `complete`, `clarify`, `share_artifact`)
     ///      in fixed order. Pinned at the very top so a model scanning the
@@ -2796,9 +3137,8 @@ public struct SystemPromptComposer: Sendable {
     ///      sequence stable across sends regardless of what plugins or MCP
     ///      providers register later (KV-cache reuse).
     ///   1. Built-in sandbox tools (alphabetical).
-    ///   2. Capability discovery tools (`capabilities_discover`, then
-    ///      `capabilities_load`) in fixed order so the discovery tool sits
-    ///      ahead of the loader in the model's view.
+    ///   2. Compact capability gateway, followed by legacy compatibility
+    ///      aliases when a non-chat surface explicitly includes them.
     ///   3. Everything else, alphabetical.
     @MainActor
     static func canonicalToolOrder(_ tools: [Tool]) -> [Tool] {
@@ -2808,7 +3148,7 @@ public struct SystemPromptComposer: Sendable {
                 .enumerated().map { ($1, $0) }
         )
         let capabilityIndex = Dictionary(
-            uniqueKeysWithValues: ["capabilities_discover", "capabilities_load"]
+            uniqueKeysWithValues: ["capabilities", "capabilities_discover", "capabilities_load"]
                 .enumerated().map { ($1, $0) }
         )
 

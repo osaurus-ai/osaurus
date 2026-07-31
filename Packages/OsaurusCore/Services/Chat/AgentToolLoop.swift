@@ -122,6 +122,15 @@ enum AgentLoopModelStep {
     /// mid-tool-args) and wants the same iteration replayed without
     /// charging the iteration budget.
     case retryWithoutCharge
+    /// A streamed tool call exceeded the bounded argument buffer before it
+    /// became executable. The driver gives the model one typed retry with
+    /// chunking guidance instead of decoding an unbounded file payload.
+    case oversizedToolCall(toolName: String?, argumentCharacters: Int)
+    /// The runtime hit its output-token ceiling after beginning a streamed
+    /// tool envelope but before committing an executable invocation. Unlike
+    /// ordinary length exhaustion, this is a typed protocol failure and gets
+    /// one bounded retry with smaller-call guidance.
+    case truncatedToolCall(toolName: String?, argumentCharacters: Int)
     /// The model step produced NO visible text AND no tool calls — an empty
     /// turn (an immediate EOS / 0-token generation). The driver attempts a
     /// bounded recovery (a corrective nudge, then retry) instead of ending
@@ -190,6 +199,11 @@ enum AgentLoopModelStep {
         }
         return String(content[...lastVisible]) + "\n\n" + fallback
     }
+}
+
+struct OversizedStreamingToolCall: Error, Sendable {
+    let toolName: String?
+    let argumentCharacters: Int
 }
 
 /// Whether a surface owes the user a normal visible answer after a
@@ -821,6 +835,12 @@ enum AgentToolLoop {
         /// The model exhausted the configured output-token budget without an
         /// executable tool call. Any visible partial text is preserved.
         case lengthExhausted
+        /// A tool call repeatedly exceeded the bounded streaming-argument
+        /// contract and never became executable.
+        case oversizedToolCallExhausted
+        /// A streamed tool envelope repeatedly hit the model output ceiling
+        /// before becoming executable.
+        case truncatedToolCallExhausted
         /// Bounded recovery could not turn reasoning-only/unclosed output into
         /// a user-visible final answer.
         case incompleteReasoningExhausted
@@ -873,6 +893,40 @@ enum AgentToolLoop {
         "The model reached the configured output-token limit before naturally completing an answer or tool call. "
         + "The agent task is incomplete; increase Max Tokens, disable Thinking for this task, "
         + "or continue from the latest tool result."
+
+    // This bounds the serialized JSON envelope, not just `content`. A valid
+    // 20,000-character write made entirely of quotes or backslashes expands
+    // to roughly 40K after JSON escaping, plus path/mode framing.
+    static let maxStreamingToolArgumentCharacters = 49_152
+    static let maxOversizedToolCallRetries = 1
+    static let maxTruncatedToolCallRetries = 1
+
+    static func oversizedToolCallNotice(toolName: String?, argumentCharacters: Int) -> String {
+        let tool = toolName?.isEmpty == false ? "`\(toolName!)`" : "tool"
+        return
+            "[System Notice] The previous \(tool) call exceeded the \(argumentCharacters)-character "
+            + "streaming argument limit before it became executable. Retry with smaller calls. "
+            + "For a large file, write the first chunk with `file_write`, then use "
+            + "`file_write` with `mode: \"append\"` for later chunks."
+    }
+
+    static let oversizedToolCallFallback =
+        "The model repeatedly produced an oversized tool call that could not execute. "
+        + "The task is incomplete; retry with a smaller output or split large file writes into chunks."
+
+    static func truncatedToolCallNotice(toolName: String?, argumentCharacters: Int) -> String {
+        let tool = toolName?.isEmpty == false ? "`\(toolName!)`" : "tool"
+        return
+            "[System Notice] The previous \(tool) call reached the model output limit after "
+            + "\(argumentCharacters) argument characters and did not execute. "
+            + "Retry now with `file_write` content under 18,000 characters. "
+            + "Write a viable first chunk, then use `file_write` with `mode: \"append\"` "
+            + "for every later chunk."
+    }
+
+    static let truncatedToolCallFallback =
+        "The model repeatedly reached its output limit inside an unfinished tool call. "
+        + "The task is incomplete; retry with a higher Max Tokens setting or smaller file-write chunks."
 
     /// Only one natural continuation generation is allowed after a
     /// reasoning-only assistant step. The surface preserves that real step in
@@ -1414,6 +1468,39 @@ enum AgentToolLoop {
             || isStaleSessionTodoCompleteResult(result)
     }
 
+    /// Typed stop policy: malformed arguments, missing paths, timeouts, and
+    /// retryable execution failures go back to the model for one correction.
+    /// Explicit user denials and policy/security refusals stop immediately.
+    /// Repeating an identical failing call also stops, preventing a correction
+    /// loop from spinning on the same envelope.
+    static func shouldStopAfterToolOutcome(_ outcome: AgentLoopToolOutcome) -> Bool {
+        guard outcome.wasError || ToolEnvelope.isError(outcome.result) else { return false }
+        if outcome.wasDeduped { return true }
+        if isRecoverableTodoContractResult(outcome.result) { return false }
+        if isTerminalDesktopSubagentFailure(
+            toolName: outcome.invocation.toolName,
+            result: outcome.result
+        ) {
+            return true
+        }
+        guard let data = outcome.result.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let kind = object["kind"] as? String
+        else {
+            // Legacy/untyped failures are hard to correct safely.
+            return outcome.wasError
+        }
+        if kind == ToolEnvelope.Kind.userDenied.rawValue
+            || kind == ToolEnvelope.Kind.rejected.rawValue
+        {
+            return true
+        }
+        // Runtime, availability, path, and argument failures get one model
+        // correction regardless of the as-is retry hint. An identical replay
+        // is caught by the dedupe branch above.
+        return false
+    }
+
     static func todoProgressUpdateRequiredNotice(pending: Int) -> String {
         "[System Notice] Your completion was rejected because \(pending) todo item"
             + (pending == 1 ? " is" : "s are")
@@ -1602,11 +1689,19 @@ enum AgentToolLoop {
         // A tool call between attempts must not re-arm another potentially
         // huge reasoning cycle in the same logical run.
         var incompleteReasoningRetries = 0
+        // Total oversized streamed-call recoveries. One typed retry gives a
+        // model a chance to switch to bounded/chunked writes without allowing
+        // another unbounded decode loop.
+        var oversizedToolCallRetries = 0
+        // Separate from ordinary length exhaustion: only a stream that began
+        // a real tool envelope receives this bounded protocol retry.
+        var truncatedToolCallRetries = 0
         // Session Todo state persists for the UI, while terminal semantics are
         // per logical run. Bind this same marker around every serial or batched
         // tool dispatch so TodoTool and CompleteTool agree even when a batch
         // executes in child tasks.
         let todoRunScope = AgentTodoRunScope()
+        let permissionRunScope = ToolPermissionRunScope()
         // Session Todo state persists across user turns. Arm terminal gating
         // only after THIS run successfully executes a valid `todo`; an older
         // stale checklist must never hijack an unrelated direct answer.
@@ -1704,6 +1799,32 @@ enum AgentToolLoop {
                 // slots were cleared before the stream error surfaced.
                 iteration -= 1
                 continue
+
+            case .oversizedToolCall(let toolName, let argumentCharacters):
+                oversizedToolCallRetries += 1
+                if oversizedToolCallRetries <= Self.maxOversizedToolCallRetries {
+                    pendingStateNotice = Self.oversizedToolCallNotice(
+                        toolName: toolName,
+                        argumentCharacters: argumentCharacters
+                    )
+                    iteration -= 1
+                    continue
+                }
+                await hooks.emitFallbackText?(Self.oversizedToolCallFallback)
+                return RunResult(exit: .oversizedToolCallExhausted, iterations: iteration)
+
+            case .truncatedToolCall(let toolName, let argumentCharacters):
+                truncatedToolCallRetries += 1
+                if truncatedToolCallRetries <= Self.maxTruncatedToolCallRetries {
+                    pendingStateNotice = Self.truncatedToolCallNotice(
+                        toolName: toolName,
+                        argumentCharacters: argumentCharacters
+                    )
+                    iteration -= 1
+                    continue
+                }
+                await hooks.emitFallbackText?(Self.truncatedToolCallFallback)
+                return RunResult(exit: .truncatedToolCallExhausted, iterations: iteration)
 
             case .emptyResponse:
                 // The model produced no visible text and no tool call. Never
@@ -1888,7 +2009,7 @@ enum AgentToolLoop {
                                 callId: callId,
                                 result: held,
                                 wasDeduped: true,
-                                wasError: false
+                                wasError: ToolEnvelope.isError(held)
                             )
                             // A held-ERROR replay escalates on every surface
                             // (it is a correctness signal, not chat polish);
@@ -1918,9 +2039,13 @@ enum AgentToolLoop {
                             await ChatExecutionContext.$agentTodoRunScope.withValue(
                                 todoRunScope
                             ) {
-                                await executeBatch(
-                                    toExecute.map { ($0.invocation, $0.callId) }
-                                )
+                                await ChatExecutionContext.$toolPermissionRunScope.withValue(
+                                    permissionRunScope
+                                ) {
+                                    await executeBatch(
+                                        toExecute.map { ($0.invocation, $0.callId) }
+                                    )
+                                }
                             }
                         // The executor may legitimately return FEWER results
                         // than calls (chat stops executing the rest of a
@@ -1932,6 +2057,7 @@ enum AgentToolLoop {
                             let execution = executions[index]
                             let wasError =
                                 execution.isError
+                                || ToolEnvelope.isError(execution.result)
                                 || Self.isTerminalDesktopSubagentFailure(
                                     toolName: entry.invocation.toolName,
                                     result: execution.result
@@ -1982,7 +2108,7 @@ enum AgentToolLoop {
                                     callId: deferred.callId,
                                     result: held,
                                     wasDeduped: true,
-                                    wasError: false
+                                    wasError: ToolEnvelope.isError(held)
                                 )
                                 if let escalation = state.lastReplayNotice {
                                     pendingStateNotice = "[System Notice] " + escalation
@@ -1994,15 +2120,20 @@ enum AgentToolLoop {
                                     await ChatExecutionContext.$agentTodoRunScope.withValue(
                                         todoRunScope
                                     ) {
-                                        await executeBatch(
-                                            [(deferred.invocation, deferred.callId)]
-                                        )
+                                        await ChatExecutionContext.$toolPermissionRunScope.withValue(
+                                            permissionRunScope
+                                        ) {
+                                            await executeBatch(
+                                                [(deferred.invocation, deferred.callId)]
+                                            )
+                                        }
                                     }
                                 guard let execution = deferredExecutions.first else {
                                     continue
                                 }
                                 let wasError =
                                     execution.isError
+                                    || ToolEnvelope.isError(execution.result)
                                     || Self.isTerminalDesktopSubagentFailure(
                                         toolName: deferred.invocation.toolName,
                                         result: execution.result
@@ -2070,9 +2201,7 @@ enum AgentToolLoop {
                         return await finishBatch(.cancelled)
                     }
                     if policy.stopOnToolRejection,
-                        outcomes.contains(where: {
-                            $0.wasError && !Self.isRecoverableTodoContractResult($0.result)
-                        })
+                        outcomes.contains(where: Self.shouldStopAfterToolOutcome)
                     {
                         return await finishBatch(.toolRejected)
                     }
@@ -2197,19 +2326,23 @@ enum AgentToolLoop {
                             argsJSON: invocation.jsonArguments
                         ) {
                             await hooks.onDedupedResult(invocation, callId, held)
-                            outcomes.append(
-                                AgentLoopToolOutcome(
+                            let outcome = AgentLoopToolOutcome(
                                     invocation: invocation,
                                     callId: callId,
                                     result: held,
                                     wasDeduped: true,
-                                    wasError: false
+                                    wasError: ToolEnvelope.isError(held)
                                 )
-                            )
+                            outcomes.append(outcome)
                             if let escalation = state.lastReplayNotice {
                                 pendingStateNotice = "[System Notice] " + escalation
                             } else if policy.dedupeNoticeEnabled {
                                 pendingStateNotice = Self.dedupeNotice
+                            }
+                            if policy.stopOnToolRejection,
+                                Self.shouldStopAfterToolOutcome(outcome)
+                            {
+                                return RunResult(exit: .toolRejected, iterations: iteration)
                             }
                             continue
                         }
@@ -2218,10 +2351,15 @@ enum AgentToolLoop {
                             await ChatExecutionContext.$agentTodoRunScope.withValue(
                                 todoRunScope
                             ) {
-                                await hooks.executeTool(invocation, callId)
+                                await ChatExecutionContext.$toolPermissionRunScope.withValue(
+                                    permissionRunScope
+                                ) {
+                                    await hooks.executeTool(invocation, callId)
+                                }
                             }
                         let wasError =
                             execution.isError
+                            || ToolEnvelope.isError(execution.result)
                             || Self.isTerminalDesktopSubagentFailure(
                                 toolName: invocation.toolName,
                                 result: execution.result
@@ -2259,8 +2397,8 @@ enum AgentToolLoop {
                         if await hooks.isCancelled() {
                             return RunResult(exit: .cancelled, iterations: iteration)
                         }
-                        if wasError, policy.stopOnToolRejection,
-                            !Self.isRecoverableTodoContractResult(execution.result)
+                        if policy.stopOnToolRejection,
+                            Self.shouldStopAfterToolOutcome(outcomes[outcomes.count - 1])
                         {
                             return RunResult(exit: .toolRejected, iterations: iteration)
                         }

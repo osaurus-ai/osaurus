@@ -7,6 +7,33 @@ import Testing
 
 @Suite("Tool permission prompt presentation")
 struct ToolPermissionPromptServiceTests {
+    @Test("run-scoped approval expires outside the task-local lease")
+    func runScopedApprovalExpires() {
+        let first = ToolPermissionRunScope()
+        ChatExecutionContext.$toolPermissionRunScope.withValue(first) {
+            #expect(ChatExecutionContext.toolPermissionRunScope?.allows("shell_run") == false)
+            ChatExecutionContext.toolPermissionRunScope?.allow("shell_run")
+            #expect(ChatExecutionContext.toolPermissionRunScope?.allows("shell_run") == true)
+        }
+        #expect(ChatExecutionContext.toolPermissionRunScope == nil)
+        #expect(ToolPermissionRunScope().allows("shell_run") == false)
+    }
+
+    @Test("a task cancelled before approval is denial-shaped")
+    @MainActor
+    func cancelledApprovalDoesNotOpenOrGrantALease() async {
+        let task = Task { @MainActor in
+            await ToolPermissionPromptService.requestApprovalOutcome(
+                toolName: "shell_run",
+                description: "Run a command",
+                argumentsJSON: #"{"command":"true"}"#
+            )
+        }
+        task.cancel()
+        #expect(await task.value == .denied)
+        #expect(ChatExecutionContext.toolPermissionRunScope == nil)
+    }
+
     @Test("launching app window wins over mouse and fallback displays")
     func launchingWindowScreenHasPriority() {
         #expect(
@@ -93,5 +120,7 @@ struct ToolPermissionPromptServiceTests {
         #expect(source.contains("styleMask: [.titled, .fullSizeContentView]"))
         #expect(source.contains("isKeyWindow: permissionWindow?.isKeyWindow == true"))
         #expect(source.contains("keyWindow: NSApp.keyWindow?.screen"))
+        #expect(source.contains("pendingApprovalPrompt"))
+        #expect(source.contains("cancelApprovalPrompt(id: requestID)"))
     }
 }

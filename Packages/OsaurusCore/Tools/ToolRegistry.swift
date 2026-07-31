@@ -201,7 +201,8 @@ public final class ToolRegistry: ObservableObject {
             // Only sanctioned path for surfacing files / inline blobs to
             // the user (file_write / sandbox writes do not show in chat).
             ShareArtifactTool(),
-            // Capability discovery (search -> load) for mid-session growth.
+            // Compact chat gateway plus legacy non-chat compatibility aliases.
+            CapabilitiesTool(),
             CapabilitiesDiscoverTool(),
             CapabilitiesLoadTool(),
             // Persistent memory recall — one tool, dispatched by `scope`.
@@ -680,6 +681,8 @@ public final class ToolRegistry: ObservableObject {
                 let approved: Bool
                 if ChatExecutionContext.autoApproveToolPrompts {
                     approved = true
+                } else if ChatExecutionContext.toolPermissionRunScope?.allows(name) == true {
+                    approved = true
                 } else if ChatExecutionContext.denyUnapprovedToolPrompts {
                     // Headless eval / external MCP with no UI: deny instead of
                     // hanging on an approval card nobody can click.
@@ -713,11 +716,20 @@ public final class ToolRegistry: ObservableObject {
                     // have been shown, so external/headless denials above win.
                     approved = true
                 } else {
-                    approved = await ToolPermissionPromptService.requestApproval(
+                    let outcome = await ToolPermissionPromptService.requestApprovalOutcome(
                         toolName: name,
                         description: tool.description,
                         argumentsJSON: approvalArgumentsJSON
                     )
+                    switch outcome {
+                    case .denied:
+                        approved = false
+                    case .allowOnce, .alwaysAllow:
+                        approved = true
+                    case .allowForRun:
+                        ChatExecutionContext.toolPermissionRunScope?.allow(name)
+                        approved = true
+                    }
                 }
                 if !approved {
                     let message =
@@ -1103,27 +1115,13 @@ public final class ToolRegistry: ObservableObject {
     /// task-locals stay consistent, and inert (`nil` / `false`) in plain
     /// folder and plain sandbox modes.
     private var combinedHostReadPolicy: (scope: URL?, allowSecretReads: Bool, allowFolderWrites: Bool) {
-        guard toolsByName.keys.contains("sandbox_exec"),
-            let root = ChatExecutionContext.currentFolderRoot
-        else { return (nil, false, false) }
-        let config = resolvedAutonomousExecConfig
-        return (
-            root,
-            config?.allowHostSecretReads ?? false,
-            config?.allowHostFolderWrites ?? false
-        )
+        (nil, false, false)
     }
 
-    /// Sandbox identity bound around every tool body in combined mode so the
-    /// unified host `file_*` tools can serve an absolute `/workspace/...`
-    /// path from the Linux sandbox (path-routed file access). Same gate as
-    /// `combinedHostReadPolicy` (sandbox exec registered + folder root),
-    /// plus a resolvable agent id; `nil` in plain folder / plain sandbox
-    /// modes so they stay untouched.
+    /// Sandbox identity bound around every tool body while VM execution is
+    /// active. The five public workspace tools use it as their backend router.
     private var combinedSandboxReadBridge: SandboxReadBridge? {
-        guard toolsByName.keys.contains("sandbox_exec"),
-            ChatExecutionContext.currentFolderRoot != nil
-        else { return nil }
+        guard toolsByName.keys.contains("sandbox_exec") else { return nil }
         // Prefer the identity captured at sandbox-tool registration; it
         // can't go stale mid-turn and doesn't require `currentAgentId` to
         // be bound at the call site. Fall back to the execution context's
@@ -1135,8 +1133,12 @@ public final class ToolRegistry: ObservableObject {
         guard let agentId = ChatExecutionContext.currentAgentId else { return nil }
         let agentName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
         return SandboxReadBridge(
+            agentId: agentId.uuidString,
             agentName: agentName,
-            home: OsaurusPaths.inContainerAgentHome(agentName)
+            home: OsaurusPaths.inContainerAgentHome(agentName),
+            maxCommandsPerTurn: resolvedAutonomousExecConfig?.maxCommandsPerTurn
+                ?? AutonomousExecConfig.default.maxCommandsPerTurn,
+            backgroundEnabled: resolvedAutonomousExecConfig?.backgroundProcessEnabled == true
         )
     }
 
@@ -1660,8 +1662,20 @@ public final class ToolRegistry: ObservableObject {
     /// Record the agent whose sandbox built-ins are now registered, so the
     /// combined-mode unified `file_*` tools can route `/workspace/...`
     /// reads to that agent's sandbox. Called by `BuiltinSandboxTools.register`.
-    func setActiveSandboxAgentContext(agentName: String, home: String) {
-        activeSandboxAgentContext = SandboxReadBridge(agentName: agentName, home: home)
+    func setActiveSandboxAgentContext(
+        agentId: String = "compat",
+        agentName: String,
+        home: String,
+        config: AutonomousExecConfig? = nil
+    ) {
+        activeSandboxAgentContext = SandboxReadBridge(
+            agentId: agentId,
+            agentName: agentName,
+            home: home,
+            maxCommandsPerTurn: config?.maxCommandsPerTurn
+                ?? AutonomousExecConfig.default.maxCommandsPerTurn,
+            backgroundEnabled: config?.backgroundProcessEnabled == true
+        )
     }
 
     private func unregisterSandboxTool(named name: String) {
@@ -1902,22 +1916,12 @@ public final class ToolRegistry: ObservableObject {
     private func excludedToolNames(for mode: ExecutionMode) -> Set<String> {
         var excluded: Set<String> = []
         if !mode.usesHostFolderTools {
-            // Combined sandbox + host-read mode keeps the read-only host
-            // subset (`file_read` / `file_search`) visible while still
-            // hiding host write / edit / shell / git — exec is
-            // sandbox-only. With the `allowHostFolderWrites` opt-in the
-            // file writers (`file_write` / `file_edit`) join too; shell /
-            // git / `file_undo` stay hidden regardless.
+            // VM mode reuses exactly the same five public tool schemas as a
+            // trusted folder. Their bodies route through the active sandbox
+            // bridge; every other host/history/git helper remains hidden.
             var folderExcluded = Self.folderToolNames
-            if mode.allowsHostReadTools {
-                folderExcluded.subtract(Self.folderReadOnlyToolNames)
-                // The workspace<->sandbox byte bridge is visible in BOTH
-                // combined variants — copies INTO the workspace are gated
-                // at execute time on the write grant.
-                folderExcluded.subtract(Self.combinedModeBridgeToolNames)
-            }
-            if mode.allowsHostWriteTools {
-                folderExcluded.subtract(Self.folderWriteToolNames)
+            if mode.usesSandboxTools {
+                folderExcluded.subtract(Self.coreWorkspaceToolNames)
             }
             excluded.formUnion(folderExcluded)
         } else {
@@ -1933,24 +1937,14 @@ public final class ToolRegistry: ObservableObject {
                 excluded.formUnion(Self.gitToolNames)
             }
         }
-        if !mode.usesSandboxTools {
-            excluded.formUnion(builtInSandboxToolNames)
-        } else if mode.allowsHostReadTools {
-            // Combined sandbox + host-read mode: the host `file_*` tools are
-            // the single, path-routed read family the model sees, so hide
-            // the redundant sandbox read tools (`file_read` / `file_search`
-            // serve `/workspace/...` paths via the bridge; `file_read` also
-            // lists directories). They stay registered (just hidden from the
-            // schema) so tear-down and capability indexing see them.
-            excluded.formUnion(Self.sandboxReadToolNames)
-            if mode.allowsHostWriteTools {
-                // Writable combined mode: `file_write` / `file_edit` are the
-                // single, path-routed WRITE family too (`/workspace/...`
-                // routes to the sandbox writer), so hide the redundant
-                // `sandbox_write_file` the same way.
-                excluded.formUnion(Self.sandboxWriteToolNames)
-            }
+        // Backend-specific names stay private adapters used by the five public
+        // tools. `sandbox_process` is the one opt-in capability: it is needed
+        // to manage jobs launched by `shell_run(background:true)`.
+        var hiddenSandboxNames = builtInSandboxToolNames
+        if mode.usesSandboxTools, toolsByName["sandbox_process"] != nil {
+            hiddenSandboxNames.remove("sandbox_process")
         }
+        excluded.formUnion(hiddenSandboxNames)
         if mode.usesHostFolderTools || mode.usesSandboxTools {
             excluded.formUnion(folderConflictingToolNames)
         }
@@ -1979,14 +1973,19 @@ public final class ToolRegistry: ObservableObject {
         "sandbox_write_file"
     ]
 
+    static let coreWorkspaceToolNames: Set<String> = [
+        "file_read", "file_search", "file_write", "file_edit", "shell_run",
+    ]
+
     /// Resolve the active execution mode for a chat send. Single source of
     /// truth: callers pass the user's explicit intent (autonomous toggle +
     /// optional folder context) and we apply the priority rule once.
     ///
-    /// Priority: sandbox > host folder > none. Sandbox wins because the
-    /// container takes longer to provision and a user who toggled it on is
-    /// signalling "use this when ready"; folder mode requires an explicit
-    /// folder selection so it only fires when sandbox is off.
+    /// Trusted workspace and sandbox are mutually exclusive execution
+    /// boundaries. When autonomous sandbox execution is enabled, a selected
+    /// host folder is deliberately NOT threaded into the sandbox mode: the
+    /// folder remains selected in the chat UI so it can resume when sandbox is
+    /// disabled, but the VM receives no host read/write bridge.
     ///
     /// Sandbox mode is only returned when both autonomous is enabled AND
     /// `sandbox_exec` is registered. If autonomous is on but sandbox tools
@@ -1997,20 +1996,15 @@ public final class ToolRegistry: ObservableObject {
     func resolveExecutionMode(
         folderContext: FolderContext?,
         autonomousEnabled: Bool,
-        allowHostFolderWrites: Bool = false
+        allowHostFolderWrites _: Bool = false
     ) -> ExecutionMode {
-        if autonomousEnabled, toolsByName.keys.contains("sandbox_exec") {
-            // Combined mode: exec runs in the sandbox, and any mounted
-            // folder rides along as a host workspace (`hostRead`) —
-            // read-only unless the agent's `allowHostFolderWrites`
-            // opt-in grants `file_write`/`file_edit`. When no folder is
-            // picked this is plain sandbox mode. Either way exec is
-            // confined to the VM, which has no mount of the host
-            // workspace.
-            return .sandbox(
-                hostRead: folderContext,
-                hostWrite: folderContext != nil && allowHostFolderWrites
-            )
+        if autonomousEnabled {
+            guard toolsByName.keys.contains("sandbox_exec") else {
+                // Never fall through to the host folder while the user has
+                // explicitly selected the untrusted VM boundary.
+                return .none
+            }
+            return .sandbox(hostRead: nil, hostWrite: false)
         }
         if let folderContext {
             return .hostFolder(folderContext)
@@ -2143,7 +2137,7 @@ public final class ToolRegistry: ObservableObject {
     }
 
     static let capabilityToolNames: Set<String> = [
-        "capabilities_discover", "capabilities_load",
+        "capabilities", "capabilities_discover", "capabilities_load",
     ]
 
     /// Built-in tools that are authoritatively gated per-agent and must never

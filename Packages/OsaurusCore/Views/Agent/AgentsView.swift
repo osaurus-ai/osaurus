@@ -5111,25 +5111,14 @@ struct AgentDetailView: View {
                 updateAutonomousExec(from: execConfig) { $0.backgroundProcessEnabled = backgroundOn }
             }
 
-            featureCard(
-                title: "Read Secret Files",
-                subtitle:
-                    "With a working folder, allow reading .env / keys / credentials. Off by default to keep secrets out of the sandbox.",
-                isOn: execConfig?.allowHostSecretReads ?? false,
-                interactive: interactive
-            ) { allow in
-                updateAutonomousExec(from: execConfig) { $0.allowHostSecretReads = allow }
-            }
-
-            featureCard(
-                title: "Edit Folder Files",
-                subtitle:
-                    "With a working folder, allow creating and editing its files (tracked and undoable in Changes). Off keeps the folder read-only.",
-                isOn: execConfig?.allowHostFolderWrites ?? false,
-                interactive: interactive
-            ) { allow in
-                updateAutonomousExec(from: execConfig) { $0.allowHostFolderWrites = allow }
-            }
+            Text(
+                "Sandbox execution cannot access a selected Mac folder. Disable Sandbox to resume the writable Trusted Folder.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.leading, 2)
         }
     }
 

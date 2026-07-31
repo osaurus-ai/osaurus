@@ -117,6 +117,40 @@ struct CapabilityLoadBufferTests {
     }
 }
 
+// MARK: - CapabilitiesTool
+
+@Suite(.serialized)
+struct CapabilitiesToolTests {
+    @Test func compactSchemaSupportsSearchOrLoadWithoutLegacyToolNames() throws {
+        let tool = CapabilitiesTool()
+        let spec = tool.asOpenAITool().toTokenizerToolSpec()
+        let fn = try #require(spec["function"] as? [String: any Sendable])
+        let parameters = try #require(fn["parameters"] as? [String: any Sendable])
+        let properties = try #require(parameters["properties"] as? [String: any Sendable])
+
+        #expect(fn["name"] as? String == "capabilities")
+        #expect(properties["query"] != nil)
+        #expect(properties["ids"] != nil)
+        #expect(properties["list"] == nil)
+    }
+
+    @Test func rejectsCallsWithoutQueryOrIds() async throws {
+        let result = try await CapabilitiesTool().execute(argumentsJSON: "{}")
+        #expect(ToolEnvelope.isError(result))
+        #expect(result.contains("\"tool\":\"capabilities\""))
+    }
+
+    @Test func searchResultUsesSingleGatewayVocabulary() async throws {
+        let probe = "zzz_gateway_probe_\(UUID().uuidString)"
+        let result = try await CapabilitiesTool().execute(
+            argumentsJSON: "{\"query\":\"\(probe)\"}"
+        )
+        #expect(!ToolEnvelope.isError(result))
+        #expect(result.contains("\"tool\":\"capabilities\""))
+        #expect(!result.contains("capabilities_load"))
+    }
+}
+
 // MARK: - CapabilitiesDiscoverTool
 
 @Suite(.serialized)

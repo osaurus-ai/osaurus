@@ -502,6 +502,16 @@ struct HarnessStabilityFixesTests {
         #expect(ShellRunTool.clampIdleTimeout(99999) == 3600)
     }
 
+    @Test func shellRun_resultReportsCanonicalWorkingDirectory() async throws {
+        let root = tmpRoot()
+        let result = try await ShellRunTool(rootPath: root).execute(
+            argumentsJSON: #"{"command":"pwd"}"#
+        )
+        let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
+        #expect(payload["working_directory"] as? String == root.standardizedFileURL.path)
+        #expect((payload["stdout"] as? String)?.hasSuffix(root.lastPathComponent) == true)
+    }
+
     @Test func shellRun_idleKillEnvelopeIsHonest() async throws {
         let root = tmpRoot()
         let tool = ShellRunTool(rootPath: root)

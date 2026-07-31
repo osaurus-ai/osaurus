@@ -21,10 +21,18 @@ enum ToolPermissionPromptService {
     /// The id prevents a delayed task-cancellation callback from dismissing a
     /// newer prompt that happened to open after the cancelled one completed.
     private static var pendingPolicyPrompt: (id: UUID, cancel: () -> Void)?
+    private static var pendingApprovalPrompt: (id: UUID, cancel: () -> Void)?
 
     enum PolicyApprovalOutcome: Sendable, Equatable {
         case denied
         case allowOnce
+        case alwaysAllow
+    }
+
+    enum ApprovalOutcome: Sendable, Equatable {
+        case denied
+        case allowOnce
+        case allowForRun
         case alwaysAllow
     }
 
@@ -33,45 +41,70 @@ enum ToolPermissionPromptService {
         description: String,
         argumentsJSON: String
     ) async -> Bool {
-        return await withCheckedContinuation { continuation in
-            var hasResumed = false
+        switch await requestApprovalOutcome(
+            toolName: toolName,
+            description: description,
+            argumentsJSON: argumentsJSON
+        ) {
+        case .denied: return false
+        case .allowOnce, .allowForRun, .alwaysAllow: return true
+        }
+    }
 
-            let onAllow = {
-                guard !hasResumed else { return }
-                hasResumed = true
-                dismissWindow()
-                continuation.resume(returning: true)
+    static func requestApprovalOutcome(
+        toolName: String,
+        description: String,
+        argumentsJSON: String
+    ) async -> ApprovalOutcome {
+        if Task.isCancelled { return .denied }
+
+        let requestID = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                var hasResumed = false
+
+                let finish: (ApprovalOutcome) -> Void = { outcome in
+                    guard !hasResumed else { return }
+                    hasResumed = true
+                    if pendingApprovalPrompt?.id == requestID {
+                        pendingApprovalPrompt = nil
+                    }
+                    if outcome == .alwaysAllow {
+                        ToolRegistry.shared.setPolicy(.auto, for: toolName)
+                    }
+                    dismissWindow()
+                    continuation.resume(returning: outcome)
+                }
+                let onAllow = { finish(.allowOnce) }
+                let onAllowForRun = { finish(.allowForRun) }
+                let onDeny = { finish(.denied) }
+                let onAlwaysAllow = { finish(.alwaysAllow) }
+
+                pendingApprovalPrompt = (id: requestID, cancel: onDeny)
+                let themeManager = ThemeManager.shared
+                let permissionView = ToolPermissionView(
+                    toolName: toolName,
+                    description:
+                        description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? "This action requires your approval."
+                        : description,
+                    argumentsJSON: argumentsJSON,
+                    onAllow: onAllow,
+                    onDeny: onDeny,
+                    onAlwaysAllow: onAlwaysAllow,
+                    onAllowForRun: onAllowForRun
+                )
+                .environment(\.theme, themeManager.currentTheme)
+                presentPanel(view: permissionView, onAllow: onAllow, onDeny: onDeny)
+
+                if Task.isCancelled {
+                    onDeny()
+                }
             }
-
-            let onDeny = {
-                guard !hasResumed else { return }
-                hasResumed = true
-                dismissWindow()
-                continuation.resume(returning: false)
+        } onCancel: {
+            Task { @MainActor in
+                cancelApprovalPrompt(id: requestID)
             }
-
-            let onAlwaysAllow = {
-                guard !hasResumed else { return }
-                hasResumed = true
-                // Set the policy to auto so it won't prompt again
-                ToolRegistry.shared.setPolicy(.auto, for: toolName)
-                dismissWindow()
-                continuation.resume(returning: true)
-            }
-
-            let themeManager = ThemeManager.shared
-            let permissionView = ToolPermissionView(
-                toolName: toolName,
-                description: description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ? "This action requires your approval."
-                    : description,
-                argumentsJSON: argumentsJSON,
-                onAllow: onAllow,
-                onDeny: onDeny,
-                onAlwaysAllow: onAlwaysAllow
-            )
-            .environment(\.theme, themeManager.currentTheme)
-            presentPanel(view: permissionView, onAllow: onAllow, onDeny: onDeny)
         }
     }
 
@@ -398,5 +431,10 @@ enum ToolPermissionPromptService {
     private static func cancelPolicyPrompt(id: UUID) {
         guard pendingPolicyPrompt?.id == id else { return }
         pendingPolicyPrompt?.cancel()
+    }
+
+    private static func cancelApprovalPrompt(id: UUID) {
+        guard pendingApprovalPrompt?.id == id else { return }
+        pendingApprovalPrompt?.cancel()
     }
 }

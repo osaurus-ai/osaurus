@@ -810,6 +810,94 @@ struct AgentToolLoopTests {
         #expect(surface.executedCalls.isEmpty)
     }
 
+    @Test func oversizedToolCallGetsOneUnchargedChunkingRetry() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .oversizedToolCall(toolName: "file_write", argumentCharacters: 16_500),
+            .toolCalls([inv("file_write", #"{"path":"index.html","content":"part"}"#)]),
+            .finalResponse,
+        ])
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(maxIterations: 2),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 2))
+        #expect(surface.executedCalls.map(\.name) == ["file_write"])
+        #expect(surface.builtNotices.count == 3)
+        #expect(surface.builtNotices[1].joined().contains("mode: \"append\""))
+    }
+
+    @Test func truncatedToolCallGetsOneUnchargedChunkingRetry() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .truncatedToolCall(toolName: "file_write", argumentCharacters: 9_100),
+            .toolCalls([inv("file_write", #"{"path":"index.html","content":"part"}"#)]),
+            .finalResponse,
+        ])
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(maxIterations: 2),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 2))
+        #expect(surface.executedCalls.map(\.name) == ["file_write"])
+        #expect(surface.builtNotices[1].joined().contains("reached the model output limit"))
+        #expect(surface.builtNotices[1].joined().contains("mode: \"append\""))
+    }
+
+    @Test func streamingArgumentLimitFitsWorstCaseEscapedWriteChunk() throws {
+        let content = String(
+            repeating: #"\"#,
+            count: WorkspaceToolContract.maxWriteContentCharacters
+        )
+        let data = try JSONSerialization.data(withJSONObject: [
+            "path": "escaped.txt",
+            "content": content,
+        ])
+        #expect(data.count < AgentToolLoop.maxStreamingToolArgumentCharacters)
+    }
+
+    @Test func repeatedOversizedToolCallStopsWithoutAnotherDecodeLoop() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .oversizedToolCall(toolName: "file_write", argumentCharacters: 16_500),
+            .oversizedToolCall(toolName: "file_write", argumentCharacters: 16_600),
+            .finalResponse,
+        ])
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(
+            result
+                == AgentToolLoop.RunResult(exit: .oversizedToolCallExhausted, iterations: 1)
+        )
+        #expect(surface.emittedFinalTexts == [AgentToolLoop.oversizedToolCallFallback])
+        #expect(surface.steps.count == 1)
+    }
+
+    @Test func repeatedTruncatedToolCallStopsWithoutAnotherDecodeLoop() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .truncatedToolCall(toolName: "file_write", argumentCharacters: 9_100),
+            .truncatedToolCall(toolName: "file_write", argumentCharacters: 9_200),
+            .finalResponse,
+        ])
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(
+            result
+                == AgentToolLoop.RunResult(exit: .truncatedToolCallExhausted, iterations: 1)
+        )
+        #expect(surface.emittedFinalTexts == [AgentToolLoop.truncatedToolCallFallback])
+        #expect(surface.steps.count == 1)
+    }
+
     @Test func toolCallsExecuteThenFinish() async throws {
         let surface = ScriptedLoopSurface(steps: [
             .toolCalls([inv("file_search", #"{"query":"x"}"#), inv("shell_run", #"{"cmd":"ls"}"#)]),
@@ -830,6 +918,36 @@ struct AgentToolLoopTests {
         #expect(surface.batchOutcomes.count == 1)
         #expect(surface.batchOutcomes[0].map { $0.invocation.toolName } == ["file_search", "shell_run"])
         #expect(surface.batchOutcomes[0].allSatisfy { !$0.wasDeduped && !$0.wasError })
+    }
+
+    @Test func permissionLeaseIsSharedWithinRunAndClearedAtTerminal() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("shell_run", #"{"command":"true"}"#)]),
+            .toolCalls([inv("shell_run", #"{"command":"true"}"#)]),
+            .finalResponse,
+        ])
+        var observedApproval: [Bool] = []
+        var hooks = surface.makeHooks()
+        hooks.executeBatch = { calls in
+            let scope = ChatExecutionContext.toolPermissionRunScope
+            observedApproval.append(scope?.allows("shell_run") == true)
+            scope?.allow("shell_run")
+            return calls.map {
+                AgentLoopToolExecution(
+                    result: ToolEnvelope.success(tool: $0.invocation.toolName, text: "ok")
+                )
+            }
+        }
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: hooks
+        )
+
+        #expect(result.exit == .finalResponse)
+        #expect(observedApproval == [false, true])
+        #expect(ChatExecutionContext.toolPermissionRunScope == nil)
     }
 
     @Test func fifthRephrasedWebSearchReturnsTransitionWithoutExecutingProvider() async throws {
@@ -1126,6 +1244,45 @@ struct AgentToolLoopTests {
         #expect(surface.executedCalls.map(\.name) == ["bad_tool", "good_tool"])
         #expect(surface.batchOutcomes.count == 1)
         #expect(surface.batchOutcomes[0].map(\.wasError) == [true, false])
+    }
+
+    @Test func retryableExecutionFailureContinuesUnderChatPolicy() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("shell_run")]),
+            .finalResponse,
+        ])
+        surface.toolResults["shell_run"] = AgentLoopToolExecution(
+            result: ToolEnvelope.failure(
+                kind: .executionError,
+                message: "command failed; correct and retry",
+                tool: "shell_run",
+                retryable: true
+            )
+        )
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+        #expect(result.exit == .finalResponse)
+        #expect(surface.builtNotices.count == 2)
+    }
+
+    @Test func identicalRepeatedFailureIsTerminal() {
+        let result = ToolEnvelope.failure(
+            kind: .invalidArgs,
+            message: "missing path",
+            tool: "file_read",
+            retryable: true
+        )
+        let outcome = AgentLoopToolOutcome(
+            invocation: inv("file_read"),
+            callId: "repeat",
+            result: result,
+            wasDeduped: true,
+            wasError: true
+        )
+        #expect(AgentToolLoop.shouldStopAfterToolOutcome(outcome))
     }
 
     @Test func terminalComputerUseEnvelopeStopsChatWithoutParentFollowUp() async throws {
@@ -1773,6 +1930,43 @@ struct AgentToolLoopTests {
         #expect(result.exit == .finalResponse)
         #expect(batchCalls == [["shell_run", "shell_run"]])
         #expect(surface.dedupedCalls.isEmpty)
+    }
+
+    @Test func batchExecutorSuppressesExactDuplicateAppendSibling() async throws {
+        let args = #"{"path":"notes.txt","content":"SECOND\n","mode":"append"}"#
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("file_write", args), inv("file_write", args)]),
+            .finalResponse,
+        ])
+        var batchCalls: [[String]] = []
+        var hooks = surface.makeHooks()
+        hooks.executeBatch = { calls in
+            batchCalls.append(calls.map { $0.invocation.toolName })
+            return calls.map {
+                AgentLoopToolExecution(
+                    result: ToolEnvelope.success(
+                        tool: $0.invocation.toolName,
+                        result: [
+                            "action": "update",
+                            "applied": true,
+                            "path": "notes.txt",
+                            "mode": "append",
+                        ] as [String: Any]
+                    )
+                )
+            }
+        }
+
+        let result = try await AgentToolLoop.run(
+            policy: headlessPolicy(),
+            state: AgentTaskState(),
+            hooks: hooks
+        )
+
+        #expect(result.exit == .finalResponse)
+        #expect(batchCalls == [["file_write"]])
+        #expect(surface.dedupedCalls.map(\.name) == ["file_write"])
+        #expect(surface.batchOutcomes[0].map(\.wasDeduped) == [false, true])
     }
 
     @Test func batchExecutorShortReturnTreatsMissingSlotsAsNeverExecuted() async throws {

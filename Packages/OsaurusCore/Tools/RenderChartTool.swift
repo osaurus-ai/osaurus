@@ -98,6 +98,12 @@ struct RenderChartTool: OsaurusTool {
                     "Compatibility alias for one `series` column. Prefer `series`; accepted to recover local-model argument drift."
                 ),
             ]),
+            "yPath": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Compatibility alias for one `series` column in flat data. Prefer `series`; accepted when a model pairs it with xPath."
+                ),
+            ]),
             "xPath": .object([
                 "type": .string("string"),
                 "description": .string(
@@ -248,7 +254,7 @@ struct RenderChartTool: OsaurusTool {
         }
 
         let xColumn = args["xColumn"] as? String
-        let requestedSeries = args["series"] ?? args["yColumn"]
+        let requestedSeries = args["series"] ?? args["yColumn"] ?? args["yPath"]
 
         var headers: [String]
         var rows: [[String]]
@@ -776,7 +782,7 @@ struct RenderChartTool: OsaurusTool {
 
         let allowedKeys: Set<String> = [
             "data", "dataRef", "format", "dataFormat", "chartType", "xColumn", "series",
-            "yColumn", "xPath", "seriesPaths", "title", "tooltipSuffix",
+            "yColumn", "yPath", "xPath", "seriesPaths", "title", "tooltipSuffix",
         ]
         guard Set(nested.keys).isSubset(of: allowedKeys),
             nested.keys.contains(where: { $0 != "data" && $0 != "title" })

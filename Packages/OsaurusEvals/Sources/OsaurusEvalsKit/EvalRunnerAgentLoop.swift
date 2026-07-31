@@ -104,9 +104,7 @@ extension EvalRunner {
         // cheap check can't see are caught later at the registrar probe and
         // likewise mapped to SKIP.
         let sandboxFixture = testCase.fixtures.sandbox
-        let sandboxMode: AgentLoopSandboxMode? = sandboxFixture.map {
-            $0.hostFolder == true ? .combined : .pure
-        }
+        let sandboxMode: AgentLoopSandboxMode? = sandboxFixture.map { _ in .pure }
         if sandboxFixture != nil {
             let availability = await SandboxManager.shared.refreshAvailability()
             let config = SandboxConfigurationStore.load()
@@ -181,6 +179,13 @@ extension EvalRunner {
         // Fresh per-case workspace. Deleted in all exits below.
         let workspace = FileManager.default.temporaryDirectory
             .appendingPathComponent("osaurus-agentloop-eval-\(UUID().uuidString)", isDirectory: true)
+        // Safety fixtures sometimes need a path that is outside this trial's
+        // workspace but cannot collide with another repeat or an older run.
+        // Keep substitution eval-only and limited to the generated basename.
+        let resolvedQuery = testCase.query.replacingOccurrences(
+            of: "{{WORKSPACE_BASENAME}}",
+            with: workspace.lastPathComponent
+        )
         do {
             try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
             for file in testCase.fixtures.workspaceFiles ?? [] {
@@ -389,15 +394,15 @@ extension EvalRunner {
         let judgeModel = EvalJudgeModel.resolveAndWarnOnce(runModelId: modelId)
         let started = Date()
         let transcript = await AgentLoopEvaluator.run(
-            task: testCase.query,
+            task: resolvedQuery,
             workspace: workspace,
             agentId: evalAgentId,
             maxIterations: exp.maxIterations ?? 10,
             contextWindowOverride: exp.contextWindowOverride,
+            maxTokens: exp.maxTokens,
             enableThinking: exp.enableThinking,
             stopOnToolRejection: exp.stopOnToolRejection ?? false,
             sandbox: sandboxMode,
-            hostFolderWritesEnabled: sandboxFixture?.allowHostFolderWrites == true,
             cancelAfterToolCalls: exp.cancelAfterToolCalls
         )
 
@@ -439,7 +444,7 @@ extension EvalRunner {
                     id: testCase.id,
                     label: label,
                     domain: testCase.domain,
-                    query: testCase.query,
+                    query: resolvedQuery,
                     outcome: .errored,
                     notes: [runtimeConcurrencyNote, "agent loop error: \(err)"].compactMap { $0 },
                     modelId: modelId,
@@ -448,7 +453,7 @@ extension EvalRunner {
                     telemetry: telemetry(from: transcript),
                     context: transcript.contextAttribution
                 ),
-                query: testCase.query
+                query: resolvedQuery
             )
         }
 
@@ -579,6 +584,12 @@ extension EvalRunner {
             "summary: toolCalls=[\(transcript.toolCalls.map(\.name).joined(separator: ","))] "
                 + "iters=\(transcript.iterations) exit=\(transcript.exit)"
         )
+        let oversizedRecoveries = transcript.notices.filter {
+            $0.contains("streaming argument limit")
+        }.count
+        if oversizedRecoveries > 0 {
+            score.notes.append("oversized tool call recoveries: \(oversizedRecoveries)")
+        }
         score.notes.append(
             "final: \(transcript.finalText.replacingOccurrences(of: "\n", with: " "))"
         )
@@ -599,7 +610,7 @@ extension EvalRunner {
                 id: testCase.id,
                 label: label,
                 domain: testCase.domain,
-                query: testCase.query,
+                query: resolvedQuery,
                 outcome: score.passed ? .passed : .failed,
                 notes: score.notes,
                 modelId: modelId,
@@ -610,7 +621,7 @@ extension EvalRunner {
                 judge: judgeAudit,
                 context: transcript.contextAttribution
             ),
-            query: testCase.query
+            query: resolvedQuery
         )
     }
 
@@ -645,6 +656,22 @@ extension EvalRunner {
                 iterations: transcript.iterations,
                 exit: transcript.exit,
                 notices: transcript.notices,
+                stepDiagnostics: transcript.stepDiagnostics.map {
+                    EvalCaseTranscript.StepEvent(
+                        step: $0.step,
+                        stopReason: $0.stopReason,
+                        contentCharacterCount: $0.contentCharacterCount,
+                        reasoningCharacterCount: $0.reasoningCharacterCount,
+                        contentPreview: $0.contentPreview,
+                        reasoningPreview: $0.reasoningPreview,
+                        sawToolCallProgress: $0.sawToolCallProgress,
+                        pendingToolName: $0.pendingToolName,
+                        toolArgumentCharacters: $0.toolArgumentCharacters,
+                        completionTokens: $0.completionTokens,
+                        requestedEnableThinking: $0.requestedEnableThinking,
+                        thinkingState: $0.thinkingState
+                    )
+                },
                 error: transcript.error
             )
         )
@@ -665,6 +692,7 @@ extension EvalRunner {
             decodeTokensPerSecond: transcript.decodeTokensPerSecond,
             prefillTokensPerSecond: transcript.prefillTokensPerSecond,
             ttftMs: transcript.ttftMs,
+            firstActionMs: transcript.firstActionMs,
             completionTokens: transcript.completionTokens,
             promptTokensTotal: transcript.promptTokensTotal,
             peakContextTokens: transcript.peakContextTokens,
@@ -827,7 +855,7 @@ extension EvalRunner {
         _ kind: SandboxToolRegistrar.UnavailabilityReason.Kind
     ) -> Bool {
         switch kind {
-        case .containerUnavailable, .startupFailed:
+        case .containerUnavailable, .startupFailed, .vmnetOwnedByOtherProcess:
             return true
         case .provisioningFailed:
             return false
@@ -1251,6 +1279,12 @@ extension EvalRunner {
             let errs = calls.filter(\.wasError).count
             if errs > maxErrors {
                 failures.append("errors \(errs) > max \(maxErrors)")
+            }
+        }
+        if let minErrors = audit.minErrors {
+            let errs = calls.filter(\.wasError).count
+            if errs < minErrors {
+                failures.append("errors \(errs) < min \(minErrors)")
             }
         }
         // Substring checks are case-INSENSITIVE, matching the sibling

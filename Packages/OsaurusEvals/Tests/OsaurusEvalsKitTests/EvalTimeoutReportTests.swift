@@ -4,6 +4,24 @@ import Testing
 @testable import OsaurusEvalsKit
 
 struct EvalTimeoutReportTests {
+    @Test func pipeSeparatedFilterMatchesAnyNamedLaneCase() {
+        let filter = "single-file-app|workspace-escape-refused"
+
+        #expect(
+            EvalCaseFilter.matches(
+                caseID: "agent_loop.substantial-single-file-app",
+                filter: filter
+            )
+        )
+        #expect(
+            EvalCaseFilter.matches(
+                caseID: "agent_loop.workspace-escape-refused",
+                filter: filter
+            )
+        )
+        #expect(!EvalCaseFilter.matches(caseID: "agent_loop.unrelated", filter: filter))
+    }
+
     @Test func timeoutReportIncludesFilteredCasesAndDecodeFailures() throws {
         let matching = EvalCase(
             id: "capability_search.browser-prefix",

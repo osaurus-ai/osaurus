@@ -1335,7 +1335,7 @@ final class PluginHostContext: @unchecked Sendable {
         case "share_artifact":
             return await processShareArtifact(result: result, prep: prep)
 
-        case "capabilities_load":
+        case "capabilities_load", "capabilities":
             // Deferred-schema policy (KV stability): loaded tools are
             // callable IMMEDIATELY — the registry dispatches by name and
             // schema visibility is not an execution gate — but this run's

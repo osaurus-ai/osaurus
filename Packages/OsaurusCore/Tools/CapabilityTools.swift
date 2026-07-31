@@ -140,6 +140,82 @@ actor CapabilityLoadBuffer {
     }
 }
 
+// MARK: - capabilities
+
+/// Compact fallback gateway for capability needs that deterministic query
+/// preflight could not resolve. It replaces the model-visible discover/load
+/// pair with one stable schema while preserving the legacy tools as non-chat
+/// compatibility entry points.
+final class CapabilitiesTool: OsaurusTool, @unchecked Sendable {
+    let name = "capabilities"
+    let description =
+        "Find or load an optional capability. Pass `query` to search the enabled "
+        + "capability index. Pass exact returned `ids` to load them into this session."
+
+    let agentId: UUID?
+
+    init(agentId: UUID? = nil) {
+        self.agentId = agentId
+    }
+
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "query": .object([
+                "type": .string("string"),
+                "description": .string("What optional capability is needed"),
+            ]),
+            "ids": .object([
+                "type": .string("array"),
+                "items": .object(["type": .string("string")]),
+                "description": .string("Exact IDs returned by an earlier search"),
+            ]),
+        ]),
+    ])
+
+    func execute(argumentsJSON: String) async throws -> String {
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        if let ids = args["ids"] as? [String], !ids.isEmpty {
+            let data = try JSONSerialization.data(withJSONObject: ["ids": ids])
+            let result = try await CapabilitiesLoadTool().execute(
+                argumentsJSON: String(decoding: data, as: UTF8.self)
+            )
+            return relabel(result)
+        }
+        if let query = args["query"] as? String,
+            !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            let data = try JSONSerialization.data(withJSONObject: ["query": query])
+            let result = try await CapabilitiesDiscoverTool(agentId: agentId).execute(
+                argumentsJSON: String(decoding: data, as: UTF8.self)
+            )
+            return relabel(
+                result.replacingOccurrences(of: "`capabilities_load`", with: "`capabilities`")
+            )
+        }
+        return ToolEnvelope.failure(
+            kind: .invalidArgs,
+            message: "Provide either a non-empty `query` or non-empty `ids`.",
+            field: "query",
+            expected: "non-empty query string or ids array",
+            tool: name
+        )
+    }
+
+    private func relabel(_ result: String) -> String {
+        guard let data = result.data(using: .utf8),
+            var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return result }
+        object["tool"] = name
+        guard let encoded = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        else { return result }
+        return String(decoding: encoded, as: UTF8.self)
+    }
+}
+
 // MARK: - capabilities_discover
 
 final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {

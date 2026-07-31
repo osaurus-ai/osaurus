@@ -430,6 +430,10 @@ struct FolderToolsResilienceTests {
             let writePayload = try #require(EnvelopeAssertions.successPayload(writeResult))
             #expect(writePayload["kind"] as? String == "workspace_write_result")
             #expect(writePayload["operation_id"] as? String != nil)
+            let reference = try #require(writePayload["file_reference"] as? [String: Any])
+            #expect(reference["kind"] as? String == "workspace_file")
+            #expect(reference["path"] as? String == "nested/report.md")
+            #expect(reference["exportable"] as? Bool == false)
             #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("nested/report.md").path))
 
             let history = FileOperationHistoryTool(rootPath: root)
@@ -442,6 +446,29 @@ struct FolderToolsResilienceTests {
             #expect(entries.first?["type"] as? String == "create")
             #expect(entries.first?["path"] as? String == "nested/report.md")
         }
+    }
+
+    @Test func fileWrite_appendBuildsLargeFilesAcrossBoundedCalls() async throws {
+        let root = tmpRoot()
+        let path = root.appendingPathComponent("index.html")
+        let tool = FileWriteTool(rootPath: root)
+
+        let first = try await tool.execute(
+            argumentsJSON: #"{"path":"index.html","content":"<html>\n"}"#
+        )
+        let second = try await tool.execute(
+            argumentsJSON:
+                #"{"path":"index.html","content":"<body>done</body>\n</html>","mode":"append"}"#
+        )
+
+        #expect(ToolEnvelope.isSuccess(first))
+        #expect(ToolEnvelope.isSuccess(second))
+        let payload = try #require(EnvelopeAssertions.successPayload(second))
+        #expect(payload["mode"] as? String == "append")
+        #expect(
+            try String(contentsOf: path, encoding: .utf8)
+                == "<html>\n<body>done</body>\n</html>"
+        )
     }
 
     @Test func fileWrite_rejectsExistingNonUTF8TextTarget() async throws {
@@ -481,6 +508,41 @@ struct FolderToolsResilienceTests {
         }
     }
 
+    @Test @MainActor func fileWrite_schemaBoundsEachChunk() throws {
+        let tool = FileWriteTool(rootPath: tmpRoot())
+        guard case .some(.object(let schema)) = tool.parameters,
+            case .some(.object(let properties)) = schema["properties"],
+            case .some(.object(let content)) = properties["content"]
+        else {
+            Issue.record("file_write should expose an object content schema")
+            return
+        }
+        #expect(
+            content["maxLength"]
+                == .number(Double(WorkspaceToolContract.maxWriteContentCharacters))
+        )
+
+        let oversized = String(
+            repeating: "x",
+            count: WorkspaceToolContract.maxWriteContentCharacters + 1
+        )
+        let data = try JSONSerialization.data(withJSONObject: [
+            "path": "large.txt",
+            "content": oversized,
+        ])
+        let outcome = ToolRegistry.shared.preflightForTest(
+            argumentsJSON: String(decoding: data, as: UTF8.self),
+            schema: tool.parameters,
+            toolName: tool.name
+        )
+        guard case .rejected(let envelope) = outcome else {
+            Issue.record("preflight should reject a write chunk beyond the schema limit")
+            return
+        }
+        #expect(failureKind(envelope) == "invalid_args")
+        #expect(failureField(envelope) == "content")
+    }
+
     // MARK: - file_edit
 
     @Test func fileEdit_emptyOldStringIsRejected() async throws {
@@ -504,6 +566,9 @@ struct FolderToolsResilienceTests {
             argumentsJSON: #"{"path": "f.txt", "old_string": "world", "new_string": ""}"#
         )
         #expect(ToolEnvelope.isSuccess(result))
+        let payload = try #require(EnvelopeAssertions.successPayload(result))
+        let reference = try #require(payload["file_reference"] as? [String: Any])
+        #expect(reference["path"] as? String == "f.txt")
         let after = try String(contentsOf: path, encoding: .utf8)
         #expect(after == "hello ")
     }

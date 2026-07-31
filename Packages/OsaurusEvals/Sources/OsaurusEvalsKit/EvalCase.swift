@@ -1520,6 +1520,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     public struct AgentLoopExpectations: Sendable, Codable {
         /// Loop budget (model steps). nil → evaluator default (10).
         public let maxIterations: Int?
+        /// Per-model-step response ceiling for this case. nil preserves the
+        /// active agent/bundle runtime default. Comparison lanes can pin this
+        /// so different harnesses receive the same bounded output budget.
+        public let maxTokens: Int?
         /// Scoreable ceiling on model steps actually consumed. Unlike
         /// `maxIterations` (a safety budget), this fails needless post-success
         /// continuation and repeated-final loops.
@@ -1653,6 +1657,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
 
         public init(
             maxIterations: Int? = nil,
+            maxTokens: Int? = nil,
             maxModelSteps: Int? = nil,
             mustCallTools: [String]? = nil,
             mustCallAnyTools: [String]? = nil,
@@ -1686,6 +1691,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             spawnBatch: SpawnBatchAssertion? = nil
         ) {
             self.maxIterations = maxIterations
+            self.maxTokens = maxTokens
             self.maxModelSteps = maxModelSteps
             self.mustCallTools = mustCallTools
             self.mustCallAnyTools = mustCallAnyTools
@@ -1940,6 +1946,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             public let maxCalls: Int?
             public let minCalls: Int?
             public let maxErrors: Int?
+            public let minErrors: Int?
             public let argsMustContain: String?
             public let argsMustNotContain: String?
 
@@ -1948,6 +1955,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 maxCalls: Int? = nil,
                 minCalls: Int? = nil,
                 maxErrors: Int? = nil,
+                minErrors: Int? = nil,
                 argsMustContain: String? = nil,
                 argsMustNotContain: String? = nil
             ) {
@@ -1955,6 +1963,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 self.maxCalls = maxCalls
                 self.minCalls = minCalls
                 self.maxErrors = maxErrors
+                self.minErrors = minErrors
                 self.argsMustContain = argsMustContain
                 self.argsMustNotContain = argsMustNotContain
             }

@@ -46,6 +46,8 @@ public struct EvalCaseTelemetry: Sendable, Codable {
     public let prefillTokensPerSecond: Double?
     /// Time-to-first-token for the first model step, milliseconds.
     public let ttftMs: Double?
+    /// Wall-clock milliseconds until the model emits its first tool action.
+    public let firstActionMs: Double?
     /// Total generated tokens across all model steps.
     public let completionTokens: Int?
     /// Estimated INPUT (prompt + tool-schema) tokens summed across every
@@ -114,6 +116,7 @@ public struct EvalCaseTelemetry: Sendable, Codable {
         decodeTokensPerSecond: Double? = nil,
         prefillTokensPerSecond: Double? = nil,
         ttftMs: Double? = nil,
+        firstActionMs: Double? = nil,
         completionTokens: Int? = nil,
         promptTokensTotal: Int? = nil,
         peakContextTokens: Int? = nil,
@@ -133,6 +136,7 @@ public struct EvalCaseTelemetry: Sendable, Codable {
         self.decodeTokensPerSecond = decodeTokensPerSecond
         self.prefillTokensPerSecond = prefillTokensPerSecond
         self.ttftMs = ttftMs
+        self.firstActionMs = firstActionMs
         self.completionTokens = completionTokens
         self.promptTokensTotal = promptTokensTotal
         self.peakContextTokens = peakContextTokens
@@ -154,7 +158,7 @@ public struct EvalCaseTelemetry: Sendable, Codable {
     /// an all-null telemetry object on deterministic (no-model) rows.
     public var isEmpty: Bool {
         decodeTokensPerSecond == nil && prefillTokensPerSecond == nil
-            && ttftMs == nil && completionTokens == nil
+            && ttftMs == nil && firstActionMs == nil && completionTokens == nil
             && promptTokensTotal == nil && peakContextTokens == nil
             && totalModelTokens == nil && modelSteps == nil
             && peakPhysFootprintMb == nil && meanCpuPercent == nil
@@ -264,8 +268,99 @@ public struct ToolUsageStat: Sendable, Codable {
     }
 }
 
+/// Typed reason a row did not run. The message preserves provider/runtime
+/// detail while `kind` gives matrix tooling a stable grouping key.
+public struct EvalBlockerReason: Sendable, Codable, Equatable {
+    public enum Kind: String, Sendable, Codable {
+        case vmnetContention
+        case sandboxCooldown
+        case sandboxUnavailable
+        case missingDependency
+        case unsupportedHarness
+        case priorCaseTimeout
+        case other
+    }
+
+    public let kind: Kind
+    public let message: String
+
+    public init(kind: Kind, message: String) {
+        self.kind = kind
+        self.message = message
+    }
+
+    public static func infer(from notes: [String]) -> EvalBlockerReason? {
+        guard let message = notes.first else { return nil }
+        let lower = message.lowercased()
+        let kind: Kind
+        if lower.contains("vmnet") || lower.contains("address already in use")
+            || lower.contains("resource busy")
+        {
+            kind = .vmnetContention
+        } else if lower.contains("cooldown") || lower.contains("cool-down") {
+            kind = .sandboxCooldown
+        } else if lower.contains("sandbox unavailable") || lower.contains("sandbox") {
+            kind = .sandboxUnavailable
+        } else if lower.contains("missing plugin") || lower.contains("not installed") {
+            kind = .missingDependency
+        } else if lower.contains("supports host-folder") || lower.contains("unsupported") {
+            kind = .unsupportedHarness
+        } else if lower.contains("blocked: not run") && lower.contains("prior case") {
+            kind = .priorCaseTimeout
+        } else {
+            kind = .other
+        }
+        return EvalBlockerReason(kind: kind, message: message)
+    }
+}
+
 /// Single-case row in the eval report.
 public struct EvalCaseReport: Sendable, Codable {
+    public struct TrialSummary: Sendable, Codable {
+        public let outcome: EvalCaseOutcome
+        public let notes: [String]
+        public let latencyMs: Double?
+        public let toolUsage: [ToolUsageStat]?
+        public let telemetry: EvalCaseTelemetry?
+        public let context: ContextAttribution?
+        public let blocker: EvalBlockerReason?
+        public let contextWindow: Int?
+        public let maxOutputTokens: Int?
+
+        public init(
+            outcome: EvalCaseOutcome,
+            notes: [String],
+            latencyMs: Double?,
+            toolUsage: [ToolUsageStat]?,
+            telemetry: EvalCaseTelemetry?,
+            context: ContextAttribution?,
+            blocker: EvalBlockerReason? = nil,
+            contextWindow: Int? = nil,
+            maxOutputTokens: Int? = nil
+        ) {
+            self.outcome = outcome
+            self.notes = notes
+            self.latencyMs = latencyMs
+            self.toolUsage = toolUsage
+            self.telemetry = telemetry
+            self.context = context
+            self.blocker = blocker
+            self.contextWindow = contextWindow
+            self.maxOutputTokens = maxOutputTokens
+        }
+
+        init(row: EvalCaseReport) {
+            self.init(
+                outcome: row.outcome,
+                notes: row.notes,
+                latencyMs: row.latencyMs,
+                toolUsage: row.toolUsage,
+                telemetry: row.telemetry,
+                context: row.context,
+                blocker: row.blocker
+            )
+        }
+    }
     public let id: String
     public let label: String
     public let domain: String
@@ -310,6 +405,11 @@ public struct EvalCaseReport: Sendable, Codable {
     /// How many of `trials` passed. `0 < trialsPassed < trials` is the
     /// observed-flaky signal the diff/history tooling reads.
     public let trialsPassed: Int?
+    /// Raw compact evidence for every repeat execution. Matrix metrics read
+    /// these instead of a representative merged row.
+    public let trialSummaries: [TrialSummary]?
+    /// Typed skip/blocker reason for stable matrix grouping.
+    public let blocker: EvalBlockerReason?
     /// Structured audit of the LLM-judge call that graded this case's
     /// rubric (judge model, per-condition verdicts, raw reply). nil for
     /// rows with no rubric or domains that don't judge.
@@ -350,6 +450,8 @@ public struct EvalCaseReport: Sendable, Codable {
         telemetry: EvalCaseTelemetry? = nil,
         trials: Int? = nil,
         trialsPassed: Int? = nil,
+        trialSummaries: [TrialSummary]? = nil,
+        blocker: EvalBlockerReason? = nil,
         judge: EvalJudgeAudit? = nil,
         context: ContextAttribution? = nil
     ) {
@@ -367,6 +469,8 @@ public struct EvalCaseReport: Sendable, Codable {
         self.telemetry = (telemetry?.isEmpty ?? true) ? nil : telemetry
         self.trials = trials
         self.trialsPassed = trialsPassed
+        self.trialSummaries = trialSummaries
+        self.blocker = blocker
         self.judge = judge
         self.context = context
     }
@@ -391,7 +495,8 @@ public struct EvalCaseReport: Sendable, Codable {
             capabilitySearch: nil,
             notes: notes,
             modelId: modelId,
-            latencyMs: nil
+            latencyMs: nil,
+            blocker: outcome == .skipped ? EvalBlockerReason.infer(from: notes) : nil
         )
     }
 
@@ -407,10 +512,10 @@ public struct EvalCaseReport: Sendable, Codable {
     ///     non-passed trial errored (harness trouble, not model flake).
     ///   - `latencyMs`: mean across trials that measured one — the fair
     ///     per-case cost estimate.
-    ///   - `notes` / `telemetry` / snapshots: taken from a representative
-    ///     trial (first trial matching the merged outcome), prefixed with a
-    ///     `trials:` summary line plus a per-trial outcome map when trials
-    ///     disagreed, so flaky rows keep full forensics.
+    ///   - Compatibility `notes` / `telemetry` / snapshots: taken from a
+    ///     representative trial and prefixed with a trial summary. Every raw
+    ///     compact trial is also retained in `trialSummaries`; matrix metrics
+    ///     read those samples rather than the representative fields.
     /// `passThreshold` (case-declared, 0…1] — see `EvalCase.passThreshold`)
     /// replaces the default strict-majority rule: the merged row passes
     /// when `passed/scored ≥ passThreshold`. nil → strict majority.
@@ -478,6 +583,10 @@ public struct EvalCaseReport: Sendable, Codable {
             telemetry: representative.telemetry,
             trials: rows.count,
             trialsPassed: passedCount,
+            trialSummaries: rows.map { TrialSummary(row: $0) },
+            blocker: outcome == .skipped
+                ? representative.blocker ?? EvalBlockerReason.infer(from: representative.notes)
+                : nil,
             judge: representative.judge,
             context: representative.context
         )
@@ -685,6 +794,9 @@ public struct EvalReport: Sendable, Codable {
         var parts: [String] = []
         if let d = t.decodeTokensPerSecond { parts.append(String(format: "decode %.1f tok/s", d)) }
         if let ttft = t.ttftMs { parts.append(String(format: "TTFT %.0fms", ttft)) }
+        if let action = t.firstActionMs {
+            parts.append(String(format: "firstAction %.0fms", action))
+        }
         if let p = t.prefillTokensPerSecond { parts.append(String(format: "prefill %.0f tok/s", p)) }
         if let ram = t.peakPhysFootprintMb { parts.append(String(format: "peakRAM %.0fMB", ram)) }
         if let cpu = t.meanCpuPercent {
@@ -771,6 +883,19 @@ public struct EvalReport: Sendable, Codable {
                     ttfts.min() ?? 0,
                     ttfts.max() ?? 0,
                     ttfts.count
+                )
+            )
+        }
+        let firstActions = telemetered.compactMap(\.firstActionMs)
+        if !firstActions.isEmpty {
+            let mean = firstActions.reduce(0, +) / Double(firstActions.count)
+            lines.append(
+                String(
+                    format: "  first action ms mean=%.0f  min=%.0f  max=%.0f  (n=%d)",
+                    mean,
+                    firstActions.min() ?? 0,
+                    firstActions.max() ?? 0,
+                    firstActions.count
                 )
             )
         }

@@ -15,6 +15,39 @@ import Testing
 @Suite
 struct DiagnosticWarningsTests {
 
+    @Test func redundantWorkspaceCdSurfacesDirectExecutionHint() {
+        let warnings = diagnosticWarnings(
+            command: "cd /tmp/workspace && python3 -m unittest discover -q",
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            workingDirectory: "/tmp/workspace"
+        )
+        #expect(warnings.contains { $0.contains("already starts in the working directory") })
+    }
+
+    @Test func absoluteCdOutsideWorkspaceSurfacesWrongDirectoryHint() {
+        let warnings = diagnosticWarnings(
+            command: "cd /tmp && python3 -m unittest discover -q",
+            exitCode: 5,
+            stdout: "",
+            stderr: "NO TESTS RAN",
+            workingDirectory: "/tmp/workspace"
+        )
+        #expect(warnings.contains { $0.contains("leaves the selected workspace") })
+    }
+
+    @Test func workspaceSubdirectoryCdDoesNotWarn() {
+        let warnings = diagnosticWarnings(
+            command: "cd /tmp/workspace/Tests && swift test",
+            exitCode: 0,
+            stdout: "ok",
+            stderr: "",
+            workingDirectory: "/tmp/workspace"
+        )
+        #expect(!warnings.contains { $0.contains("working directory") })
+    }
+
     @Test func emptyOutputWithPipelineSurfacesWarning() {
         let warnings = diagnosticWarnings(
             command: "curl -s ...; echo done | grep needle | head -10",

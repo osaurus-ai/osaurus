@@ -17,12 +17,12 @@ struct ChatViewSandboxTests {
     }
 
     @Test
-    func buildToolSpecs_sandboxEnabledIncludesBuiltIns() async {
+    func buildToolSpecs_sandboxEnabledUsesPublicWorkspaceVocabulary() async {
         await withRegisteredSandboxBuiltins {
             let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .sandbox(hostRead: nil))
-
-            #expect(specs.contains(where: { $0.function.name == "capabilities_discover" }))
-            #expect(specs.contains(where: { $0.function.name == "capabilities_load" }))
+            let names = Set(specs.map(\.function.name))
+            #expect(ToolRegistry.coreWorkspaceToolNames.isSubset(of: names))
+            #expect(names.contains(where: { $0.hasPrefix("sandbox_") }) == false)
         }
     }
 
@@ -40,15 +40,11 @@ struct ChatViewSandboxTests {
         let sandboxPrompt = sandboxCtx.prompt
 
         #expect(standardPrompt.contains(SystemPromptTemplates.sandboxSectionHeading) == false)
-        #expect(sandboxPrompt.contains(SystemPromptTemplates.sandboxSectionHeading))
-        // Pinning a tool name keeps the sandbox section honest.
-        #expect(sandboxPrompt.contains("sandbox_exec"))
-        // Plain sandbox (no host folder) must NOT emit the combined
-        // read-only workspace section or the unified Files block.
+        #expect(sandboxPrompt.contains("## Working directory"))
+        #expect(sandboxPrompt.contains("Host folders are unavailable"))
         #expect(sandboxPrompt.contains("## Host workspace (read-only)") == false)
         #expect(sandboxPrompt.contains("## Files") == false)
-        // Plain sandbox keeps the sandbox read tools in its dispatch guide.
-        #expect(sandboxPrompt.contains("sandbox_read_file"))
+        #expect(sandboxPrompt.contains("sandbox_") == false)
     }
 
     /// The sandbox section must state the agent's ABSOLUTE home (so the
@@ -68,13 +64,13 @@ struct ChatViewSandboxTests {
         #expect(expectedHome.isEmpty == false)
         // The absolute home path is named verbatim in the env block...
         #expect(prompt.contains(expectedHome))
-        // ...with the "default there / omit cwd" guidance.
-        #expect(prompt.contains("default"))
-        #expect(prompt.contains("`cwd`"))
+        #expect(prompt.contains("Use paths relative to this directory."))
+        #expect(prompt.contains("Host folders are unavailable."))
+        #expect(prompt.contains("complete requested work now"))
     }
 
     @Test
-    func buildSystemPrompt_combinedMode_emitsSandboxAndReadOnlyWorkspaceSections() async {
+    func buildSystemPrompt_legacyCombinedInputDoesNotExposeHostWorkspace() async {
         let folder = FolderContext(
             rootPath: URL(fileURLWithPath: "/tmp/osaurus-combined-prompt-\(UUID().uuidString)"),
             projectType: .swift,
@@ -90,36 +86,15 @@ struct ChatViewSandboxTests {
         )
         let prompt = combinedCtx.prompt
 
-        // Sandbox framing is present (exec is sandbox-only)...
-        #expect(prompt.contains(SystemPromptTemplates.sandboxSectionHeading))
-        // ...alongside the read-only host workspace section and the
-        // unified Files block that routes one file family by path so the
-        // model never picks between `file_*` and `sandbox_*` read tools.
-        #expect(prompt.contains("## Host workspace (read-only)"))
-        #expect(prompt.contains("## Files"))
-        // The unified Files block must name the real exec tools, never the
-        // (hidden in this mode) host `shell_run`.
-        #expect(prompt.contains("sandbox_exec"))
-        #expect(prompt.contains("shell_run") == false)
-        // Combined mode hides the redundant sandbox read tools; the
-        // dispatch guide steers to the unified `file_*` family instead.
-        // `file_read` reads files AND lists directories, so there is no
-        // separate `file_tree`.
-        #expect(prompt.contains("file_read"))
-        #expect(prompt.contains("file_tree") == false)
-        // Read-only combined mode must say so explicitly (no offering to
-        // write) and must not advertise the hidden host writers.
-        #expect(prompt.contains("read-only"))
-        #expect(prompt.contains("file_write") == false)
-        #expect(prompt.contains("file_edit") == false)
-        #expect(prompt.contains("sandbox_write_file"))
-        // The byte bridge is taught even in read-only combined mode —
-        // staging a workspace file INTO the sandbox is semantically a read.
-        #expect(prompt.contains("file_copy"))
+        #expect(prompt.contains("## Working directory"))
+        #expect(prompt.contains("Host folders are unavailable"))
+        #expect(prompt.contains(folder.rootPath.path) == false)
+        #expect(prompt.contains("## Host workspace") == false)
+        #expect(prompt.contains("sandbox_") == false)
     }
 
     @Test
-    func buildSystemPrompt_writableCombinedMode_emitsPathRoutedWriteContract() async {
+    func buildSystemPrompt_legacyWritableCombinedInputStillIsVmOnly() async {
         let folder = FolderContext(
             rootPath: URL(fileURLWithPath: "/tmp/osaurus-writable-prompt-\(UUID().uuidString)"),
             projectType: .swift,
@@ -135,24 +110,10 @@ struct ChatViewSandboxTests {
         )
         let prompt = ctx.prompt
 
-        // Writable framing: workspace section drops the read-only marker.
-        #expect(prompt.contains("## Host workspace"))
-        #expect(prompt.contains("## Host workspace (read-only)") == false)
-        // The small-model contract: path decides filesystem, writers are
-        // the unified `file_write` / `file_edit`, exec stays sandbox-only,
-        // host writes are tracked/undoable.
-        #expect(prompt.contains("## Files"))
-        #expect(prompt.contains("file_write"))
-        #expect(prompt.contains("file_edit"))
-        #expect(prompt.contains("PATH decides"))
-        #expect(prompt.contains("tracked"))
-        // The hidden sandbox writer must not be advertised anywhere.
-        #expect(prompt.contains("sandbox_write_file") == false)
-        // Exec is still sandbox-only — no host shell.
-        #expect(prompt.contains("sandbox_exec"))
-        #expect(prompt.contains("shell_run") == false)
-        // The byte bridge for binaries is taught in the writable variant too.
-        #expect(prompt.contains("file_copy"))
+        #expect(prompt.contains("Host folders are unavailable"))
+        #expect(prompt.contains(folder.rootPath.path) == false)
+        #expect(prompt.contains("## Host workspace") == false)
+        #expect(prompt.contains("sandbox_") == false)
     }
 
     @Test
@@ -193,7 +154,7 @@ struct ChatViewSandboxTests {
             let sandboxToolTokens = sandboxBreakdown.context.first { $0.id == "tools" }?.tokens ?? 0
             let inactiveToolTokens = inactiveBreakdown.context.first { $0.id == "tools" }?.tokens ?? 0
             #expect(sandboxToolTokens > inactiveToolTokens)
-            #expect(sandboxToolTokens >= ToolRegistry.shared.estimatedTokens(for: "sandbox_exec"))
+            #expect(sandboxToolTokens > 0)
 
             ToolRegistry.shared.unregisterAllSandboxTools()
             manager.setActiveAgent(originalActiveAgentId)
@@ -206,6 +167,7 @@ struct ChatViewSandboxTests {
     func alwaysLoadedSpecs_includesCapabilityTools() {
         let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
 
+        #expect(specs.contains(where: { $0.function.name == "capabilities" }))
         #expect(specs.contains(where: { $0.function.name == "capabilities_discover" }))
         #expect(specs.contains(where: { $0.function.name == "capabilities_load" }))
     }
@@ -275,7 +237,9 @@ struct ChatViewSandboxTests {
             #expect(sandboxMode.usesSandboxTools)
 
             let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: sandboxMode)
-            #expect(specs.contains(where: { $0.function.name == "sandbox_exec" }))
+            let names = Set(specs.map(\.function.name))
+            #expect(names.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+            #expect(!names.contains("sandbox_exec"))
 
             ToolRegistry.shared.unregisterAllSandboxTools()
             SandboxManager.State.shared.status = originalStatus
@@ -389,7 +353,7 @@ struct ChatViewSandboxTests {
     /// toggling e.g. background processes never moved the number until the
     /// next send.
     @Test
-    func estimatedContextBreakdown_updatesWhenAutonomousConfigEditedAfterSend() async {
+    func estimatedContextBreakdown_updatesForBackgroundCapabilityEdit() async {
         await SandboxTestLock.runWithStoragePaths {
             let manager = AgentManager.shared
             let originalActiveAgentId = manager.activeAgentId
@@ -429,10 +393,11 @@ struct ChatViewSandboxTests {
             )
             manager.update(agent)
 
-            // The resync the running app drives on `.agentUpdated` must now
-            // drop the stale send context and re-price from the edited config.
+            // Background execution adds launch arguments and process control,
+            // so the next-send context estimate must reflect that opt-in
+            // capability instead of remaining pinned to the five-tool core.
             #expect(session.resyncBudgetEstimateForTests() == true)
-            #expect(session.estimatedContextBreakdown.total != beforeEdit)
+            #expect(session.estimatedContextBreakdown.total > beforeEdit)
 
             manager.setActiveAgent(originalActiveAgentId)
             _ = await manager.delete(id: agent.id)

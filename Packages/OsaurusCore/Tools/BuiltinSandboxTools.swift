@@ -45,11 +45,19 @@ enum BuiltinSandboxTools {
     static func register(agentId: String, agentName: String, config: AutonomousExecConfig?) {
         let registry = ToolRegistry.shared
         let home = OsaurusPaths.inContainerAgentHome(agentName)
+        // The public five-tool vocabulary is implemented by the native folder
+        // tool objects and routed at execution time. Register those objects
+        // even when no host folder has ever been selected.
+        FolderToolManager.shared.ensureFolderToolsRegistered()
 
-        // Capture the active agent identity so the combined-mode unified
-        // `file_*` tools can route `/workspace/...` reads to this sandbox
-        // without relying on `currentAgentId` being bound at the call site.
-        registry.setActiveSandboxAgentContext(agentName: agentName, home: home)
+        // Capture the active agent identity/config so the public `file_*` and
+        // `shell_run` tools can route to this VM without exposing backend names.
+        registry.setActiveSandboxAgentContext(
+            agentId: agentId,
+            agentName: agentName,
+            home: home,
+            config: config
+        )
 
         // Always available (read-only)
         registry.registerSandboxTool(
@@ -324,11 +332,24 @@ internal func hostWorkspaceSearchRedirectHint(resolvedPath: String, home: String
 /// for combined-mode `/workspace/...` requests routed from the host
 /// `file_*` tools. Bound on `ChatExecutionContext.sandboxReadBridge`.
 public struct SandboxReadBridge: Sendable {
+    public let agentId: String
     public let agentName: String
     public let home: String
-    public init(agentName: String, home: String) {
+    public let maxCommandsPerTurn: Int
+    public let backgroundEnabled: Bool
+
+    public init(
+        agentId: String = "",
+        agentName: String,
+        home: String,
+        maxCommandsPerTurn: Int = AutonomousExecConfig.default.maxCommandsPerTurn,
+        backgroundEnabled: Bool = false
+    ) {
+        self.agentId = agentId
         self.agentName = agentName
         self.home = home
+        self.maxCommandsPerTurn = maxCommandsPerTurn
+        self.backgroundEnabled = backgroundEnabled
     }
 }
 
@@ -342,7 +363,15 @@ public enum CombinedFileRoute: Sendable {
 
 /// Classify a `file_*` path argument for combined-mode routing.
 public func combinedFileRoute(path: String) -> CombinedFileRoute {
-    path.hasPrefix("/workspace") ? .sandbox : .host
+    // In VM mode there is no host root at all, so relative paths naturally
+    // resolve against the sandbox cwd. The old `/workspace` discriminator is
+    // retained only for compatibility callers that still publish both roots.
+    if ChatExecutionContext.sandboxReadBridge != nil,
+        ChatExecutionContext.currentFolderRoot == nil
+    {
+        return .sandbox
+    }
+    return path.hasPrefix("/workspace") ? CombinedFileRoute.sandbox : CombinedFileRoute.host
 }
 
 private func encodeBridgeArgs(_ dict: [String: Any]) -> String {
@@ -492,8 +521,23 @@ internal func sandboxBridgeWrite(
 ) async throws -> String {
     let raw = try await SandboxWriteFileTool(agentName: bridge.agentName, home: bridge.home)
         .execute(argumentsJSON: encodeBridgeArgs(args))
-    guard !ToolEnvelope.isError(raw) else { return raw }
+    guard !ToolEnvelope.isError(raw) else { return relabelToolEnvelope(raw, tool: tool) }
     return ToolEnvelope.success(tool: tool, result: ToolEnvelope.successPayload(raw))
+}
+
+/// Route the public `shell_run` contract to the VM executor.
+internal func sandboxBridgeExec(
+    _ bridge: SandboxReadBridge,
+    argumentsJSON: String
+) async throws -> String {
+    let raw = try await SandboxExecTool(
+        agentId: bridge.agentId,
+        agentName: bridge.agentName,
+        home: bridge.home,
+        maxCommandsPerTurn: bridge.maxCommandsPerTurn,
+        backgroundEnabled: bridge.backgroundEnabled
+    ).execute(argumentsJSON: argumentsJSON)
+    return relabelToolEnvelope(raw, tool: "shell_run")
 }
 
 /// Re-shape a sandbox read/search success envelope into the host-style
@@ -507,10 +551,21 @@ private func normalizedFileEnvelope(
     payloadKey: String,
     emptyText: String
 ) -> String {
-    guard !ToolEnvelope.isError(raw) else { return raw }
+    guard !ToolEnvelope.isError(raw) else { return relabelToolEnvelope(raw, tool: tool) }
     let value = (ToolEnvelope.successPayload(raw) as? [String: Any])?[payloadKey] as? String ?? ""
     let isEmpty = value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     return ToolEnvelope.success(tool: tool, text: isEmpty ? emptyText : value)
+}
+
+private func relabelToolEnvelope(_ raw: String, tool: String) -> String {
+    guard let data = raw.data(using: .utf8),
+        var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    else { return raw }
+    object["tool"] = tool
+    guard let encoded = try? JSONSerialization.data(withJSONObject: object),
+        let result = String(data: encoded, encoding: .utf8)
+    else { return raw }
+    return result
 }
 
 /// Sandbox-tool success envelope (thin wrapper around `ToolEnvelope.success`).
@@ -556,7 +611,8 @@ internal func diagnosticWarnings(
     command: String,
     exitCode: Int32,
     stdout: String,
-    stderr: String
+    stderr: String,
+    workingDirectory: String? = nil
 ) -> [String] {
     var warnings: [String] = []
     let suspiciousEmpty =
@@ -586,7 +642,53 @@ internal func diagnosticWarnings(
     if let hint = sandboxExecHostPathHint(command: command, exitCode: exitCode, stderr: stderr) {
         warnings.append(hint)
     }
+    if let workingDirectory,
+        let hint = shellWorkingDirectoryHint(
+            command: command,
+            workingDirectory: workingDirectory
+        )
+    {
+        warnings.append(hint)
+    }
     return warnings
+}
+
+/// Trusted-folder shell commands already start at the selected workspace.
+/// Catch the common model failure where it copies a truncated absolute path
+/// into a leading `cd`, then runs verification in the wrong directory.
+internal func shellWorkingDirectoryHint(
+    command: String,
+    workingDirectory: String
+) -> String? {
+    let pattern = #"^\s*cd\s+(?:\"([^\"]+)\"|'([^']+)'|([^\s;&|]+))\s*(?:&&|;)"#
+    guard let regex = try? NSRegularExpression(pattern: pattern),
+        let match = regex.firstMatch(
+            in: command,
+            range: NSRange(command.startIndex..., in: command)
+        )
+    else { return nil }
+
+    let target = (1...3).compactMap { index -> String? in
+        let range = match.range(at: index)
+        guard range.location != NSNotFound, let swiftRange = Range(range, in: command) else {
+            return nil
+        }
+        return String(command[swiftRange])
+    }.first
+    guard let target, target.hasPrefix("/") else { return nil }
+
+    let cwd = URL(fileURLWithPath: workingDirectory).standardizedFileURL.path
+    let destination = URL(fileURLWithPath: target).standardizedFileURL.path
+    if destination == cwd {
+        return
+            "`shell_run` already starts in the working directory `\(cwd)`. "
+            + "Omit the leading `cd` and run the command directly."
+    }
+    guard !destination.hasPrefix(cwd + "/") else { return nil }
+    return
+        "`shell_run` started in `\(cwd)`, but the command changed to `\(destination)`. "
+        + "That leaves the selected workspace and can make builds or tests inspect the wrong files. "
+        + "Omit the leading `cd` unless an out-of-workspace read is intentional."
 }
 
 /// Combined-mode backstop for the one read surface that can't be
@@ -1555,7 +1657,9 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_write_file"
     let description =
         "Write a file, or edit it in place — always pass `path` (that exact key) as the FIRST argument. "
-        + "Provide `content` to write/replace the whole file; "
+        + "Provide `content` to write/replace the whole file; use `mode: \"append\"` for additive changes. "
+        + "For a large file, write a bounded first "
+        + "chunk and use `mode: \"append\"` for later chunks; "
         + "provide `old_string` (+`new_string`) to replace one exact match. **Use this instead of "
         + "`echo`/`cat` heredoc / `sed` / `awk` in `sandbox_exec`.** Creates parent directories as "
         + "needed. For an edit, `old_string` must uniquely match one location — include surrounding "
@@ -1578,8 +1682,18 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
                 ]),
                 "content": .object([
                     "type": .string("string"),
+                    "maxLength": .number(
+                        Double(WorkspaceToolContract.maxWriteContentCharacters)
+                    ),
                     "description": .string(
-                        "Whole-file contents (string). Pass `\"\"` for an empty file. Omit when editing via `old_string`. Binary / NUL bytes are not safe — they ride a `printf` shell pipeline."
+                        "Whole-file contents (maximum 7000 characters per call; use append for more). Pass `\"\"` for an empty file. Omit when editing via `old_string`. Binary / NUL bytes are not safe — they ride a `printf` shell pipeline."
+                    ),
+                ]),
+                "mode": .object([
+                    "type": .string("string"),
+                    "enum": .array([.string("overwrite"), .string("append")]),
+                    "description": .string(
+                        "Whole-file write mode (default: overwrite). Use append for additive changes or later chunks."
                     ),
                 ]),
                 "old_string": .object([
@@ -1648,9 +1762,35 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             allowEmpty: true
         )
         guard case .value(let content) = contentReq else { return contentReq.failureEnvelope ?? "" }
+        var mode = "overwrite"
+        if args["mode"] != nil {
+            let modeReq = requireString(
+                args,
+                "mode",
+                expected: "`overwrite` or `append`",
+                tool: name
+            )
+            guard case .value(let requestedMode) = modeReq else {
+                return modeReq.failureEnvelope ?? ""
+            }
+            guard requestedMode == "overwrite" || requestedMode == "append" else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`mode` must be `overwrite` or `append`.",
+                    field: "mode",
+                    expected: "`overwrite` or `append`",
+                    tool: name
+                )
+            }
+            mode = requestedMode
+        }
 
         // Capture the pre-write content so the chat can render a diff card.
         let before = await readForDiff(resolved: resolved)
+        let afterForDiff: String? =
+            mode == "append"
+            ? before.map { $0.content + content }
+            : content
 
         let dir = (resolved as NSString).deletingLastPathComponent
         _ = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
@@ -1658,10 +1798,14 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             command: "mkdir -p '\(dir)'"
         )
 
+        // Append must not depend on the best-effort diff pre-read. A transient
+        // read failure used to turn `before` into an empty string and then
+        // overwrite the existing file with only the new chunk.
         let escaped = shellEscapeSingleQuoted(content)
+        let redirect = mode == "append" ? ">>" : ">"
         let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
             agentName,
-            command: "printf '%s' '\(escaped)' > '\(resolved)'"
+            command: "printf '%s' '\(escaped)' \(redirect) '\(resolved)'"
         )
         guard result.succeeded else {
             return sandboxExecutionFailure(
@@ -1676,8 +1820,11 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             result: writeResult(
                 resolved: resolved,
                 before: before,
-                after: content,
-                extra: ["size": content.count]
+                after: afterForDiff,
+                extra: [
+                    "size": afterForDiff?.utf8.count ?? content.utf8.count,
+                    "mode": mode,
+                ]
             )
         )
     }
@@ -1820,7 +1967,14 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         after: String?,
         extra: [String: Any]
     ) -> [String: Any] {
-        var dict: [String: Any] = ["path": resolved]
+        var dict: [String: Any] = [
+            "path": resolved,
+            "file_reference": [
+                "kind": "workspace_file",
+                "path": resolved,
+                "exportable": true,
+            ],
+        ]
         dict.merge(extra) { _, new in new }
         if let before, let after {
             let diff = WorkspaceWriteSafety.unifiedDiffText(
@@ -1845,7 +1999,7 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
 // the model picks "run a command" and toggles a flag, rather than
 // picking between two near-identical tool names.
 
-private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
+internal struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_exec"
     let agentId: String
     let agentName: String

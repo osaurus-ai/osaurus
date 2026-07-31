@@ -52,6 +52,7 @@ struct EvalRepeatAndResumeTests {
         #expect(merged.passRate == 2.0 / 3.0)
         #expect(merged.notes.contains { $0.contains("FLAKY") })
         #expect(merged.notes.contains { $0.contains("trial 2: failed") })
+        #expect(merged.trialSummaries?.map(\.outcome) == [.passed, .failed, .passed])
     }
 
     @Test func tieIsConservativeFail() {

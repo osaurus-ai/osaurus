@@ -204,7 +204,7 @@ struct AgentTaskStateTests {
         #expect(state.heldResult(name: "file_read", argsJSON: #"{"path":"b.txt"}"#) == nil)
     }
 
-    @Test func dedupe_writesAreNeverHeld() {
+    @Test func dedupe_overwriteWritesAreNeverHeld() {
         let state = AgentTaskState()
         state.record(
             name: "file_write",
@@ -213,6 +213,47 @@ struct AgentTaskStateTests {
         )
         // A repeated write must always run.
         #expect(state.heldResult(name: "file_write", argsJSON: #"{"path":"a.txt","content":"x"}"#) == nil)
+    }
+
+    @Test func dedupe_exactSuccessfulAppendBecomesTypedNoop() throws {
+        let state = AgentTaskState()
+        let args = #"{"path":"a.txt","content":"SECOND\n","mode":"append"}"#
+        let result = ToolEnvelope.success(
+            tool: "file_write",
+            result: [
+                "action": "update",
+                "applied": true,
+                "path": "a.txt",
+                "mode": "append",
+            ] as [String: Any]
+        )
+        state.record(name: "file_write", argsJSON: args, result: result)
+
+        let replay = try #require(state.heldResult(name: "file_write", argsJSON: args))
+        let payload = try #require(ToolEnvelope.successPayload(replay) as? [String: Any])
+        #expect(payload["action"] as? String == "noop")
+        #expect(payload["applied"] as? Bool == false)
+        #expect(payload["reason"] as? String == "exact_append_already_applied")
+    }
+
+    @Test func dedupe_appendReexecutesAfterInterveningMutationOrMessage() {
+        let state = AgentTaskState()
+        let append = #"{"path":"a.txt","content":"x","mode":"append"}"#
+        let success = ToolEnvelope.success(
+            tool: "file_write",
+            result: ["applied": true, "path": "a.txt"] as [String: Any]
+        )
+        state.record(name: "file_write", argsJSON: append, result: success)
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"a.txt","content":"reset","mode":"overwrite"}"#,
+            result: success
+        )
+        #expect(state.heldResult(name: "file_write", argsJSON: append) == nil)
+
+        state.record(name: "file_write", argsJSON: append, result: success)
+        state.beginMessage()
+        #expect(state.heldResult(name: "file_write", argsJSON: append) == nil)
     }
 
     /// The read -> edit -> read-to-verify pattern: the write to the path

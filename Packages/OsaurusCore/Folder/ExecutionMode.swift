@@ -9,24 +9,17 @@ import Foundation
 
 public enum ExecutionMode: Sendable {
     case hostFolder(FolderContext)
-    /// Sandbox execution, optionally combined with a host workspace.
-    /// When `hostRead` is non-nil the agent gets the host read tools
-    /// (`file_read` / `file_search`, scoped to the folder root;
-    /// `file_read` also lists directories) in addition to the sandbox
-    /// exec tools — but exec still runs in the VM, which has no mount of
-    /// the host workspace. When `hostWrite` is additionally true (the
-    /// agent's `allowHostFolderWrites` opt-in), `file_write` /
-    /// `file_edit` join the schema and may mutate the folder — writes
-    /// are change-tracked and undoable; exec and shell stay
-    /// sandbox-only.
-    case sandbox(hostRead: FolderContext?, hostWrite: Bool)
+    /// VM execution with no host-folder bridge.
+    case sandbox
     case none
 
-    /// Read-only combined mode shorthand — the overwhelmingly common
-    /// construction (plain sandbox, previews, evaluator). The write grant
-    /// is only threaded through `ToolRegistry.resolveExecutionMode`.
-    public static func sandbox(hostRead: FolderContext?) -> ExecutionMode {
-        .sandbox(hostRead: hostRead, hostWrite: false)
+    /// Compatibility constructor for callers migrating from combined mode.
+    /// Associated host values are deliberately ignored.
+    public static func sandbox(
+        hostRead _: FolderContext?,
+        hostWrite _: Bool = false
+    ) -> ExecutionMode {
+        .sandbox
     }
 
     /// The host folder available for *read-write* host-native exec.
@@ -41,8 +34,7 @@ public enum ExecutionMode: Sendable {
     /// The host folder available in combined sandbox mode.
     /// Non-nil only for `.sandbox(hostRead: ctx, ...)` with a non-nil ctx.
     public var hostReadContext: FolderContext? {
-        guard case .sandbox(let hostRead, _) = self else { return nil }
-        return hostRead
+        nil
     }
 
     /// True when the mode exposes the host read tools
@@ -54,8 +46,7 @@ public enum ExecutionMode: Sendable {
     /// True when combined mode may also WRITE the host folder
     /// (`file_write` / `file_edit` only — never shell / git).
     public var allowsHostWriteTools: Bool {
-        guard case .sandbox(let hostRead, let hostWrite) = self else { return false }
-        return hostRead != nil && hostWrite
+        false
     }
 
     public var usesHostFolderTools: Bool {

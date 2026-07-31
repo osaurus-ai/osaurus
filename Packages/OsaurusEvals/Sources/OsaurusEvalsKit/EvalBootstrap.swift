@@ -741,7 +741,6 @@ public extension EvalSuite {
     }
 
     private func selectedCases(filter: String?) -> [EvalCase] {
-        guard let filter else { return cases }
-        return cases.filter { $0.id.contains(filter) }
+        cases.filter { EvalCaseFilter.matches(caseID: $0.id, filter: filter) }
     }
 }

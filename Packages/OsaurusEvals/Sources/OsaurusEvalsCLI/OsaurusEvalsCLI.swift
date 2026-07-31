@@ -809,7 +809,8 @@ struct OsaurusEvalsCLI {
         let resume: Bool
         /// Persist the FULL transcript (system prompt, every tool call +
         /// result preview, final text, loop notices) for each failed or
-        /// errored LLM case into `<report>.transcripts/<caseId>.json`.
+        /// errored LLM case into `<report>.transcripts/<caseId>.json`;
+        /// repeated failures use `<caseId>.trial-N.json`.
         /// Off by default: transcripts carry the whole composed prompt.
         let transcripts: Bool
         let verbose: Bool
@@ -1002,7 +1003,7 @@ struct OsaurusEvalsCLI {
             osaurus-evals — run behaviour evals against a chosen model
 
             USAGE:
-                osaurus-evals run --suite <dir> [--suite <dir> ...] [--model <id>] [--filter <substr>]
+                osaurus-evals run --suite <dir> [--suite <dir> ...] [--model <id>] [--filter <substr[|substr...]>]
                                               [--out <path> | --out-dir <dir> [--out-prefix <p>]]
                                               [--repeat <n>] [--resume] [--transcripts]
                                               [--threshold <float>] [--report-forensics]
@@ -1012,6 +1013,7 @@ struct OsaurusEvalsCLI {
                                               [--model <id>] [--filter <substr>] [--repeat <n>]
                                               [--min-savings <tok>] [--max-candidates <n>]
                                               [--finalist-repeat <n>] [--skip-finalists]
+                                              [--finalist-profile <profile.json> ...]
                                               [--context-budget <tok>]
                                               [--resume] [--census-only]
                 osaurus-evals capture-screen [--app <name>] [--out <path>]
@@ -1041,7 +1043,9 @@ struct OsaurusEvalsCLI {
                                         openai/gpt-4o-mini  — provider/name pair
                                         qwen3-4b            — bare local id
                                       Default: auto.
-                --filter <substr>     Only run cases whose id contains <substr>.
+                --filter <terms>      Only run cases whose id contains a term.
+                                      Separate alternatives with `|` to keep a
+                                      selected lane in one warm-model process.
                 --out <path>          Also write a JSON report to <path>. Single
                                       --suite only; use --out-dir for multi-suite.
                 --out-dir <dir>       Write one report per suite to
@@ -1063,7 +1067,8 @@ struct OsaurusEvalsCLI {
                                       prompt, tool calls + result previews,
                                       final text, loop notices) for every
                                       failed/errored LLM case to
-                                      <report>.transcripts/<caseId>.json.
+                                      <report>.transcripts/<caseId>.json
+                                      (or <caseId>.trial-N.json for repeats).
                                       Needs --out/--out-dir. Off by default —
                                       transcripts carry the whole composed
                                       prompt, which shared reports shouldn't.

@@ -493,6 +493,12 @@ enum FolderToolHelpers {
 
 // MARK: - Core Tools
 
+enum WorkspaceToolContract {
+    /// Keeps one generated tool call small enough to parse and execute
+    /// promptly on local models. Large files are assembled with append calls.
+    static let maxWriteContentCharacters = 20_000
+}
+
 // MARK: File Tree Tool
 
 struct FileTreeTool: OsaurusTool {
@@ -1597,9 +1603,11 @@ struct FileReadTool: OsaurusTool {
 struct FileWriteTool: OsaurusTool, PermissionedTool {
     let name = "file_write"
     let description =
-        "Create or overwrite a UTF-8 text file — always pass `path` (that exact key) as the FIRST argument, before `content`. "
+        "Create, overwrite, or append to a UTF-8 text file — always pass `path` (that exact key) as the FIRST argument, before `content`. "
         + "Parent directories are created automatically. You MUST provide the file contents in the "
-        + "`content` parameter. Pass `dry_run: true` to preview the diff and risk warnings without "
+        + "`content` parameter. Use `mode: \"append\"` for any additive change so existing content remains intact. "
+        + "For a large file, keep calls bounded: write the first chunk normally, "
+        + "then pass `mode: \"append\"` for later chunks. Pass `dry_run: true` to preview the diff and risk warnings without "
         + "writing. Not for structured `.xlsx` / `.pdf` / `.pptx` outputs — write text formats such "
         + "as CSV/TSV/Markdown instead. "
         + "Example: {\"path\": \"notes/summary.md\", \"content\": \"# Summary\\n...\"}"
@@ -1613,8 +1621,16 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
             ]),
             "content": .object([
                 "type": .string("string"),
+                "maxLength": .number(Double(WorkspaceToolContract.maxWriteContentCharacters)),
                 "description": .string(
-                    "Content to write to the file"
+                    "Content to write (maximum 7000 characters per call; use append for more)"
+                ),
+            ]),
+            "mode": .object([
+                "type": .string("string"),
+                "enum": .array([.string("overwrite"), .string("append")]),
+                "description": .string(
+                    "Write mode (default: overwrite). Use append for additive changes or later chunks."
                 ),
             ]),
             "dry_run": .object([
@@ -1662,6 +1678,28 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         guard case .value(let content) = contentReq else {
             return contentReq.failureEnvelope ?? ""
         }
+        var mode = "overwrite"
+        if args["mode"] != nil {
+            let modeReq = requireString(
+                args,
+                "mode",
+                expected: "`overwrite` or `append`",
+                tool: name
+            )
+            guard case .value(let requestedMode) = modeReq else {
+                return modeReq.failureEnvelope ?? ""
+            }
+            guard requestedMode == "overwrite" || requestedMode == "append" else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`mode` must be `overwrite` or `append`.",
+                    field: "mode",
+                    expected: "`overwrite` or `append`",
+                    tool: name
+                )
+            }
+            mode = requestedMode
+        }
         let dryRun = coerceBool(args["dry_run"]) ?? false
 
         // Writable combined mode: an absolute `/workspace/...` path is the
@@ -1681,10 +1719,12 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
                     tool: name
                 )
             }
+            var bridgeArgs = ["path": relativePath, "content": content]
+            if mode == "append" { bridgeArgs["mode"] = mode }
             return try await sandboxBridgeWrite(
                 bridge,
                 tool: name,
-                args: ["path": relativePath, "content": content]
+                args: bridgeArgs
             )
         }
 
@@ -1718,13 +1758,15 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         case .failureEnvelope(let envelope):
             return envelope
         }
+        let proposedContent =
+            mode == "append" ? (previousContent ?? "") + content : content
 
         let parentDir = fileURL.deletingLastPathComponent()
         let createsParentDirectories = !FileManager.default.fileExists(atPath: parentDir.path)
         var preview = WorkspaceWriteSafety.preview(
             path: relativePath,
             previousContent: previousContent,
-            proposedContent: content,
+            proposedContent: proposedContent,
             operation: name,
             dryRun: dryRun,
             createsParentDirectories: createsParentDirectories,
@@ -1746,7 +1788,7 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         )
 
         // Write content
-        try content.write(to: fileURL, atomically: true, encoding: .utf8)
+        try proposedContent.write(to: fileURL, atomically: true, encoding: .utf8)
 
         if let sessionId = ChatExecutionContext.currentSessionId {
             let operation = FileOperation(
@@ -1760,6 +1802,12 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
             await FileOperationLog.shared.log(operation)
             preview.payload["operation_id"] = operation.id.uuidString
         }
+        preview.payload["file_reference"] = [
+            "kind": "workspace_file",
+            "path": relativePath,
+            "exportable": false,
+        ]
+        preview.payload["mode"] = mode
         return ToolEnvelope.success(
             tool: name,
             result: preview.payload,
@@ -1987,6 +2035,11 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             await FileOperationLog.shared.log(operation)
             preview.payload["operation_id"] = operation.id.uuidString
         }
+        preview.payload["file_reference"] = [
+            "kind": "workspace_file",
+            "path": relativePath,
+            "exportable": false,
+        ]
 
         return ToolEnvelope.success(
             tool: name,
@@ -3058,6 +3111,13 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
                         + "terminates from the chat card if needed)."
                 ),
             ]),
+            "background": .object([
+                "type": .string("boolean"),
+                "description": .string(
+                    "VM only. Run a long-lived server or watcher as a tracked background job. "
+                        + "Requires Background Processes to be enabled; rejected in Trusted Folder mode."
+                ),
+            ]),
         ]),
         "required": .array([.string("command")]),
     ])
@@ -3080,6 +3140,22 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        if FolderToolHelpers.resolveRoot(fixed: fixedRootPath) == nil,
+            let bridge = ChatExecutionContext.sandboxReadBridge
+        {
+            return try await sandboxBridgeExec(bridge, argumentsJSON: argumentsJSON)
+        }
+
+        if coerceBool(args["background"]) == true {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "`background` is available only in VM Sandbox mode.",
+                field: "background",
+                expected: "omit in Trusted Folder mode",
+                tool: name
+            )
+        }
 
         guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRootPath) else {
             return FolderToolHelpers.noActiveFolderEnvelope(tool: name)
@@ -3256,6 +3332,7 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
             "stdout": truncateOutput(trimmedStdout),
             "stderr": truncateOutput(trimmedStderr),
             "exit_code": Int(exitCode),
+            "working_directory": rootPath.standardizedFileURL.path,
         ]
         if sink.terminationReason == .user {
             payload["killed_by"] = "user"
@@ -3267,7 +3344,8 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
             command: command,
             exitCode: exitCode,
             stdout: trimmedStdout,
-            stderr: trimmedStderr
+            stderr: trimmedStderr,
+            workingDirectory: rootPath.standardizedFileURL.path
         )
         if payload["killed_by"] as? String == "idle_timeout", let idleTimeout {
             warnings.append(

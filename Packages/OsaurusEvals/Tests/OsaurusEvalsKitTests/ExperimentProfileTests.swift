@@ -4,7 +4,7 @@ import Testing
 @testable import OsaurusEvalsKit
 
 /// Locks the experiment-profile contract for the optimization harness:
-/// decode + validation refusals (protected sections/tools, unknown ids,
+/// decode + validation refusals (identity/workspace protections, unknown ids,
 /// bad names), composition-identity hashing, the resolved feature
 /// vector, and the RunEnvironment/matrix provenance that keeps profiled
 /// runs from silently reading as production results.
@@ -19,7 +19,7 @@ struct ExperimentProfileTests {
               "name": "drop-code-style",
               "description": "price the codeStyle section",
               "dropSections": ["codeStyle"],
-              "deferTools": ["file_search"]
+              "deferTools": ["render_chart"]
             }
             """
         let profile = try JSONDecoder().decode(
@@ -27,20 +27,21 @@ struct ExperimentProfileTests {
         )
         #expect(profile.validationErrors().isEmpty)
         #expect(profile.experiment.dropSectionIds == ["codeStyle"])
-        #expect(profile.experiment.deferToolNames == ["file_search"])
+        #expect(profile.experiment.deferToolNames == ["render_chart"])
         #expect(!profile.isBaseline)
     }
 
     @Test func refusesProtectedSectionsAndTools() {
         let profile = ExperimentProfile(
             name: "bad",
-            dropSections: ["grounding", "platform"],
-            deferTools: ["capabilities_load"]
+            dropSections: ["platform", "persona"],
+            deferTools: ["file_search", "shell_run"]
         )
         let errors = profile.validationErrors()
-        #expect(errors.contains { $0.contains("protected section") && $0.contains("grounding") })
         #expect(errors.contains { $0.contains("protected section") && $0.contains("platform") })
-        #expect(errors.contains { $0.contains("protected tool") && $0.contains("capabilities_load") })
+        #expect(errors.contains { $0.contains("protected section") && $0.contains("persona") })
+        #expect(errors.contains { $0.contains("protected tool") && $0.contains("file_search") })
+        #expect(errors.contains { $0.contains("protected tool") && $0.contains("shell_run") })
     }
 
     @Test func refusesUnknownSectionIdsAndBadNames() {
@@ -62,7 +63,7 @@ struct ExperimentProfileTests {
     @Test func loadThrowsOnInvalidProfileFile() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("profile-\(UUID().uuidString).json")
-        try Data(#"{"name":"bad","dropSections":["grounding"]}"#.utf8).write(to: url)
+        try Data(#"{"name":"bad","dropSections":["platform"]}"#.utf8).write(to: url)
         defer { try? FileManager.default.removeItem(at: url) }
         #expect(throws: (any Error).self) {
             _ = try ExperimentProfile.load(from: url)
@@ -85,14 +86,14 @@ struct ExperimentProfileTests {
             name: "combo",
             forceCompactPrompt: true,
             dropSections: ["riskAware", "codeStyle"],
-            deferTools: ["file_search"]
+            deferTools: ["render_chart"]
         )
         #expect(
             profile.resolvedFeatureVector == [
                 "compactPrompt=forced-on",
                 "dropSection=codeStyle",
                 "dropSection=riskAware",
-                "deferTool=file_search",
+                "deferTool=render_chart",
             ]
         )
     }

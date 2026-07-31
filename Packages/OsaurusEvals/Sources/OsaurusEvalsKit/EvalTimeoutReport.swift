@@ -86,8 +86,7 @@ public enum EvalTimeoutReport {
     }
 
     private static func shouldInclude(_ testCase: EvalCase, filter: String?) -> Bool {
-        guard let filter else { return true }
-        return testCase.id.contains(filter)
+        EvalCaseFilter.matches(caseID: testCase.id, filter: filter)
     }
 
     private static func isTruthyCI(_ raw: String?) -> Bool {

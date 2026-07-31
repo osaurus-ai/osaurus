@@ -143,13 +143,11 @@ remove without losing quality":
    a model run.
 3. **Combine** — survivors merge into combination candidates
    (`combo-sections`, `combo-tools`, `combo-all`) plus the named
-   architecture candidates: `arch-hot-set` (immutable hot tool set,
-   everything else defers to discovery), `arch-lean-guidance` (always-on
-   guidance prose dropped), `arch-manifest-replacement` (prompt manifest
-   replaced by the exact paginated `capabilities_discover
-   {"list": "enabled"}` mode), and `arch-compact-loaded-results`
-   (compacted `capabilities_load` results — a cumulative-token axis, so it
-   is exempt from the surface-savings floor).
+   architecture candidates such as `arch-hot-set`, `arch-lean-guidance`,
+   `arch-five-tool-only`, `arch-no-lifecycle`, `arch-no-gateway`, and
+   `arch-single-gateway`. Zero-surface candidates are no longer scheduled
+   automatically; legacy discovery/load profiles remain available for
+   explicit compatibility runs.
    Architecture and combo candidates always earn a model run;
    `--max-candidates` caps how many single-axis candidates join them
    (largest surface savers first).

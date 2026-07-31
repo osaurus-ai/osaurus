@@ -215,6 +215,15 @@ public final class AgentTaskState {
         let envelope: String
     }
 
+    /// A successful exact append held only for the current user message.
+    /// Replaying it is a typed no-op, preventing an accidental second
+    /// non-idempotent append while preserving ordinary writes and any append
+    /// after an intervening mutation.
+    private struct HeldAppend {
+        let canonicalPath: String
+        let payload: [String: Any]
+    }
+
     /// The class of the most recently recorded result.
     public private(set) var lastResultClass: ToolResultClass?
     /// The most recent directory listing (survives across messages in
@@ -231,6 +240,7 @@ public final class AgentTaskState {
     private var freshReads: [CallSignature: FreshRead] = [:]
     /// Deterministic folder-tool errors held for replay, keyed by signature.
     private var heldErrors: [CallSignature: HeldError] = [:]
+    private var heldAppends: [CallSignature: HeldAppend] = [:]
     /// How many times each held error has been replayed (drives escalation).
     private var heldErrorReplays: [CallSignature: Int] = [:]
     /// Number of retryable failures executed for a selected read-like tool.
@@ -273,6 +283,7 @@ public final class AgentTaskState {
         lastToolName = nil
         freshReads.removeAll(keepingCapacity: true)
         heldErrors.removeAll(keepingCapacity: true)
+        heldAppends.removeAll(keepingCapacity: true)
         heldErrorReplays.removeAll(keepingCapacity: true)
         transientFailureExecutions.removeAll(keepingCapacity: true)
         lastReplayNotice = nil
@@ -286,12 +297,14 @@ public final class AgentTaskState {
 
     // MARK: Dedupe
 
-    /// True when `name` participates in dedupe replay (read-like tools).
+    /// True when `name` can participate in dedupe replay. `file_write` is
+    /// included so exact append siblings in one parallel batch are deferred
+    /// until the first result is known; non-append writes still re-execute.
     /// The loop driver uses this to recognise duplicate read siblings
     /// inside a single parallel batch — non-read duplicates always
     /// re-execute by design (they may legitimately differ).
     public static func isReplayEligible(name: String) -> Bool {
-        readLikeTools.contains(name)
+        readLikeTools.contains(name) || name == "file_write" || name == "sandbox_write_file"
     }
 
     /// If this call re-issues something the loop already holds the exact
@@ -312,6 +325,22 @@ public final class AgentTaskState {
         let sig = signature(name: name, argsJSON: argsJSON)
         if Self.readLikeTools.contains(name), let fresh = freshReads[sig] {
             return fresh.envelope
+        }
+        if let held = heldAppends[sig] {
+            var payload = held.payload
+            payload["action"] = "noop"
+            payload["applied"] = false
+            payload["deduped"] = true
+            payload["reason"] = "exact_append_already_applied"
+            payload.removeValue(forKey: "operation_id")
+            payload.removeValue(forKey: "diff")
+            return ToolEnvelope.success(
+                tool: name,
+                result: payload,
+                warnings: [
+                    "An identical append already succeeded in this task with no intervening mutation; the duplicate side effect was suppressed."
+                ]
+            )
         }
         if Self.deterministicErrorTools.contains(name)
             || Self.deterministicAsIsFailureTools.contains(name),
@@ -377,6 +406,7 @@ public final class AgentTaskState {
         if Self.execLikeTools.contains(name) {
             freshReads.removeAll(keepingCapacity: true)
             heldErrors.removeAll(keepingCapacity: true)
+            heldAppends.removeAll(keepingCapacity: true)
             heldErrorReplays.removeAll(keepingCapacity: true)
             transientFailureExecutions.removeAll(keepingCapacity: true)
         }
@@ -399,6 +429,18 @@ public final class AgentTaskState {
             heldErrors = heldErrors.filter { entry in
                 if Self.searchLikeTools.contains(entry.key.name) { return false }
                 return entry.value.canonicalPath != targetCanonical
+            }
+            heldAppends = heldAppends.filter {
+                $0.value.canonicalPath != targetCanonical
+            }
+            if Self.isAppendWrite(name: name, argsJSON: argsJSON),
+                ToolEnvelope.isSuccess(result),
+                let payload = ToolEnvelope.successPayload(result) as? [String: Any]
+            {
+                heldAppends[sig] = HeldAppend(
+                    canonicalPath: targetCanonical,
+                    payload: payload
+                )
             }
         }
 
@@ -779,6 +821,14 @@ public final class AgentTaskState {
         if let p = dict["path"] as? String, !p.isEmpty { return p }
         if let p = dict["file_path"] as? String, !p.isEmpty { return p }
         return nil
+    }
+
+    private static func isAppendWrite(name: String, argsJSON: String) -> Bool {
+        guard name == "file_write" || name == "sandbox_write_file",
+            let data = argsJSON.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return (dict["mode"] as? String)?.lowercased() == "append"
     }
 
     private func parseListing(_ envelope: String) -> ListingSnapshot? {

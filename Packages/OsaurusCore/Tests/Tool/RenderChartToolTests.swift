@@ -120,6 +120,40 @@ struct RenderChartToolTests {
         #expect(marker.contains("\"name\":\"sales\""))
     }
 
+    @Test func flatDataAcceptsPairedXPathYPathAliases() async throws {
+        let argumentsJSON = #"""
+            {
+              "chartType": "column",
+              "data": "month,revenue\nJan,1200\nFeb,2400\nMar,1800",
+              "dataFormat": "csv",
+              "xColumn": "month",
+              "xPath": "month",
+              "yColumn": "revenue",
+              "yPath": "revenue"
+            }
+            """#
+        let tool = RenderChartTool()
+        let normalizedJSON: String
+        switch await ToolRegistry.shared.preflightForTest(
+            argumentsJSON: argumentsJSON,
+            schema: tool.parameters,
+            toolName: tool.name
+        ) {
+        case .ready(let normalized):
+            normalizedJSON = normalized
+        case .rejected(let envelope):
+            Issue.record("preflight rejected paired xPath/yPath aliases: \(envelope)")
+            return
+        }
+
+        let result = try await tool.execute(argumentsJSON: normalizedJSON)
+        #expect(ToolEnvelope.isSuccess(result))
+        let payload = try #require(ToolEnvelope.successPayload(result) as? [String: Any])
+        let marker = try #require(payload["text"] as? String)
+        #expect(marker.contains("\"categories\":[\"Jan\",\"Feb\",\"Mar\"]"))
+        #expect(marker.contains("\"name\":\"revenue\""))
+    }
+
     @Test func omittedSeriesAndHeaderlessRowsPreserveFirstPoint() async throws {
         let argumentsJSON = #"""
             {

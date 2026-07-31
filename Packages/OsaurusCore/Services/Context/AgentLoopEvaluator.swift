@@ -163,6 +163,59 @@ public struct AgentLoopTranscript: Sendable, Codable {
         }
     }
 
+    /// Bounded, per-model-step forensic state. This intentionally records
+    /// channel sizes and short previews rather than an unbounded raw stream,
+    /// while retaining enough evidence to distinguish visible inline output,
+    /// reasoning exhaustion, and an unfinished tool envelope.
+    public struct StepDiagnostic: Sendable, Codable, Equatable {
+        public let step: Int
+        public let stopReason: String?
+        public let contentCharacterCount: Int
+        public let reasoningCharacterCount: Int
+        public let contentPreview: String?
+        public let reasoningPreview: String?
+        public let sawToolCallProgress: Bool
+        public let pendingToolName: String?
+        public let toolArgumentCharacters: Int
+        /// Runtime-reported generated tokens for this step when available.
+        public let completionTokens: Int?
+        /// Explicit request value. nil means dispatch policy/bundle defaults
+        /// resolved the effective rail downstream.
+        public let requestedEnableThinking: Bool?
+        /// Honest request-resolution state without inventing a downstream
+        /// bundle default when the evaluator did not explicitly override it.
+        public let thinkingState: String?
+
+        public init(
+            step: Int,
+            stopReason: String?,
+            contentCharacterCount: Int,
+            reasoningCharacterCount: Int,
+            contentPreview: String?,
+            reasoningPreview: String?,
+            sawToolCallProgress: Bool,
+            pendingToolName: String?,
+            toolArgumentCharacters: Int,
+            completionTokens: Int? = nil,
+            requestedEnableThinking: Bool?
+        ) {
+            self.step = step
+            self.stopReason = stopReason
+            self.contentCharacterCount = contentCharacterCount
+            self.reasoningCharacterCount = reasoningCharacterCount
+            self.contentPreview = contentPreview
+            self.reasoningPreview = reasoningPreview
+            self.sawToolCallProgress = sawToolCallProgress
+            self.pendingToolName = pendingToolName
+            self.toolArgumentCharacters = toolArgumentCharacters
+            self.completionTokens = completionTokens
+            self.requestedEnableThinking = requestedEnableThinking
+            self.thinkingState = requestedEnableThinking.map {
+                $0 ? "explicitEnabled" : "explicitDisabled"
+            } ?? "runtimeDefault"
+        }
+    }
+
     /// Parse the stable aggregate fields and ordered child rows from a
     /// production `spawn_batch` envelope. Failed all-child aggregates retain
     /// their structured result payload so evals can inspect settled rows and
@@ -291,6 +344,9 @@ public struct AgentLoopTranscript: Sendable, Codable {
     /// Lets cases assert a nudge actually FIRED, not just that the model
     /// behaved.
     public let notices: [String]
+    /// One bounded diagnostic per model step, including failed/truncated
+    /// generations that never committed a tool invocation.
+    public let stepDiagnostics: [StepDiagnostic]
     /// True when the sticky watermark recorded at least one summarize/drop
     /// decision — i.e. history compaction actually occurred during the run
     /// (the compaction-stress assertion).
@@ -314,6 +370,9 @@ public struct AgentLoopTranscript: Sendable, Codable {
     /// wall clock from request dispatch to the first streamed delta.
     /// `nil` for non-streaming runs.
     public let ttftMs: Double?
+    /// Wall-clock milliseconds from loop dispatch until the model's first
+    /// tool action. nil for text-only runs.
+    public let firstActionMs: Double?
     /// Total generated tokens across all model steps (sum of per-step
     /// stats-hint counts). Pairs with `loopDurationMs` for a run-level
     /// throughput sanity check.
@@ -347,11 +406,13 @@ public struct AgentLoopTranscript: Sendable, Codable {
         toolSchemaNames: [String],
         loopDurationMs: Double = 0,
         notices: [String] = [],
+        stepDiagnostics: [StepDiagnostic] = [],
         compacted: Bool = false,
         error: String?,
         decodeTokensPerSecond: Double? = nil,
         prefillTokensPerSecond: Double? = nil,
         ttftMs: Double? = nil,
+        firstActionMs: Double? = nil,
         completionTokens: Int? = nil,
         promptTokensTotal: Int? = nil,
         peakContextTokens: Int? = nil,
@@ -366,11 +427,13 @@ public struct AgentLoopTranscript: Sendable, Codable {
         self.toolSchemaNames = toolSchemaNames
         self.loopDurationMs = loopDurationMs
         self.notices = notices
+        self.stepDiagnostics = stepDiagnostics
         self.compacted = compacted
         self.error = error
         self.decodeTokensPerSecond = decodeTokensPerSecond
         self.prefillTokensPerSecond = prefillTokensPerSecond
         self.ttftMs = ttftMs
+        self.firstActionMs = firstActionMs
         self.completionTokens = completionTokens
         self.promptTokensTotal = promptTokensTotal
         self.peakContextTokens = peakContextTokens
@@ -382,18 +445,11 @@ public struct AgentLoopTranscript: Sendable, Codable {
 // MARK: - Sandbox mode
 
 /// How an `agent_loop` eval composes when the case runs against the
-/// live Linux-VM sandbox. `nil` (the default) keeps the host-folder
-/// path; the runner picks the mode from `fixtures.sandbox.hostFolder`.
+/// live Linux-VM sandbox. `nil` (the default) keeps the host-folder path.
 public enum AgentLoopSandboxMode: Sendable, Equatable {
-    /// Pure sandbox: every file/exec tool is a `sandbox_*` tool; no
-    /// host folder tools are registered (`.sandbox(hostRead: nil)`).
+    /// Pure sandbox: the five public workspace tools route to the VM; no
+    /// host folder is registered or bridged.
     case pure
-    /// Combined mode: the eval workspace becomes the host context —
-    /// `file_read` / `file_search` stay host-side while execution happens
-    /// in the VM (`.sandbox(hostRead: ctx)`). Read-only by default; the
-    /// evaluator's `hostFolderWritesEnabled` flag composes the writable
-    /// shape (`hostWrite: true`) instead.
-    case combined
 }
 
 // MARK: - Evaluator
@@ -423,8 +479,8 @@ public enum AgentLoopEvaluator {
     ///     tool-call assembly, and most local-model parser bugs live.
     ///   - enableThinking: explicit chat-toggle choice copied to every model
     ///     step. nil preserves the production unspecified-agent policy.
-    ///   - maxTokens: per-step response cap; falls back to the user's
-    ///     chat configuration, then 2048.
+    ///   - maxTokens: explicit per-step response cap. nil follows the same
+    ///     per-agent/bundle runtime defaults as production Chat.
     ///   - sandbox: non-nil switches the run into live-sandbox mode —
     ///     the container is booted (kept alive across cases; boot is
     ///     expensive, per-agent provisioning is cheap), the agent's
@@ -452,7 +508,6 @@ public enum AgentLoopEvaluator {
         enableThinking: Bool? = nil,
         stopOnToolRejection: Bool = false,
         sandbox: AgentLoopSandboxMode? = nil,
-        hostFolderWritesEnabled: Bool = false,
         cancelAfterToolCalls: Int? = nil
     ) async -> AgentLoopTranscript {
         // The Default agent's schema is hard-restricted to the 8-tool
@@ -483,7 +538,7 @@ public enum AgentLoopEvaluator {
         // the eval workspace from the TaskLocal folder root bound around
         // every dispatch below, so a concurrent user folder chat is never
         // redirected at the eval temp directory (and vice versa).
-        let wantsHostFolder = (sandbox == nil || sandbox == .combined)
+        let wantsHostFolder = sandbox == nil
         var folderContext: FolderContext?
         if wantsHostFolder {
             folderContext = await FolderContextService.shared.buildContext(from: workspace)
@@ -531,13 +586,6 @@ public enum AgentLoopEvaluator {
         case nil:
             // `wantsHostFolder` guarantees folderContext is non-nil here.
             executionMode = .hostFolder(folderContext!)
-        case .combined:
-            // `hostFolderWritesEnabled` is the eval-side mirror of the
-            // agent's `allowHostFolderWrites` opt-in: default (false) keeps
-            // the read-only combined shape; true composes the writable
-            // combined shape (unified `file_write`/`file_edit`,
-            // `sandbox_write_file` hidden).
-            executionMode = .sandbox(hostRead: folderContext, hostWrite: hostFolderWritesEnabled)
         case .pure:
             executionMode = .sandbox(hostRead: nil)
         }
@@ -569,10 +617,13 @@ public enum AgentLoopEvaluator {
         } else {
             contextWindow = await AgentLoopBudget.resolveContextWindow(modelId: resolvedModel)
         }
+        // Production Chat sends the effective per-agent override and otherwise
+        // leaves max_tokens nil so the active bundle/runtime config remains the
+        // source of truth. Evals must not inject a hidden 2K cap: a substantial
+        // file_write call can be truncated mid-JSON and falsely look like a
+        // harness failure that users with the same agent never see.
         let resolvedMaxTokens =
-            maxTokens
-            ?? ChatConfigurationStore.load().maxTokens
-            ?? 2_048
+            maxTokens ?? AgentManager.shared.effectiveMaxTokens(for: resolvedAgentId)
         let budgetManager = AgentLoopBudget.makeBudgetManager(
             contextWindow: contextWindow,
             systemPromptChars: systemPrompt.count,
@@ -589,6 +640,7 @@ public enum AgentLoopEvaluator {
         let state = AgentTaskState()
         var transcriptCalls: [AgentLoopTranscript.ToolInvocation] = []
         var noticesSeen: [String] = []
+        var stepDiagnostics: [AgentLoopTranscript.StepDiagnostic] = []
         var finalText = ""
         // Per-run generation telemetry, accumulated across model steps
         // from the streaming `StreamingStatsHint`. Token-weighted so a
@@ -601,6 +653,8 @@ public enum AgentLoopEvaluator {
         var completionTokensTotal = 0
         var firstStepTtftMs: Double?
         var firstStepPrefillTps: Double?
+        let loopStarted = Date()
+        var firstActionMs: Double?
         var sawAnyModelStep = false
         // Deterministic context-cost accounting, accumulated per model step
         // from the exact composed prompt + frozen tool schema. Unlike the
@@ -640,6 +694,7 @@ public enum AgentLoopEvaluator {
                 toolSchemaNames: composed.tools.map { $0.function.name },
                 loopDurationMs: loopMs,
                 notices: noticesSeen,
+                stepDiagnostics: stepDiagnostics,
                 compacted: watermark.hasCompacted,
                 error: error,
                 decodeTokensPerSecond: decodeTpsTokenWeight > 0
@@ -647,6 +702,7 @@ public enum AgentLoopEvaluator {
                     : nil,
                 prefillTokensPerSecond: firstStepPrefillTps,
                 ttftMs: firstStepTtftMs,
+                firstActionMs: firstActionMs,
                 completionTokens: sawAnyModelStep ? completionTokensTotal : nil,
                 promptTokensTotal: modelStepCount > 0 ? promptTokensTotal : nil,
                 peakContextTokens: modelStepCount > 0 ? peakContextTokens : nil,
@@ -692,7 +748,41 @@ public enum AgentLoopEvaluator {
             )
             request.samplingParametersAreImplicit = true
             request.enable_thinking = enableThinking
+            request.isAgentRequest = includeTools && !toolSpecs.isEmpty
             return request
+        }
+
+        func diagnosticPreview(_ value: String) -> String? {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            return String(trimmed.prefix(2_000))
+        }
+
+        func recordStepDiagnostic(
+            step: Int,
+            stopReason: String?,
+            content: String,
+            reasoning: String,
+            sawToolCallProgress: Bool,
+            pendingToolName: String?,
+            toolArgumentCharacters: Int,
+            completionTokens: Int? = nil
+        ) {
+            stepDiagnostics.append(
+                .init(
+                    step: step,
+                    stopReason: stopReason,
+                    contentCharacterCount: content.count,
+                    reasoningCharacterCount: reasoning.count,
+                    contentPreview: diagnosticPreview(content),
+                    reasoningPreview: diagnosticPreview(reasoning),
+                    sawToolCallProgress: sawToolCallProgress,
+                    pendingToolName: pendingToolName,
+                    toolArgumentCharacters: toolArgumentCharacters,
+                    completionTokens: completionTokens,
+                    requestedEnableThinking: enableThinking
+                )
+            )
         }
 
         /// Append the assistant turn carrying this step's tool calls.
@@ -775,7 +865,7 @@ public enum AgentLoopEvaluator {
             // result (`CapabilitiesLoadTool.loadedSchemaBlock`) — but the request
             // schema stays FROZEN for the whole run (no mid-run `<tools>`
             // rewrite), so the paged-KV prefix stays byte-stable.
-            if inv.toolName == "capabilities_load" {
+            if inv.toolName == "capabilities_load" || inv.toolName == "capabilities" {
                 _ = await CapabilityLoadBuffer.shared.drain()
             }
             history.append(
@@ -866,6 +956,12 @@ public enum AgentLoopEvaluator {
                     // assistant turns can echo `reasoning_content` back to
                     // providers that require it in thinking mode (DeepSeek).
                     var reasoning = ""
+                    var terminalStopReason: String?
+                    var terminalUnclosedReasoning = false
+                    var streamedToolName: String?
+                    var streamedToolArgumentCharacters = 0
+                    var sawToolCallProgress = false
+                    var stepCompletionTokens: Int?
                     let stepStarted = Date()
                     let isFirstStep = !sawAnyModelStep
                     sawAnyModelStep = true
@@ -880,11 +976,67 @@ public enum AgentLoopEvaluator {
                             if isFirstStep, firstStepTtftMs == nil {
                                 firstStepTtftMs = Date().timeIntervalSince(stepStarted) * 1000
                             }
+                            if let toolName = StreamingToolHint.decode(delta) {
+                                sawToolCallProgress = true
+                                streamedToolName = toolName.isEmpty ? nil : toolName
+                                // Local envelope-first parsing replays canonical
+                                // arguments after the name commits.
+                                streamedToolArgumentCharacters = 0
+                                continue
+                            }
+                            if let fragment = StreamingToolHint.decodeArgs(delta) {
+                                sawToolCallProgress = true
+                                streamedToolArgumentCharacters += fragment.utf8.count
+                                if streamedToolArgumentCharacters
+                                    > AgentToolLoop.maxStreamingToolArgumentCharacters
+                                {
+                                    recordStepDiagnostic(
+                                        step: modelStepCount,
+                                        stopReason: "oversized_tool_call",
+                                        content: content,
+                                        reasoning: reasoning,
+                                        sawToolCallProgress: true,
+                                        pendingToolName: streamedToolName,
+                                        toolArgumentCharacters: streamedToolArgumentCharacters
+                                    )
+                                    finalText = ""
+                                    return .oversizedToolCall(
+                                        toolName: streamedToolName,
+                                        argumentCharacters: streamedToolArgumentCharacters
+                                    )
+                                }
+                                continue
+                            }
+                            if let fragment = StreamingToolCallProgressHint.decode(delta) {
+                                sawToolCallProgress = true
+                                streamedToolArgumentCharacters += fragment.utf8.count
+                                if streamedToolArgumentCharacters
+                                    > AgentToolLoop.maxStreamingToolArgumentCharacters
+                                {
+                                    recordStepDiagnostic(
+                                        step: modelStepCount,
+                                        stopReason: "oversized_tool_call",
+                                        content: content,
+                                        reasoning: reasoning,
+                                        sawToolCallProgress: true,
+                                        pendingToolName: streamedToolName,
+                                        toolArgumentCharacters: streamedToolArgumentCharacters
+                                    )
+                                    finalText = ""
+                                    return .oversizedToolCall(
+                                        toolName: streamedToolName,
+                                        argumentCharacters: streamedToolArgumentCharacters
+                                    )
+                                }
+                                continue
+                            }
                             if let fragment = StreamingReasoningHint.decode(delta) {
                                 reasoning += fragment
                                 continue
                             }
                             if let stats = StreamingStatsHint.decode(delta) {
+                                terminalStopReason = stats.stopReason
+                                terminalUnclosedReasoning = stats.unclosedReasoning
                                 // Authoritative end-of-step runtime stats:
                                 // token-weight the decode tps, sum tokens,
                                 // and keep the first step's prefill speed.
@@ -893,6 +1045,7 @@ public enum AgentLoopEvaluator {
                                     decodeTpsTokenWeight += stats.tokenCount
                                 }
                                 completionTokensTotal += max(0, stats.tokenCount)
+                                stepCompletionTokens = max(0, stats.tokenCount)
                                 // Prefill speed: keep the FIRST measured reading
                                 // (the cold prompt-processing pass). Not gated to
                                 // the first model step — an early step that ends
@@ -911,14 +1064,47 @@ public enum AgentLoopEvaluator {
                             if StreamingToolHint.isSentinel(delta) { continue }
                             content += delta
                         }
-                        if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            // Empty turn (0-token / EOS-first, no tool call) —
-                            // let the driver nudge-and-retry, then fall back.
-                            return .emptyResponse
-                        }
                         finalText = content
-                        return .finalResponse
+                        recordStepDiagnostic(
+                            step: modelStepCount,
+                            stopReason: terminalStopReason,
+                            content: content,
+                            reasoning: reasoning,
+                            sawToolCallProgress: sawToolCallProgress,
+                            pendingToolName: streamedToolName,
+                            toolArgumentCharacters: streamedToolArgumentCharacters,
+                            completionTokens: stepCompletionTokens
+                        )
+                        if terminalStopReason == "length",
+                            sawToolCallProgress,
+                            streamedToolArgumentCharacters > 0
+                        {
+                            return .truncatedToolCall(
+                                toolName: streamedToolName,
+                                argumentCharacters: streamedToolArgumentCharacters
+                            )
+                        }
+                        return AgentLoopModelStep.classifyTerminal(
+                            contentIsBlank: content.trimmingCharacters(in: .whitespacesAndNewlines)
+                                .isEmpty,
+                            thinkingIsBlank: reasoning.trimmingCharacters(
+                                in: .whitespacesAndNewlines
+                            ).isEmpty,
+                            stopReason: terminalStopReason,
+                            unclosedReasoning: terminalUnclosedReasoning,
+                            requiresVisibleFinalResponse: true
+                        )
                     } catch let invs as ServiceToolInvocations {
+                        recordStepDiagnostic(
+                            step: modelStepCount,
+                            stopReason: "tool_calls",
+                            content: content,
+                            reasoning: reasoning,
+                            sawToolCallProgress: true,
+                            pendingToolName: streamedToolName,
+                            toolArgumentCharacters: streamedToolArgumentCharacters,
+                            completionTokens: stepCompletionTokens
+                        )
                         // Interim prose preceding tool calls is NOT the
                         // final answer (never let it go stale into the
                         // transcript's finalText) — but it DOES stay in
@@ -934,6 +1120,16 @@ public enum AgentLoopEvaluator {
                             )
                         )
                     } catch let inv as ServiceToolInvocation {
+                        recordStepDiagnostic(
+                            step: modelStepCount,
+                            stopReason: "tool_call",
+                            content: content,
+                            reasoning: reasoning,
+                            sawToolCallProgress: true,
+                            pendingToolName: inv.toolName,
+                            toolArgumentCharacters: inv.jsonArguments.utf8.count,
+                            completionTokens: stepCompletionTokens
+                        )
                         finalText = ""
                         return .toolCalls(
                             appendAssistantToolCalls([inv], content: content, reasoning: reasoning)
@@ -945,16 +1141,50 @@ public enum AgentLoopEvaluator {
                     request: makeRequest(effective, stream: false)
                 )
                 guard let choice = response.choices.first else {
+                    recordStepDiagnostic(
+                        step: modelStepCount,
+                        stopReason: nil,
+                        content: "",
+                        reasoning: "",
+                        sawToolCallProgress: false,
+                        pendingToolName: nil,
+                        toolArgumentCharacters: 0,
+                        completionTokens: response.usage.completion_tokens
+                    )
                     return .finalResponse
                 }
                 guard let calls = choice.message.tool_calls, !calls.isEmpty else {
                     let text = choice.message.content ?? ""
-                    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        return .emptyResponse
-                    }
+                    let reasoning = choice.message.reasoning_content ?? ""
                     finalText = text
-                    return .finalResponse
+                    recordStepDiagnostic(
+                        step: modelStepCount,
+                        stopReason: choice.finish_reason,
+                        content: text,
+                        reasoning: reasoning,
+                        sawToolCallProgress: false,
+                        pendingToolName: nil,
+                        toolArgumentCharacters: 0,
+                        completionTokens: response.usage.completion_tokens
+                    )
+                    return AgentLoopModelStep.classifyTerminal(
+                        contentIsBlank: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        thinkingIsBlank: reasoning
+                            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        stopReason: choice.finish_reason,
+                        requiresVisibleFinalResponse: true
+                    )
                 }
+                recordStepDiagnostic(
+                    step: modelStepCount,
+                    stopReason: choice.finish_reason,
+                    content: choice.message.content ?? "",
+                    reasoning: choice.message.reasoning_content ?? "",
+                    sawToolCallProgress: true,
+                    pendingToolName: calls.first?.function.name,
+                    toolArgumentCharacters: calls.reduce(0) { $0 + $1.function.arguments.utf8.count },
+                    completionTokens: response.usage.completion_tokens
+                )
                 // Tool calls present: any prose on this turn is interim
                 // narration, not the final answer. `reasoning_content` is
                 // preserved for providers that require it echoed (DeepSeek).
@@ -979,6 +1209,9 @@ public enum AgentLoopEvaluator {
                 )
             },
             onDedupedResult: { inv, callId, held in
+                if firstActionMs == nil {
+                    firstActionMs = Date().timeIntervalSince(loopStarted) * 1000
+                }
                 history.append(
                     ChatMessage(role: "tool", content: held, tool_calls: nil, tool_call_id: callId)
                 )
@@ -993,10 +1226,16 @@ public enum AgentLoopEvaluator {
                 )
             },
             executeTool: { inv, callId in
+                if firstActionMs == nil {
+                    firstActionMs = Date().timeIntervalSince(loopStarted) * 1000
+                }
                 let result = await dispatchOne(inv)
                 return await postProcess(inv, callId: callId, result: result)
             },
             executeBatch: { calls in
+                if firstActionMs == nil, !calls.isEmpty {
+                    firstActionMs = Date().timeIntervalSince(loopStarted) * 1000
+                }
                 // Parallel batch executor (the production HTTP/chat shape).
                 // Batches carrying a loop-ending intercept fall back to
                 // serial model-order execution, stopping at the first
@@ -1054,13 +1293,20 @@ public enum AgentLoopEvaluator {
                 return todo.totalCount - todo.doneCount
             },
             emitFallbackText: { text in
-                // Empty-turn recovery exhausted: surface a visible answer so a
-                // run never resolves to silent empty text.
-                finalText = text
+                // Preserve real partial visible output for length exhaustion;
+                // the fallback is presentation, not a replacement for the
+                // model evidence persisted in failed-run transcripts.
+                if text == AgentToolLoop.lengthExhaustedFallback {
+                    finalText = AgentLoopModelStep.contentWithLengthFallback(
+                        finalText,
+                        fallback: text
+                    )
+                } else {
+                    finalText = text
+                }
             }
         )
 
-        let loopStarted = Date()
         do {
             let runResult = try await ChatExecutionContext.$currentSessionSource.withValue(
                 sessionSource
@@ -1179,6 +1425,8 @@ public enum AgentLoopEvaluator {
         case .overBudget: return "overBudget"
         case .emptyResponseExhausted: return "emptyResponseExhausted"
         case .lengthExhausted: return "lengthExhausted"
+        case .oversizedToolCallExhausted: return "oversizedToolCallExhausted"
+        case .truncatedToolCallExhausted: return "truncatedToolCallExhausted"
         case .incompleteReasoningExhausted: return "incompleteReasoningExhausted"
         }
     }

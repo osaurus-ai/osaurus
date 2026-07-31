@@ -212,6 +212,25 @@ public struct SchemaValidator {
         // `maxLength`. Pattern compilation failures are tolerated — a
         // bad regex in the schema shouldn't break the tool call.
         if let s = value as? String {
+            let length = s.unicodeScalars.count
+            if case .number(let min)? = schemaObject["minLength"],
+                length < Int(min)
+            {
+                let label = key.map { " '\($0)'" } ?? ""
+                return .fail(
+                    "Property\(label) must contain at least \(Int(min)) characters (got \(length)).",
+                    field: key
+                )
+            }
+            if case .number(let max)? = schemaObject["maxLength"],
+                length > Int(max)
+            {
+                let label = key.map { " '\($0)'" } ?? ""
+                return .fail(
+                    "Property\(label) must contain at most \(Int(max)) characters (got \(length)).",
+                    field: key
+                )
+            }
             if case .string(let pat)? = schemaObject["pattern"] {
                 if let regex = try? NSRegularExpression(pattern: pat),
                     regex.firstMatch(
