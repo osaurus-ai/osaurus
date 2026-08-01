@@ -243,7 +243,7 @@ struct SystemPromptComposerToolResolutionTests {
             let names = Set(tools.map { $0.function.name })
             #expect(!names.contains("capabilities_discover"))
             #expect(!names.contains("capabilities_load"))
-            #expect(!names.contains("todo"))
+            #expect(names.isSuperset(of: SystemPromptComposer.agentLoopToolNames))
             #expect(names.contains("render_chart"))
         }
     }
@@ -934,10 +934,10 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
-    // MARK: - Lifecycle tool retirement
+    // MARK: - Lifecycle tool contract
 
     @Test
-    func lifecycleToolsAreAbsentFromDefaultCustomAgentContract() async {
+    func autoModeKeepsCompleteLifecycleContract() async {
         let modes: [ExecutionMode] = [.none]
         for mode in modes {
             await withSandboxAgent(autonomous: false) { agentId in
@@ -945,10 +945,8 @@ struct SystemPromptComposerToolResolutionTests {
                     SystemPromptComposer.resolveTools(agentId: agentId, executionMode: mode)
                         .map { $0.function.name }
                 )
-                #expect(!names.contains("todo"))
-                #expect(!names.contains("complete"))
-                #expect(!names.contains("clarify"))
-                #expect(!names.contains("share_artifact"))
+                #expect(names.isSuperset(of: SystemPromptComposer.agentLoopToolNames))
+                #expect(names.contains("get_current_time"))
             }
         }
 
@@ -958,12 +956,23 @@ struct SystemPromptComposerToolResolutionTests {
                     SystemPromptComposer.resolveTools(agentId: agentId, executionMode: .sandbox(hostRead: nil))
                         .map { $0.function.name }
                 )
-                #expect(!names.contains("todo"))
-                #expect(!names.contains("complete"))
-                #expect(!names.contains("clarify"))
-                #expect(!names.contains("share_artifact"))
+                #expect(names.isSuperset(of: SystemPromptComposer.agentLoopToolNames))
+                #expect(names.contains("get_current_time"))
             }
         }
+    }
+
+    @Test
+    func defaultAgentKeepsTodoAndCurrentTimeTogether() {
+        let tools = SystemPromptComposer.resolveTools(
+            snapshot: makeSnapshotForDefaultAgent(),
+            executionMode: .none
+        )
+        let names = Set(tools.map { $0.function.name })
+        #expect(names.contains("todo"))
+        #expect(names.contains("complete"))
+        #expect(names.contains("clarify"))
+        #expect(names.contains("get_current_time"))
     }
 
     @Test

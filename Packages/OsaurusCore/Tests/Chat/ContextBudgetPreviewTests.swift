@@ -140,9 +140,9 @@ struct ContextBudgetPreviewTests {
 
     // MARK: - Tools on (auto)
 
-    /// Auto mode keeps the identity prompt lean and exposes only compact,
-    /// generally useful gateway tools when no workspace/query is present.
-    @Test("preview: tools on (auto) keeps a lean identity and compact gateway")
+    /// Auto mode keeps the identity prompt lean while exposing the complete
+    /// lifecycle schema needed for a multi-step turn.
+    @Test("preview: tools on (auto) keeps lean identity and complete lifecycle schema")
     func toolsOn_auto_keepsLeanIdentityAndCompactGateway() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
@@ -159,7 +159,9 @@ struct ContextBudgetPreviewTests {
             // Tools row is non-zero (always-loaded baseline JSON schemas).
             #expect(preview.toolTokens > 0)
             #expect(preview.tools.contains { $0.function.name == "capabilities" })
-            #expect(!preview.tools.contains { $0.function.name == "todo" })
+            #expect(Set(preview.tools.map { $0.function.name })
+                .isSuperset(of: SystemPromptComposer.agentLoopToolNames))
+            #expect(preview.tools.contains { $0.function.name == "get_current_time" })
             #expect(!preview.tools.contains { $0.function.name == "capabilities_discover" })
         }
     }
@@ -362,16 +364,19 @@ struct ContextBudgetPreviewTests {
         }
     }
 
-    /// Ordinary work no longer injects lifecycle tools or their prompt prose.
-    @Test("compose: ordinary work omits lifecycle tools and guidance")
-    func ordinaryWork_omitsLifecycleContract() async {
+    /// Custom auto agents keep the lifecycle schema while retaining the lean
+    /// custom-agent prompt (the schemas carry the tool contract).
+    @Test("compose: ordinary work keeps lifecycle tools in lean custom prompt")
+    func ordinaryWork_keepsLifecycleContract() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let context = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
                 executionMode: .none,
                 query: "refactor the parser and add tests"
             )
-            #expect(!context.tools.contains { $0.function.name == "todo" })
+            let names = Set(context.tools.map { $0.function.name })
+            #expect(names.isSuperset(of: SystemPromptComposer.agentLoopToolNames))
+            #expect(names.contains("get_current_time"))
             #expect(!sectionIds(context).contains("agentLoopGuidance"))
         }
     }

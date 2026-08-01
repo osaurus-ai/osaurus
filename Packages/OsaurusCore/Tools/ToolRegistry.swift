@@ -2333,6 +2333,8 @@ extension ToolRegistry {
         // `web_search` joins the baseline deliberately: native search is the
         // one tool every agent gets (Settings → Search), and the free
         // providers make it usable with zero configuration.
-        configureToolNames.union(["todo", "complete", "clarify", "web_search"])
+        configureToolNames.union([
+            "todo", "complete", "clarify", "web_search", "get_current_time",
+        ])
     }
 }

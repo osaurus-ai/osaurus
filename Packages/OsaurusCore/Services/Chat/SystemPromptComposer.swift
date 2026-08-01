@@ -2793,6 +2793,14 @@ public struct SystemPromptComposer: Sendable {
             if isManual, let manualNames = snapshot.manualToolNames {
                 allowed.formUnion(manualNames)
             }
+            // Auto-mode agents need the complete lifecycle contract together:
+            // `todo` without `complete` cannot close tracked work, and omitting
+            // these built-ins after registering them leaves the model unable to
+            // satisfy the agent-loop guidance. Manual mode remains strict and
+            // exposes lifecycle tools only when the user selected them.
+            if !isManual {
+                allowed.formUnion(Self.agentLoopToolNames)
+            }
             // These unconditionally available baseline tools are part of the
             // stable schema. Query wording never adds or removes tools.
             allowed.formUnion(["get_current_time", "sandbox_process"])
