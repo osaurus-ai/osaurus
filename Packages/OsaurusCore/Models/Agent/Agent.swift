@@ -502,8 +502,7 @@ public struct AgentCapabilities: Sendable, Equatable {
     public var screenContextEnabled: Bool
     /// Browser Use (`browser_use` entry tool) exposed to the model. Custom
     /// agents opt in per-agent (`AgentSettings.browserUseEnabled`); the
-    /// Default agent's opt-in lives in `BrowserConfigurationStore` (edited
-    /// from Settings → Browser).
+    /// built-in Default agent never receives Browser Use.
     public var browserUseEnabled: Bool
     /// Spawn (`spawn`) exposed to the model — per-agent opt-in.
     public var spawnDelegationEnabled: Bool
@@ -832,9 +831,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// Per-agent opt-in for Browser Use (the `browser_use` entry tool that
     /// drives an isolated per-agent WebKit session). Default off; gated
     /// authoritatively in `resolveTools` (stripped in BOTH auto and manual
-    /// mode unless enabled). The built-in Default agent has no per-agent
-    /// settings editor, so its opt-in lives in `BrowserConfigurationStore`
-    /// (Settings → Browser) instead of here.
+    /// mode unless enabled). Browser Use is custom-agent-only; the built-in
+    /// Default agent never receives this capability.
     public var browserUseEnabled: Bool
     /// Per-agent opt-in for the `spawn` tool. Default off; gated
     /// authoritatively in `resolveTools` (stripped unless enabled AND the agent

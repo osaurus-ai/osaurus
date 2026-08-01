@@ -247,6 +247,12 @@ extension EvalRunner {
         // Sandbox cases ALWAYS install an eval agent: tool registration
         // reads `autonomousExec` off the persisted agent record, so an
         // ephemeral (unsaved) agent id would never get sandbox tools.
+        let enabledToolFixtures = testCase.fixtures.enableTools ?? []
+        let hasEnabledToolFixtures = !enabledToolFixtures.isEmpty
+        let requestsDynamicLoadProbe = enabledToolFixtures.contains(
+            EvalHostBootstrap.dynamicLoadProbeToolName
+        )
+
         var evalAgentId: UUID?
         if let sandboxFixture {
             evalAgentId = installEvalAgent(
@@ -259,6 +265,12 @@ extension EvalRunner {
                 caps,
                 spawnableAgentIDs: evalSpawnTargetIds
             )
+        } else if hasEnabledToolFixtures {
+            // Deferred dynamic-tool fixtures need a custom auto-mode agent:
+            // the Default agent intentionally loads only configure tools, and
+            // manual mode would inject selected tools up front instead of
+            // proving capabilities_load.
+            evalAgentId = installEvalAgent(nil)
         }
         defer {
             if let evalAgentId {
@@ -391,6 +403,18 @@ extension EvalRunner {
             }
         }
 
+        var enabledCapabilityRestore: EnabledCapabilityFixtureRestore?
+        if let evalAgentId, hasEnabledToolFixtures {
+            if requestsDynamicLoadProbe {
+                EvalHostBootstrap.registerDynamicLoadProbe()
+            }
+            AgentManager.shared.updateToolSelectionMode(.auto, for: evalAgentId)
+            enabledCapabilityRestore = await applyEnableTools(
+                enabledToolFixtures,
+                agentId: evalAgentId
+            )
+        }
+
         let judgeModel = EvalJudgeModel.resolveAndWarnOnce(runModelId: modelId)
         let started = Date()
         let transcript = await AgentLoopEvaluator.run(
@@ -405,6 +429,12 @@ extension EvalRunner {
             sandbox: sandboxMode,
             cancelAfterToolCalls: exp.cancelAfterToolCalls
         )
+        if let enabledCapabilityRestore, let evalAgentId {
+            await restoreToolGrant(enabledCapabilityRestore, agentId: evalAgentId)
+        }
+        if requestsDynamicLoadProbe {
+            EvalHostBootstrap.unregisterDynamicLoadProbe()
+        }
 
         var verdicts: [CapabilityClaimsJudgement] = []
         var judgeAudit: EvalJudgeAudit?
@@ -814,9 +844,9 @@ extension EvalRunner {
     /// must-be-absent tools are verifiably absent. This makes the
     /// `ensureToolsDisabled` gate satisfiable instead of force-skipping on
     /// the Default agent's legacy global tool mode. Auto mode + an allowlist
-    /// mirrors a real fully-enabled agent (manifest grounds "do you have X";
-    /// the lean hot set + always-loaded `capabilities_discover`/`_load` let
-    /// the model discover/abstain). Tear down with `removeEvalAgent`.
+    /// mirrors a real dynamic-tool agent; authoritatively gated built-ins are
+    /// enabled separately through their production AgentSettings fields.
+    /// Tear down with `removeEvalAgent`.
     static func installCapabilityClaimsAgent(excluding forbidden: [String]) -> UUID {
         let agentId = installEvalAgent(nil)
         AgentManager.shared.updateToolSelectionMode(.auto, for: agentId)

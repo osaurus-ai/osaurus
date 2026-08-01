@@ -590,20 +590,41 @@ struct CapabilitiesLoadToolTests {
         #expect(result.contains("skill") || result.contains("Skill"))
     }
 
-    @Test func toolLoadBuffersSpec() async throws {
-        await MainActor.run {
-            ToolRegistry.shared.setEnabled(true, for: "capabilities_discover")
+    @Test @MainActor func dynamicToolLoadBuffersSpec() async throws {
+        let dynamic = CapabilityPolicyFixtureTool(
+            name: "capability_load_buffer_\(UUID().uuidString)",
+            description: "Dynamic load buffer fixture"
+        )
+        ToolRegistry.shared.registerPluginTool(dynamic)
+        ToolRegistry.shared.setEnabled(true, for: dynamic.name)
+        defer { ToolRegistry.shared.unregister(names: [dynamic.name]) }
+        _ = await CapabilityLoadBuffer.shared.drain()
+        let tool = CapabilitiesLoadTool()
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+            try await tool.execute(
+                argumentsJSON: "{\"ids\": [\"tool/\(dynamic.name)\"]}"
+            )
         }
 
-        let tool = CapabilitiesLoadTool()
-        let result = try await tool.execute(
-            argumentsJSON: "{\"ids\": [\"tool/capabilities_discover\"]}"
-        )
-
-        #expect(result.contains("loaded") || result.contains("available"))
+        #expect(result.contains("loaded"))
 
         let buffered = await CapabilityLoadBuffer.shared.drain()
-        #expect(buffered.contains(where: { $0.function.name == "capabilities_discover" }))
+        #expect(buffered.contains(where: { $0.function.name == dynamic.name }))
+    }
+
+    @Test func gatedBuiltInCannotBeLoadedByExactGuessedId() async throws {
+        let tool = CapabilitiesLoadTool()
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+            try await tool.execute(
+                argumentsJSON: "{\"ids\": [\"tool/\(BrowserUseTool.toolName)\"]}"
+            )
+        }
+
+        #expect(ToolEnvelope.isError(result))
+        #expect(EnvelopeAssertions.failureKind(result) == "rejected")
+        #expect(result.contains("gated built-in"))
+        let buffered = await CapabilityLoadBuffer.shared.drain()
+        #expect(!buffered.contains(where: { $0.function.name == BrowserUseTool.toolName }))
     }
 
     @Test @MainActor

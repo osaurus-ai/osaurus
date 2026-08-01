@@ -684,6 +684,33 @@ struct SystemPromptComposerToolResolutionTests {
         #expect(ToolRegistry.nonDiscoverableBuiltInToolNames.contains(BrowserUseTool.toolName))
         let dynamicNames = Set(ToolRegistry.shared.listDynamicTools().map(\.name))
         #expect(!dynamicNames.contains(BrowserUseTool.toolName))
+        let manifestNames = Set(
+            SystemPromptComposer.deriveEnabledManifest(agentId: UUID())
+                .flatMap(\.tools)
+                .map(\.name)
+        )
+        #expect(!manifestNames.contains(BrowserUseTool.toolName))
+        #expect(!manifestNames.contains("image"))
+    }
+
+    @Test
+    func httpClientToolsCannotReintroduceAWithheldRegisteredCapability() async throws {
+        func spec(_ name: String) -> Tool {
+            Tool(
+                type: "function",
+                function: ToolFunction(name: name, description: "test", parameters: nil)
+            )
+        }
+
+        let externalName = "client_callback_\(UUID().uuidString)"
+        let resolved = await HTTPHandler.mergeAgentContextTools(
+            [],
+            clientTools: [spec(BrowserUseTool.toolName), spec(externalName)]
+        )
+        let merged = try #require(resolved)
+        let names = Set(merged.map(\.function.name))
+        #expect(!names.contains(BrowserUseTool.toolName))
+        #expect(names.contains(externalName))
     }
 
     /// Like `computer_use`, Browser Use is a custom-agent capability: the

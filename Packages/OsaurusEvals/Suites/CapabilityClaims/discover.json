@@ -1,9 +1,9 @@
 {
   "id": "capability_claims.discover",
   "domain": "capability_claims",
-  "label": "capability claims • acknowledge a manifest-grounded capability (don't deny)",
+  "label": "capability claims • acknowledge an enabled native capability (don't deny)",
   "query": "I need to automate filling out a form on a website and clicking submit. Can you do that?",
-  "notes": "Outcome-based (audited 2026-06, W2 eval-trust). The native browser_use capability is enabled AND named in the Enabled-capabilities manifest, so per this suite's own `no-spurious-discover` case the grounded behaviour is to TRUST the manifest and acknowledge the capability — not to re-derive it with capabilities_discover. The previous `mustCallTools:[capabilities_discover]` therefore contradicted that: it forced a discovery round-trip for an already-grounded capability and failed correct frontier answers (grok-4.3 legitimately confirms from the manifest with zero tool calls). The capabilities_load MECHANISM (load tools mid-run, then call them) is execution behaviour and is covered by the agent_loop `capabilities-load-midrun` case, where the loop ALLOWS tool execution; it cannot be exercised in capability_claims, which auto-DENIES execution (it measures honest CLAIMS, not actions) — a deny-loop is not a capability-claim signal. Here we score the OUTCOME: indicate you can help, don't deny for schema absence. Uses the built-in browser_use tool (the osaurus.browser plugin is superseded).",
+  "notes": "The fixture enables native browser_use through the same AgentSettings.browserUseEnabled gate as production, so the tool and Browser Use guidance are injected directly into the custom agent's schema. The grounded behavior is to acknowledge the capability without a spurious discovery or execution call. capabilities_load is intentionally irrelevant: browser_use is an authoritative built-in and cannot be loaded around its per-agent gate.",
   "fixtures": {
     "enableTools": ["browser_use"]
   },
@@ -11,7 +11,7 @@
     "capabilityClaims": {
       "rubric": [
         "Indicates it can help automate the web form task rather than refusing outright.",
-        "Does not deny the capability solely because a tool was not initially in its schema."
+        "Does not deny the capability despite browser_use being enabled in the request schema."
       ],
       "maxIterations": 6
     }

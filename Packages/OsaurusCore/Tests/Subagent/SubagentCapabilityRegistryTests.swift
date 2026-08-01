@@ -604,22 +604,19 @@ struct SubagentCapabilityRegistryTests {
         try String(contentsOf: packageRoot().appendingPathComponent(relativePath), encoding: .utf8)
     }
 
-    /// The original BUG E was a *surface split*: the native composer strip and
-    /// the HTTP enrich path each decided subagent tool visibility from their
-    /// own hardcoded `["image_generate","image_edit","local_delegate","spawn"]`
-    /// list, so they could disagree on what an agent sees. Both must now resolve
-    /// from the single `SubagentToolVisibility` SSOT and never re-introduce a
-    /// hardcoded delegation list. This is a source-level standing guard (mirrors
-    /// `RuntimePolicySourceTests`) so a future edit to either surface that
-    /// re-hardcodes the set fails CI instead of silently re-splitting them.
-    @Test("native + HTTP tool-visibility surfaces both read the shared SSOT, never a hardcoded list")
+    /// The original BUG E was a surface split: native and HTTP each resolved
+    /// subagent visibility independently. Native composition owns the resolver;
+    /// HTTP must consume that exact composed toolset without a second pass.
+    @Test("HTTP consumes the native composed toolset without a second visibility resolver")
     func surfacesShareTheResolver() throws {
         let composer = try Self.source("Services/Chat/SystemPromptComposer.swift")
         let http = try Self.source("Networking/HTTPHandler.swift")
 
-        // Both entry points resolve per-agent visibility through the shared SSOT…
+        // Native composition resolves per-agent visibility through the SSOT;
+        // HTTP consumes `composed.tools` and never re-injects from config alone.
         #expect(composer.contains("SubagentToolVisibility.visibleDelegationToolNames"))
-        #expect(http.contains("SubagentToolVisibility.visibleDelegationToolNames"))
+        #expect(http.contains("mergeAgentContextTools(\n            composed.tools,"))
+        #expect(!http.contains("SubagentToolVisibility.visibleDelegationToolNames"))
 
         // …and neither re-introduces the BUG E hardcoded delegation list.
         for legacy in ["\"local_delegate\"", "\"image_generate\"", "\"image_edit\""] {

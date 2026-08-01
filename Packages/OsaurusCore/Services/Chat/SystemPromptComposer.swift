@@ -617,10 +617,10 @@ public struct SystemPromptComposer: Sendable {
         )
     }
 
-    /// Render the complete enabled-capabilities manifest section for this
-    /// session, frozen at session start. Returns the rendered section body
-    /// (tools + plugin skills + standalone skills) or `nil` when the section
-    /// is gated off or has no content.
+    /// Render the complete loadable enabled-capabilities manifest section for
+    /// this session, frozen at session start. Returns the rendered section body
+    /// (dynamic tools + plugin skills + standalone skills) or `nil` when the
+    /// section is gated off or has no content.
     ///
     /// The manifest is a static prefix section, so this is gated only on
     /// session-constant facts — auto mode, tools enabled, and
@@ -1280,13 +1280,14 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
-        // Enabled capabilities manifest: the grounded answer to "do you
-        // have X". The schema only carries a fixed hot subset of the agent's
-        // enabled tools; without this block a small model looks at its
-        // schema, sees nothing, and (correctly-by-instruction) denies having
-        // a capability that is actually enabled. We inject the COMPLETE
-        // enabled set — every tool + plugin skill grouped by plugin, plus a
-        // trailing standalone-skills group — so capability questions (about
+        // Enabled capabilities manifest: the grounded answer for loadable
+        // dynamic tools and skills. The schema only carries a fixed hot subset;
+        // without this block a small model looks at its schema, sees nothing,
+        // and denies a capability that is actually enabled. Always-injected
+        // gated built-ins are grounded by their live schema/guidance instead;
+        // listing them here would falsely imply capabilities_load can bypass
+        // their per-agent gates. We inject every loadable tool + plugin skill
+        // grouped by plugin, plus a trailing standalone-skills group, so
         // tools AND skills) are answerable from grounded context with zero
         // tool calls. This is the single grounded enumeration: it subsumes
         // the old "Plugin Companions" and "Skill Suggestions" sections.
@@ -1535,10 +1536,12 @@ public struct SystemPromptComposer: Sendable {
         return lines.joined(separator: "\n")
     }
 
-    /// Build the **complete** enabled-capabilities manifest: every tool the
-    /// agent has enabled plus every installed skill, regardless of what landed
-    /// in this turn's tool schema. Reads the agent's enabled tool allowlist and
-    /// the live registries — MUST run on the main actor.
+    /// Build the complete **loadable** enabled-capabilities manifest: every
+    /// enabled dynamic tool plus every installed skill, regardless of what
+    /// landed in this turn's hot schema. Authoritatively gated built-ins
+    /// (Browser Use, Computer Use, Image, Spawn, AppleScript, and per-agent
+    /// abilities) are injected directly when effective and are deliberately
+    /// absent here: `capabilities_load` cannot bypass their owning flags.
     ///
     /// This is a static enumeration, not a per-turn delta. Under Design C the
     /// rendered string is frozen at session start and injected as a static
@@ -1549,7 +1552,7 @@ public struct SystemPromptComposer: Sendable {
     /// "do you have X".
     ///
     /// Contents:
-    /// - **Tools**: all enabled dynamic tools, grouped by plugin.
+    /// - **Tools**: all enabled loadable dynamic tools, grouped by plugin.
     /// - **Plugin skills**: installed skills carrying a `pluginId`, in their
     ///   plugin group (skills never enter the tool schema, so they are what
     ///   the "Skills that govern tool groups" rule binds to).
@@ -1620,39 +1623,6 @@ public struct SystemPromptComposer: Sendable {
                 skills: (skillsByGroup[groupId] ?? []).sorted { $0.name < $1.name },
                 tools: (toolsByGroup[groupId] ?? []).sorted { $0.name < $1.name }
             )
-        }
-
-        // Native image generation/editing are built-in tools, so they never
-        // show up in the dynamic-tool walk above. When `image` is visible for
-        // THIS agent (Default → global switch; custom → its own toggle), surface
-        // them as their own group so the model is told outright that it can
-        // create/edit images — otherwise the compacted baseline skeleton is the
-        // only hint and small models reach for the search tool instead.
-        let imageVisible = SubagentToolVisibility.imageAvailable(
-            isDefault: agentId == Agent.defaultId,
-            config: SubagentConfigurationStore.snapshot(),
-            perAgentEnabled: AgentManager.shared.effectiveCapabilities(for: agentId).imageEnabled
-        )
-        if imageVisible {
-            let imageCaps =
-                ToolRegistry.shared.listTools()
-                .filter { ToolRegistry.agentDelegationImageToolNames.contains($0.name) }
-                .sorted { $0.name < $1.name }
-                .map {
-                    SystemPromptTemplates.ManifestCapability(
-                        name: $0.name,
-                        description: $0.description
-                    )
-                }
-            if !imageCaps.isEmpty {
-                groups.append(
-                    SystemPromptTemplates.ManifestPluginGroup(
-                        pluginDisplay: "Image Generation",
-                        skills: [],
-                        tools: imageCaps
-                    )
-                )
-            }
         }
 
         // Trailing synthetic group for standalone (non-plugin) skills,
@@ -2511,8 +2481,8 @@ public struct SystemPromptComposer: Sendable {
         //     bypass. The Default agent is additionally excluded by the allowlist
         //     filter below, so it stays a custom-agent-only capability.
         //   * .delegation (spawn / image): visibility comes from the shared
-        //     `SubagentToolVisibility` resolver (master gate + Default-vs-custom
-        //     predicate: Default → global pool / image switch; custom → its own
+        //     `SubagentToolVisibility` resolver (Default-vs-custom predicate:
+        //     Default → global pool / image switch; custom → its own
         //     per-agent toggle + spawnable allow-list). Computed ONCE here and
         //     reused by the default-agent allowlist below; the HTTP agent-run
         //     path reads the same resolver (BUG E parity guard).

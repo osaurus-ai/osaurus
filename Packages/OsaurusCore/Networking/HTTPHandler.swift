@@ -2977,59 +2977,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         } else {
             SystemPromptComposer.injectMemoryPrefix(composed.memorySection, into: &enriched.messages)
         }
-        // Agent-run / HTTP orchestrators must get the active Subagent
-        // tools as callable SCHEMAS too. `composeChatContext` only surfaces the
-        // built-in image tools as a prompt-hint capability (not the schema), so
-        // without this an agent-run orchestrator is told it can make images /
-        // delegate but `image`/`spawn` never reach its `<tools>` block.
-        // Per-agent gate: only inject the delegation schemas when THIS agent has
-        // actually opted into spawn/image (mirrors the authoritative
-        // `resolveTools` strip). Without this, the explicit injection below would
-        // re-add tools the per-agent gate just stripped.
-        // Mirror the authoritative native-chat `resolveTools` surfacing so the
-        // HTTP agent-run path and the in-app chat agree on which subagent tools
-        // an agent sees: resolve the per-agent visible delegation set through the
-        // shared `SubagentToolVisibility` resolver (the same SSOT the native
-        // `resolveTools` strip reads) — Default → main-chat pool / image switch,
-        // custom → its own per-agent toggles + spawnable allow-list. There is no
-        // global master switch; the per-agent opt-in is the only gate. Without
-        // this parity the `/agents/{id}/run` surface drifts from the chat UI
-        // (BUG E guard). The tool-name set comes from the capability registry,
-        // not a hardcoded list.
-        // Installed-capability gate for `image`, mirroring the native
-        // `resolveTools` strip: the per-agent switch can be on, but the tool is
-        // withheld when no ready image model exists, and narrowed to a
-        // generation-only schema when a gen model is present but no edit model
-        // is (so the agent-run surface never advertises an edit it can't run).
-        let (visibleDelegation, swapImageToGenerationOnly) = await MainActor.run {
-            () -> (Set<String>, Bool) in
-            let snapshot = AgentConfigSnapshot.capture(agentId: agentUUID)
-            let cache = ModelPickerItemCache.shared
-            let names = SubagentToolVisibility.visibleDelegationToolNames(
-                agentId: agentUUID,
-                snapshot: snapshot,
-                config: SubagentConfigurationStore.snapshot(),
-                hasReadyImageModel: cache.hasReadyImageModel,
-                hasReadyAppleScriptModel: cache.hasReadyAppleScriptModel
-            )
-            let swap = names.contains("image") && !cache.hasReadyImageEditModel
-            return (names, swap)
-        }
-        let delegationSpecs =
-            visibleDelegation.isEmpty
-            ? []
-            : await MainActor.run { () -> [Tool] in
-                let raw = ToolRegistry.shared.specs(forTools: Array(visibleDelegation))
-                guard swapImageToGenerationOnly else { return raw }
-                return raw.map {
-                    $0.function.name == "image" ? ImageTool.generationOnlySpec() : $0
-                }
-            }
-        let composedToolNames = Set(composed.tools.map(\.function.name))
-        let contextToolsWithDelegation =
-            composed.tools + delegationSpecs.filter { !composedToolNames.contains($0.function.name) }
+        // `composeChatContext` is the same resolver used by native chat. Its
+        // final toolset already includes only effective built-ins and runnable
+        // spawn targets, with constrained spawn enums and the generation-only
+        // image schema when required. Do not re-inject delegation tools from a
+        // second, configuration-only pass here: doing so re-advertises targets
+        // that the authoritative request resolver classified unavailable.
         let mergedTools = await mergeAgentContextTools(
-            contextToolsWithDelegation,
+            composed.tools,
             clientTools: request.tools
         )
         let resolvedToolChoice: ToolChoiceOption? = {
@@ -3061,18 +3016,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         )
     }
 
-    private static func mergeAgentContextTools(
+    static func mergeAgentContextTools(
         _ agentTools: [Tool],
         clientTools: [Tool]?
     ) async -> [Tool]? {
         let clientTools = clientTools ?? []
         guard !agentTools.isEmpty || !clientTools.isEmpty else { return nil }
-        let clientNames = Set(clientTools.map(\.function.name))
-        let contextTools = agentTools.filter { !clientNames.contains($0.function.name) }
+        let registeredNames = await MainActor.run {
+            Set(ToolRegistry.shared.listTools().map(\.name))
+        }
+        // `/agents/{id}/run` may accept caller-defined function schemas, but a
+        // client schema must never revive or impersonate a registered Osaurus
+        // tool that the authoritative agent composer withheld. Registered
+        // tools come only from `agentTools`; unregistered caller functions
+        // remain available for the API's external function-calling contract.
+        let externalClientTools = clientTools.filter {
+            !registeredNames.contains($0.function.name)
+        }
         // Sort the union into canonical order so appended client tools don't
         // sit at the tail in a different slot than the next recompose would
         // place them — keeps the `<tools>` block byte-stable for KV reuse.
-        return await SystemPromptComposer.canonicalToolOrder(contextTools + clientTools)
+        return await SystemPromptComposer.canonicalToolOrder(agentTools + externalClientTools)
     }
 
     // MARK: - Memory Ingestion

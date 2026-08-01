@@ -3035,7 +3035,24 @@ struct AgentDetailView: View {
     /// off: those abilities keep their configured state but ship no tool
     /// schema until Tools comes back.
     private var toolsPausedNote: LocalizedStringKey? {
-        toolsEnabled ? nil : "Inactive while Tools is off"
+        let readiness = AgentCapabilityReadiness.resolve(
+            configured: true,
+            toolsEnabled: toolsEnabled
+        )
+        return readiness.isCallable
+            ? nil
+            : readiness.statusMessage.map { LocalizedStringKey($0) }
+    }
+
+    private var knowledgeReadinessNote: LocalizedStringKey? {
+        let readiness = AgentCapabilityReadiness.resolve(
+            configured: knowledgeEnabled,
+            toolsEnabled: toolsEnabled,
+            blockers: knowledgeCollectionIds.isEmpty ? [.noKnowledgeCollections] : []
+        )
+        return readiness.isCallable || !readiness.configured
+            ? nil
+            : readiness.statusMessage.map { LocalizedStringKey($0) }
     }
 
     /// Scroll anchor for the Tools master card in the Abilities overview.
@@ -3174,8 +3191,10 @@ struct AgentDetailView: View {
                     "Let the agent search and read the knowledge collections granted below: curated guides, templates, and standards. Separate from memory, knowledge is yours to edit and never written by the agent.",
                 icon: "books.vertical",
                 isOn: toolBackedSaveBinding($knowledgeEnabled),
-                pausedNote: toolsPausedNote,
-                onPausedNoteTap: flashToolsToggle
+                pausedNote: knowledgeReadinessNote,
+                onPausedNoteTap: {
+                    if !toolsEnabled { flashToolsToggle() }
+                }
             ) {
                 if knowledgeEnabled {
                     if knowledgeManager.collections.isEmpty {
@@ -3699,6 +3718,78 @@ struct AgentDetailView: View {
         )
     }
 
+    /// Presentation truth for a Subagents card. The configured toggle remains
+    /// intact when a prerequisite disappears; this resolver explains the same
+    /// gates the composer will apply instead of presenting every ON switch as
+    /// callable.
+    private func subagentReadiness(
+        for flag: SubagentCapability.PerAgentFlag
+    ) -> AgentCapabilityReadiness {
+        let configured = subagentToggles[flag] ?? false
+        let capability = SubagentCapabilityRegistry.capability(forPerAgentFlag: flag)
+        let override = capability.flatMap { subagentModelOverrides[$0.id] }?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasResolvedModel =
+            !(override?.isEmpty ?? true)
+            || agentManager.effectiveModel(for: agent.id) != nil
+
+        var configuredSpawnTargetCount = 0
+        var runnableSpawnTargetCount = 0
+        var checkingSpawnTargets = false
+        if flag == .spawn {
+            let configuredAgentIDs = spawnableAgentIDs.filter { $0 != agent.id }
+            configuredSpawnTargetCount =
+                configuredAgentIDs.count + spawnableModelNames.count
+            let availability = SpawnDescriptors.resolveForPreview(
+                agentIDs: configuredAgentIDs,
+                modelNames: spawnableModelNames,
+                modelNotes: spawnableModelNotes,
+                launcherModelOverride:
+                    subagentModelOverrides[SubagentCapabilityRegistry.spawn.id]
+            )
+            runnableSpawnTargetCount =
+                availability.runnableAgentIDs.count
+                + availability.runnableModelIds.count
+            checkingSpawnTargets =
+                availability.agentTargets.contains { $0.state == .checking }
+                || availability.modelTargets.contains { $0.state == .checking }
+        }
+
+        let permissionKindId =
+            flag == .spawn
+            ? SubagentCapabilityRegistry.spawn.id
+            : SubagentCapabilityRegistry.image.id
+        let permission: SubagentPermissionPolicy =
+            (flag == .spawn || flag == .image)
+            ? subagentPermissions.policy(for: permissionKindId)
+            : .ask
+
+        return AgentCapabilityReadiness.subagent(
+            flag: flag,
+            configured: configured,
+            toolsEnabled: toolsEnabled,
+            hasResolvedModel: hasResolvedModel,
+            configuredSpawnTargetCount: configuredSpawnTargetCount,
+            runnableSpawnTargetCount: runnableSpawnTargetCount,
+            isCheckingSpawnTargets: checkingSpawnTargets,
+            hasReadyImageModel: ModelPickerItemCache.shared.hasReadyImageModel,
+            hasReadyAppleScriptModel: ModelPickerItemCache.shared.hasReadyAppleScriptModel,
+            permission: permission
+        )
+    }
+
+    private var configuredSubagentCount: Int {
+        SubagentCapabilityRegistry.perAgentToggleFlags.count {
+            subagentReadiness(for: $0).configured
+        }
+    }
+
+    private var callableSubagentCount: Int {
+        SubagentCapabilityRegistry.perAgentToggleFlags.count {
+            subagentReadiness(for: $0).isCallable
+        }
+    }
+
     // MARK: - Subagents tab
 
     /// The Subagents tab: one card per per-agent capability (Computer Use,
@@ -3712,18 +3803,20 @@ struct AgentDetailView: View {
         AgentDetailSection(
             title: L("Subagents"),
             icon: "person.2.wave.2",
-            subtitle: L(
-                "Each helper is off by default. Turn one on to set it up."
-            )
+            subtitle:
+                "\(callableSubagentCount) \(L("callable")) · "
+                + "\(configuredSubagentCount) \(L("configured"))"
         ) {
             VStack(alignment: .leading, spacing: 18) {
                 ForEach(perAgentFeatures, id: \.flag) { feature in
                     let isOn = subagentToggleBinding(feature.flag)
+                    let readiness = subagentReadiness(for: feature.flag)
                     VStack(alignment: .leading, spacing: 6) {
                         subagentCapabilityCard(
                             title: feature.title,
                             subtitle: feature.subtitle,
-                            isOn: isOn
+                            isOn: isOn,
+                            readiness: readiness
                         )
                         if isOn.wrappedValue {
                             subagentConfigPanel {
@@ -3754,10 +3847,11 @@ struct AgentDetailView: View {
     private func subagentCapabilityCard(
         title: LocalizedStringKey,
         subtitle: LocalizedStringKey,
-        isOn: Binding<Bool>
+        isOn: Binding<Bool>,
+        readiness: AgentCapabilityReadiness
     ) -> some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title, bundle: .module)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.primaryText)
@@ -3765,6 +3859,15 @@ struct AgentDetailView: View {
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)
+                if readiness.configured, let status = readiness.statusMessage {
+                    HStack(spacing: 5) {
+                        Image(systemName: readiness.isCallable ? "checkmark.circle.fill" : "info.circle.fill")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(verbatim: status)
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundColor(subagentReadinessColor(readiness.state))
+                }
             }
             Spacer(minLength: 12)
             Toggle("", isOn: isOn)
@@ -3775,9 +3878,25 @@ struct AgentDetailView: View {
         .background(
             roundedSurface(
                 fill: theme.inputBackground,
-                stroke: isOn.wrappedValue ? theme.accentColor.opacity(0.5) : theme.inputBorder
+                stroke:
+                    isOn.wrappedValue
+                    ? subagentReadinessColor(readiness.state).opacity(0.5)
+                    : theme.inputBorder
             )
         )
+    }
+
+    private func subagentReadinessColor(_ state: AgentCapabilityReadinessState) -> Color {
+        switch state {
+        case .disabled:
+            return theme.tertiaryText
+        case .active:
+            return theme.successColor
+        case .paused, .needsSetup:
+            return theme.warningColor
+        case .unavailable:
+            return theme.errorColor
+        }
     }
 
     /// Calm, clearly subordinate container for a capability's expanded settings.

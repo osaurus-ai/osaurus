@@ -106,6 +106,48 @@ import Testing
         #expect(settings.browserUseEnabled)
         #expect(SubagentCapability.PerAgentFlag.browserUse.read(from: settings))
     }
+
+    @Test func browserFlagPersistsThroughAgentSettingsCoding() throws {
+        var settings = AgentSettings.defaultDisabled
+        settings.browserUseEnabled = true
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AgentSettings.self, from: data)
+
+        #expect(decoded.browserUseEnabled)
+    }
+
+    @Test func directInvocationDeniesTheDefaultAgent() async {
+        let scope = SubagentScope(
+            sessionId: "browser-direct-default",
+            toolCallId: "browser-direct-default",
+            agentId: Agent.defaultId
+        )
+        do {
+            _ = try await BrowserUseKind(goal: "Open example.com").resolveModel(scope)
+            Issue.record("Default agent direct Browser Use should be denied")
+        } catch let SubagentError.denied(message) {
+            #expect(message.contains("custom agent"))
+        } catch {
+            Issue.record("expected SubagentError.denied, got \(error)")
+        }
+    }
+
+    @Test func directInvocationDeniesAnUnknownCustomAgent() async {
+        let scope = SubagentScope(
+            sessionId: "browser-direct-missing",
+            toolCallId: "browser-direct-missing",
+            agentId: UUID()
+        )
+        do {
+            _ = try await BrowserUseKind(goal: "Open example.com").resolveModel(scope)
+            Issue.record("Unknown custom agent direct Browser Use should be denied")
+        } catch let SubagentError.denied(message) {
+            #expect(message.contains("not enabled"))
+        } catch {
+            Issue.record("expected SubagentError.denied, got \(error)")
+        }
+    }
 }
 
 // MARK: - Child operating instructions

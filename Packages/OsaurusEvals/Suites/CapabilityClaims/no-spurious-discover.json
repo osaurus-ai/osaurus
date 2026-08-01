@@ -1,9 +1,9 @@
 {
   "id": "capability_claims.no-spurious-discover",
   "domain": "capability_claims",
-  "label": "capability claims • confirm from manifest without spurious discovery",
+  "label": "capability claims • confirm native schema without spurious discovery",
   "query": "Just answer yes or no with a one-line reason: can you open a web page?",
-  "notes": "Guards the launder-the-id regression: the native browser_use capability is named in the static Enabled-capabilities manifest, so a pure yes/no capability question is answerable from grounded context with zero tool calls. The model must NOT run capabilities_discover to re-derive an ID it already has from the manifest, nor call the browser tool to 'prove' it. Confirms the manifest is trusted as the source of truth for listed capabilities. Uses the built-in browser_use tool (the osaurus.browser plugin is superseded).",
+  "notes": "The fixture enables native browser_use through AgentSettings.browserUseEnabled, which injects the tool and Browser Use guidance directly. A pure yes/no capability question is therefore answerable from grounded schema context with zero tool calls. The model must not run capabilities_discover or browser_use to prove what the request already exposes.",
   "fixtures": {
     "enableTools": ["browser_use"]
   },

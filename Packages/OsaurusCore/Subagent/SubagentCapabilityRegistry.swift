@@ -194,10 +194,8 @@ public enum SubagentCapabilityRegistry {
 
     /// Browser Use — the `browser_use` entry tool that drives an isolated,
     /// persistent per-agent WebKit session (the native replacement for the
-    /// `osaurus.browser` plugin). `.perAgent` like computer_use, but unlike
-    /// computer_use the Default agent CAN opt in — via the Browser settings
-    /// tab (`BrowserConfigurationStore`), which the snapshot folds into
-    /// `browserUseEnabled`.
+    /// `osaurus.browser` plugin). `.perAgent` like computer_use and available
+    /// only to custom agents; the built-in Default agent is hard-off.
     public static let browserUse = SubagentCapability(
         id: "browser_use",
         toolNames: [BrowserUseTool.toolName],

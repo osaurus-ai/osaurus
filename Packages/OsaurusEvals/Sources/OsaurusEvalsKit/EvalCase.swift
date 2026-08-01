@@ -93,12 +93,13 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `EvalRunner.runCapabilitySearchCase`. Other domains
         /// ignore this field.
         public let seedMethods: [SeedMethod]?
-        /// Tool names to grant the agent for the duration of a
-        /// `capability_claims` case (and restore afterwards). The agent's
-        /// enabled set is what the enabled-capabilities manifest is built
-        /// from, so a "confirm you have list_messages" case has to enable
-        /// `list_messages` first. No-op when the agent is in legacy
-        /// global-enabled mode (nil allowlist already grants everything).
+        /// Tool names to grant the agent for the duration of a case. For
+        /// `capability_claims`, the grant is restored afterwards. For
+        /// `agent_loop`, the runner creates a temporary custom auto-mode
+        /// agent so a deferred dynamic tool can be authorized without being
+        /// injected into the initial schema. Authoritatively gated built-ins
+        /// still use their production AgentSettings fields rather than this
+        /// allow-list.
         public let enableTools: [String]?
         /// Tool names that must NOT be enabled for the case to be valid —
         /// used by the "impossible-but-distinct" case so a host that

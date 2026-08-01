@@ -980,13 +980,23 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
 
             if !method.toolsUsed.isEmpty {
                 let allowedNames = await grantedToolNamesForCurrentAgent()
+                let alreadyExposedNames =
+                    ChatExecutionContext.toolExecutionScope?.authorizedNames ?? []
                 let (loadableToolNames, blockedToolNames) = await MainActor.run {
                     () -> ([String], [String]) in
                     var allowed: [String] = []
                     var blocked: [String] = []
                     for name in method.toolsUsed {
                         let isBuiltIn = ToolRegistry.shared.builtInToolNames.contains(name)
-                        if isBuiltIn || (allowedNames?.contains(name) ?? true) {
+                        if isBuiltIn {
+                            // Built-ins carry their own agent/mode/readiness
+                            // gates. A method may use one already exposed to the
+                            // request, but loading a method must never activate a
+                            // withheld built-in by name.
+                            if !alreadyExposedNames.contains(name) {
+                                blocked.append(name)
+                            }
+                        } else if allowedNames?.contains(name) ?? true {
                             allowed.append(name)
                         } else {
                             blocked.append(name)
@@ -1026,14 +1036,14 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
 
     private func loadTool(_ toolId: String) async -> LoadOutcome {
         let isDefaultAgent = ChatExecutionContext.currentAgentId == Agent.defaultId
+        let configureWrites = await MainActor.run {
+            ToolRegistry.configureWriteToolNames
+        }
         // Phase C default-agent gate: limit `capabilities_load` to the
         // configure write tools. Everything else (sandbox, MCP, plugin
         // tools) is hard-stopped with a routing hint so the model
         // self-corrects without burning a turn.
         if isDefaultAgent {
-            let configureWrites = await MainActor.run {
-                ToolRegistry.configureWriteToolNames
-            }
             if !configureWrites.contains(toolId) {
                 return .failure(
                     LoadFailure(
@@ -1081,6 +1091,23 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         // bookkeeping and a redundant "callable now" notice.
         if await isAlreadyLoadedInSession(toolId) {
             return .success("Tool '\(toolId)' is already loaded and callable — no action needed.\n")
+        }
+        // Built-ins are not dynamic capabilities. If the composer withheld one
+        // because Browser/Computer/Spawn/Image/AppleScript, an ability flag,
+        // execution mode, model readiness, or Tools is off, an exact guessed ID
+        // must not activate it through the load buffer. The Default agent's
+        // configure-write family is the sole intentional deferred built-in.
+        let isDeferredDefaultConfigureWrite =
+            isDefaultAgent && configureWrites.contains(toolId)
+        if isBuiltIn, !isDeferredDefaultConfigureWrite {
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message:
+                        "Tool '\(toolId)' is a gated built-in and cannot be enabled with "
+                        + "capabilities_load. Enable its owning agent or execution setting first."
+                )
+            )
         }
         guard isBuiltIn || (allowedNames?.contains(toolId) ?? true) else {
             return .failure(

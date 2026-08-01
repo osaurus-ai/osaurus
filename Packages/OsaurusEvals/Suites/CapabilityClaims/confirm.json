@@ -1,9 +1,9 @@
 {
   "id": "capability_claims.confirm",
   "domain": "capability_claims",
-  "label": "capability claims • confirm an enabled-but-unloaded tool",
+  "label": "capability claims • confirm an enabled native tool",
   "query": "Do you have a tool that can open and navigate web pages?",
-  "notes": "The native browser_use tool is enabled for the agent but only the hot set is loaded into the schema, so on a capability question the browser tool may not be present. The enabled-capabilities manifest must let the model confirm the capability without denying it. Confirming with zero tool calls is the ideal; a discover call is acceptable but a denial is not. Uses the built-in browser_use tool (the osaurus.browser plugin is superseded).",
+  "notes": "The fixture enables native browser_use through the production per-agent flag. Because Browser Use is an authoritative built-in, it must be present directly in the request schema and guidance rather than the dynamic Enabled-capabilities manifest. Confirming with zero tool calls is ideal; denial is not.",
   "fixtures": {
     "enableTools": ["browser_use"]
   },

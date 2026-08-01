@@ -41,7 +41,7 @@ struct ToolScopeGateRecoveryTests {
     @Test
     func unscopedButLoadableTool_returnsRetryableCapabilitiesLoadHint() async throws {
         let tool = ScopeProbeTool(name: "test_scope_gate_loadable_probe")
-        ToolRegistry.shared.register(tool)
+        ToolRegistry.shared.registerPluginTool(tool)
         ToolRegistry.shared.setEnabled(true, for: tool.name)
         defer {
             ToolRegistry.shared.setEnabled(false, for: tool.name)
@@ -63,6 +63,24 @@ struct ToolScopeGateRecoveryTests {
         let message = parsed?["message"] as? String ?? ""
         #expect(message.contains("capabilities_load"))
         #expect(message.contains("tool/\(tool.name)"))
+    }
+
+    @Test
+    func unexposedGatedBuiltInDoesNotSuggestCapabilitiesLoad() async throws {
+        let scope = ToolExecutionScope(exposed: [])
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+            try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+                try await ToolRegistry.shared.execute(
+                    name: BrowserUseTool.toolName,
+                    argumentsJSON: #"{"goal":"open example.com"}"#
+                )
+            }
+        }
+
+        let parsed = try envelope(result)
+        #expect(parsed?["retryable"] as? Bool == false)
+        let message = parsed?["message"] as? String ?? ""
+        #expect(!message.contains("capabilities_load"))
     }
 
     @Test

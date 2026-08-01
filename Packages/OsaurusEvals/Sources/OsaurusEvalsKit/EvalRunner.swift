@@ -1421,16 +1421,16 @@ public enum EvalRunner {
         // suite:
         //  - Absence cases (`ensureToolsDisabled`) get an allowlist that
         //    EXCLUDES the forbidden names, so "you have no X" is provable.
-        //  - Positive cases (`enableTools` for a real capability — e.g. the
-        //    browser plugin) need the manifest to NAME
-        //    the enabled capability. The active Default agent is the
+        //  - Positive cases (`enableTools` for a real capability) need an
+        //    isolated custom agent. Dynamic tools are granted through its
+        //    allow-list; authoritatively gated built-ins such as Browser Use
+        //    are enabled through their real per-agent flag below. The active Default agent is the
         //    config-only agent: it is not in `.auto` mode, so it renders NO
         //    capability manifest, and it is designed to disclaim non-config
         //    work ("I only help configure Osaurus") — so it wrongly DENIES an
         //    enabled browser capability that the model should confirm. A
-        //    fully-enabled auto-mode agent advertises the capability in the
-        //    manifest (the lean hot set still forces `capabilities_load` for
-        //    the act-on-it cases), so the model can honestly confirm/act.
+        //    fully-enabled auto-mode agent advertises dynamic capabilities in
+        //    the manifest and injects gated built-ins directly, matching production.
         // Fall back to the active agent only when the case sets up neither side
         // (no fixtures to make authoritative).
         let claimsPositiveCapability =
@@ -1484,7 +1484,7 @@ public enum EvalRunner {
         }
 
         ccPhase("enable-tools-begin")
-        let priorToolGrant = await applyEnableTools(
+        let capabilityFixtureRestore = await applyEnableTools(
             testCase.fixtures.enableTools,
             agentId: resolvedAgentId
         )
@@ -1542,7 +1542,7 @@ public enum EvalRunner {
         }
         ccPhase("judge-done restore-begin")
 
-        await restoreToolGrant(priorToolGrant, agentId: resolvedAgentId)
+        await restoreToolGrant(capabilityFixtureRestore, agentId: resolvedAgentId)
         ccPhase("restore-done")
 
         // Score.
@@ -2070,30 +2070,79 @@ public enum EvalRunner {
         return (true, "skill-first ok: loaded '\(matcher.skill)' before gated tool")
     }
 
-    /// Grant `names` to the agent for a case run. Returns the prior
-    /// allowlist to restore, or nil when no mutation was needed (legacy
-    /// global mode, or every name already enabled).
-    private static func applyEnableTools(
+    struct EnabledCapabilityFixtureRestore {
+        let priorToolGrant: [String]?
+        let priorBrowserUseEnabled: Bool?
+    }
+
+    /// Grant `names` to the agent for a case run. Dynamic names update the
+    /// per-agent allow-list. Authoritatively gated built-ins must use their
+    /// production flag instead: putting `browser_use` in a dynamic allow-list
+    /// does not expose it and used to make the positive browser claims cases
+    /// prove a fixture fiction rather than shipped behavior.
+    static func applyEnableTools(
         _ names: [String]?,
         agentId: UUID
-    ) async -> [String]? {
-        guard let names, !names.isEmpty else { return nil }
+    ) async -> EnabledCapabilityFixtureRestore {
+        guard let names, !names.isEmpty else {
+            return EnabledCapabilityFixtureRestore(
+                priorToolGrant: nil,
+                priorBrowserUseEnabled: nil
+            )
+        }
+
+        var priorBrowserUseEnabled: Bool?
+        let browserToolName = SubagentCapabilityRegistry.browserUse.primaryToolName
+        if names.contains(browserToolName),
+            var agent = AgentManager.shared.agent(for: agentId),
+            !agent.isBuiltIn
+        {
+            priorBrowserUseEnabled = agent.settings.browserUseEnabled
+            if !agent.settings.browserUseEnabled {
+                agent.settings.browserUseEnabled = true
+                AgentManager.shared.update(agent)
+            }
+        }
+
+        let dynamicNames = names.filter { $0 != browserToolName }
         // nil = legacy global-enabled mode: the names are already
         // reachable, so there's nothing to grant or restore.
         guard let prior = AgentManager.shared.effectiveEnabledToolNames(for: agentId) else {
-            return nil
+            return EnabledCapabilityFixtureRestore(
+                priorToolGrant: nil,
+                priorBrowserUseEnabled: priorBrowserUseEnabled
+            )
         }
         let priorSet = Set(prior)
-        let missing = names.filter { !priorSet.contains($0) }
-        if missing.isEmpty { return nil }
-        AgentManager.shared.updateEnabledToolNames(Array(priorSet.union(names)), for: agentId)
-        return prior
+        let missing = dynamicNames.filter { !priorSet.contains($0) }
+        if !missing.isEmpty {
+            AgentManager.shared.updateEnabledToolNames(
+                Array(priorSet.union(dynamicNames)),
+                for: agentId
+            )
+        }
+        return EnabledCapabilityFixtureRestore(
+            priorToolGrant: missing.isEmpty ? nil : prior,
+            priorBrowserUseEnabled: priorBrowserUseEnabled
+        )
     }
 
     /// Restore the allowlist snapshot taken by `applyEnableTools`.
-    private static func restoreToolGrant(_ prior: [String]?, agentId: UUID) async {
-        guard let prior else { return }
-        AgentManager.shared.updateEnabledToolNames(prior, for: agentId)
+    static func restoreToolGrant(
+        _ restore: EnabledCapabilityFixtureRestore,
+        agentId: UUID
+    ) async {
+        if let prior = restore.priorToolGrant {
+            AgentManager.shared.updateEnabledToolNames(prior, for: agentId)
+        }
+        if let priorBrowserUseEnabled = restore.priorBrowserUseEnabled,
+            var agent = AgentManager.shared.agent(for: agentId),
+            !agent.isBuiltIn,
+            agent.settings.browserUseEnabled != priorBrowserUseEnabled
+        {
+            agent.settings.browserUseEnabled = priorBrowserUseEnabled
+            AgentManager.shared.update(agent)
+        }
     }
 
     /// Re-establish the ephemeral remote judge provider if a configuration

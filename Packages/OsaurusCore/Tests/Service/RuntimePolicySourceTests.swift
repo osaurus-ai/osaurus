@@ -1717,6 +1717,35 @@ struct RuntimePolicySourceTests {
         #expect(!chatCompletions.contains("mergeAgentContextTools("))
     }
 
+    @Test("HTTP agent context uses the native composed toolset without re-injection")
+    func httpAgentContextUsesNativeComposedToolset() throws {
+        let handler = try Self.source("Networking/HTTPHandler.swift")
+        let enrichment = try Self.functionBody(
+            "private static func enrichWithAgentContext(",
+            in: handler
+        )
+
+        #expect(enrichment.contains("SystemPromptComposer.composeChatContext("))
+        #expect(enrichment.contains("mergeAgentContextTools(\n            composed.tools,"))
+        #expect(!enrichment.contains("visibleDelegationToolNames("))
+        #expect(!enrichment.contains("specs(forTools: Array(visibleDelegation))"))
+    }
+
+    @Test("Capability controls show readiness and expose Default Image and AppleScript")
+    func capabilityControlsExposeReadiness() throws {
+        let agents = try Self.source("Views/Agent/AgentsView.swift")
+        let mainChat = try Self.source("Views/Settings/SubagentSettingsSection.swift")
+        let browser = try Self.source("Views/Settings/BrowserSettingsView.swift")
+
+        #expect(agents.contains("private func subagentReadiness("))
+        #expect(agents.contains(#"\(callableSubagentCount) \(L("callable"))"#))
+        #expect(agents.contains("readiness.statusMessage"))
+        #expect(mainChat.contains("$configuration.imageDelegationEnabled"))
+        #expect(mainChat.contains("$configuration.appleScriptDelegationEnabled"))
+        #expect(mainChat.contains("mainSpawnReadiness"))
+        #expect(browser.contains("can only be enabled per custom agent"))
+    }
+
     @Test("Open Responses endpoint has v1 alias and does not inject agent context")
     func openResponsesEndpointHasV1AliasAndDoesNotInjectAgentContext() throws {
         let handler = try Self.source("Networking/HTTPHandler.swift")

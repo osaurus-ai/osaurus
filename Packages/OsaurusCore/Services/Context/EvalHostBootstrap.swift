@@ -33,14 +33,30 @@ public enum EvalHostBootstrap {
     }
 
     /// Names of the agent-enableable dynamic tools currently in the
-    /// registry (built-ins + loaded plugin tools, minus always-loaded
-    /// internals like `capabilities_discover`). Exposed so the
+    /// registry (loaded MCP, plugin, and sandbox-plugin tools; authoritative
+    /// built-ins are excluded). Exposed so the
     /// OsaurusEvals `capability_claims` runner can seed an isolated eval
     /// agent's allowlist authoritatively — `ToolRegistry` itself stays
     /// internal to OsaurusCore. Empty until `loadInstalledPlugins()` (or
     /// the index bootstrap) has synced the registry.
     public static func dynamicToolNames() -> [String] {
         ToolRegistry.shared.listDynamicTools().map(\.name)
+    }
+
+    /// Stable eval-only dynamic tool used to prove the positive
+    /// `capabilities_load` path without pretending an authoritative built-in
+    /// is loadable. The AgentLoop runner registers it only around the one
+    /// fixture that requests it and removes it before the next case.
+    nonisolated public static let dynamicLoadProbeToolName = "eval_dynamic_load_probe"
+
+    public static func registerDynamicLoadProbe() {
+        let probe = EvalDynamicLoadProbeTool()
+        ToolRegistry.shared.registerPluginTool(probe)
+        ToolRegistry.shared.setEnabled(true, for: probe.name)
+    }
+
+    public static func unregisterDynamicLoadProbe() {
+        ToolRegistry.shared.unregister(names: [dynamicLoadProbeToolName])
     }
 
     /// True when at least one curated AppleScript bundle is installed and
@@ -84,5 +100,19 @@ public enum EvalHostBootstrap {
         await SkillManager.shared.refresh()
         await SkillSearchService.shared.initialize()
         await SkillSearchService.shared.rebuildIndex()
+    }
+}
+
+private struct EvalDynamicLoadProbeTool: OsaurusTool {
+    let name = EvalHostBootstrap.dynamicLoadProbeToolName
+    let description =
+        "Return a deterministic acknowledgement that a deferred dynamic tool loaded and executed."
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "properties": .object([:]),
+    ])
+
+    func execute(argumentsJSON _: String) async throws -> String {
+        ToolEnvelope.success(tool: name, text: "dynamic load probe executed")
     }
 }

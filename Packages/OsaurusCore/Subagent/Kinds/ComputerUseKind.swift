@@ -110,6 +110,20 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
             return ResolvedModel(name: evalHarness.modelId, id: nil, isLocal: false)
         }
         let agentId = scope.agentId
+        // Defense in depth for stale/direct invocations that did not pass
+        // through a request ToolExecutionScope. Computer Use is custom-agent
+        // only and remains governed by both its per-agent flag and Tools.
+        let allowed = await MainActor.run {
+            guard agentId != Agent.defaultId,
+                let agent = AgentManager.shared.agent(for: agentId)
+            else { return false }
+            return agent.toolsEnabled && agent.settings.computerUseEnabled
+        }
+        guard allowed else {
+            throw SubagentError.denied(
+                "Computer Use is not enabled for this custom agent."
+            )
+        }
         // One shared path for precedence (per-agent `computer_use` override →
         // the parent agent's model), the availability fallback, and the live
         // residency decision (reject-before-evict; a remote override / the

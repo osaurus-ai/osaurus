@@ -68,6 +68,24 @@ final class BrowserUseKind: SubagentKind, @unchecked Sendable {
 
     func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
         let agentId = scope.agentId
+        // Defense in depth for direct/stale invocations outside the canonical
+        // request ToolExecutionScope. Browser Use is custom-agent-only and its
+        // persisted flag plus Tools master switch remain authoritative at
+        // execution time. Eval seams supply an explicit model/dispatcher and
+        // intentionally bypass live user configuration.
+        if evalModel == nil, executeOverride == nil {
+            let allowed = await MainActor.run {
+                guard agentId != Agent.defaultId,
+                    let agent = AgentManager.shared.agent(for: agentId)
+                else { return false }
+                return agent.toolsEnabled && agent.settings.browserUseEnabled
+            }
+            guard allowed else {
+                throw SubagentError.denied(
+                    "Browser Use is not enabled for this custom agent."
+                )
+            }
+        }
         // One shared path for precedence (per-agent `browser_use` override →
         // the parent agent's model), the availability fallback, and the live
         // residency decision — identical to computer_use.

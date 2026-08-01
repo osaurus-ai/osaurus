@@ -814,9 +814,9 @@ public enum SystemPromptTemplates {
         """
 
     /// Browser Use grounding. Rendered only when the `browser_use` tool
-    /// actually resolves into the schema (per-agent opt-in via
-    /// `browserUseEnabled`; the Default agent opts in from Settings →
-    /// Browser). Mirrors the tool's contract: one whole-task `goal`, a
+    /// actually resolves into the schema (custom-agent opt-in via
+    /// `browserUseEnabled`; the Default agent is hard-off). Mirrors the
+    /// tool's contract: one whole-task `goal`, a
     /// persistent per-agent signed-in session, and the read-auto /
     /// edit-confirm autonomy gate — stated plainly, not coerced.
     public static let browserUseGuidance = """

@@ -129,13 +129,13 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     public let computerUseEnabled: Bool
     /// Per-agent opt-in for Browser Use. Enforced authoritatively in
     /// `resolveTools` like `computer_use` — `browser_use` is stripped in BOTH
-    /// auto and manual mode unless the agent has opted in. The Default agent's
-    /// value comes from `BrowserConfigurationStore` (Settings → Browser).
+    /// auto and manual mode unless the custom agent has opted in. The built-in
+    /// Default agent is hard-off for Browser Use.
     public let browserUseEnabled: Bool
     /// Per-agent opt-in for `spawn`. Enforced authoritatively in `resolveTools`
     /// — stripped unless the agent has opted in AND has at least one spawnable
-    /// agent (`spawnableAgentIDs`), ANDed with the global master gate. The
-    /// Default agent is governed by the global pool instead.
+    /// agent or model. There is no global master gate; the Default agent is
+    /// governed by its own global pool instead.
     public let spawnDelegationEnabled: Bool
     /// Per-agent opt-in for `image`. Enforced in `resolveTools` — stripped
     /// unless the agent opted in (custom agents) / the global image switch is on

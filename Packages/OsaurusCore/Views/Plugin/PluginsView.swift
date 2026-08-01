@@ -1968,7 +1968,7 @@ private struct PluginDetailView: View {
         let detail: LocalizedStringKey =
             switch plugin.pluginId {
             case "osaurus.browser":
-                "The browser is now a native feature. This plugin's tools and skill are no longer loaded — manage sessions in Settings → Browser. You can uninstall this plugin."
+                "The browser is now a native feature. This plugin's tools and skill are no longer loaded — enable Browser Use on a custom agent's Subagents tab, and manage sessions in Settings → Browser. You can uninstall this plugin."
             default:
                 "Web search is now a native feature. This plugin's tools are no longer loaded — configure providers in Settings → Search. You can uninstall this plugin."
             }

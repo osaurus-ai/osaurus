@@ -301,9 +301,8 @@ public final class ToolRegistry: ObservableObject {
             // replacement for the osaurus.browser plugin). Registered as a
             // built-in so the runtime can execute it and ChatView can
             // intercept its live activity feed, but the composer strips it
-            // authoritatively unless the agent opts in via
-            // `browserUseEnabled` (custom agents; the Default agent opts in
-            // from Settings → Browser). The `browser_*` primitives are
+            // authoritatively unless a custom agent opts in via
+            // `browserUseEnabled`; the Default agent is hard-off. The `browser_*` primitives are
             // PRIVATE to the nested runner and are never registered here.
             BrowserUseTool(),
             // AppleScript subagent. Like the other delegation-family tools it
@@ -858,10 +857,18 @@ public final class ToolRegistry: ObservableObject {
             let toolAvailability = availability(forTool: name, agentAllowedNames: agentAllowed)
             // The default agent's capabilities_load is gated to the configure
             // write tools, so the hint would only steer it into a rejected
-            // load for anything else.
+            // load for anything else. Likewise, a registered built-in withheld
+            // by an agent/mode/readiness gate is not dynamically loadable: an
+            // exact guessed name must not be laundered through capabilities_load.
+            let isDeferredDefaultConfigureWrite =
+                ChatExecutionContext.currentAgentId == Agent.defaultId
+                && Self.configureWriteToolNames.contains(name)
+            let isNonLoadableBuiltIn =
+                builtInToolNames.contains(name) && !isDeferredDefaultConfigureWrite
             let loadGateAllows =
-                ChatExecutionContext.currentAgentId != Agent.defaultId
-                || Self.configureWriteToolNames.contains(name)
+                !isNonLoadableBuiltIn
+                && (ChatExecutionContext.currentAgentId != Agent.defaultId
+                    || Self.configureWriteToolNames.contains(name))
             if loadGateAllows, loadableCodes.isSuperset(of: toolAvailability.reasonCodes) {
                 return ToolErrorEnvelope(
                     kind: .toolNotFound,
