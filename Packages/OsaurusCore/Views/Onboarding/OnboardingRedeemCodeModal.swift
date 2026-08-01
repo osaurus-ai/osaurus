@@ -140,7 +140,7 @@ struct OnboardingRedeemCodeModal: View {
                 }
                 .font(theme.font(size: 12))
                 .foregroundColor(theme.errorColor)
-            } else {
+            } else if redemption.retryNotBefore == nil {
                 HStack(spacing: 5) {
                     Image(systemName: "lock.fill")
                         .font(.system(size: 9, weight: .semibold))
@@ -148,6 +148,10 @@ struct OnboardingRedeemCodeModal: View {
                         .font(theme.font(size: 11))
                 }
                 .foregroundColor(theme.tertiaryText)
+            }
+
+            if let retryDeadline = redemption.retryNotBefore {
+                RedeemRetryCountdownHint(deadline: retryDeadline)
             }
         }
         .padding(.horizontal, 24)

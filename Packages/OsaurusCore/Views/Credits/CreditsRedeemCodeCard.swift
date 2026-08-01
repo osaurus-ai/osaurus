@@ -115,6 +115,10 @@ struct CreditsRedeemCodeCard: View {
                 .font(.system(size: 12))
                 .foregroundColor(theme.errorColor)
             }
+
+            if isEnabled, let retryDeadline = redemption.retryNotBefore {
+                RedeemRetryCountdownHint(deadline: retryDeadline)
+            }
         }
     }
 

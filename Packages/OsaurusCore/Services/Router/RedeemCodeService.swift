@@ -25,7 +25,8 @@ final class RedeemCodeService: ObservableObject {
     private let client: OsaurusRouterAPIClient
     private let ensureIdentity: @MainActor () async throws -> Void
     private let refreshFixedCredit: @MainActor () async -> Void
-    private let onOnboardingRedemption: @MainActor () -> Void
+    private let onAcquisitionRedemption: @MainActor () -> Void
+    private let acquisitionGateBlocking: @MainActor () -> Bool
     private let now: @MainActor () -> Date
     private let sleep: @MainActor (TimeInterval) async -> Void
     private var retryReleaseTask: Task<Void, Never>?
@@ -35,7 +36,8 @@ final class RedeemCodeService: ObservableObject {
         client: OsaurusRouterAPIClient = .shared,
         ensureIdentity: (@MainActor () async throws -> Void)? = nil,
         refreshFixedCredit: (@MainActor () async -> Void)? = nil,
-        onOnboardingRedemption: (@MainActor () -> Void)? = nil,
+        onAcquisitionRedemption: (@MainActor () -> Void)? = nil,
+        acquisitionGateBlocking: (@MainActor () -> Bool)? = nil,
         now: @escaping @MainActor () -> Date = Date.init,
         sleep: (@MainActor (TimeInterval) async -> Void)? = nil
     ) {
@@ -54,12 +56,15 @@ final class RedeemCodeService: ObservableObject {
                 await OsaurusRouterAccountService.shared.refreshBalance()
                 await OsaurusRouterAccountService.shared.refreshTransactions(reset: true)
             }
-        self.onOnboardingRedemption =
-            onOnboardingRedemption
+        self.onAcquisitionRedemption =
+            onAcquisitionRedemption
             ?? {
                 WelcomeCreditService.shared.suppressAfterCodeRedemption()
                 RouterCreditAcquisitionCoordinator.shared.resolveAfterCodeRedemption()
             }
+        self.acquisitionGateBlocking =
+            acquisitionGateBlocking
+            ?? { RouterCreditAcquisitionCoordinator.shared.blocksGeneralSignedRequests }
         self.now = now
         self.sleep =
             sleep
@@ -107,16 +112,32 @@ final class RedeemCodeService: ObservableObject {
 
         do {
             try await ensureIdentity()
+        } catch let error as OsaurusRouterAPIError {
+            handle(error)
+            return
+        } catch {
+            // Identity setup is a local keychain operation, not a network
+            // call — "check your connection" would point the user at the
+            // wrong problem.
+            state = .failure(L("We couldn’t set up your Osaurus Identity. Please try again."))
+            return
+        }
+
+        do {
             let rawResponse = try await client.redeemCode(submittedCode)
             guard rawResponse.redeemed else {
                 throw OsaurusRouterAPIError.invalidResponse
             }
 
             let response = Self.presentationSafe(rawResponse)
-            if context == .onboarding {
-                // Open the first-action gate before refreshing balance: the
-                // refresh is intentionally the next signed Router request.
-                onOnboardingRedemption()
+            if context == .onboarding || acquisitionGateBlocking() {
+                // A redeemed code settles the wallet's first-action choice:
+                // suppress the mutually exclusive welcome claim and open the
+                // signing gate before refreshing balance, so the refresh is
+                // intentionally the next signed Router request. Outside a
+                // blocking phase (existing installs redeeming from Credits)
+                // welcome-credit behavior is left untouched.
+                onAcquisitionRedemption()
             }
             if (Int64(response.amountMicro) ?? 0) != 0 {
                 await refreshFixedCredit()

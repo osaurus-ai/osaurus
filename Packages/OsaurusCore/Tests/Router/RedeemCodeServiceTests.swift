@@ -10,16 +10,31 @@ struct RedeemCodeServiceTests {
     private final class Fixture {
         var identityPreparations = 0
         var fixedCreditRefreshes = 0
-        var onboardingCompletions = 0
+        var acquisitionSettlements = 0
+        var acquisitionGateBlocking = false
+        /// Ordered trace of the side effects a submission performed.
+        var events: [String] = []
         var now = Date(timeIntervalSince1970: 1_800_000_000)
 
         func makeService(context: RedeemCodeService.Context = .credits) -> RedeemCodeService {
             RedeemCodeService(
                 context: context,
                 client: Self.makeClient(),
-                ensureIdentity: { [weak self] in self?.identityPreparations += 1 },
-                refreshFixedCredit: { [weak self] in self?.fixedCreditRefreshes += 1 },
-                onOnboardingRedemption: { [weak self] in self?.onboardingCompletions += 1 },
+                ensureIdentity: { [weak self] in
+                    self?.identityPreparations += 1
+                    self?.events.append("identity")
+                },
+                refreshFixedCredit: { [weak self] in
+                    self?.fixedCreditRefreshes += 1
+                    self?.events.append("refresh")
+                },
+                onAcquisitionRedemption: { [weak self] in
+                    self?.acquisitionSettlements += 1
+                    self?.events.append("settle")
+                },
+                acquisitionGateBlocking: { [weak self] in
+                    self?.acquisitionGateBlocking ?? false
+                },
                 now: { [weak self] in self?.now ?? .distantPast },
                 sleep: { _ in }
             )
@@ -70,7 +85,7 @@ struct RedeemCodeServiceTests {
 
         #expect(service.code == "LAUNCH25")
         #expect(fixture.identityPreparations == 1)
-        #expect(fixture.onboardingCompletions == 1)
+        #expect(fixture.acquisitionSettlements == 1)
         #expect(fixture.fixedCreditRefreshes == 1)
         guard case .success(let response) = service.state else {
             Issue.record("Expected successful redemption")
@@ -98,6 +113,55 @@ struct RedeemCodeServiceTests {
             return
         }
         #expect(response.referralPending)
+    }
+
+    @Test func creditsRedemptionWhileGatePendingSettlesAcquisitionBeforeRefresh() async {
+        let fixture = Fixture()
+        defer { fixture.cleanup() }
+        // Onboarding finished offline: the welcome claim never completed, so
+        // the first-action gate still blocks general signed traffic.
+        fixture.acquisitionGateBlocking = true
+        respond(
+            """
+            {"redeemed":true,"already_redeemed":false,"campaign_kind":"first_time","amount_micro":"5000000","referral_pending":false,"redemption_message":"Welcome."}
+            """
+        )
+        let service = fixture.makeService(context: .credits)
+        service.code = "LATECODE"
+
+        await service.submit()
+
+        guard case .success = service.state else {
+            Issue.record("Expected successful redemption")
+            return
+        }
+        #expect(fixture.acquisitionSettlements == 1)
+        // The gate must open before the balance refresh, which is the next
+        // signed Router request — otherwise it fails with firstActionPending.
+        #expect(fixture.events == ["identity", "settle", "refresh"])
+    }
+
+    @Test func creditsRedemptionAfterGateResolvedLeavesWelcomeStateUntouched() async {
+        let fixture = Fixture()
+        defer { fixture.cleanup() }
+        respond(
+            """
+            {"redeemed":true,"already_redeemed":false,"campaign_kind":"ongoing","amount_micro":"1000000","referral_pending":false,"redemption_message":"Applied."}
+            """
+        )
+        let service = fixture.makeService(context: .credits)
+        service.code = "ONGOING"
+
+        await service.submit()
+
+        guard case .success = service.state else {
+            Issue.record("Expected successful redemption")
+            return
+        }
+        // An existing install redeeming an ongoing code must not disturb the
+        // historical welcome-claim behavior.
+        #expect(fixture.acquisitionSettlements == 0)
+        #expect(fixture.fixedCreditRefreshes == 1)
     }
 
     @Test func forbiddenUsesNeutralMessageAndPreservesCode() async {
