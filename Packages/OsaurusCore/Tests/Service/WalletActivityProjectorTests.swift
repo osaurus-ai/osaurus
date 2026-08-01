@@ -192,6 +192,25 @@ struct WalletActivityProjectorTests {
         #expect(rows[1].isCredit)
     }
 
+    @Test func negativePromoReversalStaysVisibleWithSignedAmount() {
+        let rows = WalletActivityProjector().rows(
+            usageItems: [],
+            transactions: [
+                transaction(
+                    id: "referral-reversal",
+                    amount: "-1250000",
+                    entryType: "promo"
+                )
+            ]
+        )
+
+        #expect(rows.count == 1)
+        #expect(rows[0].title == "Credits reversed")
+        #expect(rows[0].amountLabel == "-$1.25")
+        #expect(rows[0].isCredit == false)
+        #expect(rows[0].stateKind == .secondary)
+    }
+
     private func webUsage(
         id: String = "w1",
         operation: String = "search",

@@ -75,6 +75,13 @@ actor OsaurusRouterAPIClient {
         return try await post("/credits/welcome/claim", body: Body(device_id: deviceId))
     }
 
+    /// Redeem a promotion or referral code. The canonical encoder produces the
+    /// exact bytes used for both EIP-191 signing and the HTTP request body.
+    func redeemCode(_ code: String) async throws -> OsaurusRouterRedeemCodeResponse {
+        struct Body: Encodable { let code: String }
+        return try await post("/credits/redeem", body: Body(code: code))
+    }
+
     func models() async throws -> [OsaurusRouterModel] {
         let response: OsaurusRouterModelListResponse = try await get("/models")
         return response.data

@@ -162,6 +162,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             NSApp.setActivationPolicy(hideDockIcon ? .accessory : .regular)
         }
 
+        // A first-time redeem code is valid only when redemption is the
+        // wallet's first signed Router action. Prepare this persisted gate
+        // before any launch subsystem can attempt a signed request.
+        RouterCreditAcquisitionCoordinator.shared.prepareForLaunch(
+            isFreshInstall: OnboardingService.shared.isFreshInstall
+        )
+
         // Consolidate any agent records stranded in the legacy `Personas/`
         // directory into `agents/` before the first agent load. Enabling a
         // per-agent Database (or writing a custom avatar) creates `agents/`,

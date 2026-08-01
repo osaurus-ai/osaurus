@@ -357,7 +357,7 @@ struct OsaurusRouterSearchBackend: Sendable {
             default:
                 return .providerError
             }
-        case .invalidURL, .invalidResponse, .belowMinimumTopUp:
+        case .firstActionPending, .invalidURL, .invalidResponse, .belowMinimumTopUp:
             return .providerError
         }
     }

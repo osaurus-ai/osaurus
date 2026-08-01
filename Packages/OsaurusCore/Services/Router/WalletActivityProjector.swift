@@ -151,7 +151,7 @@ extension WalletActivityRow {
     static func isWalletVisible(_ item: OsaurusRouterTransactionItem) -> Bool {
         if (Int64(item.amountMicro) ?? 0) >= 0 { return true }
         switch item.entryType.lowercased() {
-        case "refund", "adjustment":
+        case "refund", "adjustment", "promo", "promotion", "grant", "bonus":
             return true
         default:
             return false
@@ -169,7 +169,7 @@ extension WalletActivityRow {
         case "refund":
             return "Refund"
         case "promo", "promotion", "grant", "bonus":
-            return "Credits granted"
+            return isCredit ? "Credits granted" : "Credits reversed"
         case "adjustment":
             return "Adjustment"
         default:

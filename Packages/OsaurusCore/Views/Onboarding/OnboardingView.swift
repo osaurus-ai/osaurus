@@ -92,8 +92,15 @@ public struct OnboardingView: View {
                     .transition(.opacity)
                     .zIndex(10)
             }
+
+            if currentStep == .welcome && welcomeState.isShowingRedeemCode {
+                OnboardingRedeemCodeModal(state: welcomeState)
+                    .transition(.opacity)
+                    .zIndex(10)
+            }
         }
         .animation(theme.animationQuick(), value: configureAIState.isChoosingModel)
+        .animation(theme.animationQuick(), value: welcomeState.isShowingRedeemCode)
         .frame(width: OnboardingMetrics.windowWidth, height: OnboardingMetrics.windowHeight)
         .onAppear {
             onPreferredSizeChange?(
@@ -180,7 +187,10 @@ public struct OnboardingView: View {
     private var stepFooterCaption: some View {
         switch currentStep {
         case .welcome:
-            VStack(spacing: 8) {
+            VStack(spacing: 7) {
+                WelcomeRedeemCodeLink {
+                    welcomeState.openRedeemCode()
+                }
                 WelcomeUsageOptIn(state: welcomeState)
                 WelcomeLegalNotice()
             }
@@ -263,6 +273,13 @@ public struct OnboardingView: View {
             HStack {
                 Spacer(minLength: 0)
                 WelcomeCTA(onContinue: {
+                    // No successful onboarding redemption means the existing
+                    // welcome claim owns the wallet's first signed Router action.
+                    // Persist that choice before identity setup can notify any
+                    // Router observers.
+                    if !welcomeState.redeemCode.succeeded {
+                        WelcomeCreditService.shared.selectForFirstLaunch()
+                    }
                     // Commit the usage opt-in here (not on toggle) so the whole
                     // funnel from this point on is captured even if the user
                     // bails before the final step. Granting flushes the events
@@ -476,6 +493,12 @@ public struct OnboardingView: View {
     }
 
     private func finishOnboarding(via: OnboardingTelemetry.Completion) {
+        // Closing on any step is also an explicit no-code continuation unless
+        // this onboarding run already redeemed one successfully.
+        if !welcomeState.redeemCode.succeeded {
+            WelcomeCreditService.shared.selectForFirstLaunch()
+        }
+
         // Record where the user left and how: `finishButton` (the consent
         // step's CTA) is a real completion, `closeButton` at an earlier step
         // is the drop-off point.

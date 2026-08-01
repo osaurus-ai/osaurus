@@ -31,9 +31,11 @@ struct WelcomeCreditServiceTests {
         let defaults: UserDefaults
         let suiteName: String
         private(set) var grantedRefreshes = 0
+        private(set) var settledCount = 0
         var identityExists = true
         var routerEnabled = true
         var deviceId: String? = WelcomeCreditServiceTests.deviceHash
+        var mayAttemptClaim = true
 
         init() {
             suiteName = "welcome-credit-tests-\(UUID().uuidString)"
@@ -47,6 +49,8 @@ struct WelcomeCreditServiceTests {
                 identityExists: { [weak self] in self?.identityExists ?? false },
                 isRouterEnabled: { [weak self] in self?.routerEnabled ?? false },
                 deviceId: { [weak self] in self?.deviceId },
+                shouldAttemptClaim: { [weak self] in self?.mayAttemptClaim ?? false },
+                onWelcomeSettled: { [weak self] in self?.settledCount += 1 },
                 onGranted: { [weak self] in self?.grantedRefreshes += 1 },
                 observesNotifications: false
             )
@@ -107,6 +111,7 @@ struct WelcomeCreditServiceTests {
         #expect(settled == true)
         #expect(service.resolution == .granted)
         #expect(fixture.grantedRefreshes == 1)
+        #expect(fixture.settledCount == 1)
 
         // Settled: no further request ever fires.
         let again = await service.claimIfNeeded()
@@ -213,6 +218,37 @@ struct WelcomeCreditServiceTests {
     }
 
     // MARK: - Preconditions
+
+    @Test func firstLaunchDecisionGatePreventsAutomaticClaim() async {
+        let fixture = Fixture()
+        defer { fixture.cleanup() }
+        fixture.mayAttemptClaim = false
+        WelcomeURLProtocol.handler = { _ in
+            Issue.record("claim must wait for the onboarding decision")
+            throw URLError(.cancelled)
+        }
+
+        let service = fixture.makeService()
+        #expect(await service.claimIfNeeded() == false)
+        #expect(service.resolution == nil)
+        #expect(WelcomeURLProtocol.requestCount == 0)
+    }
+
+    @Test func codeRedemptionSuppressesWelcomeClaimPermanently() async {
+        let fixture = Fixture()
+        defer { fixture.cleanup() }
+        WelcomeURLProtocol.handler = { _ in
+            Issue.record("redeemed onboarding code must suppress welcome claim")
+            throw URLError(.cancelled)
+        }
+
+        let service = fixture.makeService()
+        service.suppressAfterCodeRedemption()
+
+        #expect(service.resolution == .redeemed)
+        #expect(await service.claimIfNeeded())
+        #expect(WelcomeURLProtocol.requestCount == 0)
+    }
 
     @Test func claim_requiresIdentityRouterAndDeviceId() async {
         let fixture = Fixture()

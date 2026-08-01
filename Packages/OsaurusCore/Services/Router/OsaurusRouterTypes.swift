@@ -118,6 +118,7 @@ struct OsaurusRouterErrorEnvelope: Decodable {
 
 enum OsaurusRouterAPIError: LocalizedError, Sendable {
     case noIdentity
+    case firstActionPending
     case invalidURL
     case invalidResponse
     case transport(String)
@@ -139,6 +140,8 @@ enum OsaurusRouterAPIError: LocalizedError, Sendable {
         switch self {
         case .noIdentity:
             return "Set up your Osaurus Identity before using the router."
+        case .firstActionPending:
+            return "Finish choosing your welcome credit before using the router."
         case .invalidURL:
             return "Router URL is invalid."
         case .invalidResponse:
@@ -208,6 +211,26 @@ struct OsaurusRouterWelcomeClaimResponse: Decodable, Equatable, Sendable {
         case granted
         case alreadyGranted = "already_granted"
         case amountMicro = "amount_micro"
+    }
+}
+
+/// `POST /credits/redeem` result. The Router is authoritative for campaign
+/// eligibility and returns the exact plain-text message the UI should show.
+struct OsaurusRouterRedeemCodeResponse: Decodable, Equatable, Sendable {
+    let redeemed: Bool
+    let alreadyRedeemed: Bool
+    let campaignKind: String
+    let amountMicro: String
+    let referralPending: Bool
+    let redemptionMessage: String
+
+    enum CodingKeys: String, CodingKey {
+        case redeemed
+        case alreadyRedeemed = "already_redeemed"
+        case campaignKind = "campaign_kind"
+        case amountMicro = "amount_micro"
+        case referralPending = "referral_pending"
+        case redemptionMessage = "redemption_message"
     }
 }
 

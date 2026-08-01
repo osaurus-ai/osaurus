@@ -138,6 +138,46 @@ struct OsaurusRouterAPIClientTests {
         #expect(claim.alreadyGranted == true)
     }
 
+    @Test func redeemCode_postsExactCodeAndDecodesCampaignResult() async throws {
+        let client = try makeClient { request in
+            #expect(request.url?.path == "/credits/redeem")
+            #expect(request.httpMethod == "POST")
+            let body = String(
+                data: request.httpBodyStreamData ?? request.httpBody ?? Data(),
+                encoding: .utf8
+            ) ?? ""
+            #expect(body == #"{"code":"LAUNCH25"}"#)
+            return json(
+                """
+                {"redeemed":true,"already_redeemed":false,"campaign_kind":"first_time","amount_micro":"5000000","referral_pending":false,"redemption_message":"Welcome to Osaurus — $5 in credits was added."}
+                """
+            )
+        }
+
+        let response = try await client.redeemCode("LAUNCH25")
+        #expect(response.redeemed)
+        #expect(response.alreadyRedeemed == false)
+        #expect(response.campaignKind == "first_time")
+        #expect(response.amountMicro == "5000000")
+        #expect(response.referralPending == false)
+        #expect(response.redemptionMessage == "Welcome to Osaurus — $5 in credits was added.")
+    }
+
+    @Test func redeemCode_decodesIdempotentReferralResult() async throws {
+        let client = try makeClient { _ in
+            json(
+                """
+                {"redeemed":true,"already_redeemed":true,"campaign_kind":"referral","amount_micro":"0","referral_pending":true,"redemption_message":"Referral linked."}
+                """
+            )
+        }
+
+        let response = try await client.redeemCode("OSA-TEST")
+        #expect(response.alreadyRedeemed)
+        #expect(response.referralPending)
+        #expect(response.amountMicro == "0")
+    }
+
     @Test func searchSession_timeoutSitsAboveRouterUpstreamBudget() {
         let session = OsaurusRouterAPIClient.makeSearchSession()
         defer { session.invalidateAndCancel() }

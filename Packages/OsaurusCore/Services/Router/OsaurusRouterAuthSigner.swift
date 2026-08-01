@@ -25,6 +25,19 @@ struct OsaurusRouterAuthSigner: Sendable {
     var now: @Sendable () -> Int = { Int(Date().timeIntervalSince1970) }
 
     func sign(request: inout URLRequest, body: Data? = nil, nonce: String? = nil) async throws {
+        guard let requestURL = request.url else {
+            throw OsaurusRouterAPIError.invalidURL
+        }
+        let pathAndQuery = Self.pathAndQuery(for: requestURL)
+        let maySign = await MainActor.run {
+            RouterCreditAcquisitionCoordinator.shared.allowsSignedRequest(
+                pathAndQuery: pathAndQuery
+            )
+        }
+        guard maySign else {
+            throw OsaurusRouterAPIError.firstActionPending
+        }
+
         guard OsaurusIdentity.exists() else {
             throw OsaurusRouterAPIError.noIdentity
         }
@@ -36,12 +49,11 @@ struct OsaurusRouterAuthSigner: Sendable {
         }.value
         defer { privateKey.zeroOut() }
 
-        guard let url = request.url else { throw OsaurusRouterAPIError.invalidURL }
         let method = request.httpMethod ?? "GET"
         let rawBody = body ?? request.httpBody ?? Data()
         let headers = try Self.signHeaders(
             method: method,
-            pathAndQuery: Self.pathAndQuery(for: url),
+            pathAndQuery: pathAndQuery,
             body: rawBody,
             timestamp: now(),
             nonce: nonce,

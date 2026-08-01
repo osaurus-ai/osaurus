@@ -46,6 +46,7 @@ struct CreditsView: View {
                             identityRequiredCard
                         }
                         balanceCard
+                        CreditsRedeemCodeCard(isEnabled: canAddCredits)
                         webSearchCard
                         activityCard
                     } else {

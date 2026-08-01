@@ -34,6 +34,9 @@ final class WelcomeCreditService {
     enum Resolution: String {
         /// The credit landed (or had already landed for this wallet). Done.
         case granted
+        /// A code was redeemed during onboarding, so the mutually exclusive
+        /// automatic welcome claim must never run.
+        case redeemed
         /// The Router refused the claim (403/400). The offer must be hidden
         /// and the claim never retried.
         case hidden
@@ -55,6 +58,8 @@ final class WelcomeCreditService {
     private let identityExists: @MainActor () -> Bool
     private let isRouterEnabled: () -> Bool
     private let deviceId: () -> String?
+    private let shouldAttemptClaim: @MainActor () -> Bool
+    private let onWelcomeSettled: @MainActor () -> Void
     /// Post-grant hook: refresh the balance (and the ledger, where the promo
     /// entry appears). Injectable so tests don't touch the live account
     /// service.
@@ -74,6 +79,8 @@ final class WelcomeCreditService {
         identityExists: @escaping @MainActor () -> Bool = { OsaurusIdentity.existsCached() },
         isRouterEnabled: @escaping () -> Bool = { OsaurusRouter.isEnabled },
         deviceId: @escaping () -> String? = { WelcomeCreditDeviceID.current() },
+        shouldAttemptClaim: (@MainActor () -> Bool)? = nil,
+        onWelcomeSettled: (@MainActor () -> Void)? = nil,
         onGranted: (@MainActor () async -> Void)? = nil,
         observesNotifications: Bool = true
     ) {
@@ -82,6 +89,12 @@ final class WelcomeCreditService {
         self.identityExists = identityExists
         self.isRouterEnabled = isRouterEnabled
         self.deviceId = deviceId
+        self.shouldAttemptClaim =
+            shouldAttemptClaim
+            ?? { RouterCreditAcquisitionCoordinator.shared.shouldAttemptWelcomeClaim }
+        self.onWelcomeSettled =
+            onWelcomeSettled
+            ?? { RouterCreditAcquisitionCoordinator.shared.resolveAfterWelcomeClaim() }
         self.onGranted =
             onGranted
             ?? {
@@ -123,6 +136,21 @@ final class WelcomeCreditService {
         Task { await claimIfNeeded() }
     }
 
+    /// Select the no-code path before onboarding advances or closes. If an
+    /// identity already exists, begin the claim immediately; otherwise the
+    /// identity-change observer will run it as soon as setup completes.
+    func selectForFirstLaunch() {
+        RouterCreditAcquisitionCoordinator.shared.selectWelcomeCredit()
+        Task { await claimIfNeeded() }
+    }
+
+    /// Persist mutual exclusion before releasing the first-action gate after a
+    /// successful onboarding redemption.
+    func suppressAfterCodeRedemption() {
+        guard resolution == nil else { return }
+        resolve(.redeemed)
+    }
+
     /// Attempt the one-time claim if every precondition holds. Returns true
     /// when the flow is settled as granted (now or previously); false when it
     /// remains pending or is terminally hidden.
@@ -130,14 +158,23 @@ final class WelcomeCreditService {
     func claimIfNeeded() async -> Bool {
         switch resolution {
         case .granted: return true
+        case .redeemed: return true
         case .hidden: return false
         case nil: break
         }
+        guard shouldAttemptClaim() else { return false }
         guard isRouterEnabled(), identityExists() else { return false }
         // No stable per-Mac id, no claim: the server rejects a missing
         // device_id, and a random fallback would break the one-per-Mac
         // invariant.
-        guard let deviceId = deviceId() else { return false }
+        guard let deviceId = deviceId() else {
+            // A stable device id is a hard local prerequisite. Once the user
+            // selected the welcome path, do not deadlock all Router traffic if
+            // this Mac cannot provide it.
+            resolve(.hidden)
+            onWelcomeSettled()
+            return false
+        }
         guard !isClaiming else { return false }
         if let deadline = retryNotBefore, Date() < deadline { return false }
 
@@ -149,6 +186,7 @@ final class WelcomeCreditService {
             // `granted` or `already_granted` — either way the credit is on
             // the wallet.
             resolve(.granted)
+            onWelcomeSettled()
             await onGranted()
             return true
         } catch let error as OsaurusRouterAPIError {
@@ -176,7 +214,8 @@ final class WelcomeCreditService {
             // or already claimed by wallet/device); 400 means the request is
             // malformed. Both are terminal: hide the offer, never retry.
             resolve(.hidden)
-        case .unauthorized, .accountFrozen, .noIdentity, .invalidURL:
+            onWelcomeSettled()
+        case .unauthorized, .accountFrozen, .noIdentity, .firstActionPending, .invalidURL:
             // Not claim verdicts: signing/identity/config problems. A later
             // trigger (identity ready, clock fixed) may succeed.
             break
