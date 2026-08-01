@@ -651,6 +651,15 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         return value
     }
 
+    /// Insights describes user-visible/API work, not the hidden KV prefill
+    /// generations used to warm a chat session.
+    static func shouldLogInferenceToInsights(
+        source: InferenceSource,
+        warmupPrefill: Bool
+    ) -> Bool {
+        source == .chatUI && !warmupPrefill
+    }
+
     /// Build a non-stream OpenAI-style response from one or more tool
     /// invocations parsed out of a single completion. Local models can emit
     /// multiple `<tool_call>` blocks per response; OpenAI clients expect a
@@ -672,7 +681,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         requestBodyJSON: String? = nil,
         tools: [Tool]? = nil,
         connection: RequestConnectionInfo? = nil,
-        logPath: String? = nil
+        logPath: String? = nil,
+        warmupPrefill: Bool = false
     ) -> ChatCompletionResponse {
         let schemasByName = Dictionary(
             uniqueKeysWithValues: (tools ?? []).map { ($0.function.name, $0.function.parameters) }
@@ -728,7 +738,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             system_fingerprint: nil
         )
 
-        if inferenceSource == .chatUI {
+        if Self.shouldLogInferenceToInsights(
+            source: inferenceSource,
+            warmupPrefill: warmupPrefill
+        ) {
             let durationMs = Date().timeIntervalSince(startTime) * 1000
             InsightsService.logInference(
                 source: inferenceSource,
@@ -842,9 +855,15 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             )
             let temp = temperature
             let maxTok = maxTokens
+            let warmupPrefill = request.warmupPrefill
+            let shouldLogToInsights = Self.shouldLogInferenceToInsights(
+                source: source,
+                warmupPrefill: warmupPrefill
+            )
             // Capture the request body up-front so the producer task does not
             // need to retain `request` (a non-Sendable in Swift 6 strict mode).
-            let requestBodyJSON = source == .chatUI ? Self.serializeRequestForLog(request) : nil
+            let requestBodyJSON =
+                shouldLogToInsights ? Self.serializeRequestForLog(request) : nil
             let secretToolWasExposed =
                 request.tools?.contains {
                     SecretArgumentScrubber.isSecretSetToolName($0.function.name)
@@ -868,7 +887,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 connection: remoteConn?.info,
                 logPath: remoteConn?.path,
                 wireProbe: wireProbe,
-                secretToolWasExposed: secretToolWasExposed
+                secretToolWasExposed: secretToolWasExposed,
+                warmupPrefill: warmupPrefill
             )
 
         case .none:
@@ -1002,9 +1022,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         connection: RequestConnectionInfo? = nil,
         logPath: String? = nil,
         wireProbe: WireTransportProbe? = nil,
-        secretToolWasExposed: Bool = false
+        secretToolWasExposed: Bool = false,
+        warmupPrefill: Bool = false
     ) -> AsyncThrowingStream<String, Error> {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+        let shouldLogToInsights = Self.shouldLogInferenceToInsights(
+            source: source,
+            warmupPrefill: warmupPrefill
+        )
 
         // Capture the background-task id at construction time (still on
         // the parent task) so the detached producer below can forward
@@ -1080,7 +1105,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             // (Chat UI source). HTTP API requests are logged by HTTPHandler
             // with the upstream body, so accumulating here would just waste
             // memory as the buffer grows with the stream.
-            let shouldAccumulate = source == .chatUI
+            let shouldAccumulate = shouldLogToInsights
             var responseAccumulator = ""
 
             print("[Osaurus][Stream] Starting stream wrapper for model: \(model)")
@@ -1249,7 +1274,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             }
 
             // Log the completed inference (only for Chat UI - HTTP requests are logged by HTTPHandler)
-            if source == .chatUI {
+            if shouldLogToInsights {
                 let durationMs = Date().timeIntervalSince(startTime) * 1000
                 let toolCallsLog = toolInvocation.map {
                     [
@@ -1324,10 +1349,15 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let inputTokens = estimateInputTokens(messages)
         let temperature = request.temperature
         let maxTokens = request.resolvedMaxTokens ?? 16384
+        let shouldLogToInsights = Self.shouldLogInferenceToInsights(
+            source: inferenceSource,
+            warmupPrefill: request.warmupPrefill
+        )
         // Capture the request body once so all four downstream log paths
         // (text-only, text-with-tools, tool-calls batch, tool-calls single)
         // surface the same prompt + tools in the Insights detail pane.
-        let requestBodyJSON = inferenceSource == .chatUI ? Self.serializeRequestForLog(request) : nil
+        let requestBodyJSON =
+            shouldLogToInsights ? Self.serializeRequestForLog(request) : nil
         let requestId = request.idempotencyKey
         // Carry the caller's `ttftTrace` through to non-streaming requests
         // for parity with `streamChat` — useful when an HTTP route runs the
@@ -1469,7 +1499,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     )
 
                     // Log the inference (only for Chat UI - HTTP requests are logged by HTTPHandler)
-                    if inferenceSource == .chatUI {
+                    if shouldLogToInsights {
                         let durationMs = Date().timeIntervalSince(startTime) * 1000
                         InsightsService.logInference(
                             source: inferenceSource,
@@ -1507,7 +1537,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         requestBodyJSON: requestBodyJSON,
                         tools: tools,
                         connection: remoteConn?.info,
-                        logPath: loggedPath
+                        logPath: loggedPath,
+                        warmupPrefill: request.warmupPrefill
                     )
                 } catch let inv as ServiceToolInvocation {
                     return Self.makeToolCallResponse(
@@ -1526,7 +1557,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         requestBodyJSON: requestBodyJSON,
                         tools: tools,
                         connection: remoteConn?.info,
-                        logPath: loggedPath
+                        logPath: loggedPath,
+                        warmupPrefill: request.warmupPrefill
                     )
                 }
             }
@@ -1598,7 +1630,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             )
 
             // Log the inference (only for Chat UI - HTTP requests are logged by HTTPHandler)
-            if inferenceSource == .chatUI {
+            if shouldLogToInsights {
                 let durationMs = Date().timeIntervalSince(startTime) * 1000
                 InsightsService.logInference(
                     source: inferenceSource,

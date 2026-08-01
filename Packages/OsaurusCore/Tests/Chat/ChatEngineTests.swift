@@ -10,6 +10,137 @@ import Testing
 
 struct ChatEngineTests {
 
+    private func settleInsights() async {
+        await Task.yield()
+        try? await Task.sleep(nanoseconds: 5_000_000)
+        await Task.yield()
+    }
+
+    private func hasInsightsLog(turnId: UUID) async -> Bool {
+        await MainActor.run {
+            InsightsService.shared.hasLog(turnId: turnId)
+        }
+    }
+
+    private func inferenceRequest(model: String, stream: Bool) -> ChatCompletionRequest {
+        ChatCompletionRequest(
+            model: model,
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: 0.5,
+            max_tokens: 16,
+            stream: stream,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+    }
+
+    @Test func insightsLoggingPolicy_excludesOnlyChatPrefillWarmups() {
+        #expect(
+            ChatEngine.shouldLogInferenceToInsights(
+                source: .chatUI,
+                warmupPrefill: false
+            )
+        )
+        #expect(
+            !ChatEngine.shouldLogInferenceToInsights(
+                source: .chatUI,
+                warmupPrefill: true
+            )
+        )
+        #expect(
+            !ChatEngine.shouldLogInferenceToInsights(
+                source: .httpAPI,
+                warmupPrefill: false
+            )
+        )
+    }
+
+    @Test func streamChat_excludesWarmupPrefillButLogsRealBackgroundLoad() async throws {
+        let model = "insights-stream-\(UUID().uuidString)"
+        let service = FakeModelService(
+            supportedModel: model,
+            deltas: ["visible"]
+        )
+        let engine = ChatEngine(
+            services: [service],
+            installedModelsProvider: { [] },
+            source: .chatUI
+        )
+
+        let warmupTurnId = UUID()
+        var warmupRequest = inferenceRequest(model: model, stream: true)
+        warmupRequest.turnId = warmupTurnId
+        warmupRequest.warmupPrefill = true
+        warmupRequest.backgroundModelLoad = true
+
+        let warmupStream = try await engine.streamChat(request: warmupRequest)
+        for try await _ in warmupStream {}
+        await settleInsights()
+
+        #expect(await hasInsightsLog(turnId: warmupTurnId) == false)
+
+        let realTurnId = UUID()
+        var realRequest = inferenceRequest(model: model, stream: true)
+        realRequest.turnId = realTurnId
+        realRequest.backgroundModelLoad = true
+
+        let realStream = try await engine.streamChat(request: realRequest)
+        for try await _ in realStream {}
+        await settleInsights()
+
+        #expect(await hasInsightsLog(turnId: realTurnId))
+    }
+
+    @Test func completeChat_excludesWarmupPrefillFromInsights() async throws {
+        let model = "insights-complete-\(UUID().uuidString)"
+        let service = FakeModelService(supportedModel: model)
+        let engine = ChatEngine(
+            services: [service],
+            installedModelsProvider: { [] },
+            source: .chatUI
+        )
+        let turnId = UUID()
+        var request = inferenceRequest(model: model, stream: false)
+        request.turnId = turnId
+        request.warmupPrefill = true
+
+        _ = try await engine.completeChat(request: request)
+        await settleInsights()
+
+        #expect(await hasInsightsLog(turnId: turnId) == false)
+    }
+
+    @Test func toolCallResponse_excludesWarmupPrefillFromInsights() async {
+        let turnId = UUID()
+        _ = ChatEngine.makeToolCallResponse(
+            invocations: [
+                ServiceToolInvocation(
+                    toolName: "warmup_probe",
+                    jsonArguments: #"{"value":"ignored"}"#
+                )
+            ],
+            responseId: "chatcmpl-warmup",
+            created: 1,
+            effectiveModel: "insights-tool-\(UUID().uuidString)",
+            inputTokens: 10,
+            startTime: Date(),
+            inferenceSource: .chatUI,
+            temperature: 0,
+            maxTokens: 1,
+            turnId: turnId,
+            warmupPrefill: true
+        )
+        await settleInsights()
+
+        #expect(await hasInsightsLog(turnId: turnId) == false)
+    }
+
     @Test func chatCompletionRequest_decodesReasoningEffortAndEnableThinking() throws {
         let data = Data(
             """
