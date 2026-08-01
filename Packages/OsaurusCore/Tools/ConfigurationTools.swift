@@ -125,6 +125,19 @@ public final class OsaurusStatusTool: OsaurusTool, @unchecked Sendable {
 
     public init() {}
 
+    static func pluginSummary(_ plugins: [PluginCapabilityProjectionRow]) -> [String: Any] {
+        let installed = plugins.filter(\.installed)
+        return [
+            "installed": installed.count,
+            "failed": installed.filter(\.failed).count,
+            "needs_attention": installed.filter(\.needsAttention).count,
+            "installation_healthy": installed.filter(\.installationHealthy).count,
+            "enabled_artifacts": installed.reduce(0) { $0 + $1.enabledArtifactCount },
+            "native": installed.filter { $0.kind == .native }.count,
+            "claude": installed.filter { $0.kind == .claude }.count,
+        ]
+    }
+
     public func execute(argumentsJSON: String) async throws -> String {
         if let gate = ConfigurationToolBase.defaultAgentGateFailure(tool: name) {
             return gate
@@ -145,9 +158,10 @@ public final class OsaurusStatusTool: OsaurusTool, @unchecked Sendable {
             let mcpConnected = MCPProviderManager.shared.providerStates.values
                 .filter { $0.isConnected }.count
 
-            let plugins = PluginRepositoryService.shared.plugins
-            let installedPlugins = plugins.filter { $0.installedVersion != nil }
-            let failedPlugins = installedPlugins.filter { $0.loadError != nil }
+            let plugins = PluginCapabilityProjection.current()
+            let installedPlugins = plugins.filter(\.installed)
+            let failedPlugins = installedPlugins.filter(\.failed)
+            let pluginsNeedingAttention = installedPlugins.filter(\.needsAttention)
             let pluginRepositoryDiagnostic = PluginRepositoryDiagnosticProjection.dictionary(
                 PluginRepositoryService.shared.lastRefreshResult
             )
@@ -182,8 +196,12 @@ public final class OsaurusStatusTool: OsaurusTool, @unchecked Sendable {
                 }
             }
             if !failedPlugins.isEmpty {
-                let names = failedPlugins.prefix(3).map { $0.displayName }.joined(separator: ", ")
+                let names = failedPlugins.prefix(3).map(\.name).joined(separator: ", ")
                 suggestions.append("Plugins failed to load: \(names). Check their manifest / consent state.")
+            }
+            if !pluginsNeedingAttention.isEmpty {
+                let names = pluginsNeedingAttention.prefix(3).map(\.name).joined(separator: ", ")
+                suggestions.append("Plugins need attention: \(names). Inspect their plugin diagnostics.")
             }
             if !downloadingModels.isEmpty {
                 suggestions.append("\(downloadingModels.count) model(s) downloading — poll osaurus_status again.")
@@ -212,11 +230,9 @@ public final class OsaurusStatusTool: OsaurusTool, @unchecked Sendable {
                     "configured": mcpProviders.count,
                     "connected": mcpConnected,
                 ],
-                "plugins": [
-                    "installed": installedPlugins.count,
-                    "failed": failedPlugins.count,
+                "plugins": Self.pluginSummary(plugins).merging([
                     "repository": pluginRepositoryDiagnostic ?? [:],
-                ],
+                ]) { _, new in new },
                 "schedules": [
                     "total": schedules.count,
                     "enabled": enabledSchedules.count,
@@ -237,8 +253,12 @@ public final class OsaurusListTool: OsaurusTool, @unchecked Sendable {
         "List items in a configuration scope. `scope` ∈ "
         + "{agents, models, providers, mcp, plugins, schedules}. "
         + "Optional `filter` is scope-specific: models: installed|downloading|recommended|all; "
-        + "providers/mcp: enabled|disabled|connected|all; plugins: installed|available|failed; "
-        + "schedules: enabled|disabled."
+        + "providers/mcp: enabled|disabled|connected|all; "
+        + "plugins: installed|available|failed|needs_attention; "
+        + "schedules: enabled|disabled. Plugin rows include `kind` (`native` or `claude`); "
+        + "Claude rows describe imported skill/MCP packages, not native loadable plugins. "
+        + "Use `status`, `installation_healthy`, and `attention_class`/`failure_class` "
+        + "rather than treating `installed` alone as proof that a plugin is ready."
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -272,6 +292,24 @@ public final class OsaurusListTool: OsaurusTool, @unchecked Sendable {
         case "enabled": return items.filter { ($0["enabled"] as? Bool) == true }
         case "disabled": return items.filter { ($0["enabled"] as? Bool) == false }
         case "connected": return items.filter { ($0["connected"] as? Bool) == true }
+        default: return items
+        }
+    }
+
+    static func filteredPluginItems(
+        _ plugins: [PluginCapabilityProjectionRow],
+        filter: String
+    ) -> [[String: Any]] {
+        let items = plugins.map(\.dictionary)
+        switch filter {
+        case "installed": return items.filter { ($0["installed"] as? Bool) == true }
+        case "available": return items.filter { ($0["installed"] as? Bool) == false }
+        case "failed":
+            return items.filter { ($0["status"] as? String) == PluginCapabilityStatus.failed.rawValue }
+        case "needs_attention":
+            return items.filter {
+                ($0["status"] as? String) == PluginCapabilityStatus.needsAttention.rawValue
+            }
         default: return items
         }
     }
@@ -366,33 +404,14 @@ public final class OsaurusListTool: OsaurusTool, @unchecked Sendable {
                     "items": Self.filterByEnabledConnected(items, filter: filter),
                 ]
             case "plugins":
-                let plugins = PluginRepositoryService.shared.plugins
-                let items = plugins.map { state -> [String: Any] in
-                    return [
-                        "plugin_id": state.pluginId,
-                        "name": state.displayName,
-                        "installed": state.installedVersion != nil,
-                        "has_load_error": state.loadError != nil,
-                    ]
-                }
-                let filtered: [[String: Any]]
-                switch filter {
-                case "installed":
-                    filtered = items.filter { ($0["installed"] as? Bool) == true }
-                case "available":
-                    filtered = items.filter { ($0["installed"] as? Bool) == false }
-                case "failed":
-                    filtered = items.filter { ($0["has_load_error"] as? Bool) == true }
-                default:
-                    filtered = items
-                }
+                let plugins = PluginCapabilityProjection.current()
                 payload = [
                     "scope": "plugins",
                     "filter": filter,
                     "repository": PluginRepositoryDiagnosticProjection.dictionary(
                         PluginRepositoryService.shared.lastRefreshResult
                     ) ?? [:],
-                    "items": filtered,
+                    "items": Self.filteredPluginItems(plugins, filter: filter),
                 ]
             case "schedules":
                 let schedules = ScheduleManager.shared.schedules.map { s -> [String: Any] in
@@ -543,17 +562,10 @@ public final class OsaurusDescribeTool: OsaurusTool, @unchecked Sendable {
                     payload = nil
                 }
             case "plugins":
-                if let plugin = PluginRepositoryService.shared.plugins
+                if let plugin = PluginCapabilityProjection.current()
                     .first(where: { $0.pluginId == idStr })
                 {
-                    payload = [
-                        "plugin_id": plugin.pluginId,
-                        "name": plugin.displayName,
-                        "installed": plugin.installedVersion != nil,
-                        "installed_version": plugin.installedVersion?.description ?? "",
-                        "latest_version": plugin.latestVersion?.description ?? "",
-                        "load_error": plugin.loadError ?? "",
-                    ]
+                    payload = plugin.dictionary
                 } else {
                     payload = nil
                 }
