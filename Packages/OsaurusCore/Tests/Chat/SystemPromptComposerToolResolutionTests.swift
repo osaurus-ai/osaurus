@@ -262,7 +262,7 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test
-    func workspaceWebAppRequestDoesNotPreflightInternetSearch() {
+    func workspaceWebAppRequestKeepsCapabilityGatewayWithoutDisabledSearch() {
         withRegisteredFolderTools { folder in
             let tools = SystemPromptComposer.resolveTools(
                 snapshot: makeSnapshot(),
@@ -270,12 +270,14 @@ struct SystemPromptComposerToolResolutionTests {
                 query: "Create a polished single-file web app in index.html"
             )
             let names = Set(tools.map(\.function.name))
-            #expect(names == ToolRegistry.coreWorkspaceToolNames)
+            #expect(names.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+            #expect(names.contains("capabilities"))
+            #expect(!names.contains("web_search"))
         }
     }
 
     @Test
-    func workspaceDefersEnabledCapabilitiesUntilQueryNeedsThem() {
+    func workspacePreservesEnabledCapabilitiesWithoutQueryHints() {
         withRegisteredFolderTools { folder in
             let tools = SystemPromptComposer.resolveTools(
                 snapshot: makeSnapshot(
@@ -287,12 +289,39 @@ struct SystemPromptComposerToolResolutionTests {
                 query: "Update the project documentation"
             )
             let names = Set(tools.map(\.function.name))
-            #expect(names == ToolRegistry.coreWorkspaceToolNames)
+            #expect(names.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+            #expect(names.contains("capabilities"))
+            #expect(names.contains("render_chart"))
+            #expect(names.contains("web_search"))
+            #expect(names.contains("search_and_extract"))
+            #expect(names.contains(BrowserUseTool.toolName))
         }
     }
 
     @Test
-    func workspaceChartRequestPreloadsEnabledChartOnly() {
+    func sandboxPreservesEnabledCapabilitiesWithoutQueryHints() {
+        withRegisteredSandboxBuiltins {
+            let tools = SystemPromptComposer.resolveTools(
+                snapshot: makeSnapshot(
+                    renderChartEnabled: true,
+                    webSearchEnabled: true,
+                    browserUseEnabled: true
+                ),
+                executionMode: .sandbox(hostRead: nil),
+                query: "Update the project documentation"
+            )
+            let names = Set(tools.map(\.function.name))
+            #expect(names.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+            #expect(names.contains("capabilities"))
+            #expect(names.contains("render_chart"))
+            #expect(names.contains("web_search"))
+            #expect(names.contains("search_and_extract"))
+            #expect(names.contains(BrowserUseTool.toolName))
+        }
+    }
+
+    @Test
+    func workspaceChartRequestKeepsAllEnabledCapabilities() {
         withRegisteredFolderTools { folder in
             let tools = SystemPromptComposer.resolveTools(
                 snapshot: makeSnapshot(
@@ -306,8 +335,8 @@ struct SystemPromptComposerToolResolutionTests {
             let names = Set(tools.map(\.function.name))
             #expect(names.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
             #expect(names.contains("render_chart"))
-            #expect(!names.contains("web_search"))
-            #expect(!names.contains(BrowserUseTool.toolName))
+            #expect(names.contains("web_search"))
+            #expect(names.contains(BrowserUseTool.toolName))
         }
     }
 
@@ -322,7 +351,10 @@ struct SystemPromptComposerToolResolutionTests {
             let full = ToolRegistry.shared.specs(
                 forTools: Array(ToolRegistry.coreWorkspaceToolNames)
             )
-            let compactTokens = ToolRegistry.shared.totalEstimatedTokens(for: compact)
+            let compactWorkspace = compact.filter {
+                ToolRegistry.coreWorkspaceToolNames.contains($0.function.name)
+            }
+            let compactTokens = ToolRegistry.shared.totalEstimatedTokens(for: compactWorkspace)
             let fullTokens = ToolRegistry.shared.totalEstimatedTokens(for: full)
             #expect(compactTokens * 10 <= fullTokens * 7)
 
@@ -454,15 +486,22 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test
-    func manualMode_emptyManualNames_stillIncludesAlwaysLoaded() async {
+    func manualMode_emptyManualNames_keepsBaselineWhenSandboxActive() async {
         await withSandboxAgent(autonomous: true, manualToolNames: []) { agentId in
             withRegisteredSandboxBuiltins {
+                let baseline = Set(
+                    SystemPromptComposer.resolveTools(
+                        agentId: agentId,
+                        executionMode: .none
+                    ).map(\.function.name)
+                )
                 let tools = SystemPromptComposer.resolveTools(
                     agentId: agentId,
                     executionMode: .sandbox(hostRead: nil)
                 )
                 let names = Set(tools.map { $0.function.name })
-                #expect(names == ToolRegistry.coreWorkspaceToolNames)
+                #expect(names.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+                #expect(names.isSuperset(of: baseline))
             }
         }
     }
@@ -647,15 +686,22 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test
-    func hostFolderMode_exposesOnlyFiveWorkspaceToolsByDefault() async {
+    func hostFolderModeAddsWorkspaceToolsWithoutDroppingBaseline() async {
         await withSandboxAgent(autonomous: false) { agentId in
             withRegisteredFolderTools { folder in
+                let baseline = Set(
+                    SystemPromptComposer.resolveTools(
+                        agentId: agentId,
+                        executionMode: .none
+                    ).map(\.function.name)
+                )
                 let tools = SystemPromptComposer.resolveTools(
                     agentId: agentId,
                     executionMode: .hostFolder(folder)
                 )
                 let names = Set(tools.map { $0.function.name })
-                #expect(names == ToolRegistry.coreWorkspaceToolNames)
+                #expect(names.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+                #expect(names.isSuperset(of: baseline))
             }
         }
     }
@@ -670,7 +716,8 @@ struct SystemPromptComposerToolResolutionTests {
                         executionMode: .sandbox(hostRead: folder)
                     )
                     let names = Set(tools.map { $0.function.name })
-                    #expect(names == ToolRegistry.coreWorkspaceToolNames)
+                    #expect(names.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+                    #expect(names.contains("capabilities"))
                 }
             }
         }
@@ -686,7 +733,8 @@ struct SystemPromptComposerToolResolutionTests {
                         executionMode: .sandbox(hostRead: folder, hostWrite: true)
                     )
                     let names = Set(tools.map { $0.function.name })
-                    #expect(names == ToolRegistry.coreWorkspaceToolNames)
+                    #expect(names.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+                    #expect(names.contains("capabilities"))
                     let callable = ToolRegistry.shared.specs(forTools: ["sandbox_write_file"])
                     #expect(callable.count == 1)
                 }
@@ -814,7 +862,8 @@ struct SystemPromptComposerToolResolutionTests {
                         executionMode: .sandbox
                     ).map { $0.function.name }
                 )
-                #expect(names == ToolRegistry.coreWorkspaceToolNames)
+                #expect(names.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+                #expect(names.contains("capabilities"))
                 #expect(!names.contains("file_copy"))
                 #expect(!names.contains("sandbox_exec"))
             }
@@ -854,7 +903,7 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test
-    func vmContractHasStableCoreOrderWithoutUnrelatedGateway() async {
+    func vmContractHasStableCoreOrderAndCapabilityGateway() async {
         await withSandboxAgent(autonomous: true) { agentId in
             withRegisteredSandboxBuiltins {
                 let names = SystemPromptComposer.resolveTools(
@@ -862,7 +911,7 @@ struct SystemPromptComposerToolResolutionTests {
                     executionMode: .sandbox(hostRead: nil)
                 ).map { $0.function.name }
                 #expect(Set(names).isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
-                #expect(!names.contains("capabilities"))
+                #expect(names.contains("capabilities"))
                 #expect(
                     names.filter { ToolRegistry.coreWorkspaceToolNames.contains($0) }
                         == ["file_edit", "file_read", "file_search", "file_write", "shell_run"]

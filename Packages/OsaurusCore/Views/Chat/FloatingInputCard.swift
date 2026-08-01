@@ -827,6 +827,12 @@ struct FloatingInputCard: View {
                 )
             )
             .onAppear {
+                // Execution choices are mutually exclusive in both behavior
+                // and presentation. Clear a restored folder if this agent
+                // already has Sandbox enabled when the chat appears.
+                if isSandboxEnabled {
+                    folderState.clearFolder()
+                }
                 refreshLoadFeasibility()
                 let isReappear = !localText.isEmpty || voiceInputState != .idle
                 localText = text
@@ -861,6 +867,13 @@ struct FloatingInputCard: View {
                     if !showVoiceOverlay {
                         showVoiceOverlay = true
                     }
+                }
+            }
+            .onChange(of: isSandboxEnabled) { _, enabled in
+                // The setting is agent-scoped, so this also clears folders in
+                // other visible chats when Sandbox is enabled elsewhere.
+                if enabled {
+                    folderState.clearFolder()
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .startVoiceInputInChat)) { notification in
@@ -3073,10 +3086,14 @@ extension FloatingInputCard {
         let agentId = effectiveAgentId
         let manager = agentManager
         Task {
-            // The selected folder stays visible but is suspended while the VM
-            // is active. Execution never combines host and sandbox access.
             do {
                 try await manager.updateAutonomousExec(newConfig, for: agentId)
+                // Do not leave two selected-looking execution contexts in the
+                // composer. The onChange above applies the same invariant to
+                // every other visible chat using this agent.
+                if newConfig.enabled {
+                    folderState.clearFolder()
+                }
             } catch {
                 // Don't silently swallow provision failures — log loudly and
                 // roll the persisted toggle back so the chip flips back to
@@ -3119,20 +3136,8 @@ extension FloatingInputCard {
         }
     }
 
-    /// A selected folder may remain visible while the VM is active, but it is
-    /// fully suspended and contributes neither tools nor paths to the run.
-    private var isFolderSuspended: Bool {
-        isSandboxEnabled && folderState.hasActiveFolder
-    }
-
     /// Folder chip tooltip makes the active execution boundary explicit.
     private func folderChipHelp(hasFolder: Bool) -> Text {
-        if hasFolder && isFolderSuspended {
-            return Text(
-                localized:
-                    "Working folder is paused while Sandbox is active. Disable Sandbox to resume trusted workspace access."
-            )
-        }
         // Lead with the full path when a folder is active — the chip label
         // middle-truncates long names, so the tooltip is where the complete
         // name stays readable.
@@ -3156,9 +3161,6 @@ extension FloatingInputCard {
                 return "\(phase) — click to view progress."
             }
             return "Sandbox is starting up — click to view progress."
-        } else if isFolderSuspended {
-            base =
-                "Sandbox is active; the selected working folder is paused and inaccessible. Click to resume trusted workspace mode."
         } else if isSandboxEnabled && isSandboxRunning {
             base = "Sandbox is active — click to disable. Right-click for settings."
         } else if isSandboxEnabled {
@@ -3939,14 +3941,6 @@ extension FloatingInputCard {
                     // bites (middle-truncating) past this width. The full name
                     // stays available via the chip's help tooltip.
                     .frame(maxWidth: 150)
-
-                // Make the suspended host boundary visible while VM execution
-                // is active; no host access is available in this state.
-                if isFolderSuspended {
-                    Image(systemName: "pause.circle.fill")
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                }
             } else if canEdit && !compact {
                 Text("Folder", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))

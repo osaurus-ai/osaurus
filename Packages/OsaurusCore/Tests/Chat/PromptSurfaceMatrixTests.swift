@@ -239,7 +239,9 @@ struct PromptSurfaceMatrixTests {
                 #expect(!rows[3].sectionIds.contains("spawn"))
 
                 #expect(rows[4].sectionIds.contains("sandbox"))
-                #expect(rows[4].toolNames == ToolRegistry.coreWorkspaceToolNames)
+                #expect(rows[4].toolNames.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+                #expect(rows[4].toolNames.contains("capabilities"))
+                #expect(rows[4].toolNames.contains("web_search"))
                 #expect(!rows[4].sectionIds.contains("skillsGovern"))
                 #expect(rows[4].totalTokens > rows[2].totalTokens)
 

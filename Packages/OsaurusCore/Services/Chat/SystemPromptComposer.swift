@@ -2869,10 +2869,10 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
-        // In an execution workspace, keep the model-facing contract to five
-        // stable primitives. Optional capabilities are admitted only when the
-        // current query names a clear need, when the user selected them
-        // manually, or when they were explicitly loaded earlier in-session.
+        // Execution mode selects the file/shell backend; it must not replace
+        // the agent's enabled capability set. Workspace primitives join the
+        // normal auto-mode tools, while manual mode remains the explicit user
+        // selection plus those required execution primitives.
         let hasExecutionWorkspace =
             executionMode.usesHostFolderTools || executionMode.usesSandboxTools
         if snapshot.agentId != Agent.defaultId || hasExecutionWorkspace {
@@ -2886,30 +2886,24 @@ public struct SystemPromptComposer: Sendable {
                 )
                 allowed.formUnion(ToolRegistry.coreWorkspaceToolNames)
             }
-            // Enabled optional capabilities remain executable and discoverable,
-            // but do not pay schema cost on unrelated workspace turns. The
-            // deterministic query preflight below admits the clear matches;
-            // manual pins and session-loaded tools are already in `allowed`.
-            if !hasExecutionWorkspace {
-                if snapshot.dbEnabled { allowed.formUnion(agentDBToolNames) }
-                if snapshot.renderChartEnabled { allowed.insert("render_chart") }
-                if snapshot.speakEnabled { allowed.insert("speak") }
-                if snapshot.searchMemoryEnabled { allowed.insert("search_memory") }
-                if snapshot.webSearchEnabled {
-                    allowed.formUnion(["web_search", "search_and_extract"])
-                }
-                if snapshot.selfSchedulingEnabled { allowed.formUnion(schedulerToolNames) }
-                if snapshot.knowledgeEnabled { allowed.formUnion(knowledgeToolNames) }
-                if snapshot.knowledgeCuratorEnabled {
-                    allowed.formUnion(knowledgeCuratorToolNames)
-                }
-                allowed.formUnion(visibleDelegation)
-                if snapshot.computerUseEnabled { allowed.insert(ComputerUseTool.toolName) }
-                if snapshot.browserUseEnabled { allowed.insert(BrowserUseTool.toolName) }
-                if byName["capabilities"] != nil { allowed.insert("capabilities") }
-                if snapshot.hasChannelPublishDestinations {
-                    allowed.insert(AgentChannelPublishTool.toolName)
-                }
+            if snapshot.dbEnabled { allowed.formUnion(agentDBToolNames) }
+            if snapshot.renderChartEnabled { allowed.insert("render_chart") }
+            if snapshot.speakEnabled { allowed.insert("speak") }
+            if snapshot.searchMemoryEnabled { allowed.insert("search_memory") }
+            if snapshot.webSearchEnabled {
+                allowed.formUnion(["web_search", "search_and_extract"])
+            }
+            if snapshot.selfSchedulingEnabled { allowed.formUnion(schedulerToolNames) }
+            if snapshot.knowledgeEnabled { allowed.formUnion(knowledgeToolNames) }
+            if snapshot.knowledgeCuratorEnabled {
+                allowed.formUnion(knowledgeCuratorToolNames)
+            }
+            allowed.formUnion(visibleDelegation)
+            if snapshot.computerUseEnabled { allowed.insert(ComputerUseTool.toolName) }
+            if snapshot.browserUseEnabled { allowed.insert(BrowserUseTool.toolName) }
+            if byName["capabilities"] != nil { allowed.insert("capabilities") }
+            if snapshot.hasChannelPublishDestinations {
+                allowed.insert(AgentChannelPublishTool.toolName)
             }
             if let shell = byName["shell_run"],
                 !(executionMode.usesSandboxTools
