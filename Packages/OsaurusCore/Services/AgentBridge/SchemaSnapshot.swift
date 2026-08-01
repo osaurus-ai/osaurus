@@ -138,7 +138,7 @@ public enum SchemaSnapshot {
 
         if !views.isEmpty {
             lines.append(
-                "Views (stored SELECT definitions — run with `db_run_view(name)`; not queryable as tables in `db_query`):"
+                "Views (run directly with `db_run_view(name)`, or reference by name in read-only `db_query`/`db_export` SQL):"
             )
             lines.append("")
             for view in views {

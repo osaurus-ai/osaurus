@@ -956,9 +956,8 @@ final class DBQueryTool: OsaurusTool, @unchecked Sendable {
         + "`db_export` over returning raw rows. On user tables, add "
         + "`_deleted_at IS NULL` to your WHERE when you want to hide "
         + "soft-deleted rows — `db_query` runs your SQL as written. Saved "
-        + "views are stored definitions, not SQL tables: referencing a saved "
-        + "view name in FROM fails with `no such table` — run it with "
-        + "`db_run_view(name)` instead."
+        + "view names are queryable: reference them in FROM/JOIN when you "
+        + "need to filter, combine, aggregate, or page a saved result."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -1518,6 +1517,8 @@ final class DBDefineViewTool: OsaurusTool, @unchecked Sendable {
         "Save (or redefine) a named SQL view the user and you can re-run "
         + "later. View bodies must be SELECT or WITH ... SELECT only — "
         + "if you need to write data, use `db_insert` / `db_update`. "
+        + "The saved name is available in read-only `db_query`/`db_export` "
+        + "FROM and JOIN clauses, while `db_run_view` runs it directly. "
         + "`render_hint` controls how the UI plots the result; use one "
         + "of `table`, `bar`, `line`, `pie`, `number`."
 
@@ -1611,10 +1612,10 @@ final class DBDefineViewTool: OsaurusTool, @unchecked Sendable {
 final class DBRunViewTool: OsaurusTool, @unchecked Sendable {
     let name = "db_run_view"
     let description =
-        "Run a previously saved view by name. This is the only way to "
-        + "execute a saved view — they are stored definitions, not SQL "
-        + "tables, so `db_query` cannot reference them in FROM. Returns "
-        + "the same shape as `db_query`: `{columns, rows, truncated}`. "
+        "Run a previously saved view's stored SELECT directly by name. "
+        + "Returns the same shape as `db_query`: `{columns, rows, truncated}`. "
+        + "Use `db_query` or `db_export` with the view name in FROM/JOIN when "
+        + "you need additional filtering, composition, aggregation, or paging. "
         + "Use `db_list_views` to see what's defined."
 
     let parameters: JSONValue? = .object([

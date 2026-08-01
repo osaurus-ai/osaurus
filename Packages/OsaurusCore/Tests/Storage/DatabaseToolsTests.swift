@@ -189,6 +189,59 @@ struct DatabaseToolsTests {
     }
 
     @Test
+    func importCsvParsesCRLFAndQuotedMultilineFields() throws {
+        let csv = "id,note\r\n1,\"first\r\nsecond\"\r\n2,\"quoted \"\"value\"\"\"\r\n"
+        let parsed = try DatabaseImport.parse(
+            data: Data(csv.utf8),
+            format: .csv,
+            hasHeader: true,
+            explicitColumns: nil,
+            maxRows: nil
+        )
+
+        #expect(parsed.columns == ["id", "note"])
+        #expect(parsed.rows.count == 2)
+        #expect(parsed.rows[0]["id"] == .integer(1))
+        #expect(parsed.rows[0]["note"] == .text("first\r\nsecond"))
+        #expect(parsed.rows[1]["note"] == .text("quoted \"value\""))
+    }
+
+    @Test
+    func importCsvParsesBareCarriageReturns() throws {
+        let parsed = try DatabaseImport.parse(
+            data: Data("id,name\r1,alpha\r2,beta\r".utf8),
+            format: .csv,
+            hasHeader: true,
+            explicitColumns: nil,
+            maxRows: nil
+        )
+
+        #expect(parsed.rows.count == 2)
+        #expect(parsed.rows[0]["name"] == .text("alpha"))
+        #expect(parsed.rows[1]["name"] == .text("beta"))
+    }
+
+    @Test
+    func importCsvParses1304CRLFRows() throws {
+        let body = (1 ... 1_304)
+            .map { "\($0),asset-\($0)" }
+            .joined(separator: "\r\n")
+        let csv = "asset_id,asset_name\r\n\(body)\r\n"
+        let parsed = try DatabaseImport.parse(
+            data: Data(csv.utf8),
+            format: .csv,
+            hasHeader: true,
+            explicitColumns: nil,
+            maxRows: nil
+        )
+
+        #expect(parsed.rows.count == 1_304)
+        #expect(parsed.rows.first?["asset_id"] == .integer(1))
+        #expect(parsed.rows.last?["asset_id"] == .integer(1_304))
+        #expect(parsed.rows.last?["asset_name"] == .text("asset-1304"))
+    }
+
+    @Test
     func validateReadOnlyQueryRejectsInsert() {
         #expect(throws: AgentDatabaseError.self) {
             try AgentDatabase.validateReadOnlyQuery("INSERT INTO t VALUES (1)")
@@ -229,15 +282,14 @@ struct DatabaseToolsTests {
     }
 
     @Test
-    func savedViewRoutingIsPinnedInToolDescriptions() {
-        // Saved views are stored definitions, not SQL tables. The strict
-        // contract lives in the tool descriptions the model reads: db_query
-        // must point at db_run_view, and db_run_view must state it is the
-        // only execution path.
-        #expect(DBQueryTool().description.contains("db_run_view"))
+    func savedViewQueryabilityIsPinnedInToolDescriptions() {
+        // Both tools must describe the native SQL path so a model can compose
+        // a saved result instead of receiving an avoidable no-such-table error.
+        #expect(DBQueryTool().description.contains("FROM/JOIN"))
         let runView = DBRunViewTool().description
-        #expect(runView.contains("stored definitions"))
+        #expect(runView.contains("stored SELECT"))
         #expect(runView.contains("db_query"))
+        #expect(DBDefineViewTool().description.contains("FROM and JOIN"))
     }
 
     @Test

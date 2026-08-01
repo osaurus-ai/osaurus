@@ -103,12 +103,12 @@ All `db_*` tools live in [`Tools/Database/DatabaseTools.swift`](../Packages/Osau
 | ---------------- | ----------------------------------------------------------------------------------------- |
 | `db_query`       | Run a read-only SELECT. Accepts `limit` / `offset` for paging; rows are capped (hard max **5000**) and a `truncated` flag flips when the cap or an oversized payload kicks in. |
 | `db_execute`     | First-class SQL, including **multi-statement** transform scripts (`INSERT … SELECT`, CTEs, window functions) inside one transaction. Pass `path` instead of `sql` to run a `.sql` script from disk. Restricted by host policy (see below); reach for the typed tools first. |
-| `db_define_view` | Save a SELECT/CTE definition under a name. Surfaces in the Views tab.                      |
-| `db_run_view`    | Execute a saved view by name. Saved views are stored definitions, not SQL tables — this is the only way to run one; `db_query` cannot reference a view name in FROM. |
+| `db_define_view` | Save a SELECT/CTE definition under a name. The name becomes queryable from read-only SQL and surfaces in the Views tab. |
+| `db_run_view`    | Execute a saved view's stored definition directly by name. Use `db_query` / `db_export` with the view name in `FROM` or `JOIN` for filtering, composition, aggregation, or paging. |
 | `db_list_views`  | Enumerate saved views.                                                                     |
 | `db_drop_view`   | Delete a saved view definition.                                                            |
 
-`db_execute` is the SQL escape hatch but is **not** unrestricted. [`AgentDatabase.forbiddenReason`](../Packages/OsaurusCore/Storage/AgentDatabase.swift) rejects, before any statement runs: `DROP TABLE` / `TRUNCATE` / `DROP DATABASE`, `DELETE` with no `WHERE`, `ATTACH` / `DETACH` (would mount another file into the agent's private connection), `load_extension` (loads native code), `PRAGMA` *writes* (read-only PRAGMAs are fine), and any write that targets a reserved/system table (`_changelog`, `_views`, `_tables_meta`) — raw writes there would bypass the soft-delete + audit contract. Wide `UPDATE`/`DELETE` without a `WHERE` is allowed but returns a `warning` and is logged to `_changelog` with `op='raw'`.
+`db_execute` is the SQL escape hatch but is **not** unrestricted. [`AgentDatabase.forbiddenReason`](../Packages/OsaurusCore/Storage/AgentDatabase.swift) rejects, before any statement runs: `DROP TABLE` / `DROP VIEW` / `TRUNCATE` / `DROP DATABASE`, `DELETE` with no `WHERE`, `ATTACH` / `DETACH` (would mount another file into the agent's private connection), `load_extension` (loads native code), `PRAGMA` *writes* (read-only PRAGMAs are fine), and any write that targets a reserved/system table (`_changelog`, `_views`, `_tables_meta`) — raw writes there would bypass the soft-delete + audit contract. Wide `UPDATE`/`DELETE` without a `WHERE` is allowed but returns a `warning` and is logged to `_changelog` with `op='raw'`.
 
 ### Scheduling
 

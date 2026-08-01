@@ -16,7 +16,7 @@ import Foundation
 
 public enum OnboardingPrompt {
     /// Monotonic integer. Bump for any text change.
-    public static let version: Int = 4
+    public static let version: Int = 5
 
     /// Block appended to the system prompt after the agent's persistent
     /// prompt and before per-run instructions (spec §5.5.3). The schema
@@ -50,7 +50,7 @@ public enum OnboardingPrompt {
         - `db_execute` runs first-class SQL, including multi-statement transform scripts (e.g. `INSERT … SELECT`, CTEs, window functions) inside one transaction. Pass `path` instead of `sql` to run a `.sql` script from disk without loading it into tokens. Use `db_import` for CSV/JSON ingestion. `ATTACH`/`DETACH`, `PRAGMA` writes, `load_extension`, `DROP TABLE`/`TRUNCATE`, unconstrained `DELETE`, and writes to system tables are rejected.
 
         Saved views:
-        - A saved view is a stored SELECT definition, not a SQL table. The names under "Views" in the schema snapshot are NOT queryable in `db_query` FROM clauses — run them with `db_run_view(name)`. Define or redefine one with `db_define_view`.
+        - Define or redefine a saved SELECT with `db_define_view`. Run its stored definition directly with `db_run_view(name)`, or reference its name in read-only `db_query`/`db_export` SQL when you need to filter, join, aggregate, or page its result.
 
         Schema discipline:
         - Tables should have clear, narrow purposes. One thing per table.

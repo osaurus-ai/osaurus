@@ -1,0 +1,50 @@
+{
+  "id": "agentdb.queryable-saved-view",
+  "domain": "agent_loop",
+  "label": "agentdb • filter a saved view through db_query",
+  "query": "Your agent database has release_snapshots(snapshot_date, repo, downloads). Define a saved view named daily_downloads that groups by snapshot_date and repo and returns snapshot_date, repo, and SUM(downloads) AS total. Then use db_query against daily_downloads to return only rows on or after 2026-07-31, ordered by snapshot_date descending, and tell me the newest total.",
+  "notes": "Regression for the live no-such-table failure. db_define_view must install a native connection-local SQLite view, and db_query must be able to filter/order the saved name without a retry or db_run_view fallback.",
+  "fixtures": {
+    "agentCapabilities": {
+      "dbEnabled": true
+    },
+    "seedSql": [
+      "CREATE TABLE release_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, snapshot_date TEXT, repo TEXT, downloads INTEGER, _created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')), _updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')), _deleted_at INTEGER);",
+      "INSERT INTO release_snapshots (snapshot_date, repo, downloads) VALUES ('2026-07-30','osaurus-ai/osaurus',20),('2026-07-31','osaurus-ai/osaurus',30),('2026-07-31','osaurus-ai/osaurus',45);"
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 12,
+      "mustCallTools": [
+        "db_define_view",
+        "db_query"
+      ],
+      "mustCallToolsInOrder": [
+        "db_define_view",
+        "db_query"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "db_define_view",
+          "maxErrors": 0,
+          "argsMustContain": "daily_downloads"
+        },
+        {
+          "tool": "db_query",
+          "maxErrors": 0,
+          "argsMustContain": "daily_downloads"
+        }
+      ],
+      "dbState": [
+        {
+          "sql": "SELECT total FROM daily_downloads WHERE snapshot_date = '2026-07-31'",
+          "expectFirstValue": "75"
+        }
+      ],
+      "finalTextContains": [
+        "75"
+      ]
+    }
+  }
+}

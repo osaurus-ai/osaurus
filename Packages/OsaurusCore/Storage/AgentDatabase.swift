@@ -445,6 +445,7 @@ public final class AgentDatabase: @unchecked Sendable {
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.agentDirectory(for: agentId))
             try openConnection()
             try runMigrations()
+            try hydrateNativeSavedViewsUnlocked()
         }
     }
 
@@ -457,6 +458,7 @@ public final class AgentDatabase: @unchecked Sendable {
                 applyPerfPragmas: false
             )
             try runMigrations()
+            try hydrateNativeSavedViewsUnlocked()
         }
     }
 
@@ -1830,12 +1832,13 @@ public final class AgentDatabase: @unchecked Sendable {
 
     // MARK: - Public: saved views
 
-    /// Insert or update a saved view (spec §6.3). Saved views are
-    /// just SELECT/CTE statements stored by name in `_views`; the
-    /// agent reuses them via `runView` and the UI surfaces them on
-    /// the Home / Views tabs. The SQL is validated against the same
-    /// `forbiddenReason` lattice as `execute` so a SELECT-only view
-    /// can never accidentally hide a destructive statement.
+    /// Insert or update a saved view (spec §6.3). `_views` remains the
+    /// metadata source of truth, while a connection-local SQLite view makes
+    /// the definition composable from `db_query`, `db_export`, and other
+    /// saved views. The agent can also execute it directly via `runView`, and
+    /// the UI surfaces it on the Home / Views tabs. The SQL is validated
+    /// against the same `forbiddenReason` lattice as `execute` so a
+    /// SELECT-only view can never accidentally hide a destructive statement.
     public func defineView(
         name: String,
         sql: String,
@@ -1875,6 +1878,13 @@ public final class AgentDatabase: @unchecked Sendable {
             if try self.existsUserTableUnlocked(name) {
                 throw AgentDatabaseError.invalidArgument(
                     "defineView: a user table named `\(name)` already exists; pick a different view name"
+                )
+            }
+            do {
+                try self.replaceNativeSavedViewUnlocked(name: name, sql: sql, validate: true)
+            } catch {
+                throw AgentDatabaseError.invalidArgument(
+                    "defineView: invalid saved-view SQL: \(error.localizedDescription)"
                 )
             }
             // Use INSERT ... ON CONFLICT(name) DO UPDATE so we keep
@@ -1949,6 +1959,7 @@ public final class AgentDatabase: @unchecked Sendable {
                 if sqlite3_step(stmt) == SQLITE_ROW { existed = true }
             }
             if !existed { return }
+            try self.executeRaw("DROP VIEW IF EXISTS temp.\(name)")
             try self.transactionalStep("DELETE FROM _views WHERE name = ?1") { stmt in
                 Self.bind(stmt, index: 1, value: .text(name))
             }
@@ -2185,6 +2196,49 @@ public final class AgentDatabase: @unchecked Sendable {
         return views
     }
 
+    /// Rebuild the connection-local SQLite view mirror from `_views`.
+    ///
+    /// Legacy versions accepted stored definitions without preparing them.
+    /// Keep startup resilient by skipping an individual legacy definition
+    /// that SQLite can no longer create; redefining it through `db_define_view`
+    /// will return a precise validation error.
+    private func hydrateNativeSavedViewsUnlocked() throws {
+        for view in try listViewsUnlocked() {
+            do {
+                try replaceNativeSavedViewUnlocked(name: view.name, sql: view.sql, validate: false)
+            } catch {
+                try? executeRaw("DROP VIEW IF EXISTS temp.\(view.name)")
+            }
+        }
+    }
+
+    /// Replace one temporary SQLite view. Callers must validate `name` before
+    /// interpolation. When requested, preparing a zero-row read resolves the
+    /// complete dependency graph and catches missing tables/columns, circular
+    /// definitions, and parameterized SQL before metadata is committed.
+    private func replaceNativeSavedViewUnlocked(
+        name: String,
+        sql: String,
+        validate: Bool
+    ) throws {
+        try executeRaw("DROP VIEW IF EXISTS temp.\(name)")
+        try executeRaw("CREATE TEMP VIEW \(name) AS \(sql)")
+        guard validate, let connection = db else { return }
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(
+            connection,
+            "SELECT * FROM temp.\(name) LIMIT 0",
+            -1,
+            &statement,
+            nil
+        ) == SQLITE_OK, let prepared = statement
+        else {
+            throw AgentDatabaseError.failedToPrepare(String(cString: sqlite3_errmsg(connection)))
+        }
+        sqlite3_finalize(prepared)
+    }
+
     private func existsUserTableUnlocked(_ name: String) throws -> Bool {
         var found = false
         try executeRaw(
@@ -2311,6 +2365,9 @@ public final class AgentDatabase: @unchecked Sendable {
         let s = collapseWhitespace(stripComments(rawSQL.uppercased()))
         if s.contains("DROP TABLE") {
             return "DROP TABLE is not allowed; rename + deprecate is the agent path."
+        }
+        if s.contains("DROP VIEW") {
+            return "DROP VIEW is not allowed; use db_drop_view so metadata and audit history stay in sync."
         }
         if s.contains("TRUNCATE") {
             return "TRUNCATE is not allowed."

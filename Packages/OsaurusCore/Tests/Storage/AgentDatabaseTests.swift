@@ -136,6 +136,164 @@ struct AgentDatabaseTests {
         #expect(row[3] == .text(runId.uuidString))
     }
 
+    // MARK: - Native saved views
+
+    @Test
+    func savedViewsAreQueryableAndComposable() throws {
+        let db = try makeDB()
+        try db.createTable(
+            name: "metrics",
+            purpose: "view query test",
+            columns: [
+                AgentColumnSpec(name: "day", type: "TEXT", nullable: false),
+                AgentColumnSpec(name: "value", type: "INTEGER", nullable: false),
+            ],
+            indexes: [],
+            actor: .agent,
+            runId: nil
+        )
+        _ = try db.insertMany(
+            table: "metrics",
+            rows: [
+                ["day": .text("mon"), "value": .integer(3)],
+                ["day": .text("tue"), "value": .integer(5)],
+                ["day": .text("wed"), "value": .integer(7)],
+            ],
+            actor: .agent,
+            runId: nil
+        )
+        _ = try db.defineView(
+            name: "metric_rows",
+            sql: "SELECT id, day, value FROM metrics WHERE _deleted_at IS NULL",
+            renderHint: "table",
+            refresh: "live",
+            description: nil,
+            actor: .agent
+        )
+
+        let filtered = try db.query(
+            sql:
+                "SELECT v.day, m.value FROM metric_rows v "
+                + "JOIN metrics m ON m.id = v.id WHERE v.value >= 5 ORDER BY v.value"
+        )
+        #expect(filtered.rows == [
+            [.text("tue"), .integer(5)],
+            [.text("wed"), .integer(7)],
+        ])
+
+        let direct = try db.runView(name: "metric_rows")
+        #expect(direct.rows.count == 3)
+    }
+
+    @Test
+    func savedViewRedefineAndDropStaySynchronized() throws {
+        let db = try makeDB()
+        try db.createTable(
+            name: "values_table",
+            purpose: "view lifecycle test",
+            columns: [AgentColumnSpec(name: "value", type: "INTEGER", nullable: false)],
+            indexes: [],
+            actor: .agent,
+            runId: nil
+        )
+        _ = try db.insertMany(
+            table: "values_table",
+            rows: [["value": .integer(1)], ["value": .integer(2)]],
+            actor: .agent,
+            runId: nil
+        )
+        _ = try db.defineView(
+            name: "selected_values",
+            sql: "SELECT value FROM values_table WHERE value >= 1",
+            renderHint: "table",
+            refresh: "live",
+            description: nil,
+            actor: .agent
+        )
+        #expect(try db.query(sql: "SELECT COUNT(*) FROM selected_values").rows[0][0] == .integer(2))
+
+        _ = try db.defineView(
+            name: "selected_values",
+            sql: "SELECT value FROM values_table WHERE value >= 2",
+            renderHint: "table",
+            refresh: "live",
+            description: nil,
+            actor: .agent
+        )
+        #expect(try db.query(sql: "SELECT COUNT(*) FROM selected_values").rows[0][0] == .integer(1))
+
+        #expect(try db.dropView(name: "selected_values", actor: .agent))
+        #expect(try db.savedView(named: "selected_values") == nil)
+        #expect(throws: AgentDatabaseError.self) {
+            _ = try db.query(sql: "SELECT * FROM selected_values")
+        }
+    }
+
+    @Test
+    func savedViewsHydrateAfterReopen() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentdb-view-\(UUID().uuidString).sqlite")
+        defer {
+            for suffix in ["", "-wal", "-shm"] {
+                try? FileManager.default.removeItem(atPath: url.path + suffix)
+            }
+        }
+
+        do {
+            let db = AgentDatabase(agentId: UUID(), path: url.path)
+            try db.open()
+            try db.createTable(
+                name: "source_rows",
+                purpose: "view hydration test",
+                columns: [AgentColumnSpec(name: "value", type: "INTEGER", nullable: false)],
+                indexes: [],
+                actor: .agent,
+                runId: nil
+            )
+            _ = try db.insert(
+                table: "source_rows",
+                row: ["value": .integer(42)],
+                actor: .agent,
+                runId: nil
+            )
+            _ = try db.defineView(
+                name: "answer_view",
+                sql: "SELECT value FROM source_rows",
+                renderHint: "table",
+                refresh: "live",
+                description: nil,
+                actor: .agent
+            )
+            db.close()
+        }
+
+        let reopened = AgentDatabase(agentId: UUID(), path: url.path)
+        try reopened.open()
+        defer { reopened.close() }
+        #expect(try reopened.query(sql: "SELECT value FROM answer_view").rows[0][0] == .integer(42))
+    }
+
+    @Test
+    func invalidSavedViewDoesNotCommitMetadata() throws {
+        let db = try makeDB()
+        #expect(throws: AgentDatabaseError.self) {
+            _ = try db.defineView(
+                name: "broken_view",
+                sql: "SELECT missing FROM absent_table",
+                renderHint: "table",
+                refresh: "live",
+                description: nil,
+                actor: .agent
+            )
+        }
+        #expect(try db.savedView(named: "broken_view") == nil)
+    }
+
+    @Test
+    func rawDropViewIsForbidden() {
+        #expect(AgentDatabase.forbiddenReason(in: "DROP VIEW answer_view") != nil)
+    }
+
     // MARK: - Schema snapshot truncation
 
     @Test
@@ -146,10 +304,10 @@ struct AgentDatabaseTests {
     }
 
     @Test
-    func snapshotLabelsSavedViewsWithRunViewRoute() {
-        // The views section the model sees must state that saved views are
-        // stored definitions executed via db_run_view, not queryable tables —
-        // regression for the `db_query ... FROM <view>` "no such table" loop.
+    func snapshotLabelsSavedViewsAsQueryable() {
+        // The views section must advertise both the direct runner and native
+        // read-only SQL composition so models do not repeat the historical
+        // `db_query ... FROM <view>` "no such table" failure.
         let view = AgentSavedView(
             name: "weekly_total",
             sql: "SELECT 1",
@@ -163,7 +321,8 @@ struct AgentDatabaseTests {
         let rendered = SchemaSnapshot.render(schema)
         #expect(rendered.contains("weekly_total"))
         #expect(rendered.contains("db_run_view"))
-        #expect(rendered.contains("not queryable as tables"))
+        #expect(rendered.contains("db_query"))
+        #expect(rendered.contains("reference by name"))
     }
 
     @Test
@@ -263,10 +422,10 @@ struct AgentDatabaseTests {
         // Import mode contract: `insert` is the append; there is no
         // `append` mode for the model to invent.
         #expect(OnboardingPrompt.block.contains("no `append` mode"))
-        // Saved-view routing: run stored definitions with db_run_view,
-        // never by referencing the view name in db_query SQL.
+        // Saved views support both direct execution and native SQL composition.
         #expect(OnboardingPrompt.block.contains("db_run_view"))
         #expect(OnboardingPrompt.block.contains("db_define_view"))
+        #expect(OnboardingPrompt.block.contains("reference its name"))
         // Soft-delete guidance: typed tools hide tombstones; raw SQL does not.
         #expect(
             OnboardingPrompt.block.lowercased().contains("soft delete")

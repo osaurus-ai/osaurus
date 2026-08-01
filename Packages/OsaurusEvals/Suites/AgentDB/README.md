@@ -27,7 +27,9 @@ the flow is reachable end-to-end from existing tools.
 | `execute-sql-script` | A `.sql` script runs from disk, its SQL never entering tokens | `db_execute` path mode | args contain `transform.sql` but **no** `select`, `file_read` **not** called, derived table shape + busiest-day row |
 | `sandbox-import` | A file generated **inside the sandbox** bulk-loads (the original gap) | dual-root path resolution (`DatabaseFilePathResolver`) | rowCount 6, `SUM(additions)=105`, `db_insert`/`db_upsert` **not** called; SKIPs on hosts without a sandbox |
 | `import-mode-canonical` | "Append" phrasing still yields a canonical import mode on the **first** call | `db_import` `mode` contract (`insert`\|`upsert` only; `insert` IS the append) | `db_import` args never contain `append`, zero `db_import` error envelopes, rowCount 4 |
-| `run-saved-view-directly` | Saved views execute via `db_run_view`, never `db_query FROM <view>` | saved views are stored definitions in `_views`, not SQL tables | define → run ordering, `db_query` args never mention the view name, zero `db_run_view` errors, answer `Zara` |
+| `import-crlf-csv` | Windows-style CSV loads without preprocessing | scalar-aware `db_import` CSV parsing | one error-free `db_import`, rowCount 4, `SUM(downloads)=100`, no shell/per-row fallback |
+| `run-saved-view-directly` | A saved definition executes directly via `db_run_view` | direct saved-view path plus native mirror | define → run ordering, zero `db_run_view` errors, native-name dbState query, answer `Zara` |
+| `queryable-saved-view` | Saved views compose naturally in read-only SQL | connection-local SQLite view mirror | define → query ordering, `db_query` filters the saved name with zero errors, answer `75` |
 
 Fixtures live in [`../../Fixtures/AgentDB`](../../Fixtures/AgentDB):
 `commits-500.csv` (500 deterministic commit rows) and `stars-today.csv`
