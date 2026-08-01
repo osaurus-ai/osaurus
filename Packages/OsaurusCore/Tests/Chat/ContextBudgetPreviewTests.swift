@@ -217,33 +217,37 @@ struct ContextBudgetPreviewTests {
         }
     }
 
-    /// A greeting should not carry dynamic discovery prompt text or enter
-    /// the local tool-template path. Keep the always-loaded baseline frozen
-    /// separately so turn 2 can grow into real work.
-    @Test("compose: trivial greeting suppresses tool schema and dynamic prompt sections")
-    func trivialGreeting_suppressesToolSchemaAndDynamicPromptSections() async {
+    /// Query wording is runtime data, not a prompt-shape input. A greeting and
+    /// a work request with identical settings must produce byte-identical
+    /// system prompts and tool schemas.
+    @Test("compose: cold first-turn prompt and tools ignore query wording")
+    func coldFirstTurn_promptAndToolsIgnoreQueryWording() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
-            let context = await SystemPromptComposer.composeChatContext(
+            let greeting = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
                 executionMode: .none,
                 query: "hi!"
             )
-            let ids = sectionIds(context)
-            #expect(SystemPromptComposer.isTrivialUserQuery("hi!"))
-            #expect(ids.contains("capabilityNudge") == false)
-            #expect(ids.contains("pluginCreator") == false)
-            #expect(ids.contains("agentLoopGuidance") == false)
-            #expect(context.tools.isEmpty)
-            #expect(context.toolTokens == 0)
-            #expect(context.alwaysLoadedNames.contains("capabilities"))
+            let work = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                query: "summarize this project"
+            )
+            #expect(!greeting.tools.isEmpty)
+            #expect(greeting.prompt == work.prompt)
+            #expect(greeting.staticPrefix == work.staticPrefix)
+            #expect(greeting.cacheHint == work.cacheHint)
+            #expect(
+                greeting.tools.map { $0.canonicalHashPayload() }
+                    == work.tools.map { $0.canonicalHashPayload() }
+            )
         }
     }
 
-    /// The greeting-only fast path must not poison the session freeze. After
-    /// a trivial first turn, a real request still gets the bootstrap catalog
-    /// needed to load/discover capabilities.
-    @Test("compose: real task after greeting restores bootstrap tools")
-    func realTaskAfterGreeting_restoresBootstrapTools() async {
+    /// A frozen session baseline must preserve that same query-independent
+    /// shape on the next turn.
+    @Test("compose: frozen follow-up remains query invariant")
+    func frozenFollowUp_remainsQueryInvariant() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let greeting = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
@@ -257,20 +261,22 @@ struct ContextBudgetPreviewTests {
                 frozenAlwaysLoadedNames: greeting.alwaysLoadedNames
             )
 
-            #expect(greeting.tools.isEmpty)
             #expect(greeting.alwaysLoadedNames.contains("capabilities"))
             #expect(followUp.tools.contains { $0.function.name == "capabilities" })
             #expect(!followUp.tools.contains { $0.function.name == "capabilities_load" })
             #expect(!followUp.tools.contains { $0.function.name == "capabilities_discover" })
-            #expect(followUp.toolTokens > 0)
+            #expect(greeting.prompt == followUp.prompt)
+            #expect(greeting.staticPrefix == followUp.staticPrefix)
+            #expect(
+                greeting.tools.map { $0.canonicalHashPayload() }
+                    == followUp.tools.map { $0.canonicalHashPayload() }
+            )
         }
     }
 
-    /// "ok" is only harmless on a clean first turn. Once the session has
-    /// cached tool state or prior task history, an acknowledgement can be the
-    /// user's confirmation for a `clarify`/loop step and must keep schemas.
-    @Test("compose: trivial continuation with cached state keeps bootstrap tools")
-    func trivialContinuationWithCachedState_keepsBootstrapTools() async {
+    /// An acknowledgement with cached state keeps the same bootstrap tools.
+    @Test("compose: acknowledgement with cached state keeps bootstrap tools")
+    func acknowledgementWithCachedState_keepsBootstrapTools() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let frozen = LoadedTools(
                 ToolRegistry.shared.alwaysLoadedSpecs(mode: .none).map(\.function.name)
@@ -283,7 +289,6 @@ struct ContextBudgetPreviewTests {
                 frozenAlwaysLoadedNames: frozen
             )
 
-            #expect(SystemPromptComposer.isTrivialUserQuery("ok"))
             #expect(context.tools.contains { $0.function.name == "capabilities" })
             #expect(!context.tools.contains { $0.function.name == "capabilities_load" })
             #expect(!context.tools.contains { $0.function.name == "capabilities_discover" })
@@ -291,15 +296,10 @@ struct ContextBudgetPreviewTests {
         }
     }
 
-    /// Warm-up parity: warm-up composes with `query: ""` (never trivial), so
-    /// a trivial first send ("hey") in sandbox mode must render the exact
-    /// same static prefix — including the `capabilityNudge` section — or the
-    /// warmed KV misses and the model re-prefills from 0. Regression for the
-    /// live "green dot but full re-prefill on 'hey'" bug where the trivial
-    /// gate dropped just the Capability Discovery section while the tool
-    /// schema stayed.
-    @Test("compose: sandbox trivial first send matches warmup compose byte-for-byte")
-    func sandboxTrivialFirstSend_matchesWarmupCompose() async {
+    /// Warm-up parity: the unknown query used for warm-up and the actual first
+    /// send must render the exact same static prefix.
+    @Test("compose: sandbox first send matches warmup compose byte-for-byte")
+    func sandboxFirstSend_matchesWarmupCompose() async {
         await withAgent(toolSelectionMode: .auto, autonomous: true) { agentId in
             BuiltinSandboxTools.register(
                 agentId: agentId.uuidString,
@@ -319,9 +319,6 @@ struct ContextBudgetPreviewTests {
                 query: "hey"
             )
 
-            #expect(SystemPromptComposer.isTrivialUserQuery("hey"))
-            // Sandbox mode keeps the schema (the trivial fast path is
-            // `.none`-only) without adding legacy capability prose.
             #expect(!send.tools.isEmpty)
             #expect(!sectionIds(send).contains("capabilityNudge"))
             #expect(sectionIds(send) == sectionIds(warmup))
@@ -334,12 +331,10 @@ struct ContextBudgetPreviewTests {
         }
     }
 
-    /// Mid-session KV stability: a trivial acknowledgement ("thanks") in a
-    /// session with history must not rewrite the system prompt — dropping the
-    /// `capabilityNudge` section there would bust the entire conversation KV
-    /// for zero prefill savings.
-    @Test("compose: trivial mid-conversation turn keeps capability nudge section")
-    func trivialMidConversation_keepsCapabilityNudgeSection() async {
+    /// Mid-session KV stability: an acknowledgement must not rewrite the
+    /// system prompt.
+    @Test("compose: acknowledgement keeps the mid-conversation prompt stable")
+    func acknowledgement_keepsMidConversationPromptStable() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let frozen = LoadedTools(
                 ToolRegistry.shared.alwaysLoadedSpecs(mode: .none).map(\.function.name)
@@ -360,7 +355,6 @@ struct ContextBudgetPreviewTests {
                 frozenAlwaysLoadedNames: frozen
             )
 
-            #expect(SystemPromptComposer.isTrivialUserQuery("thanks"))
             #expect(!sectionIds(thanks).contains("capabilityNudge"))
             #expect(sectionIds(thanks) == sectionIds(steady))
             #expect(thanks.staticPrefix == steady.staticPrefix)

@@ -282,11 +282,9 @@ struct ComposedContext: Sendable {
     /// Callers stash it on `SessionToolState.initialAlwaysLoadedNames` after
     /// the first compose so subsequent composes can freeze the schema against
     /// it via `frozenAlwaysLoadedNames` — preventing tools that register
-    /// mid-session from silently appearing in turn 2. It may include a
-    /// trivial-turn baseline even when `tools` is empty for that one request.
+    /// mid-session from silently appearing in turn 2.
     let alwaysLoadedNames: LoadedTools
-    /// Exact tool payloads to freeze on the first compose of a session. This
-    /// can be non-empty when `tools` is empty for the greeting-only fast path.
+    /// Exact tool payloads to freeze on the first compose of a session.
     let initialToolSpecs: [Tool]
     /// Hash of the static prefix + canonical tool payloads for cache evidence.
     let cacheHint: String

@@ -249,16 +249,25 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test
-    func queryPreflightSelectsCompactGatewayWithoutLegacyPair() {
-        let tools = SystemPromptComposer.resolveTools(
+    func queryWordingDoesNotChangeCompactGatewayBaseline() {
+        let pluginQuery = SystemPromptComposer.resolveTools(
             snapshot: makeSnapshot(),
             executionMode: .none,
             query: "Use an installed plugin capability for this task"
         )
-        let names = Set(tools.map(\.function.name))
+        let unrelatedQuery = SystemPromptComposer.resolveTools(
+            snapshot: makeSnapshot(),
+            executionMode: .none,
+            query: "Summarize these notes"
+        )
+        let names = Set(pluginQuery.map(\.function.name))
         #expect(names.contains("capabilities"))
         #expect(!names.contains("capabilities_discover"))
         #expect(!names.contains("capabilities_load"))
+        #expect(
+            pluginQuery.map { $0.canonicalHashPayload() }
+                == unrelatedQuery.map { $0.canonicalHashPayload() }
+        )
     }
 
     @Test
@@ -321,22 +330,32 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test
-    func workspaceChartRequestKeepsAllEnabledCapabilities() {
+    func workspaceToolSchemaIsQueryInvariant() {
         withRegisteredFolderTools { folder in
-            let tools = SystemPromptComposer.resolveTools(
-                snapshot: makeSnapshot(
-                    renderChartEnabled: true,
-                    webSearchEnabled: true,
-                    browserUseEnabled: true
-                ),
+            let snapshot = makeSnapshot(
+                renderChartEnabled: true,
+                webSearchEnabled: true,
+                browserUseEnabled: true
+            )
+            let documentationQuery = SystemPromptComposer.resolveTools(
+                snapshot: snapshot,
+                executionMode: .hostFolder(folder),
+                query: "Update the project documentation"
+            )
+            let chartQuery = SystemPromptComposer.resolveTools(
+                snapshot: snapshot,
                 executionMode: .hostFolder(folder),
                 query: "Render a chart from data.csv in the workspace"
             )
-            let names = Set(tools.map(\.function.name))
+            let names = Set(chartQuery.map(\.function.name))
             #expect(names.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
             #expect(names.contains("render_chart"))
             #expect(names.contains("web_search"))
             #expect(names.contains(BrowserUseTool.toolName))
+            #expect(
+                documentationQuery.map { $0.canonicalHashPayload() }
+                    == chartQuery.map { $0.canonicalHashPayload() }
+            )
         }
     }
 
@@ -370,16 +389,25 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test
-    func keywordPreflightUsesWholeWordsInsteadOfSubstrings() {
+    func workspaceKeywordsDoNotChangeToolSchema() {
         withRegisteredFolderTools { folder in
-            let tools = SystemPromptComposer.resolveTools(
+            let ordinary = SystemPromptComposer.resolveTools(
                 snapshot: makeSnapshot(),
                 executionMode: .hostFolder(folder),
                 query: "Update one paragraph in README.md"
             )
-            let names = Set(tools.map(\.function.name))
-            #expect(!names.contains("get_current_time"))
+            let keywordHeavy = SystemPromptComposer.resolveTools(
+                snapshot: makeSnapshot(),
+                executionMode: .hostFolder(folder),
+                query: "Plot the latest results today and start a server"
+            )
+            let names = Set(ordinary.map(\.function.name))
+            #expect(names.contains("get_current_time"))
             #expect(!names.contains("render_chart"))
+            #expect(
+                ordinary.map { $0.canonicalHashPayload() }
+                    == keywordHeavy.map { $0.canonicalHashPayload() }
+            )
         }
     }
 
@@ -787,7 +815,7 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test
-    func vmBackgroundRequestPreloadsProcessControlWithoutExpandingShell() async {
+    func vmBackgroundModeAlwaysIncludesProcessControlWithoutExpandingShell() async {
         await withSandboxAgent(autonomous: true, backgroundProcesses: true) { agentId in
             withRegisteredSandboxBuiltins(backgroundProcesses: true) {
                 withRegisteredFolderTools { _ in
@@ -796,8 +824,17 @@ struct SystemPromptComposerToolResolutionTests {
                         executionMode: .sandbox,
                         query: "Start a background server and keep it running"
                     )
+                    let unrelated = SystemPromptComposer.resolveTools(
+                        agentId: agentId,
+                        executionMode: .sandbox,
+                        query: "Summarize the source tree"
+                    )
                     let names = Set(tools.map(\.function.name))
                     #expect(names.contains("sandbox_process"))
+                    #expect(
+                        tools.map { $0.canonicalHashPayload() }
+                            == unrelated.map { $0.canonicalHashPayload() }
+                    )
                     let shell = tools.first { $0.function.name == "shell_run" }
                     guard let parameters = shell?.function.parameters,
                         case .object(let schema) = parameters,

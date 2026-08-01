@@ -128,9 +128,9 @@ public struct SystemPromptComposer: Sendable {
     /// so optional bits (trace, frozen snapshot, mid-session loaded
     /// names) stay grouped instead of trailing the signature.
     ///
-    /// `request.query` is the effective user query (for memory recall and
-    /// the trivial-input fast path). If empty, the most recent `"user"`
-    /// message in `request.messages` is used. Pass `additionalToolNames` so
+    /// `request.query` is the effective user query for memory recall. If
+    /// empty, the most recent `"user"` message in `request.messages` is used.
+    /// Pass `additionalToolNames` so
     /// tools the agent loaded mid-session via `capabilities_load` survive
     /// across subsequent composes.
     @MainActor
@@ -171,7 +171,8 @@ public struct SystemPromptComposer: Sendable {
 
     /// Derive the effective user query: prefer the explicit `query`, else
     /// the most recent user message text. Returns "" if neither is available.
-    /// Feeds memory recall and the trivial-input fast path.
+    /// This feeds memory recall only; prompt and tool shape must not depend on
+    /// query wording.
     static func resolveEffectiveQuery(query: String, messages: [ChatMessage]) -> String {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { return trimmed }
@@ -183,36 +184,6 @@ public struct SystemPromptComposer: Sendable {
             }
         }
         return ""
-    }
-
-    /// Greetings and acknowledgements are high-volume "no work yet" turns.
-    /// Skipping dynamic capability prose and the tool schema for these keeps
-    /// TTFT tied to the answer the user actually asked for. Empty queries are
-    /// not classified as trivial because preview and cache-parity composes
-    /// intentionally use `""` as "unknown next input" rather than as a user
-    /// greeting.
-    static func isTrivialUserQuery(_ query: String) -> Bool {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.count <= 32 else { return false }
-
-        let keptScalars = trimmed.lowercased().unicodeScalars.map { scalar -> Character in
-            if CharacterSet.alphanumerics.contains(scalar)
-                || CharacterSet.whitespacesAndNewlines.contains(scalar)
-            {
-                return Character(String(scalar))
-            }
-            return " "
-        }
-        let normalized = String(keptScalars)
-            .split(whereSeparator: { $0.isWhitespace })
-            .joined(separator: " ")
-        let trivialInputs: Set<String> = [
-            "hi", "hello", "hey", "yo", "hiya", "howdy",
-            "good morning", "good afternoon", "good evening",
-            "thanks", "thank you", "thx", "ty",
-            "ok", "okay", "cool", "nice", "great",
-        ]
-        return trivialInputs.contains(normalized)
     }
 
     /// Shared pipeline: assemble memory (returned separately) + resolve
@@ -261,8 +232,6 @@ public struct SystemPromptComposer: Sendable {
             snapshot: snapshot,
             agentId: agentId,
             executionMode: executionMode,
-            query: query,
-            messages: messages,
             additionalToolNames: additionalToolNames,
             frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
             frozenToolSpecs: frozenToolSpecs,
@@ -568,8 +537,6 @@ public struct SystemPromptComposer: Sendable {
         snapshot: AgentConfigSnapshot,
         agentId: UUID,
         executionMode: ExecutionMode,
-        query: String,
-        messages: [ChatMessage],
         additionalToolNames: LoadedTools,
         frozenAlwaysLoadedNames: LoadedTools?,
         frozenToolSpecs: [Tool]?,
@@ -599,7 +566,6 @@ public struct SystemPromptComposer: Sendable {
             trace?.set("contextSizeClass", String(describing: window.sizeClass))
         }
 
-        let isTrivialInput = isTrivialUserQuery(query)
         let configuredSpawn = configuredSpawnPools(snapshot: snapshot)
         let spawnTargets =
             effectiveToolsOff
@@ -616,30 +582,12 @@ public struct SystemPromptComposer: Sendable {
             snapshot: snapshot,
             executionMode: executionMode,
             toolsDisabled: effectiveToolsOff,
-            query: query,
             additionalToolNames: additionalToolNames,
             frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
             frozenToolSpecs: frozenToolSpecs,
             spawnTargets: spawnTargets
         )
         trace?.mark("resolve_tools_done")
-        let suppressTrivialToolSchema = shouldSuppressTrivialToolSchema(
-            isTrivialInput: isTrivialInput,
-            executionMode: executionMode,
-            messages: messages,
-            additionalToolNames: additionalToolNames,
-            frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
-            resolvedTools: resolvedTools
-        )
-        if suppressTrivialToolSchema {
-            trace?.set("toolSchemaSuppressed", "trivial")
-        }
-        // #1161 reports clean raw local completions but corrupted UI/local
-        // chat for greetings. Keep those tiny turns on the no-tool path, while
-        // preserving the baseline below so the next real task can still freeze
-        // against the always-loaded tools that were available at session start.
-        let tools = suppressTrivialToolSchema ? [] : resolvedTools
-
         let alwaysLoadedNames = resolveAlwaysLoadedNames(
             tools: resolvedTools,
             executionMode: executionMode,
@@ -649,14 +597,14 @@ public struct SystemPromptComposer: Sendable {
         let enabledManifest = resolveEnabledManifest(
             snapshot: snapshot,
             agentId: agentId,
-            tools: tools,
+            tools: resolvedTools,
             effectiveToolsOff: effectiveToolsOff,
             frozenManifest: frozenManifest,
             trace: trace
         )
 
         return ResolvedToolset(
-            tools: tools,
+            tools: resolvedTools,
             sessionBaselineTools: resolvedTools,
             enabledManifest: enabledManifest,
             alwaysLoadedNames: alwaysLoadedNames,
@@ -664,35 +612,9 @@ public struct SystemPromptComposer: Sendable {
             contextDisable: contextDisable,
             sizeClass: window.sizeClass,
             effectiveToolsOff: effectiveToolsOff,
-            // Tied to the tool-schema fast path, NOT to `isTrivialInput`
-            // alone: capability prose sections are static prefix content, so
-            // dropping them for a trivial query in a session that keeps its
-            // tool schema (sandbox mode, existing history, frozen state)
-            // would rewrite the cached prefix — busting the warm-up KV on a
-            // "hey" first send and the whole conversation KV on any
-            // mid-session "thanks"/"ok" turn, with zero prefill savings.
-            capabilityPromptSectionsEnabled: !suppressTrivialToolSchema,
+            capabilityPromptSectionsEnabled: true,
             prefersCompactPrompt: window.prefersCompactPrompt
         )
-    }
-
-    /// Keep #1161's greeting-only fast path to the clean first-turn shape.
-    /// Frozen baselines, loaded tools, execution modes, or prior messages all
-    /// mean the user is already in a task context where an acknowledgement
-    /// like "ok" may still need loop/discovery tools.
-    private static func shouldSuppressTrivialToolSchema(
-        isTrivialInput: Bool,
-        executionMode: ExecutionMode,
-        messages: [ChatMessage],
-        additionalToolNames: LoadedTools,
-        frozenAlwaysLoadedNames: LoadedTools?,
-        resolvedTools: [Tool]
-    ) -> Bool {
-        guard isTrivialInput, !resolvedTools.isEmpty else { return false }
-        guard case .none = executionMode else { return false }
-        return messages.isEmpty
-            && additionalToolNames.isEmpty
-            && frozenAlwaysLoadedNames == nil
     }
 
     /// Render the complete enabled-capabilities manifest section for this
@@ -1324,15 +1246,8 @@ public struct SystemPromptComposer: Sendable {
         // `capabilities_discover` / `capabilities_load` as pragmatic
         // always-loaded tools.
         //
-        // KV-cache stability: `capabilityPromptSectionsEnabled` goes false
-        // ONLY on the greeting-only cold first turn in `.none` mode where
-        // the whole tool schema is dropped too (the #1161 fast path — the
-        // `capabilities_discover` check below would fail there anyway). Like
-        // `pluginCreator`, this section must NOT vanish for a trivial query
-        // in a session that keeps its schema: warm-up composes with
-        // `query: ""` and includes it, so dropping it on a "hey" send (or a
-        // mid-session "thanks") would rewrite the static prefix and force a
-        // full re-prefill.
+        // KV-cache stability: capability prompt sections are determined only
+        // by the resolved static schema, never by query wording.
         if toolset.capabilityPromptSectionsEnabled,
             !effectiveToolsOff,
             tools.contains(where: { $0.function.name == "capabilities_discover" })
@@ -2160,13 +2075,8 @@ public struct SystemPromptComposer: Sendable {
     /// `composeChatContext(query: "")` would emit, not a mid-session
     /// freeze.
     ///
-    /// Known, deliberate divergence: `capabilityPromptSectionsEnabled` is
-    /// hardcoded `true` here, while a greeting-only cold first send in
-    /// `.none` mode drops the schema AND the capability nudge (see
-    /// `shouldSuppressTrivialToolSchema`). The popover therefore prices the
-    /// prompt a *real task* will produce — slightly overstating that one
-    /// fast-path turn is the honest side to err on, and pricing against
-    /// `""` already means "unknown next input" rather than "greeting".
+    /// Prompt and tool shape are query-independent, so pricing against `""`
+    /// matches every send made with the same settings and execution mode.
     @MainActor
     private static func previewToolset(
         snapshot: AgentConfigSnapshot,
@@ -2411,7 +2321,7 @@ public struct SystemPromptComposer: Sendable {
         agentId: UUID,
         executionMode: ExecutionMode,
         toolsDisabled: Bool = false,
-        query: String = "",
+        query _: String = "",
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
         frozenToolSpecs: [Tool]? = nil,
@@ -2425,7 +2335,6 @@ public struct SystemPromptComposer: Sendable {
             snapshot: snapshot,
             executionMode: executionMode,
             toolsDisabled: toolsDisabled,
-            query: query,
             additionalToolNames: additionalToolNames,
             frozenAlwaysLoadedNames: frozenAlwaysLoadedNames,
             frozenToolSpecs: frozenToolSpecs,
@@ -2438,7 +2347,7 @@ public struct SystemPromptComposer: Sendable {
         snapshot: AgentConfigSnapshot,
         executionMode: ExecutionMode,
         toolsDisabled: Bool = false,
-        query: String = "",
+        query _: String = "",
         additionalToolNames: LoadedTools = [],
         frozenAlwaysLoadedNames: LoadedTools? = nil,
         frozenToolSpecs: [Tool]? = nil,
@@ -2914,7 +2823,9 @@ public struct SystemPromptComposer: Sendable {
             if isManual, let manualNames = snapshot.manualToolNames {
                 allowed.formUnion(manualNames)
             }
-            allowed.formUnion(querySelectedToolNames(query: query, available: Set(byName.keys)))
+            // These unconditionally available baseline tools are part of the
+            // stable schema. Query wording never adds or removes tools.
+            allowed.formUnion(["get_current_time", "sandbox_process"])
             byName = byName.filter { allowed.contains($0.key) }
 
             // The implementation keeps its full argument compatibility, while
@@ -2953,60 +2864,6 @@ public struct SystemPromptComposer: Sendable {
         )
 
         return resolved
-    }
-
-    /// Cheap deterministic preflight for optional capabilities. This is not a
-    /// workflow tutorial: it only prevents an obvious feature request from
-    /// paying a discovery round-trip before the first useful action.
-    private static func querySelectedToolNames(
-        query: String,
-        available: Set<String>
-    ) -> Set<String> {
-        let q = query.lowercased()
-        guard !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
-        var selected: Set<String> = []
-        let words = Set(
-            q.components(separatedBy: CharacterSet.alphanumerics.inverted)
-                .filter { !$0.isEmpty }
-        )
-
-        func containsNeedle(_ needle: String) -> Bool {
-            if needle.contains(" ") || needle.contains("://") {
-                return q.contains(needle)
-            }
-            return words.contains(needle)
-        }
-
-        func select(_ names: [String], when needles: [String]) {
-            guard needles.contains(where: containsNeedle) else { return }
-            selected.formUnion(names.filter(available.contains))
-        }
-
-        select(["web_search", "search_and_extract"], when: [
-            "search the web", "search web", "search online", "look up online",
-            "latest", "current news", "http://", "https://",
-        ])
-        select(["render_chart"], when: ["chart", "plot", "graph"])
-        select(["get_current_time"], when: ["time", "date", "today", "timezone"])
-        select(["speak"], when: ["speak", "read aloud", "say this"])
-        select(["search_memory"], when: ["memory", "remember", "previous conversation"])
-        select(Array(agentDBToolNames), when: ["database", "table", "sql", "query rows"])
-        select(Array(schedulerToolNames), when: ["schedule", "remind", "recurring"])
-        select(Array(knowledgeToolNames), when: ["knowledge base", "collection"])
-        select(["image"], when: ["generate image", "create image", "edit image"])
-        select(
-            Array(SubagentCapabilityRegistry.spawn.toolNames),
-            when: ["delegate", "subagent", "parallel agent"]
-        )
-        select([ComputerUseTool.toolName], when: ["computer use", "use the screen", "click"])
-        select([BrowserUseTool.toolName], when: ["browse", "browser", "open website"])
-        select(["sandbox_process"], when: ["background process", "server", "watcher"])
-        select([AgentChannelPublishTool.toolName], when: ["publish", "send message", "post to"])
-
-        // One compact fallback gateway replaces the discover→load pair when
-        // the user explicitly asks for an installed plugin/tool/capability.
-        select(["capabilities"], when: ["plugin", "capability", "installed tool"])
-        return selected
     }
 
     private static func compactWorkspaceSpec(_ tool: Tool) -> Tool {

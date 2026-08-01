@@ -28,6 +28,10 @@ struct ChatWarmupPayload: Sendable {
     /// system turn) and is mixed into the runtime's cache-scope salt — a
     /// mismatch on either side makes every cache lookup miss.
     let modelOptions: [String: ModelOptionValue]?
+    /// Exact static-system-prefix hint used by real chat requests. Warm-up
+    /// must carry the same tokenizer boundary hint so vMLX persists the
+    /// boundary the real send later looks up.
+    let cacheStableSystemPrefix: String?
     /// Identity of what this payload warms: model + static prefix hash +
     /// full rendered-prompt hash + history shape + options. The rendered
     /// hash matters: dynamic prompt sections (channel destinations, agent DB
@@ -36,6 +40,22 @@ struct ChatWarmupPayload: Sendable {
     /// cold-re-prefill the whole conversation. A fingerprint match means
     /// the KV prefix is already hot.
     let fingerprint: String
+
+    init(
+        model: String,
+        messages: [ChatMessage],
+        tools: [Tool]?,
+        modelOptions: [String: ModelOptionValue]?,
+        cacheStableSystemPrefix: String? = nil,
+        fingerprint: String
+    ) {
+        self.model = model
+        self.messages = messages
+        self.tools = tools
+        self.modelOptions = modelOptions
+        self.cacheStableSystemPrefix = cacheStableSystemPrefix
+        self.fingerprint = fingerprint
+    }
 }
 
 @MainActor
@@ -980,6 +1000,7 @@ final class ChatWarmupController: ObservableObject {
         // Prompt-affecting request options must mirror the real send exactly
         // (see `ChatWarmupPayload.modelOptions`).
         request.modelOptions = payload.modelOptions
+        request.cacheStableSystemPrefix = payload.cacheStableSystemPrefix
         // Prefill only up to the canonical history boundary — the prompt
         // rendered WITHOUT the generation prompt. The KV stored for that
         // token sequence is an exact prefix of the next real send, which is

@@ -1168,6 +1168,8 @@ struct RuntimePolicySourceTests {
         let api = try Self.source("Models/API/OpenAIAPI.swift")
         let chatEngine = try Self.source("Services/Chat/ChatEngine.swift")
         let chatView = try Self.source("Views/Chat/ChatView.swift")
+        let chatWarmup = try Self.source("Services/Chat/ChatSessionWarmup.swift")
+        let warmupController = try Self.source("Services/Chat/ChatWarmupController.swift")
         let httpHandler = try Self.source("Networking/HTTPHandler.swift")
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
 
@@ -1178,6 +1180,12 @@ struct RuntimePolicySourceTests {
         #expect(chatView.contains("req.cacheStableSystemPrefix ="))
         #expect(chatView.contains("finalReq.cacheStableSystemPrefix ="))
         #expect(chatView.contains("self.isRemoteAgentTarget ? nil : context.staticPrefix"))
+        #expect(chatWarmup.contains("cacheStableSystemPrefix: context.staticPrefix"))
+        #expect(
+            warmupController.contains(
+                "request.cacheStableSystemPrefix = payload.cacheStableSystemPrefix"
+            )
+        )
         #expect(httpHandler.contains("enriched.cacheStableSystemPrefix = composed.staticPrefix"))
         #expect(adapter.contains("cacheStableSystemPrefix: buildRawPrompt == nil"))
         #expect(adapter.contains("cacheStableSystemPrefix: cacheStableSystemPrefix"))

@@ -111,6 +111,7 @@ extension ChatSession: ChatWarmupSessionContext {
             messages: messages,
             tools: toolSpecs.isEmpty ? nil : toolSpecs,
             modelOptions: activeModelOptions.isEmpty ? nil : activeModelOptions,
+            cacheStableSystemPrefix: context.staticPrefix,
             fingerprint: fingerprint
         )
     }

@@ -347,13 +347,11 @@ struct ChatWarmupControllerRAMGateTests {
 @MainActor
 struct ChatWarmupControllerRequestTests {
 
-    /// The warm-up generation must mirror the real send's prompt-affecting
-    /// options. `enable_thinking` (derived from `disableThinking`) changes
-    /// both the rendered template and the runtime's cache-scope salt — a
-    /// warm-up without it prefetches under a different cache key and every
-    /// real send misses (the "green dot but prefill from 0" bug).
-    @Test("warm-up request carries the payload's model options")
-    func warmupRequestCarriesModelOptions() async {
+    /// Warm-up must mirror every cache-identity input used by the real send.
+    /// Model options alter rendered tokens/scope salt, while the stable prefix
+    /// tells vMLX which reusable boundary to persist.
+    @Test("warm-up request carries model options and stable prefix")
+    func warmupRequestCarriesCacheIdentityInputs() async {
         let engine = WarmupRecordingEngine()
         let session = WarmupTestSession()
         session.engine = engine
@@ -362,6 +360,7 @@ struct ChatWarmupControllerRequestTests {
             messages: [ChatMessage(role: "system", content: "sys")],
             tools: nil,
             modelOptions: ["disableThinking": .bool(true)],
+            cacheStableSystemPrefix: "stable system prefix",
             fingerprint: "test-model|hint|opts|"
         )
 
@@ -375,6 +374,7 @@ struct ChatWarmupControllerRequestTests {
         await controller.awaitInFlightWarmup()
 
         #expect(engine.lastRequest?.modelOptions?["disableThinking"] == .bool(true))
+        #expect(engine.lastRequest?.cacheStableSystemPrefix == "stable system prefix")
         #expect(engine.lastRequest?.suppressProgressUI == true)
         #expect(engine.lastRequest?.warmupPrefill == true)
         #expect(engine.lastRequest?.backgroundModelLoad == true)

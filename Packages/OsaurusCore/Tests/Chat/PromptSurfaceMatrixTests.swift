@@ -220,8 +220,13 @@ struct PromptSurfaceMatrixTests {
                 #expect(!rows[0].sectionIds.contains("agentLoopGuidance"))
                 #expect(!rows[0].sectionIds.contains("capabilityNudge"))
 
-                #expect(rows[1].context.tools.isEmpty)
-                #expect(rows[1].toolTokens == 0)
+                #expect(rows[1].toolNames == rows[2].toolNames)
+                #expect(rows[1].context.prompt == rows[2].context.prompt)
+                #expect(rows[1].context.staticPrefix == rows[2].context.staticPrefix)
+                #expect(
+                    rows[1].context.tools.map { $0.canonicalHashPayload() }
+                        == rows[2].context.tools.map { $0.canonicalHashPayload() }
+                )
 
                 #expect(rows[2].toolNames.isDisjoint(with: gatedTools))
                 #expect(rows[2].sectionIds.contains("computerUse") == false)
