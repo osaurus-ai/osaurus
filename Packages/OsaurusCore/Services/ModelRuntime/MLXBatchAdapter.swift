@@ -990,24 +990,27 @@ struct MLXBatchAdapter {
             guard normalizedReasoningEffort != nil || disableThinking != nil else {
                 return context
             }
-            let effort: String
             if let normalizedReasoningEffort {
-                effort = DSV4ReasoningProfile.normalizedEffort(normalizedReasoningEffort)
+                if let effort = DSV4ReasoningProfile.normalizedEffort(normalizedReasoningEffort) {
+                    switch effort {
+                    case "low", "high", "max":
+                        context["enable_thinking"] = true
+                        context["reasoning_effort"] = effort
+                    default:
+                        context["enable_thinking"] = false
+                    }
+                } else {
+                    // Preserve invalid explicit values so vmlx's DSV4 policy
+                    // rejects them with its typed error. Never downgrade an
+                    // unknown effort to Off or silently coerce it to High.
+                    context["enable_thinking"] = true
+                    context["reasoning_effort"] = normalizedReasoningEffort.lowercased()
+                }
             } else if let disableThinking {
-                effort = disableThinking ? "instruct" : "high"
-            } else {
-                return context
-            }
-
-            switch effort {
-            case "max":
-                context["enable_thinking"] = true
-                context["reasoning_effort"] = "max"
-            case "high":
-                context["enable_thinking"] = true
-                context["reasoning_effort"] = "high"
-            default:
-                context["enable_thinking"] = false
+                // The legacy on/off toggle selects the mode only. When it is
+                // on, omit an effort so the bundle's declared default (low for
+                // DSV4-0731) remains authoritative.
+                context["enable_thinking"] = !disableThinking
             }
             return context
         }

@@ -1642,6 +1642,31 @@ struct MLXBatchAdapterTests {
         #expect(instruct["enable_thinking"] as? Bool == false)
         #expect(instruct["reasoning_effort"] == nil)
 
+        let low = MLXBatchAdapter.additionalContext(
+            for: GenerationParameters(
+                temperature: nil,
+                maxTokens: 16,
+                modelOptions: ["reasoningEffort": .string("low")]
+            ),
+            modelName: modelName
+        )
+        #expect(low["enable_thinking"] as? Bool == true)
+        #expect(low["reasoning_effort"] as? String == "low")
+
+        let invalid = MLXBatchAdapter.additionalContext(
+            for: GenerationParameters(
+                temperature: nil,
+                maxTokens: 16,
+                modelOptions: ["reasoningEffort": .string("medium")]
+            ),
+            modelName: modelName
+        )
+        #expect(invalid["enable_thinking"] as? Bool == true)
+        #expect(
+            invalid["reasoning_effort"] as? String == "medium",
+            "Invalid explicit efforts must reach vmlx's typed validation instead of being coerced"
+        )
+
         let reasoning = MLXBatchAdapter.additionalContext(
             for: GenerationParameters(
                 temperature: nil,
@@ -1676,7 +1701,10 @@ struct MLXBatchAdapterTests {
             modelName: modelName
         )
         #expect(legacyToggle["enable_thinking"] as? Bool == true)
-        #expect(legacyToggle["reasoning_effort"] as? String == "high")
+        #expect(
+            legacyToggle["reasoning_effort"] == nil,
+            "A legacy thinking-on toggle must preserve the bundle's default effort"
+        )
     }
 
     @Test func additionalContext_threadsRequiredToolChoiceToLocalTemplates() {

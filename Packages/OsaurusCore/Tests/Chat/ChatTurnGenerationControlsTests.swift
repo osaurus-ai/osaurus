@@ -122,6 +122,27 @@ struct ChatTurnGenerationControlsTests {
         #expect(request.modelOptions == nil)
     }
 
+    @Test("DSV4 reasoning effort reaches every reconstructed tool-loop request unchanged")
+    func dsv4ReasoningEffortPropagatesAcrossIterations() {
+        for effort in ["instruct", "low", "high", "max"] {
+            let controls = ChatTurnGenerationControls.capture(
+                activeModelOptions: ["reasoningEffort": .string(effort)]
+            )
+            var requests = [request(), request(), request(), request()]
+            for index in requests.indices {
+                controls.apply(to: &requests[index])
+            }
+
+            #expect(controls.enableThinking == nil)
+            #expect(requests.allSatisfy { $0.enable_thinking == nil })
+            #expect(
+                requests.allSatisfy {
+                    $0.modelOptions?["reasoningEffort"]?.stringValue == effort
+                }
+            )
+        }
+    }
+
     @Test("non-thinking model options do not synthesize a Thinking override")
     func unrelatedOptionsDoNotSynthesizeThinking() {
         let controls = ChatTurnGenerationControls.capture(

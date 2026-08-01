@@ -649,42 +649,15 @@ struct ModelRuntimeFindDirectoryTests {
         try ModelRuntime.validateJANGTQSidecarIfRequired(at: dir, name: "DSV4-bf16-dense")
     }
 
-    @Test("Plain affine DeepSeek V4 JANG is blocked before shard load")
-    func dsv4_plainAffineJANG_throwsBeforeLoad() throws {
+    @Test("Plain affine DeepSeek V4 JANG passes normal JANG preflight")
+    func dsv4_plainAffineJANG_passesNormalPreflight() throws {
         let dir = try makeIsolatedDir()
         try writeConfig(modelType: "deepseek_v4", routedExperts: 256, at: dir)
         try writeJangConfig(weightFormat: "affine", at: dir)
 
-        #expect(throws: MLXService.RuntimePolicyError.self) {
-            try ModelRuntime.validateUnsupportedPlainDSV4AffineJANG(
-                at: dir,
-                name: "DeepSeek-V4-Flash-JANG"
-            )
-        }
-    }
-
-    @Test("DeepSeek V4 JANGTQ sidecar is not blocked by plain-affine guard")
-    func dsv4_jangtqSidecar_passesPlainAffineGuard() throws {
-        let dir = try makeIsolatedDir()
-        try writeConfig(modelType: "deepseek_v4", routedExperts: 256, at: dir)
-        try writeJangConfig(weightFormat: "mxtq", at: dir)
-        try Data("dummy".utf8).write(to: dir.appendingPathComponent("jangtq_runtime.safetensors"))
-
-        try ModelRuntime.validateUnsupportedPlainDSV4AffineJANG(
+        try ModelRuntime.validateJANGTQSidecarIfRequired(
             at: dir,
-            name: "DeepSeek-V4-Flash-JANGTQ2"
-        )
-    }
-
-    @Test("Small affine fixtures are not blocked by DeepSeek V4 JANG guard")
-    func dsv4_smallAffineFixture_passesPlainAffineGuard() throws {
-        let dir = try makeIsolatedDir()
-        try writeConfig(modelType: "deepseek_v4", routedExperts: 8, at: dir)
-        try writeJangConfig(weightFormat: "affine", at: dir)
-
-        try ModelRuntime.validateUnsupportedPlainDSV4AffineJANG(
-            at: dir,
-            name: "Tiny-DSV4-fixture"
+            name: "DeepSeek-V4-Flash-JANG"
         )
     }
 

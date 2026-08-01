@@ -1,5 +1,5 @@
 {
-  "originHash" : "ac35f77d8231060a221af9d363887cd2cc1cfc2c7b07e776b61b9906ba1bf390",
+  "originHash" : "5c89d828b8096b19125056616a79b19869225b83cf44313f1441b1258a0b42e9",
   "pins" : [
     {
       "identity" : "aachartkit-swift",
@@ -374,7 +374,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/osaurus-ai/vmlx-swift",
       "state" : {
-        "revision" : "0d838879a7ea102eb6e034f1d33ac0dbb51c02c3"
+        "revision" : "dcc812271e5dbb61de401fb6dd404ea6f229ede8"
       }
     },
     {

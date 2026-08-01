@@ -109,6 +109,46 @@ struct GenerationEventMapperTests {
         )
     }
 
+    @Test func toolCall_preserves_valid_native_argument_order() async throws {
+        let call = MLXLMCommon.ToolCall(
+            function: MLXLMCommon.ToolCall.Function(
+                name: "ordered",
+                arguments: [
+                    "zeta": .int(7),
+                    "alpha": .string("ready"),
+                ],
+                rawArgumentsJSON: "{\"zeta\": 7, \"alpha\": \"ready\"}"
+            )
+        )
+        let out = try await collect(events: [.toolCall(call)])
+        guard case .toolInvocation(_, let argsJSON) = out.first else {
+            Issue.record("expected toolInvocation")
+            return
+        }
+        #expect(argsJSON == "{\"zeta\": 7, \"alpha\": \"ready\"}")
+    }
+
+    @Test func toolCall_rejects_mismatched_raw_argument_text() async throws {
+        let call = MLXLMCommon.ToolCall(
+            function: MLXLMCommon.ToolCall.Function(
+                name: "ordered",
+                arguments: ["count": .int(2)],
+                rawArgumentsJSON: "{\"count\": 999}"
+            )
+        )
+        let out = try await collect(events: [.toolCall(call)])
+        guard case .toolInvocation(_, let argsJSON) = out.first else {
+            Issue.record("expected toolInvocation")
+            return
+        }
+        let decoded = try JSONDecoder().decode(
+            [String: MLXLMCommon.JSONValue].self,
+            from: Data(argsJSON.utf8)
+        )
+        #expect(decoded == ["count": .int(2)])
+        #expect(argsJSON != "{\"count\": 999}")
+    }
+
     @Test func toolCallProgress_drops_empty_deltas() async throws {
         // Empty envelope deltas carry no preview and must not produce events.
         let events: [Generation] = [.toolCallProgress("")]

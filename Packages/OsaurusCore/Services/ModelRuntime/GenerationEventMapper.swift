@@ -163,6 +163,7 @@ enum GenerationEventMapper {
                     markFirstModelOutput()
                     let argsJSON = serializeArguments(
                         call.function.arguments,
+                        rawArgumentsJSON: call.function.rawArgumentsJSON,
                         toolName: call.function.name
                     )
                     continuation.yield(
@@ -317,8 +318,25 @@ enum GenerationEventMapper {
     /// of silently swallowing the argument set.
     private static func serializeArguments(
         _ arguments: [String: MLXLMCommon.JSONValue],
+        rawArgumentsJSON: String?,
         toolName: String
     ) -> String {
+        // Native parsers can preserve the exact JSON member order emitted by
+        // the model. Reuse it only when it still decodes to the same typed
+        // values; otherwise fall through to the canonical safe serializer.
+        // This keeps DSV4's next-turn DSML history byte-stable without making
+        // raw protocol text authoritative for tool execution.
+        if let rawArgumentsJSON,
+            let rawData = rawArgumentsJSON.data(using: .utf8),
+            let decoded = try? JSONDecoder().decode(
+                [String: MLXLMCommon.JSONValue].self,
+                from: rawData
+            ),
+            decoded == arguments
+        {
+            return rawArgumentsJSON
+        }
+
         let anyDict = arguments.mapValues { $0.anyValue }
         // Pre-validate the dictionary: `JSONSerialization.data(...)` raises
         // an Objective-C `NSException` (not a Swift `Error`) when given

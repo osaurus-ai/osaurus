@@ -56,6 +56,10 @@ struct ModelRuntimeMappingTests {
         #expect(asst.toolCalls?.count == 1)
         #expect(asst.toolCalls?.first?.id == "call_1")
         #expect(asst.toolCalls?.first?.function.name == "get_weather")
+        #expect(
+            asst.toolCalls?.first?.function.rawArgumentsJSON
+                == "{\"city\":\"Tokyo\"}"
+        )
         if case .string(let city) = asst.toolCalls?.first?.function.arguments["city"] {
             #expect(city == "Tokyo")
         } else {
@@ -199,6 +203,23 @@ struct ModelRuntimeMappingTests {
         #expect(mapped[0].role == .assistant)
         #expect(mapped[0].content == "Final answer.")
         #expect(mapped[0].reasoningContent == "Prior reasoning.")
+    }
+
+    @Test func preservesAssistantContentAndReasoningBytes() throws {
+        let assistant = ChatMessage(
+            role: "assistant",
+            content: "  Final answer.\n",
+            tool_calls: nil,
+            tool_call_id: nil,
+            reasoning_content: "\nPrior reasoning.  "
+        )
+
+        let mapped = ModelRuntime.mapOpenAIChatToMLX([assistant])
+
+        #expect(mapped.count == 1)
+        #expect(mapped[0].role == .assistant)
+        #expect(mapped[0].content == "  Final answer.\n")
+        #expect(mapped[0].reasoningContent == "\nPrior reasoning.  ")
     }
 
     @Test func preservesReasoningOnlyAssistantTurns() throws {

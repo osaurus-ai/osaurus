@@ -361,11 +361,12 @@ enum ModelProfileRegistry {
 
 /// DeepSeek-V4 / DSV4 Flash JANG bundles use vmlx's dedicated DSV4 encoder
 /// rather than a generic `enable_thinking`-only Jinja path. The runtime has
-/// three intentional modes:
-/// - instruct: closed `</think>` assistant tail, answer on content rail
-/// - reasoning: open `<think>` assistant tail, normal reasoning split
-/// - max: raw DSV4 max reasoning effort; Osaurus passes it through to vmlx
-///   unchanged so runtime issues are fixed at the engine layer, not hidden here
+/// four intentional modes:
+/// - instruct: compatibility id for the direct/off rail (`enable_thinking=false`)
+/// - low/high/max: exact 0731 reasoning-effort values passed through to vmlx
+///
+/// The bundle default is low. The default below is display-only; Osaurus does
+/// not synthesize it into requests, so bundle metadata remains authoritative.
 struct DSV4ReasoningProfile: ModelProfile {
     static let displayName = "DSV4 Reasoning"
 
@@ -379,27 +380,26 @@ struct DSV4ReasoningProfile: ModelProfile {
             label: L("Reasoning Mode"),
             icon: "brain.head.profile",
             kind: .segmented([
-                ModelOptionSegment(id: "instruct", label: L("Instruct")),
-                ModelOptionSegment(id: "high", label: L("Reasoning")),
+                ModelOptionSegment(id: "instruct", label: L("Off")),
+                ModelOptionSegment(id: "low", label: L("Low")),
+                ModelOptionSegment(id: "high", label: L("High")),
                 ModelOptionSegment(id: "max", label: L("Max")),
             ])
         )
     ]
 
     static let defaults: [String: ModelOptionValue] = [
-        "reasoningEffort": .string("instruct")
+        "reasoningEffort": .string("low")
     ]
 
-    static func normalizedEffort(_ value: String) -> String {
+    static func normalizedEffort(_ value: String) -> String? {
         switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "instruct", "chat", "none", "no_think", "off", "disabled", "false":
             return "instruct"
-        case "max", "maximum":
-            return "max"
-        case "reasoning", "think", "thinking", "high", "medium", "low", "true":
-            return "high"
+        case "low", "high", "max":
+            return value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         default:
-            return "instruct"
+            return nil
         }
     }
 }

@@ -72,8 +72,8 @@ struct DSV4ParserPipelineTests {
         #expect(call.function.arguments["location"] == .string("Paris"))
     }
 
-    @Test("malformed live DSV4 DSML aliases route to tools without visible leakage")
-    func malformedLiveDSMLAliasesRouteToToolsWithoutVisibleLeakage() throws {
+    @Test("malformed live DSV4 DSML aliases remain non-executable without visible leakage")
+    func malformedLiveDSMLAliasesRemainNonExecutableWithoutVisibleLeakage() throws {
         let toolCallProcessor = ToolCallProcessor(format: .dsml)
         var events: [Generation] = []
 
@@ -109,17 +109,11 @@ struct DSV4ParserPipelineTests {
         #expect(!visible.contains("tool_ccalls"))
         #expect(!visible.contains("tool_cs"))
         #expect(!visible.contains("invoke name"))
-        #expect(calls.count == 1)
-        let call = try #require(calls.first)
-        #expect(call.function.name == "file_read")
-        #expect(
-            call.function.arguments["path"]
-                == .string("/Users/eric/Desktop/testmandel/mandelbrot.py")
-        )
+        #expect(calls.isEmpty)
     }
 
-    @Test("live DSV4 tool_crs alias after bare tool marker routes to a tool call")
-    func liveToolCRSAliasAfterBareToolMarkerRoutesToToolCall() throws {
+    @Test("live DSV4 tool_crs alias after bare text remains non-executable")
+    func liveToolCRSAliasAfterBareTextRemainsNonExecutable() throws {
         let dsml = "\u{FF5C}DSML\u{FF5C}"
         let toolCallProcessor = ToolCallProcessor(format: .dsml, tools: lineCountToolSchema())
         var events: [Generation] = []
@@ -157,15 +151,11 @@ struct DSV4ParserPipelineTests {
         let visible = events.compactMap(\.chunk).joined()
         let calls = events.compactMap(\.toolCall)
 
-        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines) == "-line_count")
         #expect(!visible.contains("DSML"), "tool_crs DSML must not leak as visible text: \(visible)")
         #expect(!visible.contains("tool_crs"))
         #expect(!visible.contains("invoke name"))
-        #expect(!visible.contains("line_count"))
-        #expect(calls.count == 1)
-        let call = try #require(calls.first)
-        #expect(call.function.name == "line_count")
-        #expect(call.function.arguments["text"] == .string("alpha\nbeta\ngamma"))
+        #expect(calls.isEmpty)
     }
 
     @Test("ZAYA XML tool parser decodes live HTML line breaks")
@@ -260,8 +250,8 @@ struct DSV4ParserPipelineTests {
         #expect(call.function.arguments["text"] == .string("red\ngreen\nblue"))
     }
 
-    @Test("live DSV4 bare-name JSON split after tool marker routes to a tool call")
-    func liveBareNameJSONAfterToolMarkerRoutesToToolCall() throws {
+    @Test("live DSV4 bare-name JSON remains visible and non-executable")
+    func liveBareNameJSONRemainsVisibleAndNonExecutable() throws {
         let toolCallProcessor = ToolCallProcessor(format: .dsml, tools: lineCountToolSchema())
         var events: [Generation] = []
         let output = #"line_count{"text":"alpha\nbeta\gamma"}"#
@@ -289,13 +279,8 @@ struct DSV4ParserPipelineTests {
         let visible = events.compactMap(\.chunk).joined()
         let calls = events.compactMap(\.toolCall)
 
-        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        #expect(!visible.contains("line_count"))
-        #expect(!visible.contains(#"{"text":"#))
-        #expect(calls.count == 1)
-        let call = try #require(calls.first)
-        #expect(call.function.name == "line_count")
-        #expect(call.function.arguments["text"] == .string("alpha\nbeta\\gamma"))
+        #expect(visible == output)
+        #expect(calls.isEmpty)
     }
 
     @Test("incomplete DSV4 DSML protocol opener at EOS does not leak to chat")
@@ -334,8 +319,8 @@ struct DSV4ParserPipelineTests {
         #expect(!visible.contains("tool_c"))
     }
 
-    @Test("malformed live DSV4 aliases route every folder and git tool without leakage")
-    func malformedLiveAliasesRouteFolderAndGitToolsWithoutLeakage() throws {
+    @Test("malformed live DSV4 aliases never execute folder or git tools")
+    func malformedLiveAliasesNeverExecuteFolderOrGitTools() throws {
         let fixtures: [DSMLToolFixture] = [
             .init(
                 name: "file_tree",
@@ -440,23 +425,12 @@ struct DSV4ParserPipelineTests {
             #expect(!visible.contains("DSML"), "\(fixture.name) leaked DSML marker: \(visible)")
             #expect(!visible.contains("tool_ccalls"), "\(fixture.name) leaked start alias: \(visible)")
             #expect(!visible.contains("tool_cs"), "\(fixture.name) leaked end alias: \(visible)")
-            #expect(calls.count == 1, "\(fixture.name) should emit one tool call")
-
-            let call = calls.first
-            #expect(call?.function.name == fixture.name)
-            for parameter in fixture.parameters {
-                assertArgument(
-                    call?.function.arguments[parameter.name],
-                    matches: parameter.expected,
-                    tool: fixture.name,
-                    parameter: parameter.name
-                )
-            }
+            #expect(calls.isEmpty, "\(fixture.name) must not emit a tool call")
         }
     }
 
-    @Test("DSV4 top-level JSON tool fallback routes only schema-valid calls")
-    func topLevelJSONToolFallbackRoutesOnlySchemaValidCalls() throws {
+    @Test("DSV4 top-level JSON remains visible and non-executable")
+    func topLevelJSONRemainsVisibleAndNonExecutable() throws {
         let toolCallProcessor = ToolCallProcessor(format: .dsml, tools: fileReadToolSchema())
         var events: [Generation] = []
         let output = """
@@ -486,17 +460,13 @@ struct DSV4ParserPipelineTests {
         let visible = events.compactMap(\.chunk).joined()
         let calls = events.compactMap(\.toolCall)
 
-        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        #expect(calls.count == 1)
-        let call = try #require(calls.first)
-        #expect(call.function.name == "file_read")
-        #expect(call.function.arguments["path"] == .string("mandelbrot.py"))
-        #expect(call.function.arguments["start_line"] == .int(38))
-        #expect(call.function.arguments["end_line"] == .int(41))
+        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines)
+            == output.trimmingCharacters(in: .whitespacesAndNewlines))
+        #expect(calls.isEmpty)
     }
 
-    @Test("DSV4 malformed JSON tool-shaped answer is quarantined without visible leakage")
-    func malformedJSONToolShapedAnswerIsQuarantinedWithoutVisibleLeakage() throws {
+    @Test("DSV4 malformed JSON tool-shaped answer remains visible and non-executable")
+    func malformedJSONToolShapedAnswerRemainsVisibleAndNonExecutable() throws {
         let toolCallProcessor = ToolCallProcessor(format: .dsml, tools: fileReadToolSchema())
         var events: [Generation] = []
         let output = """
@@ -526,20 +496,13 @@ struct DSV4ParserPipelineTests {
         let visible = events.compactMap(\.chunk).joined()
         let calls = events.compactMap(\.toolCall)
 
-        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        #expect(!visible.contains("\"tool\":\"file_read\""))
-        #expect(!visible.contains("np.clip"))
-        #expect(calls.count == 1)
-        let call = try #require(calls.first)
-        #expect(call.function.name == "file_read")
-        #expect(call.function.arguments["path"] == nil)
-        #expect(call.function.arguments["_error"] == .string("invalid_tool_arguments"))
-        #expect(call.function.arguments["_field"] == .string("path"))
-        #expect(call.function.arguments["r"] == nil)
+        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines)
+            == output.trimmingCharacters(in: .whitespacesAndNewlines))
+        #expect(calls.isEmpty)
     }
 
-    @Test("DSV4 schema-less JSON tool fallback routes built-in tool attempts without visible leakage")
-    func schemaLessJSONToolFallbackRoutesBuiltInToolAttemptsWithoutVisibleLeakage() throws {
+    @Test("DSV4 schema-less JSON tool attempts remain visible and non-executable")
+    func schemaLessJSONToolAttemptsRemainVisibleAndNonExecutable() throws {
         let toolCallProcessor = ToolCallProcessor(format: .dsml)
         var events: [Generation] = []
         let output = """
@@ -569,29 +532,13 @@ struct DSV4ParserPipelineTests {
         let visible = events.compactMap(\.chunk).joined()
         let calls = events.compactMap(\.toolCall)
 
-        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        #expect(!visible.contains("\"tool\":\"file_read\""))
-        #expect(!visible.contains("np.clip"))
-        #expect(calls.count == 1)
-        let call = try #require(calls.first)
-        #expect(call.function.name == "file_read")
-        #expect(call.function.arguments["path"] == nil)
-        #expect(
-            call.function.arguments["r"]
-                == .string("np.clip(esc * 4.0 - 1.0, 0.0, 1.0)")
-        )
-        #expect(
-            call.function.arguments["g"]
-                == .string("np.clip(1.0 - np.abs(esc * 2.0 - 1.0), 0.0, 1.0)")
-        )
-        #expect(
-            call.function.arguments["b"]
-                == .string("np.clip(1.0 - esc * 2.0, 0.0, 1.0)")
-        )
+        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines)
+            == output.trimmingCharacters(in: .whitespacesAndNewlines))
+        #expect(calls.isEmpty)
     }
 
-    @Test("DSV4 truncated schema-less JSON tool attempt is quarantined without visible leakage")
-    func truncatedSchemaLessJSONToolAttemptIsQuarantinedWithoutVisibleLeakage() throws {
+    @Test("DSV4 truncated schema-less JSON remains visible and non-executable")
+    func truncatedSchemaLessJSONRemainsVisibleAndNonExecutable() throws {
         let toolCallProcessor = ToolCallProcessor(format: .dsml)
         var events: [Generation] = []
         let output = """
@@ -622,9 +569,8 @@ struct DSV4ParserPipelineTests {
         let calls = events.compactMap(\.toolCall)
 
         #expect(calls.isEmpty)
-        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        #expect(!visible.contains("\"tool\":\"file_read\""))
-        #expect(!visible.contains("np.clip"))
+        #expect(visible.trimmingCharacters(in: .whitespacesAndNewlines)
+            == output.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     private struct DSMLToolFixture {
