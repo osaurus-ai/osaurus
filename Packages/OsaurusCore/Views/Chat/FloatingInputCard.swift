@@ -4014,16 +4014,14 @@ extension FloatingInputCard {
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(effectiveBorderStyle, lineWidth: isDragOver ? 2 : (isFocused ? 1.5 : 0.5))
+                .strokeBorder(effectiveBorderStyle, lineWidth: isDragOver ? 2 : (inputStyle == .shadow ? 0.75 : (isFocused ? 1.5 : 0.5)))
         )
-        /*
         .shadow(
-            color: shadowColor,
-            radius: isFocused ? 12 : 6,
+            color: inputStyle == .shadow ? shadowColor : .clear,
+            radius: inputStyle == .shadow ? (isFocused ? 4.9 : 4) : 0,
             x: 0,
-            y: isFocused ? 4 : 2
+            y: inputStyle == .shadow ? (theme.isDark ? 0 : (isFocused ? 3 : 1)) : 0
         )
-        */
         .animation(.easeOut(duration: 0.15), value: isFocused)
         .animation(.easeOut(duration: 0.1), value: isDragOver)
     }
@@ -4902,12 +4900,18 @@ extension FloatingInputCard {
                 endPoint: .center
             )
             .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .opacity(inputStyle == .gradient ? 1 : 0)
         }
     }
+
+    private var inputStyle: ThemeInputStyle { theme.customThemeConfig?.inputStyle ?? .gradient }
 
     private var effectiveBorderStyle: AnyShapeStyle {
         if isDragOver {
             return AnyShapeStyle(theme.accentColor)
+        }
+        if inputStyle == .shadow {
+            return AnyShapeStyle(theme.primaryBorder.opacity(theme.isDark ? 0.8 : 0.7))
         }
         return borderGradient
     }
@@ -4940,7 +4944,8 @@ extension FloatingInputCard {
     }
 
     private var shadowColor: Color {
-        isFocused ? theme.accentColor.opacity(0.18) : theme.shadowColor.opacity(0.12)
+        let opacity = isFocused ? (theme.isDark ? 0.18 : 0.14) : 0.07
+        return (theme.isDark ? theme.accentColor : theme.shadowColor).opacity(opacity)
     }
 }
 

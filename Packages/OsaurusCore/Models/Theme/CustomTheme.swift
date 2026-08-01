@@ -722,6 +722,8 @@ public struct ThemeBorders: Codable, Equatable, Sendable {
     public static var `default`: ThemeBorders { ThemeBorders() }
 }
 
+public enum ThemeInputStyle: String, Codable, Sendable { case gradient, shadow }
+
 // MARK: - Custom Theme
 
 /// Complete custom theme configuration
@@ -735,6 +737,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
     public var shadows: ThemeShadows
     public var messages: ThemeMessages
     public var borders: ThemeBorders
+    public var inputStyle: ThemeInputStyle
 
     /// Syntax highlighting theme name (Highlightr). nil = auto (dark/light).
     public var codeHighlightTheme: String?
@@ -763,6 +766,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         shadows: ThemeShadows = ThemeShadows(),
         messages: ThemeMessages = ThemeMessages(),
         borders: ThemeBorders = ThemeBorders(),
+        inputStyle: ThemeInputStyle = .gradient,
         codeHighlightTheme: String? = nil,
         library: ThemeLibraryInfo? = nil,
         isBuiltIn: Bool = false,
@@ -778,6 +782,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         self.shadows = shadows
         self.messages = messages
         self.borders = borders
+        self.inputStyle = inputStyle
         self.codeHighlightTheme = codeHighlightTheme
         self.library = library
         self.isBuiltIn = isBuiltIn
@@ -797,6 +802,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         shadows = try container.decode(ThemeShadows.self, forKey: .shadows)
         messages = try container.decodeIfPresent(ThemeMessages.self, forKey: .messages) ?? ThemeMessages()
         borders = try container.decodeIfPresent(ThemeBorders.self, forKey: .borders) ?? ThemeBorders()
+        inputStyle = try container.decodeIfPresent(ThemeInputStyle.self, forKey: .inputStyle) ?? .gradient
         codeHighlightTheme = try container.decodeIfPresent(String.self, forKey: .codeHighlightTheme)
         library = try container.decodeIfPresent(ThemeLibraryInfo.self, forKey: .library)
         isBuiltIn = try container.decode(Bool.self, forKey: .isBuiltIn)
