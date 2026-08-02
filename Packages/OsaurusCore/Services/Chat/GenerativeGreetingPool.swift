@@ -117,6 +117,14 @@ public actor GenerativeGreetingPool {
     /// `resume()` from `ChatWindowManager`'s NSWorkspace observers.
     private var paused = false
 
+    /// True while the host reports a serious/critical thermal state.
+    /// Kept separate from `paused` on purpose: sleep/wake and thermal
+    /// pressure are independent signals, and folding them into one flag
+    /// would let a wake-time `resume()` silently clear a still-active
+    /// throttle (or vice versa). Toggled by `ThermalStateMonitor`.
+    private var thermallyThrottled = false
+    private var lastThermalTransitionSequence: UInt64 = 0
+
     /// Public diagnostics snapshot. Returned by `stats()` and emitted
     /// once per ticker pass at `info` so the Console signal exists
     /// without a new in-app surface. Useful for spot-checking that
@@ -129,7 +137,7 @@ public actor GenerativeGreetingPool {
         public var refillsStarted: Int = 0
         public var refillsSucceeded: Int = 0
         public var refillsFailed: Int = 0
-        public var lastFailure: String? = nil
+        public var lastFailure: String?
     }
 
     private var stats = Stats()
@@ -259,7 +267,7 @@ public actor GenerativeGreetingPool {
     /// while paused — the wake handler will warm up the active agent.
     public func warmUp(for agent: Agent, model: String) {
         startTickerIfNeeded()
-        if paused { return }
+        if paused || thermallyThrottled { return }
         if refillTasks[agent.id] != nil { return }
 
         let agentId = agent.id
@@ -296,6 +304,34 @@ public actor GenerativeGreetingPool {
     public func resume() {
         paused = false
         if let agent = activeAgent, let model = activeModel {
+            warmUp(for: agent, model: model)
+        }
+    }
+
+    /// Thermal gate, driven by `ThermalStateMonitor` on serious/critical
+    /// boundary crossings. Entering the throttled state cancels in-flight
+    /// refills — a background greeting mid-generation is exactly the
+    /// discretionary GPU work macOS is asking us to shed, and on a fanless
+    /// chassis letting it finish extends the throttle window for the
+    /// user's actual turns. Leaving it warms the active agent back up
+    /// (`warmUp` still honors the independent sleep `paused` flag).
+    public func setThermallyThrottled(
+        _ throttled: Bool,
+        transitionSequence: UInt64? = nil
+    ) {
+        if let transitionSequence {
+            guard transitionSequence > lastThermalTransitionSequence else { return }
+            lastThermalTransitionSequence = transitionSequence
+        }
+        guard thermallyThrottled != throttled else { return }
+        thermallyThrottled = throttled
+        if throttled {
+            // Drain BEFORE cancelling — same Dictionary-mutation hazard
+            // documented in `pause()`.
+            let tasks = Array(refillTasks.values)
+            refillTasks.removeAll()
+            for task in tasks { task.cancel() }
+        } else if let agent = activeAgent, let model = activeModel {
             warmUp(for: agent, model: model)
         }
     }
@@ -610,7 +646,7 @@ public actor GenerativeGreetingPool {
             if Task.isCancelled { break }
             purgeAllExpired()
             logTickSummary()
-            if paused { continue }
+            if paused || thermallyThrottled { continue }
             guard let agent = activeAgent, let model = activeModel else { continue }
             // Drop the stale active context when the feature was toggled
             // off so the loop goes fully idle next tick instead of
@@ -688,6 +724,19 @@ public actor GenerativeGreetingPool {
         /// In-memory entry count for `agentId`.
         internal func _testingEntryCount(for agentId: UUID) -> Int {
             pools[agentId]?.count ?? 0
+        }
+
+        /// Whether a refill task is currently registered for `agentId`.
+        /// Lets the thermal-gate test assert that `warmUp` was a no-op
+        /// while throttled without racing the refill's own completion.
+        internal func _testingHasRefillTask(for agentId: UUID) -> Bool {
+            refillTasks[agentId] != nil
+        }
+
+        /// Current thermal-gate flag, for asserting `setThermallyThrottled`
+        /// round-trips.
+        internal func _testingIsThermallyThrottled() -> Bool {
+            thermallyThrottled
         }
     }
 #endif

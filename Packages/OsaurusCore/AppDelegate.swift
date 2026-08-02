@@ -286,6 +286,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // NSWorkspace activation observer.
         FrontmostAppTracker.shared.start()
 
+        // Track thermal pressure so background inference (greeting pre-warm)
+        // sheds itself while the chassis is throttled — sustained-throughput
+        // insurance for fanless laptops where discretionary GPU work extends
+        // the throttle window macOS imposes on the user's real turns.
+        ThermalStateMonitor.shared.start()
+
         // Set up distributed control listeners (local-only management)
         setupControlNotifications()
 

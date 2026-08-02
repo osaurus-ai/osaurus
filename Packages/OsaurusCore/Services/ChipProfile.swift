@@ -35,6 +35,16 @@ struct ChipProfile: Sendable, Equatable {
         case unknown
     }
 
+    /// Enclosure class. Laptops (especially fanless Airs) throttle under
+    /// sustained GPU load where desktops don't, so thermal-aware policy
+    /// needs to know which one it's on. `unknown` covers VMs and future
+    /// identifiers; policy code must treat it like a laptop (conservative).
+    enum Chassis: String, Sendable {
+        case laptop
+        case desktop
+        case unknown
+    }
+
     /// Marketing name as reported by the kernel, e.g. "Apple M4 Pro".
     let brandString: String
     /// Apple Silicon generation (1 for M1, 5 for M5, …); `nil` when the
@@ -50,6 +60,9 @@ struct ChipProfile: Sendable, Equatable {
     /// answer to "how much GPU-visible memory may I comfortably use" and is
     /// the anchor for any future wired-memory policy.
     let recommendedMaxWorkingSetBytes: UInt64?
+    /// Enclosure class derived from `hw.model` (with an IOKit product-name
+    /// fallback for opaque "Mac14,12"-style identifiers).
+    let chassis: Chassis
     /// The M5 family embeds matrix units ("Neural Accelerators") in each GPU
     /// core, which shifts the prefill/decode balance materially. Derived
     /// from `generation`, not probed — Metal exposes no direct capability
@@ -66,7 +79,7 @@ struct ChipProfile: Sendable, Equatable {
     static let current: ChipProfile = {
         let profile = ChipProfile.detect()
         chipLog.info(
-            "resolved: brand=\(profile.brandString, privacy: .public) generation=\(profile.generation.map(String.init) ?? "unknown", privacy: .public) tier=\(profile.tier.rawValue, privacy: .public) ramBytes=\(profile.physicalMemoryBytes, privacy: .public) gpuCores=\(profile.gpuCoreCount.map(String.init) ?? "unknown", privacy: .public) workingSetBytes=\(profile.recommendedMaxWorkingSetBytes.map(String.init) ?? "unknown", privacy: .public) neuralAccelerators=\(profile.hasGPUNeuralAccelerators, privacy: .public)"
+            "resolved: brand=\(profile.brandString, privacy: .public) generation=\(profile.generation.map(String.init) ?? "unknown", privacy: .public) tier=\(profile.tier.rawValue, privacy: .public) ramBytes=\(profile.physicalMemoryBytes, privacy: .public) gpuCores=\(profile.gpuCoreCount.map(String.init) ?? "unknown", privacy: .public) workingSetBytes=\(profile.recommendedMaxWorkingSetBytes.map(String.init) ?? "unknown", privacy: .public) neuralAccelerators=\(profile.hasGPUNeuralAccelerators, privacy: .public) chassis=\(profile.chassis.rawValue, privacy: .public)"
         )
         return profile
     }()
@@ -81,7 +94,22 @@ struct ChipProfile: Sendable, Equatable {
             physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory,
             gpuCoreCount: detectGPUCoreCount(),
             recommendedMaxWorkingSetBytes: MTLCreateSystemDefaultDevice()
-                .map { UInt64($0.recommendedMaxWorkingSetSize) }
+                .map { UInt64($0.recommendedMaxWorkingSetSize) },
+            chassis: detectChassis()
+        )
+    }
+
+    /// Two-stage chassis detection: the model identifier alone classifies
+    /// every pre-2022 machine; the IOKit product-name probe only runs for
+    /// the opaque "Mac14,12"-style identifiers, keeping the common path a
+    /// single sysctl.
+    private static func detectChassis() -> Chassis {
+        let model = sysctlString("hw.model") ?? ""
+        let fromModel = parseChassis(modelIdentifier: model)
+        if fromModel != .unknown { return fromModel }
+        return parseChassis(
+            modelIdentifier: model,
+            productName: platformProductName()
         )
     }
 
@@ -112,6 +140,36 @@ struct ChipProfile: Sendable, Equatable {
         return (generation, tier)
     }
 
+    // MARK: - Chassis parsing (pure, unit-tested)
+
+    /// Classifies a `hw.model` identifier (e.g. "MacBookPro18,3") into a
+    /// chassis class, optionally falling back to the IOKit marketing
+    /// product name (e.g. "MacBook Pro") for the opaque "Mac14,12"-style
+    /// identifiers Apple ships since 2022, which encode nothing about the
+    /// enclosure. Anything unclassifiable — VMs, Xserve, future naming —
+    /// yields `.unknown` so policy falls back to the conservative
+    /// (laptop-like) treatment rather than guessing.
+    static func parseChassis(modelIdentifier: String, productName: String? = nil) -> Chassis {
+        if let chassis = classifyChassis(modelIdentifier) { return chassis }
+        if let productName, let chassis = classifyChassis(productName) { return chassis }
+        return .unknown
+    }
+
+    /// Shared matcher for both identifier styles. Lowercased and
+    /// de-spaced so "Mac mini" (product name) and "Macmini9,1" (hw.model)
+    /// hit the same token. Laptop is checked first so "macbookpro" can
+    /// never substring-match the desktop "macpro" token.
+    private static func classifyChassis(_ raw: String) -> Chassis? {
+        let normalized = raw.lowercased().replacingOccurrences(of: " ", with: "")
+        guard !normalized.isEmpty else { return nil }
+        // "book" covers MacBook / MacBookPro / MacBookAir — the only
+        // battery-powered, thermally constrained enclosures Apple ships.
+        if normalized.contains("book") { return .laptop }
+        let desktopTokens = ["macmini", "macstudio", "macpro", "imac"]
+        if desktopTokens.contains(where: { normalized.contains($0) }) { return .desktop }
+        return nil
+    }
+
     // MARK: - /health surface
 
     /// JSON-object form for the `/health` endpoint's `hardware` block.
@@ -127,6 +185,7 @@ struct ChipProfile: Sendable, Equatable {
             "recommended_max_working_set_bytes":
                 recommendedMaxWorkingSetBytes as Any? ?? NSNull(),
             "gpu_neural_accelerators": hasGPUNeuralAccelerators,
+            "chassis": chassis.rawValue,
         ]
     }
 
@@ -138,6 +197,44 @@ struct ChipProfile: Sendable, Equatable {
         var buffer = [CChar](repeating: 0, count: size)
         guard sysctlbyname(name, &buffer, &size, nil, 0) == 0 else { return nil }
         return String(cString: buffer)
+    }
+
+    /// Reads the marketing `product-name` ("MacBook Pro (14-inch, M5 Max)",
+    /// "Mac mini", …). Only consulted when `hw.model` is an opaque
+    /// "Mac14,12"-style identifier. On current Apple Silicon the property
+    /// lives on the device tree's `product` node (verified on Mac17,7);
+    /// IOPlatformExpertDevice is probed second for older firmware layouts.
+    /// Missing on Intel and most VMs, in which case chassis stays `.unknown`.
+    private static func platformProductName() -> String? {
+        if let name = productNameProperty(
+            of: IORegistryEntryFromPath(kIOMainPortDefault, "IODeviceTree:/product")
+        ) {
+            return name
+        }
+        return productNameProperty(
+            of: IOServiceGetMatchingService(
+                kIOMainPortDefault,
+                IOServiceMatching("IOPlatformExpertDevice")
+            )
+        )
+    }
+
+    /// Extracts the `product-name` string from `entry`, releasing the entry
+    /// (callers hand over ownership; MACH_PORT_NULL is tolerated so lookup
+    /// failures need no separate guard).
+    private static func productNameProperty(of entry: io_registry_entry_t) -> String? {
+        guard entry != 0 else { return nil }
+        defer { IOObjectRelease(entry) }
+        guard let value = IORegistryEntryCreateCFProperty(
+            entry,
+            "product-name" as CFString,
+            kCFAllocatorDefault,
+            0
+        )?.takeRetainedValue() else { return nil }
+        if let name = value as? String { return name }
+        guard let data = value as? Data else { return nil }
+        // The registry value is commonly a NUL-terminated C string in CFData.
+        return String(bytes: data.prefix { $0 != 0 }, encoding: .utf8)
     }
 
     /// Reads `gpu-core-count` from the AGXAccelerator IORegistry node. There
@@ -154,7 +251,7 @@ struct ChipProfile: Sendable, Equatable {
         else { return nil }
         defer { IOObjectRelease(iterator) }
 
-        var coreCount: Int? = nil
+        var coreCount: Int?
         var entry = IOIteratorNext(iterator)
         while entry != 0 {
             if coreCount == nil,
@@ -163,8 +260,7 @@ struct ChipProfile: Sendable, Equatable {
                     "gpu-core-count" as CFString,
                     kCFAllocatorDefault,
                     0
-                )?.takeRetainedValue() as? Int
-            {
+                )?.takeRetainedValue() as? Int {
                 coreCount = value
             }
             IOObjectRelease(entry)

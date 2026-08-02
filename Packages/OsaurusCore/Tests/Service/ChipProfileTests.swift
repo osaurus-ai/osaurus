@@ -50,6 +50,57 @@ struct ChipProfileTests {
         #expect(ChipProfile.parse(brandString: "").tier == .unknown)
     }
 
+    // MARK: - Chassis parsing
+
+    @Test func classifiesLaptopIdentifiers() {
+        #expect(ChipProfile.parseChassis(modelIdentifier: "MacBookPro18,3") == .laptop)
+        #expect(ChipProfile.parseChassis(modelIdentifier: "MacBookAir10,1") == .laptop)
+        #expect(ChipProfile.parseChassis(modelIdentifier: "MacBook10,1") == .laptop)
+    }
+
+    @Test func classifiesDesktopIdentifiers() {
+        #expect(ChipProfile.parseChassis(modelIdentifier: "Macmini9,1") == .desktop)
+        #expect(ChipProfile.parseChassis(modelIdentifier: "Mac13,2") == .unknown)  // pre-fallback Studio
+        #expect(ChipProfile.parseChassis(modelIdentifier: "MacPro7,1") == .desktop)
+        // Intel-era identifiers still classify without the IOKit fallback.
+        #expect(ChipProfile.parseChassis(modelIdentifier: "iMac19,1") == .desktop)
+        #expect(ChipProfile.parseChassis(modelIdentifier: "iMacPro1,1") == .desktop)
+    }
+
+    @Test func opaqueIdentifiersResolveViaProductNameFallback() {
+        // 2022+ identifiers encode nothing about the enclosure; only the
+        // IOKit marketing name can disambiguate. Note the marketing form
+        // has spaces ("Mac mini") that the hw.model form lacks.
+        #expect(
+            ChipProfile.parseChassis(modelIdentifier: "Mac14,12", productName: "Mac mini")
+                == .desktop)
+        #expect(
+            ChipProfile.parseChassis(modelIdentifier: "Mac14,12", productName: "MacBook Pro")
+                == .laptop)
+        #expect(
+            ChipProfile.parseChassis(modelIdentifier: "Mac13,2", productName: "Mac Studio")
+                == .desktop)
+        #expect(
+            ChipProfile.parseChassis(
+                modelIdentifier: "Mac16,6", productName: "MacBook Pro (14-inch, Nov 2024)")
+                == .laptop)
+    }
+
+    @Test func unresolvableIdentifiersStayUnknown() {
+        // No product name available (Intel VMs, stripped registry).
+        #expect(ChipProfile.parseChassis(modelIdentifier: "Mac14,12") == .unknown)
+        #expect(ChipProfile.parseChassis(modelIdentifier: "Mac14,12", productName: nil) == .unknown)
+        // Product name present but equally opaque.
+        #expect(
+            ChipProfile.parseChassis(
+                modelIdentifier: "VirtualMac2,1",
+                productName: "Apple Virtualization Generic Platform"
+            ) == .unknown)
+        #expect(ChipProfile.parseChassis(modelIdentifier: "Xserve3,1") == .unknown)
+        #expect(ChipProfile.parseChassis(modelIdentifier: "") == .unknown)
+        #expect(ChipProfile.parseChassis(modelIdentifier: "", productName: "") == .unknown)
+    }
+
     // MARK: - Policy invariants
 
     @Test func policyTierNeverExposesUnknown() {
@@ -59,7 +110,8 @@ struct ChipProfileTests {
             tier: .unknown,
             physicalMemoryBytes: 8 << 30,
             gpuCoreCount: nil,
-            recommendedMaxWorkingSetBytes: nil
+            recommendedMaxWorkingSetBytes: nil,
+            chassis: .unknown
         )
         #expect(unknown.policyTier == .base)
 
@@ -69,7 +121,8 @@ struct ChipProfileTests {
             tier: .max,
             physicalMemoryBytes: 128 << 30,
             gpuCoreCount: 40,
-            recommendedMaxWorkingSetBytes: 100 << 30
+            recommendedMaxWorkingSetBytes: 100 << 30,
+            chassis: .desktop
         )
         #expect(known.policyTier == .max)
     }
@@ -82,7 +135,8 @@ struct ChipProfileTests {
                 tier: .base,
                 physicalMemoryBytes: 16 << 30,
                 gpuCoreCount: nil,
-                recommendedMaxWorkingSetBytes: nil
+                recommendedMaxWorkingSetBytes: nil,
+                chassis: .unknown
             )
         }
         #expect(!profile(generation: 4).hasGPUNeuralAccelerators)
@@ -102,6 +156,8 @@ struct ChipProfileTests {
         }
         // JSON surface must serialize (guards against a non-plist value
         // sneaking into the /health object).
-        #expect(JSONSerialization.isValidJSONObject(profile.healthJSONObject()))
+        let json = profile.healthJSONObject()
+        #expect(JSONSerialization.isValidJSONObject(json))
+        #expect(json["chassis"] as? String == profile.chassis.rawValue)
     }
 }

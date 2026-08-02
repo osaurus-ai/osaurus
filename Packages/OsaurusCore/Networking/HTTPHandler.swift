@@ -9225,6 +9225,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "status": "healthy",
                 "timestamp": Date().ISO8601Format(),
                 "hardware": ChipProfile.current.healthJSONObject(),
+                // Read fresh from ProcessInfo (thread-safe) rather than the
+                // @MainActor monitor so /health never queues behind the UI.
+                "thermal_state": ThermalStateMonitor.healthLabel(
+                    for: ProcessInfo.processInfo.thermalState
+                ),
                 "loaded": loaded,
                 "current_model": current,
                 "inflight": inflightObj,
