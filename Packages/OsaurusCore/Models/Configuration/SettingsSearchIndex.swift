@@ -399,7 +399,10 @@ public enum SettingsSearchIndex {
             tab: .server,
             section: "Decode Performance",
             title: "Decode Performance",
-            keywords: ["decode", "throughput", "speed", "tokens per second"],
+            keywords: [
+                "decode", "throughput", "speed", "tokens per second",
+                "deepseek", "dsv4", "activation qat", "graph fidelity",
+            ],
             subTab: "decodePerformance"
         ),
         .init(

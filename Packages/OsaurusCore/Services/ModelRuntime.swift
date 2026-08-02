@@ -3836,7 +3836,7 @@ public actor ModelRuntime {
                 settings: serverSettings
             )
             genLog.info(
-                "loadContainer: native MTP plan model=\(name, privacy: .public) nativeMTP=\(mtpPlan.loadConfiguration.nativeMTP, privacy: .public) draftStrategy=\(Self.describeDraftStrategy(mtpPlan.draftStrategy), privacy: .public) reason=\(mtpPlan.reason, privacy: .public) status=\(mtpPlan.statusLine ?? "none", privacy: .public) memorySafety=\(mtpPlan.memorySafetySummary, privacy: .public)"
+                "loadContainer: resolved load plan model=\(name, privacy: .public) nativeMTP=\(mtpPlan.loadConfiguration.nativeMTP, privacy: .public) dsv4ActivationQAT=\(mtpPlan.loadConfiguration.deepseekV4ActivationQAT ?? false, privacy: .public) draftStrategy=\(Self.describeDraftStrategy(mtpPlan.draftStrategy), privacy: .public) reason=\(mtpPlan.reason, privacy: .public) status=\(mtpPlan.statusLine ?? "none", privacy: .public) memorySafety=\(mtpPlan.memorySafetySummary, privacy: .public)"
             )
             // Weight dequantization + kernel compilation drive the Metal
             // command queue. Hold the GPU gate as an exclusive producer so a
@@ -4073,7 +4073,9 @@ public actor ModelRuntime {
             modelName: modelName,
             kvModeTag: kvModeTag,
             weightsFingerprint: weightsFingerprint,
-            cacheTopology: cacheTopology
+            cacheTopology: cacheTopology,
+            deepseekV4ActivationQAT:
+                resolvedSettings.effectivePerformance.deepseekV4ActivationQAT
         )
 
         // Delegate the full coordinator config to vmlx's spec'd builder
@@ -4378,7 +4380,8 @@ public actor ModelRuntime {
         modelName: String,
         kvModeTag: String,
         weightsFingerprint: String,
-        cacheTopology: ModelCacheTopologySnapshot? = nil
+        cacheTopology: ModelCacheTopologySnapshot? = nil,
+        deepseekV4ActivationQAT: Bool = false
     ) -> String {
         var tags = [
             modelName,
@@ -4407,10 +4410,18 @@ public actor ModelRuntime {
             tags.append(contentsOf: cacheTopology.topologyTags)
         }
 
-        if ModelFamilyNames.isDSV4Family(modelName) {
+        let isDSV4CacheTopology =
+            ModelFamilyNames.isDSV4Family(modelName)
+            || (cacheTopology?.hybridPoolLayerCount ?? 0) > 0
+        if isDSV4CacheTopology {
             tags.append("layers=deepseekV4")
             tags.append("prefix=hybrid-pool-disk")
             tags.append("decode=max-rp110")
+            // Activation-QAT changes every attention/cache activation from
+            // token zero. Its stored SWA/CSA/HSA state is therefore not valid
+            // under the other graph, even when prompt, weights, and KV codec
+            // are identical.
+            tags.append("activation-qat=\(deepseekV4ActivationQAT ? "on" : "off")")
         } else if ModelFamilyNames.isZayaFamily(modelName) {
             tags.append("layers=zayaCCA")
             tags.append("prefix=path-dependent-disk")

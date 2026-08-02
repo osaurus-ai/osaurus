@@ -391,7 +391,8 @@ struct ServerRuntimeSettingsStoreTests {
             // user codec round-trips and is not clobbered on load.
             settings.performance = VMLXServerPerformanceSettings(
                 tiedHeadCodec: .q8,
-                compiledDecode: false
+                compiledDecode: false,
+                deepseekV4ActivationQAT: true
             )
             settings.concurrency.maxConcurrentSequences = 5
             settings.concurrency.smeltMode = .disabled
@@ -424,7 +425,19 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(loaded.effectivePerformance.tiedHeadCodec == .q6)
             // compiled decode stays OFF by default (correctness gate #1173).
             #expect(loaded.effectivePerformance.compiledDecode == false)
+            #expect(loaded.effectivePerformance.deepseekV4ActivationQAT == false)
         }
+    }
+
+    @Test func oldPerformanceJSON_defaultsDSV4ActivationQATOff() throws {
+        let data = Data(
+            #"{"tiedHeadCodec":"q6","compiledDecode":false}"#.utf8)
+        let decoded = try JSONDecoder().decode(
+            VMLXServerPerformanceSettings.self, from: data)
+
+        #expect(decoded.tiedHeadCodec == .q6)
+        #expect(decoded.compiledDecode == false)
+        #expect(decoded.deepseekV4ActivationQAT == false)
     }
 
     @Test @MainActor func load_repairsOldPersistedMTPDefaultOffToAuto() async throws {

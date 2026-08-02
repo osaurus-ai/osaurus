@@ -982,6 +982,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     disk["hits"] = diskStats.hits
                     disk["misses"] = diskStats.misses
                     disk["stores"] = diskStats.stores
+                    disk["store_skips"] = diskStats.storeSkips
+                    disk["current_payload_bytes"] = diskStats.currentPayloadBytes
+                    disk["current_entry_count"] = diskStats.currentEntryCount
+                    disk["evictions"] = diskStats.evictions
                     disk["max_size_bytes"] = diskStats.maxSizeBytes
                     aggregate["disk_l2_hits", default: 0] += diskStats.hits
                     aggregate["disk_l2_misses", default: 0] += diskStats.misses
@@ -1384,10 +1388,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 || previous.multimodal != next.multimodal
                 || previous.mtp != next.mtp
                 || previous.memorySafety != next.memorySafety
-                // The tied-head codec applies at model construction
-                // (TiedHeadQuantizationPolicy is read while loading the head),
-                // so a change takes effect on the next load — evicting the
-                // resident model makes the toggle live. Compare
+                // The tied-head codec and DSV4 activation-QAT choice apply at
+                // model construction, so a change takes effect on the next
+                // load — evicting the resident model makes either toggle live.
+                // Compare
                 // effectivePerformance so a nil<->explicit-default edit
                 // (semantically unchanged) does not force a spurious reload.
                 //
@@ -1547,6 +1551,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "use_mmap_safetensors": configuration.useMmapSafetensors,
             "jang_press_policy": jangPressPolicyJSONObject(configuration.jangPress),
             "native_mtp": configuration.nativeMTP,
+            "deepseek_v4_activation_qat":
+                configuration.deepseekV4ActivationQAT as Any? ?? NSNull(),
         ]
     }
 

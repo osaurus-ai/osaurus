@@ -781,7 +781,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "0d838879a7ea102eb6e034f1d33ac0dbb51c02c3"
+        let expectedRuntimeHardenedRevision = "4960398a2c56f6ee37f393ee6be0b14d0a4f9208"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -1133,6 +1133,10 @@ struct RuntimePolicySourceTests {
         #expect(httpHandler.contains(#""requires_paged_boundary_companion""#))
         #expect(httpHandler.contains(#""block_disk_store""#))
         #expect(httpHandler.contains(#""disk_l2_hits""#))
+        #expect(httpHandler.contains(#""current_payload_bytes""#))
+        #expect(httpHandler.contains(#""current_entry_count""#))
+        #expect(httpHandler.contains(#""store_skips""#))
+        #expect(httpHandler.contains(#""evictions""#))
         #expect(httpHandler.contains(#""prefix_hits""#))
         #expect(httpHandler.contains(#""companion_cache""#))
         #expect(httpHandler.contains(#""zaya_cca_disk_payload_restore""#))
@@ -2758,6 +2762,7 @@ struct RuntimePolicySourceTests {
         #expect(httpHandler.contains("\"slider\": memorySafety.slider"))
         #expect(httpHandler.contains("\"allowed\": plan.blockingIssues.isEmpty"))
         #expect(httpHandler.contains("\"load_configuration\": loadConfigurationJSONObject(plan.loadConfiguration)"))
+        #expect(httpHandler.contains("\"deepseek_v4_activation_qat\""))
         #expect(httpHandler.contains("\"memory_status\": memoryStatusJSONObject(memoryStatus)"))
         #expect(httpHandler.contains("\"warnings\": plan.warnings"))
         #expect(httpHandler.contains("\"blocking_issues\": plan.blockingIssues.map(settingsIssueJSONObject)"))

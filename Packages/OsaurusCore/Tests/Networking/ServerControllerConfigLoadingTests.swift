@@ -248,7 +248,7 @@ struct ServerControllerConfigLoadingTests {
         }
     }
 
-    @Test func loadedModelRefreshInputs_coverCacheMemorySafetyMultimodalAndMTP() {
+    @Test func loadedModelRefreshInputs_coverCacheMemorySafetyMultimodalMTPAndLoadPerformance() {
         let base = VMLXServerRuntimeSettings()
 
         var cacheChanged = base
@@ -296,6 +296,26 @@ struct ServerControllerConfigLoadingTests {
             ServerController.loadedModelRuntimeInputsRequireRefresh(
                 previous: base,
                 next: mtpChanged
+            )
+        )
+
+        var tiedHeadChanged = base
+        tiedHeadChanged.performance = VMLXServerPerformanceSettings(
+            tiedHeadCodec: .q8)
+        #expect(
+            ServerController.loadedModelRuntimeInputsRequireRefresh(
+                previous: base,
+                next: tiedHeadChanged
+            )
+        )
+
+        var qatChanged = base
+        qatChanged.performance = VMLXServerPerformanceSettings(
+            deepseekV4ActivationQAT: true)
+        #expect(
+            ServerController.loadedModelRuntimeInputsRequireRefresh(
+                previous: base,
+                next: qatChanged
             )
         )
     }

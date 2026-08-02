@@ -864,7 +864,37 @@ struct MLXBatchAdapterTests {
         #expect(dsv4.contains("layers=deepseekV4"))
         #expect(dsv4.contains("prefix=hybrid-pool-disk"))
         #expect(dsv4.contains("decode=max-rp110"))
+        #expect(dsv4.contains("activation-qat=off"))
         #expect(!dsv4.contains("layers=hybrid-ssm"))
+
+        let dsv4QATOn = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "DeepSeek-V4-Flash-JANGTQ2",
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp",
+            deepseekV4ActivationQAT: true
+        )
+        #expect(dsv4QATOn.contains("activation-qat=on"))
+        #expect(dsv4QATOn != dsv4)
+
+        let renamedDSV4Topology = ModelCacheTopologySnapshot(
+            layerCount: 43,
+            rotatingKVLayerCount: 2,
+            hybridPoolLayerCount: 41)
+        let renamedDSV4Off = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "my-renamed-local-model",
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp",
+            cacheTopology: renamedDSV4Topology,
+            deepseekV4ActivationQAT: false)
+        let renamedDSV4On = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "my-renamed-local-model",
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp",
+            cacheTopology: renamedDSV4Topology,
+            deepseekV4ActivationQAT: true)
+        #expect(renamedDSV4Off.contains("activation-qat=off"))
+        #expect(renamedDSV4On.contains("activation-qat=on"))
+        #expect(renamedDSV4Off != renamedDSV4On)
 
         #expect(zaya.contains("layers=zayaCCA"))
         #expect(zaya.contains("prefix=path-dependent-disk"))
@@ -876,6 +906,13 @@ struct MLXBatchAdapterTests {
         #expect(!generic.contains("layers=zayaCCA"))
         #expect(!generic.contains("layers=hybrid-ssm"))
         #expect(!generic.contains("media=omni-audio-video"))
+
+        let genericQATOn = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "Mistral-Medium-3.5-128B-MXFP4",
+            kvModeTag: "fp16",
+            weightsFingerprint: "testfp",
+            deepseekV4ActivationQAT: true)
+        #expect(genericQATOn == generic)
 
         #expect(Set([dsv4, zaya, ling, omni, generic]).count == 5)
     }

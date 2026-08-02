@@ -480,6 +480,13 @@ final class ServerController: ObservableObject {
         previous.cache != next.cache
             || previous.multimodal != next.multimodal
             || previous.mtp != next.mtp
+            // These values are consumed while constructing the model graph.
+            // Compare effective settings so nil versus an explicit default
+            // does not unload a resident model unnecessarily.
+            || previous.effectivePerformance.tiedHeadCodec
+                != next.effectivePerformance.tiedHeadCodec
+            || previous.effectivePerformance.deepseekV4ActivationQAT
+                != next.effectivePerformance.deepseekV4ActivationQAT
             // Memory Safety resolves the live KV cap, prefix-memory budget,
             // allocator cap, and companion-cache entry limit at model load.
             // Persisting a new profile while retaining the old container makes
