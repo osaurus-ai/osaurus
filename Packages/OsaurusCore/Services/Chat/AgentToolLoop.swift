@@ -569,8 +569,11 @@ enum AgentLoopBudget {
     /// Breakdown entry ids that history compaction can trim away. The
     /// generated-output entry is conversation history from the next
     /// request's point of view; "compacted" is the saved-tokens display
-    /// entry, not real cost.
-    private static let compactableEntryIds: Set<String> = ["conversation", "output", "compacted"]
+    /// entry, not real cost; "summary" is the LLM compaction summary, which
+    /// a later re-compaction can shrink further.
+    private static let compactableEntryIds: Set<String> = [
+        "conversation", "output", "compacted", "summary",
+    ]
 
     /// Assess a composed breakdown against a model window. The response
     /// reservation's contribution to the hard gate is capped at a quarter

@@ -1612,6 +1612,7 @@ final class NativeMessageCellView: NSTableCellView {
     // Native views (no NSHostingView)
     private var nativeMarkdownView: NativeMarkdownView?
     private var nativeThinkingView: NativeThinkingView?
+    private var nativeCompactionMarkerView: NativeCompactionMarkerView?
     private var nativeToolCallGroupView: NativeToolCallGroupView?
     private var nativeActivityGroupView: NativeActivityGroupView?
     private var userMessageContainer: NSView?
@@ -1826,6 +1827,16 @@ final class NativeMessageCellView: NSTableCellView {
                 tokensPerSecond: tokensPerSecond,
                 tokenCount: tokenCount,
                 unclosedReasoning: unclosedReasoning,
+                context: context,
+                sameKind: sameKind
+            )
+
+        case let .compactionMarker(savedTokens, modelName, summaryText):
+            configureAsCompactionMarker(
+                block: block,
+                savedTokens: savedTokens,
+                modelName: modelName,
+                summaryText: summaryText,
                 context: context,
                 sameKind: sameKind
             )
@@ -2070,6 +2081,52 @@ final class NativeMessageCellView: NSTableCellView {
             onHeightChanged: { [weak self] in
                 guard let self, let tv = self.nativeThinkingView, let id = self.currentBlockId else { return }
                 let h = tv.measuredHeight() + 8
+                context.onHeightMeasured?(h, id)
+            }
+        )
+    }
+
+    // MARK: - Compaction Marker (NativeCompactionMarkerView)
+
+    private func configureAsCompactionMarker(
+        block: ContentBlock,
+        savedTokens: Int,
+        modelName: String,
+        summaryText: String,
+        context: CellRenderingContext,
+        sameKind: Bool
+    ) {
+        if !sameKind || nativeCompactionMarkerView == nil {
+            removeAllContentViews()
+            let mv = NativeCompactionMarkerView()
+            mv.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(mv)
+            NSLayoutConstraint.activate([
+                mv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+                mv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+                mv.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            ])
+            nativeCompactionMarkerView = mv
+        }
+        let isExpanded = context.expandedIds.contains(block.id)
+        nativeCompactionMarkerView?.configure(
+            savedTokens: savedTokens,
+            modelName: modelName,
+            summaryText: summaryText,
+            width: context.width - 32,
+            isExpanded: isExpanded,
+            theme: context.theme,
+            blockId: block.id,
+            onToggle: { [weak self] in
+                guard let self else { return }
+                context.onToggleExpand(block.id)
+                self.nativeCompactionMarkerView?.onHeightChanged?()
+            },
+            onHeightChanged: { [weak self] in
+                guard let self, let mv = self.nativeCompactionMarkerView,
+                    let id = self.currentBlockId
+                else { return }
+                let h = mv.measuredHeight() + 8
                 context.onHeightMeasured?(h, id)
             }
         )
@@ -2857,6 +2914,7 @@ final class NativeMessageCellView: NSTableCellView {
         nativeMarkdownView?.tearDownForReuse()
         nativeMarkdownView?.removeFromSuperview(); nativeMarkdownView = nil
         nativeThinkingView?.removeFromSuperview(); nativeThinkingView = nil
+        nativeCompactionMarkerView?.removeFromSuperview(); nativeCompactionMarkerView = nil
         // Coordinator-cached views: only call `removeFromSuperview` if
         // we're still the parent. After cache reuse the view may live
         // in a sibling cell already; blindly calling `removeFromSuperview`
@@ -3122,7 +3180,7 @@ private func cgColorsEqual(_ lhs: CGColor?, _ rhs: CGColor?) -> Bool {
 enum ContentBlockKindTag: Equatable {
     case header, paragraph, toolCallGroup, thinking, activityGroup, userMessage, pendingToolCall
     case generationStats, typingIndicator, groupSpacer, sharedArtifact, chart
-    case assistantActions, emptyResponseNotice, fileDiff, other
+    case assistantActions, emptyResponseNotice, fileDiff, compactionMarker, other
 }
 
 extension ContentBlockKind {
@@ -3143,6 +3201,7 @@ extension ContentBlockKind {
         case .fileDiff: return .fileDiff
         case .assistantActions: return .assistantActions
         case .emptyResponseNotice: return .emptyResponseNotice
+        case .compactionMarker: return .compactionMarker
         }
     }
 }
@@ -3214,6 +3273,16 @@ enum NativeCellHeightEstimator {
             let charsPerLine = max(Int(innerW / 7), 20)
             let lines = max(1, (text.count + charsPerLine - 1) / charsPerLine)
             return 58 + min(CGFloat(lines) * 22 + 32, 356)
+
+        case let .compactionMarker(_, _, summaryText):
+            // Collapsed: 4 top inset + 32 header + 8 cell gap. Expanded adds
+            // the summary text, estimated like thinking; the cell corrects
+            // via the measured-height report.
+            if !isExpanded { return 44 }
+            let innerW = max(width - 60, 100)
+            let charsPerLine = max(Int(innerW / 7), 20)
+            let lines = max(1, (summaryText.count + charsPerLine - 1) / charsPerLine)
+            return 44 + 8 + CGFloat(lines) * 22 + 10
 
         case let .paragraph(_, text, _, _):
             let innerW = max(width - 32, 100)

@@ -833,6 +833,20 @@ final class ContextBudgetTracker {
         )
     }
 
+    /// Surface the LLM compaction summary's own cost as a dedicated row so
+    /// the streaming popover matches the pre-send estimate (which prices
+    /// the summary separately from Conversation).
+    func updateSummary(tokens: Int) {
+        guard tokens > 0 else { return }
+        breakdown?.setTokens(
+            for: "summary",
+            in: \.messages,
+            tokens: tokens,
+            label: L("Summary"),
+            tint: .teal
+        )
+    }
+
     /// Returns the snapshot with live output tokens, or nil if no snapshot is active.
     func activeBreakdown(isActive: Bool, outputTurn: ChatTurn?) -> ContextBreakdown? {
         guard var bd = breakdown, isActive else { return nil }

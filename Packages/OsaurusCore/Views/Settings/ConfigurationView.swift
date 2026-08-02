@@ -106,7 +106,8 @@ struct ConfigurationView: View {
     // section reliably surfaces the empty state instead of a blank pane.
     private static let generalKeywords = [
         "General", "System", "Hotkey", "Login", "Start at Login", "Beta", "Updates",
-        "Core Model", "CLI", "Command Line", "Install", "Symlink", "Maintenance",
+        "Core Model",
+        "CLI", "Command Line", "Install", "Symlink", "Maintenance",
         "Reset", "Factory Reset", "Wipe",
     ]
     private static let notificationsKeywords = [
@@ -984,6 +985,7 @@ struct ConfigurationView: View {
         }
         .frame(maxWidth: 320)
     }
+
 }
 
 // MARK: - CLI Install Helper

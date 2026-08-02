@@ -116,6 +116,14 @@ struct FloatingInputCard: View {
     var inputHistoryKey: UUID?
     /// When true, the model chip dot reflects warm-up state (yellow/green).
     var warmModelsOnLoadEnabled: Bool = false
+    /// Session-scoped LLM context-compaction state, rendered as inline
+    /// progress / result rows inside the Context Budget popover.
+    var compactionState: ContextCompactionUIState = .idle
+    /// True when the manual "Compact conversation" action is applicable:
+    /// utilization crossed the threshold and there's an uncovered older span.
+    var canCompactConversation: Bool = false
+    /// Invoked by the popover's "Compact conversation" button.
+    var onCompactConversation: (() -> Void)? = nil
     /// Warm-up state for the selected local model in this session.
     @ObservedObject var warmupController: ChatWarmupController = ChatWarmupController()
     /// THIS chat session's working-folder state. The folder chip, picker,
@@ -164,6 +172,9 @@ struct FloatingInputCard: View {
         inputHistoryProvider: (() -> [String])? = nil,
         inputHistoryKey: UUID? = nil,
         warmModelsOnLoadEnabled: Bool = false,
+        compactionState: ContextCompactionUIState = .idle,
+        canCompactConversation: Bool = false,
+        onCompactConversation: (() -> Void)? = nil,
         warmupController: ChatWarmupController = ChatWarmupController(),
         folderState: ChatFolderState? = nil
     ) {
@@ -207,6 +218,9 @@ struct FloatingInputCard: View {
         self.inputHistoryProvider = inputHistoryProvider
         self.inputHistoryKey = inputHistoryKey
         self.warmModelsOnLoadEnabled = warmModelsOnLoadEnabled
+        self.compactionState = compactionState
+        self.canCompactConversation = canCompactConversation
+        self.onCompactConversation = onCompactConversation
         self._warmupController = ObservedObject(wrappedValue: warmupController)
         self._folderState = ObservedObject(wrappedValue: folderState ?? ChatFolderState())
     }
@@ -2474,7 +2488,10 @@ extension FloatingInputCard {
                         isHardOverflow: isContextHardOverflow,
                         metaCompact: metaCompact,
                         formatTokenCount: formatTokenCount,
-                        breakdown: { displayContextBreakdown }
+                        breakdown: { displayContextBreakdown },
+                        compactionState: compactionState,
+                        canCompact: canCompactConversation && !isStreaming,
+                        onCompact: onCompactConversation
                     )
                 }
             }
@@ -5501,6 +5518,13 @@ private struct ContextBreakdownPopover: View {
     let isNearLimit: Bool
     let isHardOverflow: Bool
     let formatTokenCount: (Int) -> String
+    /// Session compaction state — drives the inline progress / result row.
+    var compactionState: ContextCompactionUIState = .idle
+    /// True when the manual "Compact conversation" button should show
+    /// (utilization past threshold, an uncovered older span exists, and no
+    /// turn is streaming).
+    var canCompact: Bool = false
+    var onCompact: (() -> Void)? = nil
 
     @Environment(\.theme) private var theme
 
@@ -5679,7 +5703,110 @@ private struct ContextBreakdownPopover: View {
                 divider
                 messagesSection
             }
+
+            if showsCompactionSection {
+                divider
+                compactionSection
+            }
         }
+    }
+
+    // MARK: - Compaction
+
+    /// The compaction row shows whenever there's something to act on or
+    /// report: the manual trigger is available, a run is in flight, or a
+    /// run just completed/failed.
+    private var showsCompactionSection: Bool {
+        if canCompact { return true }
+        switch compactionState {
+        case .idle, .needsModelSelection: return false
+        case .running, .completed, .failed: return true
+        }
+    }
+
+    @ViewBuilder
+    private var compactionSection: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            switch compactionState {
+            case .running(let phase):
+                HStack(spacing: 7) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.6)
+                        .frame(width: 12, height: 12)
+                    Text(verbatim: phase.label)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                    Spacer(minLength: 0)
+                }
+            case .completed(let savedTokens):
+                HStack(spacing: 7) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 10.5))
+                        .foregroundColor(theme.successColor)
+                    Text(
+                        "Compacted — ~\(formatTokenCount(savedTokens)) tokens reclaimed",
+                        bundle: .module
+                    )
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    Spacer(minLength: 0)
+                }
+            case .failed(let message):
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .top, spacing: 7) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 10.5))
+                            .foregroundColor(theme.warningColor)
+                        Text(verbatim: message)
+                            .font(.system(size: 10.5))
+                            .foregroundColor(theme.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if canCompact { compactButton(label: L("Retry compaction")) }
+                }
+            case .idle, .needsModelSelection:
+                if canCompact {
+                    VStack(alignment: .leading, spacing: 5) {
+                        compactButton(label: L("Compact conversation"))
+                        Text(
+                            "Summarizes older messages with your compaction model to free up context. The visible chat is unchanged.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 9.5))
+                        .foregroundColor(theme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private func compactButton(label: String) -> some View {
+        Button {
+            onCompact?()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.down.right.and.arrow.up.left")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(verbatim: label)
+                    .font(.system(size: 10.5, weight: .semibold))
+            }
+            .foregroundColor(theme.accentColor)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4.5)
+            .background(
+                Capsule()
+                    .fill(theme.accentColor.opacity(0.12))
+                    .overlay(
+                        Capsule().strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
     }
 
     /// Wallet-style hero: the number users are checking first, followed by
@@ -7243,6 +7370,10 @@ private struct FloatingContextChip: View {
     let metaCompact: Bool
     let formatTokenCount: (Int) -> String
     let breakdown: () -> ContextBreakdown
+    /// LLM compaction state + manual trigger, rendered inside the popover.
+    var compactionState: ContextCompactionUIState = .idle
+    var canCompact: Bool = false
+    var onCompact: (() -> Void)? = nil
 
     @Environment(\.theme) private var theme
 
@@ -7333,7 +7464,10 @@ private struct FloatingContextChip: View {
                 isStreaming: isStreaming,
                 isNearLimit: isNearLimit,
                 isHardOverflow: isHardOverflow,
-                formatTokenCount: formatTokenCount
+                formatTokenCount: formatTokenCount,
+                compactionState: compactionState,
+                canCompact: canCompact,
+                onCompact: onCompact
             )
             // Keep the popover alive while the cursor is over it, so the user
             // can travel from the trigger and click the disclosure headers.

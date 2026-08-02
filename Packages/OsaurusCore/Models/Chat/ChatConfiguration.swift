@@ -70,6 +70,25 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         return name
     }
 
+    // MARK: - Context Compaction Model Settings
+    /// Provider for the context-compaction model (same split/join contract
+    /// as `coreModelProvider`). Nil for local/Foundation models.
+    public var compactionModelProvider: String?
+    /// Name of the model that runs LLM context compaction (conversation
+    /// summarization when a chat outgrows the context window). Unlike the
+    /// core model there is deliberately NO chat-model fallback: when unset,
+    /// the first compaction run asks the user to pick a model.
+    public var compactionModelName: String?
+
+    /// Full compaction-model identifier for routing, or nil when unset.
+    public var compactionModelIdentifier: String? {
+        guard let name = compactionModelName, !name.isEmpty else { return nil }
+        if let provider = compactionModelProvider, !provider.isEmpty {
+            return "\(provider)/\(name)"
+        }
+        return name
+    }
+
     // MARK: - Tool Settings
     /// When true, no tools are passed to the model. The raw message is sent
     /// directly, keeping the prompt stable across turns for maximum KV-cache reuse. Recommended
@@ -114,6 +133,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         defaultModel: String? = nil,
         coreModelProvider: String? = nil,
         coreModelName: String? = nil,
+        compactionModelProvider: String? = nil,
+        compactionModelName: String? = nil,
         disableTools: Bool = false,
         enableClipboardMonitoring: Bool = true,
         warmModelsOnLoad: Bool = true,
@@ -130,6 +151,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.defaultModel = defaultModel
         self.coreModelProvider = coreModelProvider
         self.coreModelName = coreModelName
+        self.compactionModelProvider = compactionModelProvider
+        self.compactionModelName = compactionModelName
         self.disableTools = disableTools
         self.enableClipboardMonitoring = enableClipboardMonitoring
         self.warmModelsOnLoad = warmModelsOnLoad
@@ -149,6 +172,10 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         defaultModel = try container.decodeIfPresent(String.self, forKey: .defaultModel)
         coreModelProvider = try container.decodeIfPresent(String.self, forKey: .coreModelProvider)
         coreModelName = try container.decodeIfPresent(String.self, forKey: .coreModelName)
+        compactionModelProvider = try container.decodeIfPresent(
+            String.self, forKey: .compactionModelProvider)
+        compactionModelName = try container.decodeIfPresent(
+            String.self, forKey: .compactionModelName)
         disableTools = try container.decodeIfPresent(Bool.self, forKey: .disableTools) ?? false
         enableClipboardMonitoring = try container.decodeIfPresent(Bool.self, forKey: .enableClipboardMonitoring) ?? true
         warmModelsOnLoad = try container.decodeIfPresent(Bool.self, forKey: .warmModelsOnLoad) ?? true
