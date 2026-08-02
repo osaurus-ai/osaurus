@@ -122,13 +122,15 @@ let package = Package(
         // processor seeds for hybrid state, without persisting the warmup's
         // throwaway decoded token. vmlx-swift#198 prevents fully restorable,
         // non-recurrent disk-only caches such as DSV4 from synchronously
-        // replaying older stable boundaries before warmup can finish.
+        // replaying older stable boundaries before warmup can finish and keeps
+        // DSV4 on its measured model-native compiled gate/SwiGLU path instead
+        // of the incompatible generic whole-cache compiled trace.
         // vmlx-swift#186-#188 correct FalconH1 key
         // projection scaling, prefixed output-head loading, and gated RMSNorm
         // group normalization without changing the shared unload/cache APIs.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "3ec9426b5316540b4727d05c6f425e35f21766ce"
+            revision: "ad059136fd7de2feaede5bff19d9a98e3ee2a601"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
