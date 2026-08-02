@@ -223,9 +223,12 @@ private let scheduleFrequencyDescription =
 public final class OsaurusScheduleTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     public let name = "osaurus_schedule"
     public let description =
-        "Manage scheduled agent runs. `action`: create (needs `name`, `instructions`, `agent_id` of a custom "
-        + "agent, `frequency`), update (needs `id`; other fields patch), delete (needs `id`), enable (needs "
-        + "`id`; resumes the schedule), disable (needs `id`; pauses it). Chat-created schedules attach no "
+        "Manage scheduled agent runs — create, delete, enable, disable, or update: patch any field, "
+        + "including `agent_id` to move a schedule to another custom agent. "
+        + "`action`: create (needs `name`, `instructions`, `agent_id` of a custom "
+        + "agent, `frequency`), update (needs `id`; other fields patch, including `agent_id` to move the "
+        + "schedule to another custom agent), delete (needs `id`), enable (needs `id`; resumes the schedule), "
+        + "disable (needs `id`; pauses it). Chat-created schedules attach no "
         + "folder context — point the user to the Schedules tab if they need one."
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -243,11 +246,18 @@ public final class OsaurusScheduleTool: OsaurusTool, PermissionedTool, @unchecke
                 "type": .string("string"),
                 "description": .string("Schedule UUID. Required for update / delete / enable / disable."),
             ]),
-            "name": .object(["type": .string("string")]),
+            "name": .object([
+                "type": .string("string"),
+                "description": .string("Display name of the schedule (not an agent id)."),
+            ]),
             "instructions": .object(["type": .string("string")]),
             "agent_id": .object([
                 "type": .string("string"),
-                "description": .string("UUID of a custom agent. Required for create."),
+                "description": .string(
+                    "UUID of the custom agent that runs this schedule. Required for create. "
+                        + "To move a schedule to a different agent, pass agent_id on update: "
+                        + "{action: 'update', id: <schedule uuid>, agent_id: <new agent uuid>}."
+                ),
             ]),
             "frequency": .object([
                 "type": .string("string"),
@@ -423,6 +433,52 @@ public final class OsaurusScheduleTool: OsaurusTool, PermissionedTool, @unchecke
         let newInstructions = args["instructions"] as? String
         let newEnabled = coerceBool(args["enabled"])
 
+        // Observed miss on compact-schema models: "move this schedule to
+        // agent X" gets the agent UUID stuffed into `name`. A schedule's
+        // display name is never a bare UUID, so bounce with a typed error
+        // that steers the retry to `agent_id` instead of silently renaming.
+        if let newName {
+            let trimmedName = newName.trimmingCharacters(in: .whitespaces)
+            if UUID(uuidString: trimmedName) != nil {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "`name` is the schedule's display name, but a UUID was passed. To move the "
+                        + "schedule to a different agent, put that UUID in `agent_id`, NOT `name`. "
+                        + "Retry exactly: {\"action\": \"update\", \"id\": \"\(idStr)\", "
+                        + "\"agent_id\": \"\(trimmedName)\"}.",
+                    field: "name",
+                    tool: name
+                )
+            }
+        }
+
+        // Optional reassignment to another custom agent. Same constraint as
+        // create: never the Default agent.
+        var newAgentId: UUID?
+        if let agentIdStr = args["agent_id"] as? String {
+            guard let parsed = UUID(uuidString: agentIdStr) else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`agent_id` must be a valid UUID.",
+                    field: "agent_id",
+                    tool: name
+                )
+            }
+            if parsed == Agent.defaultId {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message:
+                        "Schedules cannot target the Default agent. Pick a custom agent via "
+                        + "osaurus_list({scope:'agents'}).",
+                    field: "agent_id",
+                    tool: name,
+                    retryable: false
+                )
+            }
+            newAgentId = parsed
+        }
+
         return await MainActor.run {
             guard var schedule = ScheduleManager.shared.schedule(for: id) else {
                 return ToolEnvelope.failure(
@@ -432,16 +488,26 @@ public final class OsaurusScheduleTool: OsaurusTool, PermissionedTool, @unchecke
                     tool: name
                 )
             }
+            if let agentId = newAgentId {
+                guard AgentManager.shared.agent(for: agentId) != nil else {
+                    return ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "No agent found with id \(agentId.uuidString).",
+                        field: "agent_id",
+                        tool: name
+                    )
+                }
+                schedule.agentId = agentId
+            }
             if let v = newName { schedule.name = v }
             if let v = newInstructions { schedule.instructions = v }
             if let f = newFrequency { schedule.frequency = f }
             if let b = newEnabled { schedule.isEnabled = b }
 
             ScheduleManager.shared.update(schedule)
-            return ToolEnvelope.success(
-                tool: name,
-                result: ["schedule_id": schedule.id.uuidString, "status": "updated"]
-            )
+            var result: [String: Any] = ["schedule_id": schedule.id.uuidString, "status": "updated"]
+            if let agentId = newAgentId { result["agent_id"] = agentId.uuidString }
+            return ToolEnvelope.success(tool: name, result: result)
         }
     }
 

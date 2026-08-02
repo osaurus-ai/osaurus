@@ -1196,6 +1196,21 @@ struct RuntimePolicySourceTests {
         #expect(!adapter.contains(#""cacheStableSystemPrefix""#))
     }
 
+    @Test("near-limit wrap-up notice stages only on a mid-run tool tail")
+    func nearLimitNoticeStagesOnlyMidRun() throws {
+        // The "Context is nearly full — wrap up" notice is a mid-run nudge.
+        // Staging it on a fresh user question appends it as the trailing
+        // user-role message and displaces the real query (observed live:
+        // the model reasoned about the notice instead of the question), and
+        // staging it on a non-tool tail also breaks the byte-identical
+        // rebuild contract of reasoning-continuation retries.
+        let chatView = try Self.source("Views/Chat/ChatView.swift")
+        #expect(chatView.contains(#"let midRunToolTail = msgs.last?.role == "tool""#))
+        #expect(
+            chatView.contains("!tokenBudgetNoticeFired,\n                                midRunToolTail,")
+        )
+    }
+
     @Test("Server settings cache changes clear loaded model runtime")
     func cacheSettingsChangesClearLoadedModelRuntime() throws {
         let controller = try Self.source("Networking/ServerController.swift")

@@ -56,6 +56,67 @@ final class ServerController: ObservableObject {
         await controller.applySpawnBatchLimit(normalized)
     }
 
+    /// Applies runtime settings on behalf of the `osaurus_settings`
+    /// configure tool. Routes through the live controller when one is
+    /// wired (restart-aware: port/expose/CORS changes restart the NIO
+    /// socket, cache/multimodal changes unload models). Returns `nil`
+    /// when no controller exists yet — the settings are persisted and
+    /// take effect when the server starts.
+    static func applyRuntimeSettingsFromConfigureTool(
+        _ settings: VMLXServerRuntimeSettings
+    ) async -> RuntimeSettingsApplyEffects? {
+        guard let controller = ServerControllerHolder.shared.controller else {
+            ServerRuntimeSettingsStore.save(settings)
+            return nil
+        }
+        return await controller.saveRuntimeSettings(settings)
+    }
+
+    /// Current runtime settings + server liveness for the
+    /// `osaurus_settings` configure tool. Prefers the live controller's
+    /// published value (identical to the store snapshot after every
+    /// save, but authoritative mid-flight).
+    static func runtimeSettingsForConfigureTool() -> (
+        settings: VMLXServerRuntimeSettings, isRunning: Bool
+    ) {
+        if let controller = ServerControllerHolder.shared.controller {
+            return (controller.runtimeSettings, controller.isRunning)
+        }
+        return (ServerRuntimeSettingsStore.snapshot(), false)
+    }
+
+    /// Current app-shell configuration for the `osaurus_settings`
+    /// configure tool `get` action. Prefers the live controller's
+    /// published value.
+    static func appShellSettingsForConfigureTool() -> ServerConfiguration {
+        ServerControllerHolder.shared.controller?.configuration
+            ?? ServerConfigurationStore.load()
+            ?? .default
+    }
+
+    /// Applies app-shell settings (start at login / hide dock icon) on
+    /// behalf of the `osaurus_settings` configure tool, mirroring the
+    /// General settings pane: persist, sync the live controller's
+    /// published configuration, and (re)register the login item.
+    static func applyAppShellSettingsFromConfigureTool(
+        startAtLogin: Bool?,
+        hideDockIcon: Bool?
+    ) {
+        let controller = ServerControllerHolder.shared.controller
+        var configuration =
+            controller?.configuration
+            ?? ServerConfigurationStore.load()
+            ?? .default
+        let previousStartAtLogin = configuration.startAtLogin
+        if let startAtLogin { configuration.startAtLogin = startAtLogin }
+        if let hideDockIcon { configuration.hideDockIcon = hideDockIcon }
+        ServerConfigurationStore.save(configuration)
+        controller?.configuration = configuration
+        if let startAtLogin, startAtLogin != previousStartAtLogin {
+            LoginItemService.shared.applyStartAtLogin(startAtLogin)
+        }
+    }
+
     /// Convenience property for accessing port
     var port: Int {
         get { configuration.port }

@@ -511,6 +511,39 @@ final class ChatSession: ObservableObject {
     /// (regeneration/edit) via identity validation.
     private let compactionWatermark = CompactionWatermark()
 
+    // MARK: - LLM Context Compaction State
+
+    /// Non-destructive LLM compaction result: the covered oldest turns are
+    /// replaced by this summary in the OUTBOUND message array only (the
+    /// visible transcript is untouched). Persisted with the session;
+    /// invalidated when covered turns are edited/regenerated away (see
+    /// `validateConversationSummary`).
+    @Published var conversationSummary: ConversationSummary?
+
+    /// Live compaction progress, rendered by the Context Budget popover
+    /// (inline) and the compaction dialog.
+    @Published var compactionState: ContextCompactionUIState = .idle
+
+    /// Presents `CompactionDialogView`: the first-run model picker, or the
+    /// live-progress sheet for auto-triggered runs.
+    @Published var showCompactionDialog = false
+
+    /// True when the in-flight/pending compaction was auto-triggered by a
+    /// send; the stashed send resumes once compaction settles (success,
+    /// failure, or the user dismissing the first-run dialog).
+    private var resumeSendAfterCompaction = false
+
+    /// One-shot latch so the resumed send doesn't immediately re-enter the
+    /// auto-compaction gate.
+    private var skipAutoCompactionForNextSend = false
+
+    /// In-flight compaction run, if any. Kept so `reset()` can cancel it
+    /// (compaction never overlaps a streaming run — manual is gated on
+    /// `!isStreaming` and the auto-trigger fires pre-send — so `stop()`
+    /// has nothing to cancel; a run that outlives its transcript is
+    /// dropped by the `summaryIsValid` check before it can apply).
+    private var compactionTask: Task<Void, Never>?
+
     /// Per-session always-loaded + capabilities_load tool kit lives in the
     /// process-wide `SessionToolStateStore` so chat sessions and the
     /// HTTP/plugin path share one cache. Keyed by `sessionId.uuidString`.
@@ -1631,10 +1664,15 @@ final class ChatSession: ObservableObject {
 
         seedAutoExpandedReasoningBlocks(streamingTurnId: streamingTurnId)
 
-        let newBlocks = blockMemoizer.blocks(
-            from: effectiveTurns,
-            streamingTurnId: streamingTurnId,
-            agentName: displayName
+        // Display-time only, like coalescing/rollup: the LLM compaction
+        // divider never enters the memoizer cache, so per-turn incremental
+        // regeneration keeps its stable ids.
+        let newBlocks = insertCompactionMarkerIfNeeded(
+            into: blockMemoizer.blocks(
+                from: effectiveTurns,
+                streamingTurnId: streamingTurnId,
+                agentName: displayName
+            )
         )
         let newHeaderMap = blockMemoizer.groupHeaderMap
 
@@ -1649,6 +1687,26 @@ final class ChatSession: ObservableObject {
             visibleBlocksStore.blocks = newBlocks
             visibleBlocksStore.groupHeaderMap = newHeaderMap
         }
+    }
+
+    /// Inject the compaction-boundary divider right after the last block of
+    /// the last summary-covered turn. No-ops when there's no (valid) summary
+    /// or the covered span was windowed out by the display cap.
+    private func insertCompactionMarkerIfNeeded(into blocks: [ContentBlock]) -> [ContentBlock] {
+        guard let summary = conversationSummary,
+            ContextCompactionService.summaryIsValid(summary, for: turns),
+            let lastCoveredId = summary.coveredTurnIds.last
+        else { return blocks }
+        let covered = Set(summary.coveredTurnIds)
+        guard let lastIndex = blocks.lastIndex(where: { covered.contains($0.turnId) }) else {
+            return blocks
+        }
+        var result = blocks
+        result.insert(
+            .compactionMarker(summary: summary, afterTurnId: lastCoveredId),
+            at: lastIndex + 1
+        )
+        return result
     }
 
     /// Auto-expand the thinking block of a completed reasoning-only turn so the
@@ -1749,19 +1807,46 @@ final class ChatSession: ObservableObject {
             return active
         }
 
-        let outputTokens = ContextBudgetManager.estimateOutputTokens(for: turns)
-        let conversationTokens = ContextBudgetManager.estimateTokens(for: turns) - outputTokens
+        // With an LLM compaction summary, the model sees the summary message
+        // instead of the covered turns — price the next send accordingly and
+        // surface the summary's own cost as a dedicated row.
+        let coveredIds = summaryCoveredTurnIds
+        let modelVisibleTurns =
+            coveredIds.isEmpty ? turns : turns.filter { !coveredIds.contains($0.id) }
+        let summaryTokens =
+            conversationSummary.map {
+                ContextBudgetManager.estimateTokens(for: $0.contextMessageText)
+            } ?? 0
+
+        let outputTokens = ContextBudgetManager.estimateOutputTokens(for: modelVisibleTurns)
+        let conversationTokens =
+            ContextBudgetManager.estimateTokens(for: modelVisibleTurns) - outputTokens
         var inputTokens = 0
         if !input.isEmpty { inputTokens += ContextBudgetManager.estimateTokens(for: input) }
         for attachment in pendingAttachments { inputTokens += attachment.estimatedTokens }
 
+        func addingSummaryRow(_ breakdown: ContextBreakdown) -> ContextBreakdown {
+            guard summaryTokens > 0 else { return breakdown }
+            var bd = breakdown
+            bd.setTokens(
+                for: "summary",
+                in: \.messages,
+                tokens: summaryTokens,
+                label: L("Summary"),
+                tint: .teal
+            )
+            return bd
+        }
+
         if let ctx = cachedContext {
-            return .from(
-                context: ctx,
-                screenContextTokens: cachedScreenContextTokens,
-                conversationTokens: conversationTokens,
-                inputTokens: inputTokens,
-                outputTokens: outputTokens
+            return addingSummaryRow(
+                .from(
+                    context: ctx,
+                    screenContextTokens: cachedScreenContextTokens,
+                    conversationTokens: conversationTokens,
+                    inputTokens: inputTokens,
+                    outputTokens: outputTokens
+                )
             )
         }
 
@@ -1782,23 +1867,27 @@ final class ChatSession: ObservableObject {
             // is in flight and we won't park the main thread to open the DB).
             // Surface the cheap conversation/input/output overlay now; the
             // system-prefix rows fill in once `refreshContextEstimates` runs.
-            return .from(
-                manifest: .empty,
+            return addingSummaryRow(
+                .from(
+                    manifest: .empty,
+                    memoryTokens: cachedMemoryTokens,
+                    screenContextTokens: cachedScreenContextTokens,
+                    conversationTokens: conversationTokens,
+                    inputTokens: inputTokens,
+                    outputTokens: outputTokens
+                )
+            )
+        }
+        return addingSummaryRow(
+            .from(
+                manifest: preview.manifest,
+                toolTokens: preview.toolTokens,
                 memoryTokens: cachedMemoryTokens,
                 screenContextTokens: cachedScreenContextTokens,
                 conversationTokens: conversationTokens,
                 inputTokens: inputTokens,
                 outputTokens: outputTokens
             )
-        }
-        return .from(
-            manifest: preview.manifest,
-            toolTokens: preview.toolTokens,
-            memoryTokens: cachedMemoryTokens,
-            screenContextTokens: cachedScreenContextTokens,
-            conversationTokens: conversationTokens,
-            inputTokens: inputTokens,
-            outputTokens: outputTokens
         )
     }
 
@@ -2071,6 +2160,18 @@ final class ChatSession: ObservableObject {
             windowState?.showLocalModelBusyAlert = true
             return
         }
+        // Auto LLM compaction: when the estimated next send crosses the
+        // near-limit threshold and there's an uncovered older span, compact
+        // FIRST (dialog shows live progress; first run asks for a model),
+        // then resume this send. The draft stays in `input` untouched.
+        let hasSendableContent =
+            !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !pendingAttachments.isEmpty
+        if hasSendableContent, shouldAutoCompactBeforeSend {
+            beginCompaction(resumeSend: true, showDialogWhileRunning: true)
+            return
+        }
+        skipAutoCompactionForNextSend = false
         let text = input
         let attachments = pendingAttachments
         input = ""
@@ -2421,6 +2522,14 @@ final class ChatSession: ObservableObject {
         currentTodo = nil
         lastCompletionSummary = nil
         lastCompletionWasBlocked = false
+        // A fresh chat starts uncompacted.
+        compactionTask?.cancel()
+        compactionTask = nil
+        conversationSummary = nil
+        compactionState = .idle
+        showCompactionDialog = false
+        resumeSendAfterCompaction = false
+        skipAutoCompactionForNextSend = false
         promptQueue.drainAll()
         let oldSid = expectedTodoSessionId
         Task { await AgentTodoStore.shared.clear(for: oldSid) }
@@ -2455,6 +2564,225 @@ final class ChatSession: ObservableObject {
         // new one now that turns/sessionId are cleared.
         applyEffectiveModel(for: newAgentId)
         Task { [weak self] in await self?.refreshContextEstimates() }
+    }
+
+    // MARK: - LLM Context Compaction
+
+    /// Turn IDs the active summary replaces in the outbound context.
+    /// Empty when there is no summary.
+    var summaryCoveredTurnIds: Set<UUID> {
+        guard let summary = conversationSummary else { return [] }
+        return Set(summary.coveredTurnIds)
+    }
+
+    /// Drop the summary when it no longer lines up with the live
+    /// transcript (covered turns edited, regenerated, or deleted). Called
+    /// on session load and at the top of every send.
+    func validateConversationSummary() {
+        guard let summary = conversationSummary else { return }
+        if !ContextCompactionService.summaryIsValid(summary, for: turns) {
+            conversationSummary = nil
+        }
+    }
+
+    /// Whether the conversation currently has a span a (new) summary could
+    /// cover. Gates the popover button and the auto-trigger.
+    var hasCompactableConversation: Bool {
+        ContextCompactionService.compactionCutIndex(
+            turns: turns,
+            existingSummary: conversationSummary
+        ) != nil
+    }
+
+    /// Estimated fraction of the usable (effective) budget the next send
+    /// occupies — the same denominator the runtime trims against.
+    private var contextUsageFractionEstimate: Double? {
+        guard let model = selectedModel else { return nil }
+        let window = AgentLoopBudget.resolveContextWindowSync(modelId: model)
+        let effective = ContextBudgetManager(contextLength: window).effectiveBudget
+        guard effective > 0 else { return nil }
+        let total = estimatedContextBreakdown.total
+        guard total > 0 else { return nil }
+        return Double(total) / Double(effective)
+    }
+
+    /// Popover-button gate: utilization crossed the manual threshold (~70%)
+    /// and there's an uncovered older span a summary could reclaim.
+    var canManuallyCompactConversation: Bool {
+        guard hasCompactableConversation,
+            let fraction = contextUsageFractionEstimate
+        else { return false }
+        return fraction >= ContextCompactionService.manualTriggerThreshold
+    }
+
+    /// One-shot suppression after the user dismisses the first-run dialog
+    /// without picking a model: stop auto-prompting for the rest of this
+    /// session (the manual popover button remains available).
+    private var compactionDeclinedForSession = false
+
+    /// Auto-trigger gate, checked at send time: the estimated next send is
+    /// at ≥85% of the usable budget (the same near-limit signal that turns
+    /// the context chip amber) and there is an uncovered span to summarize.
+    private var shouldAutoCompactBeforeSend: Bool {
+        guard !skipAutoCompactionForNextSend,
+            !compactionDeclinedForSession,
+            compactionState == .idle,
+            hasCompactableConversation,
+            let fraction = contextUsageFractionEstimate
+        else { return false }
+        return fraction >= 0.85
+    }
+
+    /// Manual entry point (Context Budget popover). Runs inline — progress
+    /// shows in the popover — unless no model is configured yet, in which
+    /// case the first-run dialog opens.
+    func requestManualCompaction() {
+        guard !isStreaming, !compactionState.isRunning else { return }
+        beginCompaction(resumeSend: false, showDialogWhileRunning: false)
+    }
+
+    /// First-run dialog: persist the chosen model, then run.
+    func chooseCompactionModelAndRun(_ identifier: String) {
+        ContextCompactionService.saveConfiguredModel(identifier: identifier)
+        runCompaction()
+    }
+
+    /// Retry button in the dialog / popover after a failure.
+    func retryCompaction() {
+        guard !compactionState.isRunning else { return }
+        runCompaction()
+    }
+
+    /// Dialog dismissed. If a run is in flight it keeps going (state stays
+    /// visible in the popover); a declined first-run model pick resumes any
+    /// stashed send without compaction (deterministic trimming remains the
+    /// safety net).
+    func cancelCompactionDialog() {
+        showCompactionDialog = false
+        guard !compactionState.isRunning else { return }
+        if case .needsModelSelection = compactionState {
+            compactionState = .idle
+            compactionDeclinedForSession = true
+        }
+        if case .failed = compactionState { compactionState = .idle }
+        if resumeSendAfterCompaction {
+            resumeSendAfterCompaction = false
+            skipAutoCompactionForNextSend = true
+            sendCurrent()
+        }
+    }
+
+    private func beginCompaction(resumeSend: Bool, showDialogWhileRunning: Bool) {
+        validateConversationSummary()
+        resumeSendAfterCompaction = resumeSend
+        guard ContextCompactionService.configuredModelIdentifier() != nil else {
+            // First run: no model configured. Open the explainer dialog and
+            // let the user pick one (or decline).
+            compactionState = .needsModelSelection
+            showCompactionDialog = true
+            return
+        }
+        if showDialogWhileRunning { showCompactionDialog = true }
+        runCompaction()
+    }
+
+    private func runCompaction() {
+        guard !compactionState.isRunning else { return }
+        compactionTask?.cancel()
+        let turnsSnapshot = turns
+        let existing = conversationSummary
+        let sid = sessionId
+        compactionState = .running(.preparing)
+        compactionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let summary = try await ContextCompactionService.shared.summarize(
+                    turns: turnsSnapshot,
+                    existingSummary: existing,
+                    sessionId: sid,
+                    onPhase: { [weak self] phase in
+                        self?.compactionState = .running(phase)
+                    }
+                )
+                guard !Task.isCancelled else {
+                    self.compactionState = .idle
+                    return
+                }
+                // The transcript may have changed while the summarizer ran
+                // (covered turn edited/regenerated/deleted). A summary that
+                // no longer lines up would be dropped at the next send
+                // anyway; discard it now so the budget breakdown never
+                // prices a stale summary row.
+                guard ContextCompactionService.summaryIsValid(summary, for: self.turns) else {
+                    self.compactionState = .idle
+                    return
+                }
+                self.conversationSummary = summary
+                self.save()
+                // The outbound message shape changed (covered turns replaced
+                // by the summary), so the watermark's recorded decisions no
+                // longer line up — its identity validation resets it on the
+                // next trim, effectively rebasing at the summary boundary.
+                self.rebuildVisibleBlocks()
+                // Rewarm the post-compaction shape (system + summary + recent
+                // turns) as required-context work: the prefill it stores (KV +
+                // disk L2) is an exact prefix of the next send, which awaits
+                // it in the pre-send handshake and prefix-hits instead of
+                // cold-re-prefilling past the static system prefix. The warm
+                // fingerprint folds in the summary identity, so the stale
+                // pre-compaction warm claim can't coalesce this away.
+                self.invalidateWarmupAfterContextShapeChange()
+                self.compactionState = .completed(savedTokens: summary.savedTokensEstimate)
+                self.finishCompaction(success: true)
+            } catch let compactionError as ContextCompactionError
+                where compactionError == .needsModelSelection
+            {
+                self.compactionState = .needsModelSelection
+                self.showCompactionDialog = true
+            } catch is CancellationError {
+                self.compactionState = .idle
+            } catch {
+                guard !Task.isCancelled else {
+                    self.compactionState = .idle
+                    return
+                }
+                self.compactionState = .failed(message: error.localizedDescription)
+                self.finishCompaction(success: false)
+            }
+        }
+    }
+
+    /// Post-run bookkeeping: resume a stashed auto-triggered send, and let
+    /// transient states (completed badge) settle back to idle.
+    private func finishCompaction(success: Bool) {
+        let shouldResume = resumeSendAfterCompaction
+        resumeSendAfterCompaction = false
+        if shouldResume {
+            Task { @MainActor [weak self] in
+                // Let the user read the "done" state briefly before the
+                // dialog closes and the send proceeds. Failures resume
+                // immediately — the deterministic trimmer still protects
+                // the request, and the failed state stays visible in the
+                // budget popover.
+                if success {
+                    try? await Task.sleep(nanoseconds: 900_000_000)
+                }
+                guard let self else { return }
+                self.showCompactionDialog = false
+                self.skipAutoCompactionForNextSend = true
+                self.sendCurrent()
+            }
+        }
+        // Settle transient completed/failed badges back to idle so the
+        // popover button doesn't stay stuck on an old outcome.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard let self else { return }
+            switch self.compactionState {
+            case .completed, .failed: self.compactionState = .idle
+            default: break
+            }
+        }
     }
 
     // MARK: - Generative Greeting
@@ -2686,7 +3014,8 @@ final class ChatSession: ObservableObject {
             pinned: pinned,
             capabilities: SessionCapability.derive(from: turnData),
             folderBookmark: folderState.persistedBookmark,
-            folderPath: folderState.persistedPath
+            folderPath: folderState.persistedPath,
+            conversationSummary: conversationSummary
         )
     }
 
@@ -2768,6 +3097,14 @@ final class ChatSession: ObservableObject {
         }
 
         turns = data.turns.map { ChatTurn(from: $0) }
+        // Restore the LLM compaction summary and drop it immediately when it
+        // no longer lines up with the restored transcript.
+        conversationSummary = data.conversationSummary
+        validateConversationSummary()
+        compactionState = .idle
+        showCompactionDialog = false
+        resumeSendAfterCompaction = false
+        skipAutoCompactionForNextSend = false
         voiceInputState = .idle
         showVoiceOverlay = false
         input = ""
@@ -4496,6 +4833,11 @@ final class ChatSession: ObservableObject {
             return
         }
 
+        // The LLM compaction summary must line up with the transcript this
+        // send will build from; regenerations/edits that rewrote covered
+        // turns invalidate it here (mirrors `CompactionWatermark.validate`).
+        validateConversationSummary()
+
         // Settings notifications intentionally debounce preview work by 80 ms
         // to coalesce UI churn. A user can still click Send inside that
         // window. Recompose from the authoritative stores *before* deciding
@@ -5134,7 +5476,31 @@ final class ChatSession: ObservableObject {
                         var msgs: [ChatMessage] = []
                         if !sys.isEmpty { msgs.append(ChatMessage(role: "system", content: sys)) }
 
+                        // Non-destructive LLM compaction: turns covered by the
+                        // session's ConversationSummary are replaced by ONE
+                        // byte-stable summary message in the outbound array —
+                        // the visible transcript keeps every turn. When a new
+                        // summary lands between runs, the built shape changes
+                        // and `CompactionWatermark.validate` resets its sticky
+                        // decisions (an implicit rebase at the boundary); the
+                        // deterministic trimmer still runs on the remainder.
+                        let summary = self.conversationSummary
+                        let coveredIds = summary.map { Set($0.coveredTurnIds) } ?? []
+                        var summaryInjected = false
+
                         for (index, t) in turns.enumerated() {
+                            if let summary, coveredIds.contains(t.id) {
+                                if !summaryInjected {
+                                    msgs.append(
+                                        ChatMessage(
+                                            role: "user",
+                                            content: summary.contextMessageText
+                                        )
+                                    )
+                                    summaryInjected = true
+                                }
+                                continue
+                            }
                             let isLastTurn = index == turns.count - 1
                             if let msg = turnToMessage(t, isLastTurn: isLastTurn) {
                                 msgs.append(msg)
@@ -5731,6 +6097,13 @@ final class ChatSession: ObservableObject {
                             if savedTokens > 0 {
                                 self.budgetTracker.updateCompaction(savedTokens: savedTokens)
                             }
+                            if let summary = self.conversationSummary {
+                                self.budgetTracker.updateSummary(
+                                    tokens: ContextBudgetManager.estimateTokens(
+                                        for: summary.contextMessageText
+                                    )
+                                )
+                            }
 
                             // Driver-staged `[System Notice]` lines (budget
                             // warning first, then dedupe/bias nudge) ride as
@@ -5745,14 +6118,27 @@ final class ChatSession: ObservableObject {
                             // budget, tell the model to wrap up — compaction
                             // remains the actual overflow handler, this is the
                             // early signal. Fired at most once per run, like
-                            // the iteration-budget warning. The system prefix
-                            // is excluded — its tokens are reserved separately
-                            // and the history budget already accounts for them.
+                            // the iteration-budget warning, and only when the
+                            // history actually ends in an in-progress tool
+                            // exchange: "wrap up the current work" is incoherent
+                            // on a fresh user question (observed live — the
+                            // notice landed as the trailing user-role message
+                            // right after the real question and the model
+                            // reasoned about the notice instead), and skipping
+                            // it on non-tool tails also keeps reasoning-retry
+                            // rebuilds byte-identical to the pre-attempt
+                            // history. The tool tail is additionally the only
+                            // placement where `appendingTransientNotices` is
+                            // KV-stable. The system prefix is excluded — its
+                            // tokens are reserved separately and the history
+                            // budget already accounts for them.
+                            let midRunToolTail = msgs.last?.role == "tool"
                             let historyBudget = loopBudgetManager.historyBudget
                             let historyTokens = ContextBudgetManager.estimateTokens(
                                 for: msgs.filter { $0.role != "system" }
                             )
                             if !tokenBudgetNoticeFired,
+                                midRunToolTail,
                                 historyBudget > 0,
                                 historyTokens >= Int(Double(historyBudget) * 0.9)
                             {
@@ -5798,11 +6184,19 @@ final class ChatSession: ObservableObject {
                                 appleScriptWorkingContext.map {
                                     ContextBudgetManager.estimateTokens(for: $0)
                                 } ?? 0
+                            // The LLM compaction summary message rides inside
+                            // `msgs` but has its own budget row (set above), so
+                            // exclude it from the Conversation total.
+                            let summaryMessageTokens =
+                                self.conversationSummary.map {
+                                    ContextBudgetManager.estimateTokens(for: $0.contextMessageText)
+                                } ?? 0
                             let convTokens =
                                 msgs
                                 .filter { $0.role != "system" }
                                 .reduce(0) { $0 + ContextBudgetManager.estimateTokens(for: $1.content) }
                                 - max(0, currentInjectedTokens - automationContextTokens)
+                                - summaryMessageTokens
                             self.budgetTracker.updateConversation(
                                 tokens: max(0, convTokens),
                                 finishedOutputTurn: assistantTurn
@@ -6966,6 +7360,22 @@ struct ChatView: View {
                 CreditsTopUpSheet()
                     .environment(\.theme, theme)
             }
+            // First-run / progress dialog for LLM context compaction. The
+            // sheet's dismissal (Esc, outside interaction) routes through the
+            // session so a declined first run resumes the stashed send.
+            .sheet(
+                isPresented: Binding(
+                    get: { observedSession.showCompactionDialog },
+                    set: { isShown in
+                        if !isShown, observedSession.showCompactionDialog {
+                            observedSession.cancelCompactionDialog()
+                        }
+                    }
+                )
+            ) {
+                CompactionDialogView(session: observedSession)
+                    .environment(\.theme, theme)
+            }
             .onChange(of: accountService.balance) { _, _ in
                 session.handleBalanceChangeForRetry()
             }
@@ -7245,6 +7655,12 @@ struct ChatView: View {
                                 },
                                 inputHistoryKey: observedSession.sessionId,
                                 warmModelsOnLoadEnabled: ChatConfigurationStore.load().warmModelsOnLoad,
+                                compactionState: observedSession.compactionState,
+                                canCompactConversation: observedSession
+                                    .canManuallyCompactConversation,
+                                onCompactConversation: {
+                                    observedSession.requestManualCompaction()
+                                },
                                 warmupController: observedSession.warmupController,
                                 folderState: observedSession.folderState
                             )

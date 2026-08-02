@@ -1050,8 +1050,9 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                         kind: .rejected,
                         message:
                             "Default agent can only load configuration write tools "
-                            + "(`osaurus_*_<verb>`). Use `osaurus_status`, `osaurus_list`, or "
-                            + "`osaurus_describe` for reads; nothing else needs `capabilities_load`."
+                            + "(`osaurus_*_<verb>`). Use `osaurus_status`, `osaurus_list`, "
+                            + "`osaurus_describe`, or `osaurus_help` for reads; nothing else "
+                            + "needs `capabilities_load`."
                     )
                 )
             }
@@ -1265,8 +1266,8 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                     kind: .rejected,
                     message:
                         "Skill loading is disabled for the configuration agent. "
-                        + "Use `capabilities_discover` to find a configuration tool (osaurus_*_<verb>) "
-                        + "and load it directly."
+                        + "Use `osaurus_help` for questions about Osaurus, or `capabilities_discover` "
+                        + "to find a configuration tool (osaurus_*_<verb>) and load it directly."
                 )
             )
         }

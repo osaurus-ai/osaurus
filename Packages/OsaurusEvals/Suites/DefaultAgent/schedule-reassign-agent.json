@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.schedule-reassign-agent",
+  "domain": "default_agent",
+  "label": "default agent • move a schedule to another agent",
+  "query": "Move my schedule 9b4f2a61-7d05-4c38-8e1a-0f6c3d9b27e5 to run under the agent 2a9f4c7d-1e83-4b56-9d02-7f1a6c3e8b45 instead.",
+  "notes": "Gap-closure write surface: osaurus_schedule update now accepts agent_id (previously delete + recreate). Pins that SOME update call carries an agent_id — the '-' probe asserts a UUID-shaped value without depending on exact transcription (small models mis-copy ids). A UUID stuffed into `name` (the observed compact-schema miss) gets a typed error steering the retry to agent_id.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_schedule"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_schedule", "args": { "action": "update", "agent_id": "-" } }
+      ],
+      "maxIterations": 6
+    }
+  }
+}

@@ -152,6 +152,13 @@ public enum SettingsSearchIndex {
             keywords: ["title", "auto title", "rename", "chat name", "summary"]
         ),
         .init(
+            id: "settings.chat.compactionModel",
+            tab: .chat,
+            section: "Chat",
+            title: "Compaction Model",
+            keywords: ["compaction", "compact", "summarize", "context", "summary model"]
+        ),
+        .init(
             id: "settings.chat.temperature",
             tab: .chat,
             section: "Generation",

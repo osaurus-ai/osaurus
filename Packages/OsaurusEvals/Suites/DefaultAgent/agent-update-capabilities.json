@@ -1,0 +1,22 @@
+{
+  "id": "default_agent.agent-update-capabilities",
+  "domain": "default_agent",
+  "label": "default agent • enable a capability toggle on an agent",
+  "query": "Enable browser use for my agent 2a9f4c7d-1e83-4b56-9d02-7f1a6c3e8b45.",
+  "notes": "Gap-closure write surface: osaurus_agent update accepts a capabilities patch. The agent is seeded so the happy path is real; the update result echoes the effective capabilities, so a model that missed the nested object on its first call sees browser_use_enabled still false and recovers. Pins that SOME update call carries capabilities naming browser_use_enabled (substring probe of the re-encoded object).",
+  "fixtures": {
+    "seedAgents": [
+      { "id": "2a9f4c7d-1e83-4b56-9d02-7f1a6c3e8b45", "name": "Eval Browser Agent" }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_agent"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_agent", "args": { "action": "update", "capabilities": "browser_use_enabled" } }
+      ],
+      "maxIterations": 6
+    }
+  }
+}

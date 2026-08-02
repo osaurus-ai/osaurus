@@ -78,6 +78,12 @@ enum ContentBlockKind: Equatable {
     /// affordance instead of silently dropping the turn. `costMicro` is the raw
     /// micro-USD string; `status` is the router's terminal status.
     case emptyResponseNotice(turnId: UUID, outputTokens: Int, costMicro: String, status: String)
+    /// Divider marker at the LLM context-compaction boundary: everything above
+    /// it is covered by the session's ConversationSummary in the OUTBOUND
+    /// context (the visible turns are untouched). Expandable to read the
+    /// summary text the model sees. Injected at display time in
+    /// `ChatSession.rebuildVisibleBlocks` — never stored in the block cache.
+    case compactionMarker(savedTokens: Int, modelName: String, summaryText: String)
 
     /// Custom Equatable optimized for performance during streaming.
     /// Uses text length comparison as a cheap proxy for content change detection.
@@ -151,6 +157,14 @@ enum ContentBlockKind: Equatable {
         ):
             return lId == rId && lTokens == rTokens && lCost == rCost && lStatus == rStatus
 
+        case let (
+            .compactionMarker(lSaved, lModel, lText),
+            .compactionMarker(rSaved, rModel, rText)
+        ):
+            guard lSaved == rSaved && lModel == rModel else { return false }
+            guard lText.count == rText.count else { return false }
+            return lText == rText
+
         default:
             return false
         }
@@ -172,7 +186,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         case let .paragraph(_, _, _, role): return role
         case .toolCallGroup, .thinking, .activityGroup, .sharedArtifact, .pendingToolCall,
             .generationStats, .typingIndicator, .groupSpacer, .chart, .assistantActions,
-            .emptyResponseNotice, .fileDiff:
+            .emptyResponseNotice, .fileDiff, .compactionMarker:
             return .assistant
         case .userMessage: return .user
         }
@@ -428,6 +442,25 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
             turnId: turnId,
             kind: .fileDiff(diff: diff),
             position: position
+        )
+    }
+
+    /// Compaction-boundary divider. Keyed on the summary id so a re-compaction
+    /// (new summary covering more turns) moves/re-renders it; `turnId` is the
+    /// last covered turn, anchoring the marker right below the covered span.
+    static func compactionMarker(
+        summary: ConversationSummary,
+        afterTurnId: UUID
+    ) -> ContentBlock {
+        ContentBlock(
+            id: "compaction-\(summary.id.uuidString)",
+            turnId: afterTurnId,
+            kind: .compactionMarker(
+                savedTokens: summary.savedTokensEstimate,
+                modelName: summary.modelIdentifier,
+                summaryText: summary.summaryText
+            ),
+            position: .only
         )
     }
 

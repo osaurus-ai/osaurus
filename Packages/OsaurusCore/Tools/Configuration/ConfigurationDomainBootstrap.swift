@@ -29,7 +29,9 @@ enum ConfigurationDomainBootstrap {
         registry.register(SearchProviderConfigurationDomain.domain)
         registry.register(PluginConfigurationDomain.domain)
         registry.register(ScheduleConfigurationDomain.domain)
+        registry.register(WatcherConfigurationDomain.domain)
         registry.register(AgentConfigurationDomain.domain)
+        registry.register(SettingsConfigurationDomain.domain)
     }
 
     /// Test-only: reset the latch so a fresh `registerBuiltIns()`

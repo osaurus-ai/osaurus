@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.settings-default-agent-model",
+  "domain": "default_agent",
+  "label": "default agent • change its own model via osaurus_settings",
+  "query": "Set your own model to \"mlx-community/Qwen3-4B-4bit\".",
+  "notes": "The self-configuration path the revamp unlocked: the Default agent's model/persona used to be a hard 'go to Settings → Chat' refusal in osaurus_agent; now osaurus_settings scope 'default_agent' handles it. A run that calls osaurus_agent instead exercises the old dead end (osaurus_agent still refuses to target the Default agent).",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_settings"],
+      "mustNotCallTools": ["capabilities_discover"],
+      "argsMustContain": [
+        { "tool": "osaurus_settings", "args": { "action": "set", "scope": "default_agent", "settings": "Qwen3-4B-4bit" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}
