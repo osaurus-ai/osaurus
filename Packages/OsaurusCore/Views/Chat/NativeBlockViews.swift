@@ -485,9 +485,12 @@ final class NativePendingToolCallView: NSView {
         // Always running: shimmer the friendly title to signal progress. The
         // view mirrors the running group row exactly (node + shimmer title), so
         // the pending → running-group → done transition is seamless — no args
-        // box flashing in and out. `argPreview`/`argSize` are unused.
+        // box flashing in and out. `argPreview` is unused; `argSize` drives the
+        // liveness counter, because the DSML envelope buffers to its closing
+        // tag and a long file-write otherwise renders a motionless card.
         shimmerLabel.configure(
-            text: ToolDisplayName.friendly(for: toolName, running: true),
+            text: ToolDisplayName.friendly(
+                for: toolName, running: true, pendingBytes: argSize),
             font: NSFont.systemFont(ofSize: 12, weight: .semibold),
             baseColor: NSColor(theme.primaryText).withAlphaComponent(0.4),
             highlightColor: NSColor(theme.primaryText)

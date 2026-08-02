@@ -40,6 +40,16 @@ enum ToolDisplayName {
         }
     }
 
+    /// Compact size for the in-flight tool-call envelope. Deliberately coarse:
+    /// this is a liveness signal, not a measurement, and a jittering byte count
+    /// reads as noise.
+    static func formattedByteCount(_ bytes: Int) -> String {
+        if bytes < 1024 { return "\(bytes) B" }
+        let kb = Double(bytes) / 1024
+        if kb < 1024 { return String(format: "%.1f KB", kb) }
+        return String(format: "%.1f MB", kb / 1024)
+    }
+
     /// Friendly label for the chip. `running` selects present-continuous
     /// ("Inserting…") vs past ("Inserted…"). Falls back to a humanized form of
     /// `rawName` for tools without a curated entry.
@@ -51,12 +61,24 @@ enum ToolDisplayName {
         for rawName: String,
         running: Bool,
         arguments: String? = nil,
-        failed: Bool = false
+        failed: Bool = false,
+        pendingBytes: Int = 0
     ) -> String {
         if rawName == pendingToolSentinel {
             // A call is being written but hasn't closed, so the tool isn't known
             // yet. Present-continuous only — it always resolves to the real name.
-            return L("Preparing tool call")
+            //
+            // Show how much envelope has arrived. The DSML parser buffers a
+            // canonical tool-call envelope until its closing tag (it does not
+            // override `isValidPartialContent`, deliberately — a strict partial
+            // check breaks the malformed-envelope quarantine), so a model
+            // writing a whole HTML file emits nothing renderable for minutes.
+            // A static label makes that indistinguishable from a hang; a
+            // growing byte count proves the stream is alive.
+            guard pendingBytes > 0 else { return L("Preparing tool call") }
+            return String(
+                format: L("Preparing tool call (%@)"),
+                formattedByteCount(pendingBytes))
         }
         // A completed call whose result was an error must not read as success:
         // the past tense ("Wrote a file") would contradict the red error node
