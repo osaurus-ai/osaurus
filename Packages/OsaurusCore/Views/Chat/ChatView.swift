@@ -6099,14 +6099,27 @@ final class ChatSession: ObservableObject {
                             // budget, tell the model to wrap up — compaction
                             // remains the actual overflow handler, this is the
                             // early signal. Fired at most once per run, like
-                            // the iteration-budget warning. The system prefix
-                            // is excluded — its tokens are reserved separately
-                            // and the history budget already accounts for them.
+                            // the iteration-budget warning, and only when the
+                            // history actually ends in an in-progress tool
+                            // exchange: "wrap up the current work" is incoherent
+                            // on a fresh user question (observed live — the
+                            // notice landed as the trailing user-role message
+                            // right after the real question and the model
+                            // reasoned about the notice instead), and skipping
+                            // it on non-tool tails also keeps reasoning-retry
+                            // rebuilds byte-identical to the pre-attempt
+                            // history. The tool tail is additionally the only
+                            // placement where `appendingTransientNotices` is
+                            // KV-stable. The system prefix is excluded — its
+                            // tokens are reserved separately and the history
+                            // budget already accounts for them.
+                            let midRunToolTail = msgs.last?.role == "tool"
                             let historyBudget = loopBudgetManager.historyBudget
                             let historyTokens = ContextBudgetManager.estimateTokens(
                                 for: msgs.filter { $0.role != "system" }
                             )
                             if !tokenBudgetNoticeFired,
+                                midRunToolTail,
                                 historyBudget > 0,
                                 historyTokens >= Int(Double(historyBudget) * 0.9)
                             {
