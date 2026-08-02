@@ -346,8 +346,14 @@ evals-all-report: evals-prep
 # regression (floors.json pins their pass rate at 1.0). Safe on hosted CI
 # runners; the CI `test-evals` job runs this after the harness unit tests.
 # No `evals-prep` dependency: these lanes never touch MLX or the embedder.
-EVALS_DETERMINISTIC_SUITES := Schema ToolEnvelope PrefixHash ArgumentCoercion \
-	ToolResultGrounding AgentChannels ComputerUse ScreenContext
+#
+# Derived from Packages/OsaurusEvals/Config/floors.json (the suitePassRates
+# keys) so adding a new deterministic suite to floors.json is a one-file
+# edit. `scripts/live-proof/assert-eval-floors-makefile-sync.sh` flags
+# drift if a contributor hand-edits this list or if the file is missing.
+EVALS_DETERMINISTIC_SUITES := $(shell \
+	jq -r '.suitePassRates | keys | join(" ")' \
+	Packages/OsaurusEvals/Config/floors.json 2>/dev/null)
 
 evals-deterministic:
 	@rc=0; for name in $(EVALS_DETERMINISTIC_SUITES); do \
