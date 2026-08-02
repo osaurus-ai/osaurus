@@ -115,6 +115,7 @@ LABEL="${LABEL:-}"
 SNAPSHOT_DIR="${SNAPSHOT_DIR:-${REPO_ROOT}/reports}"
 SKIP_DET="${SKIP_DET:-0}"
 SUITE_TIMEOUT_SEC="${SUITE_TIMEOUT_SEC:-2700}"
+EVALS_BUILD_CONFIGURATION="${EVALS_BUILD_CONFIGURATION:-debug}"
 
 # Resolve a `timeout`-compatible command once (GNU coreutils ships `gtimeout`
 # on macOS via Homebrew; Linux/CI has `timeout`). Empty when neither exists,
@@ -183,8 +184,8 @@ if [[ "${OSAURUS_EVALS_SKIP_PREP:-0}" != "1" ]]; then
 fi
 
 log "Building osaurus-evals…"
-swift build --package-path "${EVALS_PKG}" >/dev/null
-BIN="$(swift build --package-path "${EVALS_PKG}" --show-bin-path)/osaurus-evals"
+swift build --package-path "${EVALS_PKG}" -c "${EVALS_BUILD_CONFIGURATION}" >/dev/null
+BIN="$(swift build --package-path "${EVALS_PKG}" -c "${EVALS_BUILD_CONFIGURATION}" --show-bin-path)/osaurus-evals"
 if [[ ! -x "${BIN}" ]]; then
   log "ERROR: osaurus-evals binary not found at ${BIN}"
   exit 2

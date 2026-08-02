@@ -21,6 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 EVALS_PKG="${REPO_ROOT}/Packages/OsaurusEvals"
 EMBED_MODEL="minishlab/potion-base-4M"
+EVALS_BUILD_CONFIGURATION="${EVALS_BUILD_CONFIGURATION:-debug}"
 
 shopt -s nullglob
 
@@ -33,11 +34,12 @@ warn() { printf '[evals-prep] WARNING: %s\n' "$*" >&2; }
 # exists before we drop the metallib in.
 if [[ "${OSAURUS_EVALS_SKIP_BUILD:-0}" != "1" ]]; then
   log "Building osaurus-evals (swift build)…"
-  swift build --package-path "${EVALS_PKG}" >/dev/null
+  swift build --package-path "${EVALS_PKG}" -c "${EVALS_BUILD_CONFIGURATION}" >/dev/null
 fi
 
 bin_dirs=()
-for d in "${EVALS_PKG}"/.build/debug "${EVALS_PKG}"/.build/*/debug; do
+for d in "${EVALS_PKG}"/.build/"${EVALS_BUILD_CONFIGURATION}" \
+         "${EVALS_PKG}"/.build/*/"${EVALS_BUILD_CONFIGURATION}"; do
   [[ -d "${d}" ]] && bin_dirs+=("${d}")
 done
 
@@ -66,7 +68,7 @@ find_metallib_source() {
 }
 
 if [[ ${#bin_dirs[@]} -eq 0 ]]; then
-  warn "no osaurus-evals .build/debug dir found; skipping metallib colocation."
+  warn "no osaurus-evals .build/${EVALS_BUILD_CONFIGURATION} dir found; skipping metallib colocation."
 else
   if metallib_src="$(find_metallib_source)"; then
     for d in "${bin_dirs[@]}"; do
