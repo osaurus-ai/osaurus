@@ -283,10 +283,16 @@ public actor ModelRuntime {
         let draftStrategy: MLXLMCommon.DraftStrategy?
         let nativeMTPStatus: String?
         let nativeMTPReason: String?
-        /// Allocator-cache cap resolved from the user-visible memory-safety
-        /// plan used for this exact load. `nil` preserves performance mode's
-        /// explicit unlimited policy.
+        /// Numeric allocator-cache cap resolved from the user-visible
+        /// memory-safety plan used for this exact load. `nil` means no numeric
+        /// cap; the family-specific uncapped requirement is tracked separately
+        /// so ordinary models still use Osaurus's dynamic reuse heuristic.
         let allocatorCacheLimitBytes: Int?
+        /// Plain affine DSV4 requires MLX's admitted allocator ceiling rather
+        /// than Osaurus's generic weight-scaled reuse heuristic. Its routed
+        /// decode intermediates otherwise churn out of the allocator cache on
+        /// every token even though RAM admission already accepted the model.
+        let requiresUncappedMLXAllocatorCache: Bool
         var cacheTopology: ModelCacheTopologySnapshot?
         init(
             name: String,
@@ -297,7 +303,8 @@ public actor ModelRuntime {
             draftStrategy: MLXLMCommon.DraftStrategy? = nil,
             nativeMTPStatus: String? = nil,
             nativeMTPReason: String? = nil,
-            allocatorCacheLimitBytes: Int? = nil
+            allocatorCacheLimitBytes: Int? = nil,
+            requiresUncappedMLXAllocatorCache: Bool = false
         ) {
             self.name = name
             self.container = container
@@ -308,6 +315,7 @@ public actor ModelRuntime {
             self.nativeMTPStatus = nativeMTPStatus
             self.nativeMTPReason = nativeMTPReason
             self.allocatorCacheLimitBytes = allocatorCacheLimitBytes
+            self.requiresUncappedMLXAllocatorCache = requiresUncappedMLXAllocatorCache
         }
     }
 
@@ -2312,9 +2320,13 @@ public actor ModelRuntime {
         let byModel = max(totalWeights / 4, 1 * 1024 * 1024 * 1024)
         let bySystem = min(systemRAM / 8, 8 * 1024 * 1024 * 1024)
         let dynamicLimit = min(byModel, bySystem)
+        let uncappedLimit = modelCache.values.contains {
+            $0.requiresUncappedMLXAllocatorCache
+        } ? max(dynamicLimit, Memory.memoryLimit) : nil
         return Self.effectiveMLXCacheLimit(
             dynamicLimit: dynamicLimit,
-            configuredLimits: modelCache.values.map(\.allocatorCacheLimitBytes)
+            configuredLimits: modelCache.values.map(\.allocatorCacheLimitBytes),
+            uncappedLimit: uncappedLimit
         )
     }
 
@@ -2324,9 +2336,13 @@ public actor ModelRuntime {
     /// silently replaced it with at least 1 GiB.
     nonisolated static func effectiveMLXCacheLimit(
         dynamicLimit: Int,
-        configuredLimits: [Int?]
+        configuredLimits: [Int?],
+        uncappedLimit: Int? = nil
     ) -> Int {
         guard dynamicLimit > 0 else { return 0 }
+        if let uncappedLimit {
+            return max(dynamicLimit, uncappedLimit)
+        }
         guard let configuredLimit = configuredLimits.compactMap({ $0 }).min() else {
             return dynamicLimit
         }
@@ -3597,6 +3613,7 @@ public actor ModelRuntime {
         genLog.info(
             "loadContainer: local directory model=\(name, privacy: .public) path=\(localURL.path, privacy: .public)"
         )
+        let loadBundleFacts = LoadBundleFacts.inspect(bundleURL: localURL)
 
         // One-time, idempotent bundle-metadata repair for the Laguna XS 2.1
         // release that shipped an incorrect/missing top_k in some artifacts.
@@ -3900,7 +3917,9 @@ public actor ModelRuntime {
                 allocatorCacheLimitBytes: mtpPlan.loadConfiguration.maxResidentBytes
                     .applyAsCacheLimitInt(
                         physicalMemory: ProcessInfo.processInfo.physicalMemory
-                    )
+                    ),
+                requiresUncappedMLXAllocatorCache:
+                    loadBundleFacts.isPlainDeepseekV4AffineJANG
             )
 
             // Install the cache coordinator before the coalesced load task
