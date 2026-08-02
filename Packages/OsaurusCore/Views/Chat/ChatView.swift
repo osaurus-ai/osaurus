@@ -2712,6 +2712,14 @@ final class ChatSession: ObservableObject {
                 // longer line up — its identity validation resets it on the
                 // next trim, effectively rebasing at the summary boundary.
                 self.rebuildVisibleBlocks()
+                // Rewarm the post-compaction shape (system + summary + recent
+                // turns) as required-context work: the prefill it stores (KV +
+                // disk L2) is an exact prefix of the next send, which awaits
+                // it in the pre-send handshake and prefix-hits instead of
+                // cold-re-prefilling past the static system prefix. The warm
+                // fingerprint folds in the summary identity, so the stale
+                // pre-compaction warm claim can't coalesce this away.
+                self.invalidateWarmupAfterContextShapeChange()
                 self.compactionState = .completed(savedTokens: summary.savedTokensEstimate)
                 self.finishCompaction(success: true)
             } catch let compactionError as ContextCompactionError

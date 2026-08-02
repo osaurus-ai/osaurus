@@ -282,3 +282,73 @@ struct ConversationSummaryPersistenceTests {
         #expect(summary.contextMessageText.contains("Conversation summary"))
     }
 }
+
+// MARK: - Warm-up composition
+
+/// Warm-up must serialize the identical post-compaction shape the send
+/// composes (summary message in place of covered turns), or the prefill it
+/// stores (KV + disk L2) diverges from the real send right after the system
+/// prompt and every warmed byte past it is wasted.
+@Suite("Compaction warm-up composition")
+@MainActor
+struct CompactionWarmupCompositionTests {
+
+    private func makeSession(pairs: Int) -> (ChatSession, [ChatTurn]) {
+        let session = ChatSession()
+        var turns: [ChatTurn] = []
+        for i in 0..<pairs {
+            turns.append(ChatTurn(role: .user, content: "question \(i)"))
+            turns.append(ChatTurn(role: .assistant, content: "answer \(i)"))
+        }
+        session.turns = turns
+        return (session, turns)
+    }
+
+    @Test("warm-up injects the summary in place of covered turns, like the send")
+    func warmupInjectsSummary() {
+        let (session, turns) = makeSession(pairs: 4)
+        let summary = ConversationSummary(
+            summaryText: "the early exchanges",
+            coveredTurnIds: turns[0..<4].map(\.id),
+            modelIdentifier: "m",
+            savedTokensEstimate: 100
+        )
+        session.conversationSummary = summary
+
+        let msgs = session.buildWarmupMessages(systemPrompt: "sys")
+        // system + one summary message + the 4 surviving turns.
+        #expect(msgs.count == 6)
+        #expect(msgs[0].role == "system")
+        #expect(msgs[1].role == "user")
+        #expect(msgs[1].content == summary.contextMessageText)
+        #expect(msgs[2].content == "question 2")
+        // Covered turn content never rides alongside the summary.
+        #expect(!msgs.contains { $0.content?.contains("question 0") == true })
+        #expect(!msgs.contains { $0.content?.contains("answer 1") == true })
+    }
+
+    @Test("a summary that no longer matches the transcript is ignored")
+    func invalidSummaryIgnored() {
+        let (session, turns) = makeSession(pairs: 3)
+        let summary = ConversationSummary(
+            summaryText: "stale",
+            coveredTurnIds: [UUID(), UUID()],
+            modelIdentifier: "m",
+            savedTokensEstimate: 0
+        )
+        session.conversationSummary = summary
+
+        #expect(session.activeWarmupSummary == nil)
+        let msgs = session.buildWarmupMessages(systemPrompt: "sys")
+        #expect(msgs.count == 1 + turns.count)
+        #expect(!msgs.contains { $0.content == summary.contextMessageText })
+    }
+
+    @Test("without a summary the full history is warmed")
+    func noSummaryFullHistory() {
+        let (session, turns) = makeSession(pairs: 3)
+        let msgs = session.buildWarmupMessages(systemPrompt: "sys")
+        #expect(msgs.count == 1 + turns.count)
+        #expect(msgs[1].content == "question 0")
+    }
+}

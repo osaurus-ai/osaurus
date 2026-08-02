@@ -84,6 +84,16 @@ extension ChatSession: ChatWarmupSessionContext {
             "\(turn.role.rawValue):\(turn.id.uuidString):\(turn.content.count)"
         }.joined(separator: "|")
 
+        // LLM context compaction replaces the covered turns with one summary
+        // message in the composed bytes WITHOUT changing `turns`, so the
+        // summary must be part of the warm identity. Otherwise a pre-compaction
+        // warm-up keeps claiming a hot prefix for bytes the post-compaction
+        // send no longer composes (and vice versa when a summary is
+        // invalidated), and the send cold-re-prefills everything past the
+        // static system prefix.
+        let summaryFingerprint =
+            activeWarmupSummary.map { "\($0.id.uuidString):\($0.coveredTurnIds.count)" } ?? "none"
+
         // Options like the Thinking toggle change the rendered prompt and
         // the runtime cache salt, so they're part of the warm identity.
         let optionsFingerprint = activeModelOptions
@@ -104,7 +114,7 @@ extension ChatSession: ChatWarmupSessionContext {
         let promptFingerprint = PromptSurfaceEvaluator.fnv1a(sys)
 
         let fingerprint =
-            "\(model)|\(context.cacheHint)|\(promptFingerprint)|\(optionsFingerprint)|\(historyFingerprint)"
+            "\(model)|\(context.cacheHint)|\(promptFingerprint)|\(optionsFingerprint)|\(summaryFingerprint)|\(historyFingerprint)"
 
         return ChatWarmupPayload(
             model: model,
@@ -116,13 +126,40 @@ extension ChatSession: ChatWarmupSessionContext {
         )
     }
 
-    private func buildWarmupMessages(systemPrompt: String) -> [ChatMessage] {
+    /// The compaction summary the next send will inject, or nil when there is
+    /// none / it no longer lines up with the transcript. Same validity rule as
+    /// the send path (`validateConversationSummary` runs at the top of every
+    /// send), applied inline because warm-up composes at arbitrary times.
+    var activeWarmupSummary: ConversationSummary? {
+        guard let summary = conversationSummary,
+            ContextCompactionService.summaryIsValid(summary, for: turns)
+        else { return nil }
+        return summary
+    }
+
+    func buildWarmupMessages(systemPrompt: String) -> [ChatMessage] {
         var msgs: [ChatMessage] = []
         if !systemPrompt.isEmpty {
             msgs.append(ChatMessage(role: "system", content: systemPrompt))
         }
 
+        // Mirror the send path's non-destructive LLM compaction (see
+        // `buildMessages` in the send loop): covered turns are replaced by ONE
+        // byte-stable summary message. Warm-up must serialize the identical
+        // shape, or the prefill it stores (memory + disk L2) diverges from the
+        // real send right after the system prompt and the warm work is wasted.
+        let summary = activeWarmupSummary
+        let coveredIds = summary.map { Set($0.coveredTurnIds) } ?? []
+        var summaryInjected = false
+
         for (index, turn) in turns.enumerated() {
+            if let summary, coveredIds.contains(turn.id) {
+                if !summaryInjected {
+                    msgs.append(ChatMessage(role: "user", content: summary.contextMessageText))
+                    summaryInjected = true
+                }
+                continue
+            }
             let isLastTurn = index == turns.count - 1
             if let msg = warmupTurnToMessage(turn, isLastTurn: isLastTurn) {
                 msgs.append(msg)
