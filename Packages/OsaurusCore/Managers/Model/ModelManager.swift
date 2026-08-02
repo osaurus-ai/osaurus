@@ -1977,6 +1977,15 @@ extension ModelManager {
             localModelsCacheCondition.broadcast()
             localModelsCacheCondition.unlock()
 
+            // A cold scan may outlive discoverLocalModels()'s bounded wait.
+            // In that case launch-time picker builders have already published
+            // their partial snapshot, so merely filling cachedLocalModels is
+            // invisible until some unrelated download/provider event happens.
+            // Publish completion after the cache is ready so every local-model
+            // consumer rebuilds from the finished scan. The next discovery is
+            // cache-only, so this cannot recursively start another scan.
+            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+
             // Warm the per-model capability caches while still on the scan
             // queue. Both are lazily computed from on-disk config files, and a
             // cold lookup otherwise happens on the main thread the first time

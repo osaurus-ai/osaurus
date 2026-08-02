@@ -1542,3 +1542,18 @@ proved.
    RAM eviction followed by disk restore. UI warm/prefill counters and TTFT/
    token-rate telemetry must agree with exact restored and remaining token
    counts; no arbitrary suffix or unrelated block concatenation is allowed.
+6. **Large local-model root picker refresh — REPRODUCED 2026-08-02.** The
+   isolated Release app's local server discovered and loaded
+   `/Users/eric/models/DeepSeek-V4-Flash-0731-JANG` as
+   `deepseek-v4-flash-0731-jang`, while the live Chat picker remained on its
+   launch-time partial snapshot and exposed only the unrelated remote
+   `deepseek-v4-flash` alias. Sending through that alias failed visibly with
+   `HTTP 503: Managed TP2 model switch is already in progress`; sending the
+   exact local ID to the same app server returned HTTP 200 and populated the
+   DSV4 cache topology. Source trace: `discoverLocalModels()` bounds a cold
+   scan wait, while `startLocalModelsScanLocked()` previously filled
+   `cachedLocalModels` after that timeout without posting
+   `.localModelsChanged`, so `ModelPickerItemCache` never rebuilt. The owning
+   fix is to publish local-scan completion after the finished snapshot is
+   installed, followed by a fresh Release UI rerun selecting the exact local
+   row. Until that rerun, this row is PARTIAL and not release proof.
