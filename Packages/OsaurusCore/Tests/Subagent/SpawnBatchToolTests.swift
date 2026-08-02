@@ -2356,7 +2356,8 @@ struct SpawnBatchToolTests {
                 model: "cloud/a",
                 isLocal: false,
                 admission: .remote,
-                probe: probe
+                probe: probe,
+                delayMilliseconds: 400
             ),
             prepared(
                 index: 1,
@@ -2366,7 +2367,8 @@ struct SpawnBatchToolTests {
                 model: "cloud/b",
                 isLocal: false,
                 admission: .remote,
-                probe: probe
+                probe: probe,
+                delayMilliseconds: 400
             ),
         ]
         let interrupt = InterruptToken()
@@ -2385,7 +2387,19 @@ struct SpawnBatchToolTests {
             )
         }
 
-        try? await Task.sleep(for: .milliseconds(20))
+        // Wait for both jobs to actually ENTER execution rather than assuming a
+        // fixed 20ms is long enough. The scripted jobs sleep 80ms, so the old
+        // barrier left only a 60ms margin: on a contended runner
+        // `Task.sleep(20ms)` oversleeps, both jobs finish before
+        // `interrupt()` lands, and every assertion below inverts — results come
+        // back `"ok":true` instead of `user_denied`. That is the CI failure
+        // signature (3 or 4 issues depending on how the race lands), while the
+        // same test passes on a fast machine. Mirrors the deadline+poll idiom
+        // already used earlier in this file.
+        let startDeadline = Date().addingTimeInterval(2)
+        while await probe.snapshot().total < jobs.count, Date() < startDeadline {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
         interrupt.interrupt()
         let results = await task.value.sorted { $0.job.index < $1.job.index }
         let execution = await probe.snapshot()
