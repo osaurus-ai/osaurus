@@ -129,12 +129,14 @@ let package = Package(
         // disk seed during prefill so exact replay restores the longest valid
         // prefix and re-feeds only the final prompt token. Warm restores do not
         // recapture the seed or retain an unusable exact-prompt duplicate.
+        // Its follow-up persists that materialized seed before decode and drops
+        // the duplicate pool state so an uncached DSV4 turn keeps native speed.
         // vmlx-swift#186-#188 correct FalconH1 key
         // projection scaling, prefixed output-head loading, and gated RMSNorm
         // group normalization without changing the shared unload/cache APIs.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "7a63d960844dc3cb1b145f8150485c73978637f4"
+            revision: "11f2000c9ff8fe774da5eb0a0635b6a51f752acd"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
