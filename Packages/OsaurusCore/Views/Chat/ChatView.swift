@@ -537,8 +537,11 @@ final class ChatSession: ObservableObject {
     /// auto-compaction gate.
     private var skipAutoCompactionForNextSend = false
 
-    /// In-flight compaction run, if any. Kept so `stop()`/`reset()` can
-    /// cancel it.
+    /// In-flight compaction run, if any. Kept so `reset()` can cancel it
+    /// (compaction never overlaps a streaming run — manual is gated on
+    /// `!isStreaming` and the auto-trigger fires pre-send — so `stop()`
+    /// has nothing to cancel; a run that outlives its transcript is
+    /// dropped by the `summaryIsValid` check before it can apply).
     private var compactionTask: Task<Void, Never>?
 
     /// Per-session always-loaded + capabilities_load tool kit lives in the
@@ -2702,6 +2705,15 @@ final class ChatSession: ObservableObject {
                     }
                 )
                 guard !Task.isCancelled else {
+                    self.compactionState = .idle
+                    return
+                }
+                // The transcript may have changed while the summarizer ran
+                // (covered turn edited/regenerated/deleted). A summary that
+                // no longer lines up would be dropped at the next send
+                // anyway; discard it now so the budget breakdown never
+                // prices a stale summary row.
+                guard ContextCompactionService.summaryIsValid(summary, for: self.turns) else {
                     self.compactionState = .idle
                     return
                 }
