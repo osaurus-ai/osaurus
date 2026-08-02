@@ -400,6 +400,10 @@ struct ModelProfileRegistryTests {
         )
         #expect(ModelOptionsStore.shared.loadOptions(for: dsv4) == nil)
 
+        ModelOptionsStore.shared.saveOptions(["reasoningEffort": .string("instruct")], for: dsv4)
+        let explicitDSV4Off = ModelOptionsStore.shared.loadOptions(for: dsv4)
+        #expect(explicitDSV4Off?["reasoningEffort"]?.stringValue == "instruct")
+
         ModelOptionsStore.shared.saveOptions(["disableThinking": .bool(true)], for: qwen)
         let explicitQwen = ModelOptionsStore.shared.loadOptions(for: qwen)
         #expect(explicitQwen?["disableThinking"]?.boolValue == true)
@@ -830,7 +834,7 @@ struct ModelProfileRegistryTests {
             let dsv4 = "dsv4-flash-jangtq-k"
             #expect(
                 ModelProfileRegistry.inlineReasoningSuffixLabel(for: dsv4, values: [:])
-                    == "Instruct"
+                    == "Low"
             )
             #expect(
                 ModelProfileRegistry.inlineReasoningSuffixLabel(

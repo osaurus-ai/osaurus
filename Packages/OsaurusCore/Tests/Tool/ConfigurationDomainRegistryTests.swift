@@ -163,6 +163,7 @@ struct ConfigurationDomainRegistryTests {
             "complete",
             "clarify",
             "web_search",
+            "get_current_time",
         ]
         #expect(ToolRegistry.defaultAgentAllowedToolNames == expected)
         // The capability-search gateway is explicitly NOT in the Default

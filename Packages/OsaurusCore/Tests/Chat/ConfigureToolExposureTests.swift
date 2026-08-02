@@ -9,7 +9,8 @@
 //     EXACTLY `defaultAgentAllowedToolNames` — the consolidated configure
 //     surface (`osaurus_status` / `osaurus_list` / `osaurus_describe` reads
 //     + the per-domain `osaurus_*` write tools) plus the three agent-loop
-//     tools. The writes load DIRECTLY (no `capabilities_load` step), and the
+//     tools, native `web_search`, and `get_current_time`. The writes load
+//     DIRECTLY (no `capabilities_load` step), and the
 //     capability-search gateway (`capabilities_discover` /
 //     `capabilities_load`) is NOT present for the Default agent.
 //   * For every other agent, every configure tool (reads + writes) is
@@ -59,9 +60,9 @@ struct ConfigureToolExposureTests {
         let names = Set(tools.map { $0.function.name })
         #expect(names == ToolRegistry.defaultAgentAllowedToolNames)
         // Structural: the allowed set is the configure surface (reads +
-        // writes) plus exactly the three agent-loop tools and native
-        // `web_search`, with no overlap.
-        #expect(names.count == ToolRegistry.configureToolNames.count + 4)
+        // writes) plus exactly the three agent-loop tools, native
+        // `web_search`, and `get_current_time`, with no overlap.
+        #expect(names.count == ToolRegistry.configureToolNames.count + 5)
     }
 
     @Test
