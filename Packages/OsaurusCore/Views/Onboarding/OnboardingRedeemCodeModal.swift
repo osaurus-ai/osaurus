@@ -214,7 +214,7 @@ struct OnboardingRedeemCodeModal: View {
         if redemption.succeeded {
             Text("Your code was accepted.", bundle: .module)
         } else {
-            Text("We’ll take it from there.", bundle: .module)
+            Text("We’ll take it from here.", bundle: .module)
         }
     }
 

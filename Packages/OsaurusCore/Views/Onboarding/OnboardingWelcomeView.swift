@@ -174,8 +174,9 @@ struct WelcomeLegalNotice: View {
 
 // MARK: - Redeem Code Link
 
-/// Compact first-run affordance that sits above the usage checkbox. It uses a
-/// soft accent capsule so it reads as an optional perk, not another required
+/// Compact first-run affordance that sits above the usage checkbox. An
+/// accent-tinted capsule keeps it visible at rest without competing with the
+/// Get Started CTA, so it reads as an optional perk, not another required
 /// onboarding step.
 struct WelcomeRedeemCodeLink: View {
     let action: () -> Void
@@ -189,22 +190,24 @@ struct WelcomeRedeemCodeLink: View {
                 Text("Have a code?", bundle: .module)
                     .font(theme.font(size: 12, weight: .medium))
                     .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
-                Text("Enter it", bundle: .module)
-                    .font(theme.font(size: 12, weight: .semibold))
-                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
+                HStack(spacing: 2) {
+                    Text("Enter it", bundle: .module)
+                        .font(theme.font(size: 12, weight: .semibold))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                }
+                .foregroundColor(theme.accentColor)
             }
-            .padding(.horizontal, 11)
+            .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(
                 Capsule()
-                    .fill(theme.tertiaryBackground.opacity(isHovered ? 0.65 : 0.38))
+                    .fill(theme.accentColor.opacity(isHovered ? 0.15 : 0.08))
             )
             .overlay(
                 Capsule()
                     .strokeBorder(
-                        isHovered
-                            ? theme.accentColor.opacity(0.20)
-                            : theme.primaryBorder.opacity(0.16),
+                        theme.accentColor.opacity(isHovered ? 0.38 : 0.22),
                         lineWidth: 1
                     )
             )
