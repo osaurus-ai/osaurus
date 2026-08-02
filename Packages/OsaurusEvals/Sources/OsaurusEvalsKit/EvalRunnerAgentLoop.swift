@@ -610,6 +610,21 @@ extension EvalRunner {
         if !score.passed {
             appendFailureForensics(transcript, into: &score)
         }
+        if !transcript.stepDiagnostics.isEmpty {
+            let attribution = transcript.stepDiagnostics.map { step in
+                if let tps = step.decodeTokensPerSecond {
+                    return String(
+                        format: "%d=%.4f_tok_s[%@]",
+                        locale: Locale(identifier: "en_US_POSIX"),
+                        step.step,
+                        tps,
+                        step.decodeThroughputAttribution
+                    )
+                }
+                return "\(step.step)=unavailable[\(step.decodeThroughputAttribution)]"
+            }.joined(separator: ",")
+            score.notes.append("decode throughput by step: \(attribution)")
+        }
         score.notes.append(
             "summary: toolCalls=[\(transcript.toolCalls.map(\.name).joined(separator: ","))] "
                 + "iters=\(transcript.iterations) exit=\(transcript.exit)"
@@ -698,6 +713,8 @@ extension EvalRunner {
                         pendingToolName: $0.pendingToolName,
                         toolArgumentCharacters: $0.toolArgumentCharacters,
                         completionTokens: $0.completionTokens,
+                        decodeTokensPerSecond: $0.decodeTokensPerSecond,
+                        decodeThroughputAttribution: $0.decodeThroughputAttribution,
                         requestedEnableThinking: $0.requestedEnableThinking,
                         thinkingState: $0.thinkingState
                     )

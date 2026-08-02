@@ -125,12 +125,16 @@ let package = Package(
         // replaying older stable boundaries before warmup can finish and keeps
         // DSV4 on its measured model-native compiled gate/SwiGLU path instead
         // of the incompatible generic whole-cache compiled trace.
+        // vmlx-swift#199 captures DSV4's complete SWA/CSA/HSA prompt-minus-one
+        // disk seed during prefill so exact replay restores the longest valid
+        // prefix and re-feeds only the final prompt token. Warm restores do not
+        // recapture the seed or retain an unusable exact-prompt duplicate.
         // vmlx-swift#186-#188 correct FalconH1 key
         // projection scaling, prefixed output-head loading, and gated RMSNorm
         // group normalization without changing the shared unload/cache APIs.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "0beef2031e963cfd2ba5ddd362fdd6cb072a809f"
+            revision: "205720c63a166772564ea662c88f791b40581bad"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

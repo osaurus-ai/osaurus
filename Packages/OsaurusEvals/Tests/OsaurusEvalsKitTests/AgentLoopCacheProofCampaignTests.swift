@@ -308,5 +308,80 @@ struct AgentLoopCacheProofCampaignTests {
         let transcript = try JSONDecoder().decode(CacheProofTranscript.self, from: data)
         #expect(transcript.visibleTurns == ["ok"])
         #expect(transcript.turnMetrics == nil)
+        #expect(transcript.requiredResidentSafetensorsBytes == nil)
+        #expect(transcript.requiredResidentSafetensorsAttribution == nil)
+    }
+
+    @Test func applicableResolvedPeakGateFailsWhenPeakExceedsBudget() {
+        let budgetBytes: UInt64 = 90 * 1024 * 1024 * 1024
+        let verdict = CacheProofFootprintGate.peakAgainstResolvedBudget(
+            peakMb: 95 * 1024,
+            resolvedBudgetBytes: budgetBytes,
+            requiredResidentSafetensorsBytes: 80 * 1024 * 1024 * 1024,
+            residentRequirementAttribution: "fixture",
+            planSummary: "fixture-plan"
+        )
+
+        guard case .failed(let note) = verdict else {
+            Issue.record("expected applicable over-budget peak gate to fail")
+            return
+        }
+        #expect(note.contains("EXCEEDS resolved budget"))
+        #expect(note.contains("fixture-plan"))
+    }
+
+    @Test func residentBundleLargerThanBudgetMakesPeakGateNAWhileGrowthPasses() {
+        let budgetBytes: UInt64 = 90 * 1024 * 1024 * 1024
+        let requiredBytes: UInt64 = 100 * 1024 * 1024 * 1024
+        let peak = CacheProofFootprintGate.peakAgainstResolvedBudget(
+            peakMb: 105 * 1024,
+            resolvedBudgetBytes: budgetBytes,
+            requiredResidentSafetensorsBytes: requiredBytes,
+            residentRequirementAttribution: "fixture-resident-policy",
+            planSummary: "fixture-plan"
+        )
+        let growth = CacheProofFootprintGate.growth(
+            samplesMb: [104_913, 100_609],
+            ceilingMb: 1_280
+        )
+
+        guard case .notApplicable(let note) = peak else {
+            Issue.record("expected resident-bundle peak gate to be N/A")
+            return
+        }
+        #expect(note.contains("\(requiredBytes) bytes"))
+        #expect(note.contains("\(budgetBytes) bytes"))
+        #expect(note.contains("measured peak 107520 MB"))
+        #expect(note.contains("growth/leak gate remains independently enforced"))
+        guard case .passed = growth else {
+            Issue.record("expected independent growth gate to pass")
+            return
+        }
+    }
+
+    @Test func residentBundleLargerThanBudgetDoesNotMaskGrowthFailure() {
+        let budgetBytes: UInt64 = 90 * 1024 * 1024 * 1024
+        let requiredBytes: UInt64 = 100 * 1024 * 1024 * 1024
+        let peak = CacheProofFootprintGate.peakAgainstResolvedBudget(
+            peakMb: 105 * 1024,
+            resolvedBudgetBytes: budgetBytes,
+            requiredResidentSafetensorsBytes: requiredBytes,
+            residentRequirementAttribution: "fixture-resident-policy",
+            planSummary: "fixture-plan"
+        )
+        let growth = CacheProofFootprintGate.growth(
+            samplesMb: [100_000, 102_000],
+            ceilingMb: 1_280
+        )
+
+        guard case .notApplicable = peak else {
+            Issue.record("expected resident-bundle peak gate to be N/A")
+            return
+        }
+        guard case .failed(let note) = growth else {
+            Issue.record("expected independent growth gate to fail")
+            return
+        }
+        #expect(note.contains("EXCEEDS 1280 MB gate"))
     }
 }

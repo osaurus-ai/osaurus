@@ -831,6 +831,67 @@ struct SwiftTransformersTokenizerLoaderTests {
         )
     }
 
+    @Test func dsv4MidConversationSystemUsesLatestReminderWithoutBreakingPrefix() async throws {
+        let defaultPath = "/Users/eric/models/DeepSeek-V4-Flash-0731-JANG"
+        let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV4_TEST_MODEL"] ?? defaultPath
+        let modelURL = URL(fileURLWithPath: modelPath)
+        guard
+            FileManager.default.fileExists(
+                atPath: modelURL.appendingPathComponent("tokenizer.json").path
+            )
+        else {
+            return
+        }
+
+        let tokenizer = try await SwiftTransformersTokenizerLoader().load(from: modelURL)
+        guard let controllable = tokenizer as? any GenerationPromptControllableTokenizer else {
+            Issue.record("DSV4 tokenizer must expose no-generation rendering for prefix proof")
+            return
+        }
+
+        let stableHistory: [[String: any Sendable]] = [
+            ["role": "system", "content": "Stable system preface."],
+            ["role": "user", "content": "Turn one."],
+            ["role": "assistant", "content": "Answer one."],
+        ]
+        let extendedHistory = stableHistory + [
+            ["role": "system", "content": "Use the newest project state."],
+            ["role": "user", "content": "Turn two."],
+        ]
+        let context: [String: any Sendable] = ["enable_thinking": false]
+        let stableTokens = try controllable.applyChatTemplate(
+            messages: stableHistory,
+            tools: nil,
+            additionalContext: context,
+            addGenerationPrompt: false
+        )
+        let extendedTokens = try controllable.applyChatTemplate(
+            messages: extendedHistory,
+            tools: nil,
+            additionalContext: context,
+            addGenerationPrompt: true
+        )
+        let decoded = tokenizer.decode(tokenIds: extendedTokens, skipSpecialTokens: false)
+
+        #expect(
+            extendedTokens.prefix(stableTokens.count).elementsEqual(stableTokens),
+            "A tail reminder must extend, not rewrite, the stable DSV4 token prefix. Decoded: \(decoded)"
+        )
+        #expect(
+            decoded.contains(
+                "<\u{FF5C}latest_reminder\u{FF5C}>Use the newest project state."
+                    + "<\u{FF5C}User\u{FF5C}>Turn two."
+            ),
+            "A mid-conversation system reminder must use DSV4's trained latest_reminder role. Decoded: \(decoded)"
+        )
+        #expect(
+            decoded.hasPrefix(
+                "<\u{FF5C}begin\u{2581}of\u{2581}sentence\u{FF5C}>Stable system preface."
+            ),
+            "The leading system preface must remain at token zero. Decoded: \(decoded)"
+        )
+    }
+
     @Test func nemotronLocalTokenizerDoesNotRouteThroughDSV4Template() async throws {
         let defaultPath = "/Users/eric/models/dealign.ai/Nemotron-Omni-Nano-JANGTQ-CRACK"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_NEMOTRON_TEST_MODEL"] ?? defaultPath

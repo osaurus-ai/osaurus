@@ -68,6 +68,10 @@ public struct EvalCaseTranscript: Codable, Sendable {
         public let pendingToolName: String?
         public let toolArgumentCharacters: Int
         public let completionTokens: Int?
+        public let decodeTokensPerSecond: Double?
+        /// Always populated for current artifacts. Historical transcripts that
+        /// predate this field decode as `unavailable_legacy_transcript`.
+        public let decodeThroughputAttribution: String
         public let requestedEnableThinking: Bool?
         public let thinkingState: String?
 
@@ -82,6 +86,8 @@ public struct EvalCaseTranscript: Codable, Sendable {
             pendingToolName: String?,
             toolArgumentCharacters: Int,
             completionTokens: Int? = nil,
+            decodeTokensPerSecond: Double? = nil,
+            decodeThroughputAttribution: String? = nil,
             requestedEnableThinking: Bool?,
             thinkingState: String? = nil
         ) {
@@ -95,8 +101,65 @@ public struct EvalCaseTranscript: Codable, Sendable {
             self.pendingToolName = pendingToolName
             self.toolArgumentCharacters = toolArgumentCharacters
             self.completionTokens = completionTokens
+            self.decodeTokensPerSecond = decodeTokensPerSecond
+            self.decodeThroughputAttribution = decodeThroughputAttribution
+                ?? (decodeTokensPerSecond != nil
+                    ? "measured_vmlx_info"
+                    : "unavailable_no_vmlx_info")
             self.requestedEnableThinking = requestedEnableThinking
             self.thinkingState = thinkingState
+                ?? requestedEnableThinking.map {
+                    $0 ? "explicitEnabled" : "explicitDisabled"
+                } ?? "runtimeDefault"
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case step
+            case stopReason
+            case contentCharacterCount
+            case reasoningCharacterCount
+            case contentPreview
+            case reasoningPreview
+            case sawToolCallProgress
+            case pendingToolName
+            case toolArgumentCharacters
+            case completionTokens
+            case decodeTokensPerSecond
+            case decodeThroughputAttribution
+            case requestedEnableThinking
+            case thinkingState
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            step = try container.decode(Int.self, forKey: .step)
+            stopReason = try container.decodeIfPresent(String.self, forKey: .stopReason)
+            contentCharacterCount = try container.decode(Int.self, forKey: .contentCharacterCount)
+            reasoningCharacterCount = try container.decode(
+                Int.self,
+                forKey: .reasoningCharacterCount
+            )
+            contentPreview = try container.decodeIfPresent(String.self, forKey: .contentPreview)
+            reasoningPreview = try container.decodeIfPresent(String.self, forKey: .reasoningPreview)
+            sawToolCallProgress = try container.decode(Bool.self, forKey: .sawToolCallProgress)
+            pendingToolName = try container.decodeIfPresent(String.self, forKey: .pendingToolName)
+            toolArgumentCharacters = try container.decode(Int.self, forKey: .toolArgumentCharacters)
+            completionTokens = try container.decodeIfPresent(Int.self, forKey: .completionTokens)
+            decodeTokensPerSecond = try container.decodeIfPresent(
+                Double.self,
+                forKey: .decodeTokensPerSecond
+            )
+            decodeThroughputAttribution = try container.decodeIfPresent(
+                String.self,
+                forKey: .decodeThroughputAttribution
+            ) ?? (decodeTokensPerSecond != nil
+                ? "measured_vmlx_info"
+                : "unavailable_legacy_transcript")
+            requestedEnableThinking = try container.decodeIfPresent(
+                Bool.self,
+                forKey: .requestedEnableThinking
+            )
+            thinkingState = try container.decodeIfPresent(String.self, forKey: .thinkingState)
                 ?? requestedEnableThinking.map {
                     $0 ? "explicitEnabled" : "explicitDisabled"
                 } ?? "runtimeDefault"
