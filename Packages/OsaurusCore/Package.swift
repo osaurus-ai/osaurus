@@ -125,7 +125,7 @@ let package = Package(
         // group normalization without changing the shared unload/cache APIs.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "4960398a2c56f6ee37f393ee6be0b14d0a4f9208"
+            revision: "3aeff8ed0652adf65efa8f0d59e4313243bb10db"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

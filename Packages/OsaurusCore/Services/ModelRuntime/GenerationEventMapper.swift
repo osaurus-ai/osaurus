@@ -57,6 +57,7 @@ enum GenerationEventMapper {
             var sawReasoning = false
             var estimatedTextTokens = 0
             var markedFirstModelOutput = false
+            var terminalInfoAt: CFAbsoluteTime?
             // Prefill diagnostics: log only on stage CHANGE so we see the
             // cacheRestore→prefill split (how many tokens were restored from
             // cache vs freshly processed) without a line per progress tick.
@@ -91,6 +92,7 @@ enum GenerationEventMapper {
             for await event in events {
                 if case .info(let info) = event {
                     sawCompletionInfo = true
+                    terminalInfoAt = CFAbsoluteTimeGetCurrent()
                     finalTokenCount = info.generationTokenCount
                     logCompletionInfo(info)
                     continuation.yield(
@@ -102,6 +104,13 @@ enum GenerationEventMapper {
                             promptTokensPerSecond: info.promptTokensPerSecond
                         )
                     )
+                    // `.info` is vmlx's authoritative logical completion.
+                    // Finish the user-facing stream now, but keep this mapper
+                    // task draining `events`. The adapter's producer still owns
+                    // the model lease and Metal gate until synchronous cache
+                    // serialization has fully drained, so a subsequent request
+                    // queues safely instead of racing it.
+                    continuation.finish()
                     continue
                 }
 
@@ -229,12 +238,15 @@ enum GenerationEventMapper {
             // otherwise an estimate (text/reasoning only — tool-call arg tokens
             // are not counted).
             let nowEnd = CFAbsoluteTimeGetCurrent()
+            let logicalEnd = terminalInfoAt ?? nowEnd
             let ttftMs = firstOutputAt.map { Int(($0 - startedAt) * 1000) }
-            let decodeMs = firstOutputAt.map { Int((nowEnd - $0) * 1000) }
+            let decodeMs = firstOutputAt.map { Int((logicalEnd - $0) * 1000) }
             let decodeTps =
                 (firstOutputAt != nil && decodeMs! > 0)
                 ? Double(finalTokenCount) / (Double(decodeMs!) / 1000.0)
                 : 0
+            let logicalTotalMs = Int((logicalEnd - startedAt) * 1000)
+            let cleanupDrainMs = max(0, Int((nowEnd - logicalEnd) * 1000))
             PrefillDebugLog.shared.log(
                 "     STEP-DECODE endedInToolCall=\(sawToolCall) "
                     + "ttftMs=\(ttftMs.map(String.init) ?? "?") decodeMs=\(decodeMs.map(String.init) ?? "?") "
@@ -242,12 +254,15 @@ enum GenerationEventMapper {
                     + "decodeTps=\(String(format: "%.1f", decodeTps)) totalMs=\(durationMs)"
             )
 
+            PrefillDebugLog.shared.log(
+                "     STEP-DRAIN logicalTotalMs=\(logicalTotalMs) cleanupDrainMs=\(cleanupDrainMs)"
+            )
             reportPrefillFinished()
             continuation.finish()
         }
         continuation.onTermination = { @Sendable termination in
-            task.cancel()
             if case .cancelled = termination {
+                task.cancel()
                 // Cancelling the mapper task alone relies on several nested
                 // AsyncStream termination handlers eventually reaching the
                 // runtime producer. The caller owns the direct per-request

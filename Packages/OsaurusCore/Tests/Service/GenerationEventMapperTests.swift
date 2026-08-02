@@ -420,6 +420,53 @@ struct GenerationEventMapperTests {
         )
     }
 
+    @Test("terminal info finishes the surface while upstream cleanup remains open")
+    func terminalInfoFinishesSurfaceBeforeCleanupDrain() async throws {
+        let (events, producer) = AsyncStream<Generation>.makeStream()
+        let cancellationProbe = MapperCancellationProbe()
+        let mapped = GenerationEventMapper.map(
+            events: events,
+            modelName: "slow-cache-store",
+            onConsumerCancellation: { cancellationProbe.markCancellation() }
+        )
+
+        let consumer = Task { () throws -> [ModelRuntimeEvent] in
+            var output: [ModelRuntimeEvent] = []
+            for try await event in mapped { output.append(event) }
+            return output
+        }
+
+        producer.yield(.chunk("ready"))
+        producer.yield(.info(GenerateCompletionInfo(
+            promptTokenCount: 32,
+            generationTokenCount: 1,
+            promptTime: 0.25,
+            generationTime: 0.05,
+            stopReason: .stop
+        )))
+
+        let output = try await withThrowingTaskGroup(
+            of: [ModelRuntimeEvent].self
+        ) { group in
+            group.addTask { try await consumer.value }
+            group.addTask {
+                try await Task.sleep(for: .seconds(2))
+                throw MapperTestTimeout()
+            }
+            let first = try await group.next()!
+            group.cancelAll()
+            return first
+        }
+
+        #expect(output.contains { if case .tokens("ready") = $0 { true } else { false } })
+        #expect(output.contains { if case .completionInfo = $0 { true } else { false } })
+        #expect(!cancellationProbe.sawCancellation)
+
+        // The user-facing consumer has completed even though the producer is
+        // intentionally still open, modelling vmlx's serialized cache drain.
+        producer.finish()
+    }
+
     /// ZAYA1 (Zyphra; `model_type=zaya`) is reasoning-capable. Unlike Ling,
     /// its `.reasoning` stream must stay on the reasoning channel so the UI
     /// can render the Thinking panel when the user opts in.
@@ -503,6 +550,8 @@ struct GenerationEventMapperTests {
         #expect(argsJSON.contains("\"_tool\":\"broken\""))
     }
 }
+
+private struct MapperTestTimeout: Error {}
 
 private final class MapperCancellationProbe: @unchecked Sendable {
     private let lock = NSLock()
