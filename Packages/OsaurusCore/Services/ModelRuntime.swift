@@ -4056,10 +4056,20 @@ public actor ModelRuntime {
         if let diskCacheDir {
             OsaurusPaths.ensureExistsSilent(diskCacheDir)
         }
-        let diskDirUsable = diskCacheDir.map(isDirectoryWritable) ?? false
-        if let diskCacheDir, !diskDirUsable {
-            genLog.warning(
-                "buildCacheCoordinatorConfig: disk cache dir not writable, forcing memory-only: \(diskCacheDir.path, privacy: .public)"
+        let diskProbeFailure = diskCacheDir.flatMap(diskCacheProbeFailure)
+        let diskDirUsable = diskCacheDir != nil && diskProbeFailure == nil
+        if let diskCacheDir, let diskProbeFailure {
+            // `.error`, not `.warning`: this is not a tuning detail. It removes
+            // the only prefix-reuse tier for paged-incompatible models, so the
+            // user sees every tool round cold-prefill the whole transcript.
+            // Name the path AND the reason so it is fixable without a bisect.
+            genLog.error(
+                """
+                buildCacheCoordinatorConfig: disk cache dir NOT WRITABLE — prefix caching \
+                is disabled and every request will re-prefill from scratch. \
+                path=\(diskCacheDir.path, privacy: .public) \
+                reason=\(diskProbeFailure, privacy: .public)
+                """
             )
         }
 
@@ -4459,13 +4469,41 @@ public actor ModelRuntime {
     /// tempfile round-trip rather than `FileManager.isWritableFile(atPath:)`
     /// so symlinks / ACLs / out-of-disk conditions are caught.
     private nonisolated static func isDirectoryWritable(_ url: URL) -> Bool {
+        diskCacheProbeFailure(url) == nil
+    }
+
+    /// Probe the disk-cache directory, returning a human-readable reason when
+    /// it is not writable.
+    ///
+    /// This used to be a bare `Bool` that swallowed the underlying error, and
+    /// a failure here silently forces the whole runtime to memory-only. For a
+    /// paged-incompatible model (DSV4) the disk tier is the ONLY prefix-reuse
+    /// mechanism, so that silent downgrade removes prefix caching entirely and
+    /// presents as an agent loop that re-prefills the full transcript every
+    /// tool round — with nothing in the logs naming the cause.
+    ///
+    /// Observed live 2026-08-02: `~/.osaurus/cache` had been created
+    /// root-owned, every probe write failed with EACCES, and the trace showed
+    /// zero stores and zero hits across an entire session. Reporting the errno
+    /// and the directory's owner turns that from an invisible performance
+    /// cliff into a one-line diagnosis.
+    nonisolated static func diskCacheProbeFailure(_ url: URL) -> String? {
         let probe = url.appendingPathComponent(".osaurus_write_probe_\(UUID().uuidString)")
         do {
             try Data().write(to: probe)
             try? FileManager.default.removeItem(at: probe)
-            return true
+            return nil
         } catch {
-            return false
+            var detail = (error as NSError).localizedDescription
+            if let attributes = try? FileManager.default
+                .attributesOfItem(atPath: url.path),
+                let owner = attributes[.ownerAccountName] as? String
+            {
+                let permissions = (attributes[.posixPermissions] as? NSNumber)
+                    .map { String($0.intValue, radix: 8) } ?? "?"
+                detail += " (owner=\(owner) mode=\(permissions), current user=\(NSUserName()))"
+            }
+            return detail
         }
     }
 
