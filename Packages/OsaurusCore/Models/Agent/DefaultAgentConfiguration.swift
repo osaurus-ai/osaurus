@@ -19,10 +19,10 @@
 import Foundation
 
 /// Settings for the built-in Default agent. The Default agent is
-/// user-editable via Settings → Chat and is
-/// never mutated through chat tools — `osaurus_*` write tools refuse
-/// to target it. See `AgentManager.effective*` for the routing of
-/// these values into the runtime.
+/// user-editable via Settings → Chat and via the `osaurus_settings`
+/// configure tool (scope `default_agent`); the `osaurus_agent` tool
+/// still refuses to target it. See `AgentManager.effective*` for the
+/// routing of these values into the runtime.
 public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
     /// System prompt prepended to every turn with the Default agent.
     /// The configure-agent prompt addendum (rendered by

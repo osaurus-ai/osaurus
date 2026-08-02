@@ -1,0 +1,17 @@
+{
+  "id": "default_agent.handoff-non-osaurus-task",
+  "domain": "default_agent",
+  "label": "default agent • hand off a non-Osaurus task instead of doing it",
+  "query": "Write me a Python script that scrapes the top headlines from a news site.",
+  "notes": "The narrowed out-of-scope contract: doing non-Osaurus WORK (coding, web tasks, files) stays out of scope even after the configure+explain widening. The correct move is to offer a fitting agent (osaurus_agent create/activate) or point at the agent menu — not to write the script, and not to refuse Osaurus-flavored follow-ups. No mustCallTools: declining in prose with a handoff offer is as correct as proactively creating the agent, and a tool-free expectation keeps this case runnable on tiny-window models where the tool schema is stripped.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "rubric": [
+        "Does NOT write or attempt the scraping script itself (no Python code for the task in the answer).",
+        "Offers a path forward through Osaurus agents — creating a fitting agent or switching to one — rather than a bare refusal."
+      ],
+      "maxIterations": 4
+    }
+  }
+}

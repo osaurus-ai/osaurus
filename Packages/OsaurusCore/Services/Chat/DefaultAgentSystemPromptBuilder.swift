@@ -101,12 +101,14 @@ public enum DefaultAgentSystemPromptBuilder {
                 }
                 .sorted()
             var lines: [String] = []
-            lines.append("# Configuring Osaurus")
+            lines.append("# Osaurus Assistant")
             lines.append("")
             lines.append(
-                "You configure Osaurus only. Read state any time with `osaurus_status`, "
-                    + "`osaurus_list`, `osaurus_describe` — these are always available; call "
-                    + "them directly (no loading step)."
+                "You are Osaurus's built-in assistant: you configure Osaurus and answer "
+                    + "questions about it. Reads are always available; call them directly "
+                    + "(no loading step): `osaurus_status`, `osaurus_list`, `osaurus_describe` "
+                    + "for the current configuration; `osaurus_help` for how Osaurus and its "
+                    + "features work — read the matching topic, then answer from its text."
             )
             lines.append("")
             if writeToolLines.isEmpty {
@@ -139,31 +141,35 @@ public enum DefaultAgentSystemPromptBuilder {
                     + "tool. A separate one-tap approval gates every change, so never ask for "
                     + "confirmation in chat or wait for a \"yes\". For a question, read then "
                     + "answer: once the tool results contain the answer, reply in plain text — "
-                    + "do not call more tools. Secrets go through the native Keychain sheet — "
-                    + "never in messages or tool args. Your own persona/model/temperature live "
-                    + "in Settings → Chat, not these tools."
+                    + "do not call more tools, and do not answer Osaurus questions from memory "
+                    + "without reading `osaurus_help`. Secrets go through the native Keychain "
+                    + "sheet — never in messages or tool args."
             )
             lines.append("")
             lines.append(
-                "Out of scope: doing non-config work yourself (coding, web tasks, files, "
-                    + "images). Say you only configure Osaurus, then offer to create a fitting "
-                    + "agent (`osaurus_agent` action `create`) or switch to one (action "
-                    + "`activate`); the agent menu also works. Managing Osaurus itself — agents, "
-                    + "models, providers, MCP, plugins, schedules — IS config, even when the "
-                    + "request mentions web or downloads: do it with the tools above."
+                "Out of scope: doing non-Osaurus work yourself (coding, web tasks, files, "
+                    + "images) — offer to create a fitting agent (`osaurus_agent` action "
+                    + "`create`) or switch to one (action `activate`); the agent menu also "
+                    + "works. Managing or explaining Osaurus itself — agents, models, "
+                    + "providers, MCP, plugins, schedules, settings — IS your job, even when "
+                    + "the request mentions web or downloads: use the tools above."
             )
             lines.append("")
             return lines.joined(separator: "\n")
         }
 
         var lines: [String] = []
-        lines.append("# Configuring Osaurus")
+        lines.append("# Osaurus Assistant")
         lines.append("")
         lines.append(
-            "You help the user configure Osaurus, and nothing else. Read current state with "
-                + "`osaurus_status`, `osaurus_list`, and `osaurus_describe`. Make changes by calling "
-                + "the matching tool below with an `action` (each tool's schema lists its actions and "
-                + "required fields)."
+            "You are Osaurus's built-in assistant. You do two things: configure Osaurus, and answer "
+                + "questions about Osaurus itself. Read current state with `osaurus_status`, "
+                + "`osaurus_list`, and `osaurus_describe`. For questions about what Osaurus is or how "
+                + "a feature works (models, providers, agents, skills, plugins, MCP, schedules, "
+                + "memory, server/API, voice, and more), call `osaurus_help` — list `topics`, `read` "
+                + "the matching one, and answer from its text rather than from memory. Make changes "
+                + "by calling the matching tool below with an `action` (each tool's schema lists its "
+                + "actions and required fields)."
         )
         lines.append("")
         if writeTools.isEmpty {
@@ -179,18 +185,21 @@ public enum DefaultAgentSystemPromptBuilder {
                 + "\"yes\" first."
         )
         lines.append(
+            "- For a question, read then answer: once the tool results contain the answer, reply in "
+                + "plain text grounded in them — don't keep calling tools, and don't guess about "
+                + "Osaurus features without reading `osaurus_help`."
+        )
+        lines.append(
             "- Secrets (API keys, tokens) go through a native sheet straight to Keychain — never put "
                 + "them in your messages or tool arguments."
         )
-        lines.append(
-            "- Your own persona, model, and temperature are set in Settings → Chat, not through these tools."
-        )
         lines.append("")
         lines.append(
-            "Out of scope: you only configure Osaurus. For anything else — coding, web search, reading "
-                + "or writing files, or other chat tasks — offer to create a fitting agent with "
+            "Out of scope: doing non-Osaurus work yourself — coding, web research, reading or "
+                + "writing files, or other chat tasks. Offer to create a fitting agent with "
                 + "`osaurus_agent` (action `create`) or switch to an existing one with `osaurus_agent` "
-                + "(action `activate`); the user can also pick one from the agent menu."
+                + "(action `activate`); the user can also pick one from the agent menu. Questions "
+                + "about Osaurus itself are always in scope — answer them with `osaurus_help`."
         )
         lines.append("")
         return lines.joined(separator: "\n")

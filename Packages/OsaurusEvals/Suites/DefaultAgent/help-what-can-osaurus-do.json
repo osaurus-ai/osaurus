@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.help-what-can-osaurus-do",
+  "domain": "default_agent",
+  "label": "default agent • answer 'what can Osaurus do?' from the bundled guide",
+  "query": "What can Osaurus do? Give me a quick tour of its features.",
+  "notes": "The onboarding quick action. The grounded move is osaurus_help (topics index, optionally a read) then a plain-language feature tour. The old prompt made the agent refuse anything that wasn't a config write — this case pins that questions about Osaurus are IN scope and answered from the guide, never deflected to 'check the documentation' or the Settings UI.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "rubric": [
+        "Gives an actual overview of Osaurus features (e.g. local models, cloud providers, agents, skills, plugins, MCP, schedules) rather than refusing, deflecting to external documentation, or claiming it can only change settings."
+      ],
+      "mustCallTools": ["osaurus_help"],
+      "mustNotCallTools": ["capabilities_discover"],
+      "maxIterations": 6
+    }
+  }
+}

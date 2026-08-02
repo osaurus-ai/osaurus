@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.settings-voice-tts",
+  "domain": "default_agent",
+  "label": "default agent • enable text-to-speech via the voice scope",
+  "query": "Turn on text-to-speech so Osaurus can read answers aloud.",
+  "notes": "Gap-closure settings scope: 'voice' joins the scope enum. Pins action 'set', scope 'voice', with tts_enabled in the settings object (substring probe; booleans render true/false).",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_settings"],
+      "mustNotCallTools": ["capabilities_discover"],
+      "argsMustContain": [
+        { "tool": "osaurus_settings", "args": { "action": "set", "scope": "voice", "settings": "tts_enabled" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

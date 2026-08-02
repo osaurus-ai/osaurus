@@ -275,6 +275,9 @@
       "default_agent.agent-delete",
       "default_agent.agent-update",
       "default_agent.error-recovery-missing-id",
+      "default_agent.handoff-non-osaurus-task",
+      "default_agent.help-explain-skills",
+      "default_agent.help-what-can-osaurus-do",
       "default_agent.mcp-add",
       "default_agent.mcp-disable",
       "default_agent.mcp-remove",
@@ -297,7 +300,11 @@
       "default_agent.schedule-create-weekly",
       "default_agent.schedule-delete",
       "default_agent.schedule-enable",
-      "default_agent.schedule-update"
+      "default_agent.schedule-update",
+      "default_agent.settings-app-dark-mode",
+      "default_agent.settings-default-agent-model",
+      "default_agent.settings-memory-disable",
+      "default_agent.settings-server-port"
     ],
     "HTTPAPI" : [
       "http_api.cache-stats-contract",

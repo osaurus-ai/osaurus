@@ -41,10 +41,16 @@ public struct AgentQuickAction: Codable, Identifiable, Sendable, Equatable {
     }
 
     /// Setup-oriented quick actions for the built-in Osaurus configuration
-    /// agent (`Agent.defaultId`). These nudge the user toward the configure
-    /// flow that's unique to this agent instead of the generic chat prompts.
+    /// agent (`Agent.defaultId`). These nudge the user toward the two flows
+    /// unique to this agent — configuring Osaurus and asking how it works —
+    /// instead of the generic chat prompts.
     public static var defaultConfigurationQuickActions: [AgentQuickAction] {
         [
+            AgentQuickAction(
+                icon: "questionmark.circle",
+                text: L("What can Osaurus do?"),
+                prompt: L("What can Osaurus do? Give me a quick tour of its features.")
+            ),
             AgentQuickAction(
                 icon: "checklist",
                 text: L("What's configured?"),
@@ -61,9 +67,14 @@ public struct AgentQuickAction: Codable, Identifiable, Sendable, Equatable {
                 prompt: L("Help me add a cloud AI provider.")
             ),
             AgentQuickAction(
-                icon: "puzzlepiece.extension",
-                text: L("Install a plugin"),
-                prompt: L("Help me install a plugin.")
+                icon: "slider.horizontal.3",
+                text: L("Change a setting"),
+                prompt: L("I want to change an Osaurus setting.")
+            ),
+            AgentQuickAction(
+                icon: "person.2",
+                text: L("Create an agent"),
+                prompt: L("Help me create a new agent.")
             ),
         ]
     }
@@ -280,7 +291,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         Agent(
             id: defaultId,
             name: "Osaurus",
-            description: L("Configuration helper"),
+            description: L("Sets up Osaurus and answers questions about the app"),
             systemPrompt: "",
             themeId: nil,
             defaultModel: nil,

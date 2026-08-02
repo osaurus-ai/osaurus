@@ -1,0 +1,21 @@
+{
+  "id": "default_agent.help-explain-watchers",
+  "domain": "default_agent",
+  "label": "default agent • explain watchers from the new guide topic",
+  "query": "What are watchers in Osaurus and when should I use one instead of a schedule?",
+  "notes": "Gap-closure guide topic: watchers now has a dedicated topic. Feature-explanation path — osaurus_help read of the watchers topic, then an answer grounded in that text (event-driven folder triggers vs timed schedules).",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "rubric": [
+        "Explains that watchers monitor a folder and run an agent when its contents change (event-driven), contrasted with schedules which run on a timed cadence, grounded in the guide content rather than invented details or a refusal."
+      ],
+      "mustCallTools": ["osaurus_help"],
+      "mustNotCallTools": ["capabilities_discover", "skill_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_help", "args": { "action": "read", "topic": "watcher" } }
+      ],
+      "maxIterations": 6
+    }
+  }
+}
