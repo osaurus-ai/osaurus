@@ -24,6 +24,100 @@ import Foundation
 @preconcurrency import MLXLMCommon
 import OsaurusCore
 
+enum CacheProofFootprintGate {
+    enum Verdict: Equatable {
+        case passed(String)
+        case failed(String)
+        case notApplicable(String)
+    }
+
+    static func growth(
+        samplesMb: [Double],
+        ceilingMb: Double
+    ) -> Verdict {
+        guard let first = samplesMb.first,
+            let last = samplesMb.last,
+            samplesMb.count >= 2
+        else {
+            return .failed(
+                "maxFootprintGrowthMb set but per-turn footprint samples unavailable "
+                    + "(\(samplesMb.count) sample(s))"
+            )
+        }
+        let growth = last - first
+        if growth <= ceilingMb {
+            return .passed(
+                String(
+                    format: "footprint growth %.0f MB within %.0f MB across %d turns",
+                    growth, ceilingMb, samplesMb.count
+                )
+            )
+        }
+        return .failed(
+            String(
+                format: "footprint grew %.0f MB across %d turns — EXCEEDS %.0f MB gate",
+                growth, samplesMb.count, ceilingMb
+            )
+        )
+    }
+
+    static func peakAgainstResolvedBudget(
+        peakMb: Double?,
+        resolvedBudgetBytes: UInt64?,
+        requiredResidentSafetensorsBytes: UInt64?,
+        residentRequirementAttribution: String?,
+        planSummary: String
+    ) -> Verdict {
+        guard let budgetBytes = resolvedBudgetBytes else {
+            return .notApplicable(
+                "gatePeakFootprintToResolvedBudget — no budget resolved "
+                    + "(unlimited/diagnostic mode); gate not applied"
+            )
+        }
+        guard let peakMb else {
+            return .failed(
+                "gatePeakFootprintToResolvedBudget set but ResourceSampler produced no reading"
+            )
+        }
+
+        let bytesPerMb = Double(1024 * 1024)
+        let budgetMb = Double(budgetBytes) / bytesPerMb
+        if let requiredBytes = requiredResidentSafetensorsBytes,
+            requiredBytes > budgetBytes
+        {
+            let requiredMb = Double(requiredBytes) / bytesPerMb
+            return .notApplicable(
+                String(
+                    format:
+                        "absolute peak footprint gate N/A: required resident safetensors %llu bytes (%.0f MB) exceed nominal resolved budget %llu bytes (%.0f MB); measured peak %.0f MB; source=%@; plan=%@; nominal cap remains reported and the growth/leak gate remains independently enforced",
+                    requiredBytes,
+                    requiredMb,
+                    budgetBytes,
+                    budgetMb,
+                    peakMb,
+                    residentRequirementAttribution ?? "unattributed",
+                    planSummary
+                )
+            )
+        }
+
+        if peakMb <= budgetMb {
+            return .passed(
+                String(
+                    format: "peak footprint %.0f MB within resolved budget %.0f MB",
+                    peakMb, budgetMb
+                )
+            )
+        }
+        return .failed(
+            String(
+                format: "peak footprint %.0f MB EXCEEDS resolved budget %.0f MB (plan: %@)",
+                peakMb, budgetMb, planSummary
+            )
+        )
+    }
+}
+
 extension EvalRunner {
 
     static func runCacheProofCase(
@@ -154,6 +248,17 @@ extension EvalRunner {
             } else {
                 passed = false
                 notes.append("FAIL: \(fail)")
+            }
+        }
+        func applyFootprintVerdict(_ verdict: CacheProofFootprintGate.Verdict) {
+            switch verdict {
+            case .passed(let note):
+                notes.append("ok: \(note)")
+            case .failed(let note):
+                passed = false
+                notes.append("FAIL: \(note)")
+            case .notApplicable(let note):
+                notes.append("N/A: \(note)")
             }
         }
 
@@ -435,30 +540,12 @@ extension EvalRunner {
             notes.append("footprint after each turn (MB): \(series)")
         }
         if let growthCeiling = exp.maxFootprintGrowthMb {
-            if let first = transcript.footprintAfterTurnMb.first,
-                let last = transcript.footprintAfterTurnMb.last,
-                transcript.footprintAfterTurnMb.count >= 2
-            {
-                let growth = last - first
-                check(
-                    growth <= growthCeiling,
-                    pass: String(
-                        format: "footprint growth %.0f MB within %.0f MB across %d turns",
-                        growth, growthCeiling, transcript.footprintAfterTurnMb.count
-                    ),
-                    fail: String(
-                        format: "footprint grew %.0f MB across %d turns — EXCEEDS %.0f MB gate",
-                        growth, transcript.footprintAfterTurnMb.count, growthCeiling
-                    )
+            applyFootprintVerdict(
+                CacheProofFootprintGate.growth(
+                    samplesMb: transcript.footprintAfterTurnMb,
+                    ceilingMb: growthCeiling
                 )
-            } else {
-                check(
-                    false,
-                    pass: "",
-                    fail: "maxFootprintGrowthMb set but per-turn footprint samples unavailable "
-                        + "(\(transcript.footprintAfterTurnMb.count) sample(s))"
-                )
-            }
+            )
         }
 
         // Production-resolved budget gate: the peak footprint must stay
@@ -470,35 +557,17 @@ extension EvalRunner {
             let plan = ServerRuntimeSettingsStore.resolvedMemorySafetyPlan(
                 for: ServerRuntimeSettingsStore.snapshot()
             )
-            if let budgetBytes = plan.resolvedLoadBudgetBytes {
-                let budgetMb = Double(budgetBytes) / (1024 * 1024)
-                if let peak = sample.peakPhysFootprintMb {
-                    check(
-                        peak <= budgetMb,
-                        pass: String(
-                            format: "peak footprint %.0f MB within resolved budget %.0f MB",
-                            peak, budgetMb
-                        ),
-                        fail: String(
-                            format: "peak footprint %.0f MB EXCEEDS resolved budget %.0f MB "
-                                + "(plan: %@)",
-                            peak, budgetMb, plan.displaySummary
-                        )
-                    )
-                } else {
-                    check(
-                        false,
-                        pass: "",
-                        fail: "gatePeakFootprintToResolvedBudget set but ResourceSampler "
-                            + "produced no reading"
-                    )
-                }
-            } else {
-                notes.append(
-                    "note: gatePeakFootprintToResolvedBudget — no budget resolved "
-                        + "(unlimited/diagnostic mode); gate not applied"
+            applyFootprintVerdict(
+                CacheProofFootprintGate.peakAgainstResolvedBudget(
+                    peakMb: sample.peakPhysFootprintMb,
+                    resolvedBudgetBytes: plan.resolvedLoadBudgetBytes,
+                    requiredResidentSafetensorsBytes:
+                        transcript.requiredResidentSafetensorsBytes,
+                    residentRequirementAttribution:
+                        transcript.requiredResidentSafetensorsAttribution,
+                    planSummary: plan.displaySummary
                 )
-            }
+            )
         }
 
         if let ceiling = exp.maxPeakPhysFootprintMb {

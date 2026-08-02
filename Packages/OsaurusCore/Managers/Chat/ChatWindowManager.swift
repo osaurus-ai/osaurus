@@ -380,6 +380,14 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         return windows.values.first { $0.sessionId == sessionId }
     }
 
+    /// The live `ChatSession` currently showing the given persisted session
+    /// id in any open window. Used by `SessionActivityMonitor.stop` to route
+    /// a sidebar Stop to the owning window's run when it isn't a detached
+    /// registry task.
+    func session(forSessionId sessionId: UUID) -> ChatSession? {
+        windowStates.values.first { $0.session.sessionId == sessionId }?.session
+    }
+
     /// Check if any windows are visible
     public var hasVisibleWindows: Bool {
         nsWindows.values.contains { $0.isVisible }

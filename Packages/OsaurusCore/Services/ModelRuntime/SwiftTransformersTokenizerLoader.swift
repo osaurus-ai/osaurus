@@ -876,6 +876,28 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         }
     }
 
+    /// DSV4's native transcript has one unmarked system preface at the start
+    /// of the prompt. A later reminder has its own trained role token. Keep a
+    /// contiguous leading system preface intact, but never render a caller's
+    /// mid-conversation `system` message as bare, unmarked text between turns:
+    /// that both violates the native transcript shape and tempts adapters to
+    /// hoist changing bytes into the cached prefix.
+    private static func normalizeDeepseekV4ReminderRoles(
+        _ messages: [MLXLMCommon.DeepseekV4ChatEncoder.Message]
+    ) -> [MLXLMCommon.DeepseekV4ChatEncoder.Message] {
+        var reachedConversationBody = false
+        return messages.map { message in
+            if message.role != .system {
+                reachedConversationBody = true
+                return message
+            }
+            guard reachedConversationBody else { return message }
+            var reminder = message
+            reminder.role = .latestReminder
+            return reminder
+        }
+    }
+
     private static func deepseekV4String(_ value: Any?) -> String? {
         guard let value else { return nil }
         if let string = value as? String { return string }
@@ -994,6 +1016,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 task: Self.deepseekV4String(raw["task"])
             )
         }
+        dsv4Messages = Self.normalizeDeepseekV4ReminderRoles(dsv4Messages)
         let toolChoiceRequired =
             Self.deepseekV4String(additionalContext?["tool_choice"]) == "required"
         let toolChoiceName = Self.deepseekV4String(additionalContext?["tool_choice_name"])

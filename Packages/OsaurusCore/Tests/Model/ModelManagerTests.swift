@@ -10,6 +10,23 @@ import Testing
 
 @testable import OsaurusCore
 
+private final class LocalModelsScanNotificationProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = 0
+
+    func record() {
+        lock.lock()
+        storage += 1
+        lock.unlock()
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+}
+
 @Suite(.serialized)
 struct ModelManagerTests {
 
@@ -461,7 +478,16 @@ struct ModelManagerTests {
                     )
                 ]
             }
+            let completionNotifications = LocalModelsScanNotificationProbe()
+            let completionObserver = NotificationCenter.default.addObserver(
+                forName: .localModelsChanged,
+                object: nil,
+                queue: nil
+            ) { _ in
+                completionNotifications.record()
+            }
             defer {
+                NotificationCenter.default.removeObserver(completionObserver)
                 ModelManager.scanLocalModelsOverrideForTests = previousOverride
                 ModelManager.localModelsScanWaitLimitOverrideForTests = previousWait
                 ExternalModelLocator.testRootsOverride = previousExternalOverride
@@ -483,6 +509,7 @@ struct ModelManagerTests {
                 try await Task.sleep(nanoseconds: 25_000_000)
             }
             #expect(second.map(\.id) == ["gemma-4-E2B-it-qat-MXFP4"])
+            #expect(completionNotifications.count == 1)
         }
     }
 

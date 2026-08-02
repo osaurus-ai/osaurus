@@ -34,6 +34,9 @@ struct ChatSessionSidebar: View {
     let onSetArchived: (UUID, Bool) -> Void
     let onSetPinned: (UUID, Bool) -> Void
     let onExport: (ChatSessionData, ExportFormat) -> Void
+    /// Stop the live run driving the given session id. Rows only offer the
+    /// control while `SessionActivityMonitor` reports the session active.
+    var onStop: ((UUID) -> Void)? = nil
     /// Optional callback for opening a session in a new window
     var onOpenInNewWindow: ((ChatSessionData) -> Void)? = nil
 
@@ -46,6 +49,10 @@ struct ChatSessionSidebar: View {
     @Environment(\.theme) private var theme
     @Environment(\.themedAlertScope) private var alertScope
     @ObservedObject private var agentManager = AgentManager.shared
+    /// Live "session id → working / waiting for input" map. Drives the
+    /// animated avatar ring, the status metadata line, the per-row Stop
+    /// control, and floating active rows to the top of the list.
+    @ObservedObject private var activityMonitor = SessionActivityMonitor.shared
     /// Freshly imported session ids; their rows glow briefly and the list
     /// scrolls the first one into view so the user can see where the
     /// imports landed (they sort by original date, not to the top).
@@ -119,7 +126,7 @@ struct ChatSessionSidebar: View {
             byFilter = sessions.filter { $0.archived }
         }
         guard !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty else {
-            return pinnedFirst(byFilter)
+            return orderedForDisplay(byFilter)
         }
         let matched = byFilter.filter { session in
             if SearchService.matches(query: searchQuery, in: session.title) { return true }
@@ -136,16 +143,20 @@ struct ChatSessionSidebar: View {
                 SearchService.matches(query: searchQuery, in: cap.label)
             }
         }
-        return pinnedFirst(matched)
+        return orderedForDisplay(matched)
     }
 
-    /// Stable partition floating pinned sessions to the top while preserving
-    /// the incoming (recency-descending) order within each group. The
-    /// `.archived` lens keeps its own order — pins are a default-view concern
-    /// — but partitioning there too is harmless and keeps the rule uniform.
-    private func pinnedFirst(_ list: [ChatSessionData]) -> [ChatSessionData] {
-        guard list.contains(where: { $0.pinned }) else { return list }
-        return list.filter { $0.pinned } + list.filter { !$0.pinned }
+    /// Stable partition floating active (running / waiting-for-input)
+    /// sessions to the very top, then pinned sessions, while preserving the
+    /// incoming (recency-descending) order within each group. Display-only:
+    /// `updatedAt` and persistence are untouched. The `.archived` lens keeps
+    /// its own order — pins/activity are a default-view concern — but
+    /// partitioning there too is harmless and keeps the rule uniform.
+    private func orderedForDisplay(_ list: [ChatSessionData]) -> [ChatSessionData] {
+        SessionActivityOrdering.ordered(
+            list,
+            activeIds: Set(activityMonitor.statuses.keys)
+        )
     }
 
     /// Debounced full-text lookup for the search query. The in-memory
@@ -666,6 +677,7 @@ struct ChatSessionSidebar: View {
                             isSelected: session.id == currentSessionId,
                             isMultiSelected: selectedIds.contains(session.id),
                             isImportHighlighted: importHighlight.sessionIds.contains(session.id),
+                            activityStatus: activityMonitor.statuses[session.id],
                             isEditing: editingSessionId == session.id,
                             onSelect: {
                                 handleTap(session)
@@ -703,6 +715,9 @@ struct ChatSessionSidebar: View {
                             onExport: { format in
                                 onExport(session, format)
                             },
+                            onStop: onStop.map { stop in
+                                { stop(session.id) }
+                            },
                             onOpenInNewWindow: onOpenInNewWindow != nil
                                 ? {
                                     onOpenInNewWindow?(session)
@@ -713,6 +728,9 @@ struct ChatSessionSidebar: View {
                 }
                 .padding(.vertical, 8)
                 .padding(.horizontal, 8)
+                // Rows glide (rather than teleport) when a run starts/ends
+                // and the active-first partition reorders the list.
+                .animation(theme.springAnimation(responseMultiplier: 0.9), value: filteredSessions.map(\.id))
             }
             .scrollIndicators(.hidden)
             .onChange(of: importHighlight.sessionIds) { _, ids in
@@ -740,6 +758,10 @@ private struct SessionRow: View {
     /// True while this session is in the freshly-imported flash window;
     /// renders a short accent glow so the row is findable in the list.
     var isImportHighlighted: Bool = false
+    /// Live activity for this row's session: `.working` animates the avatar
+    /// ring, `.waitingForInput` renders the warning ring + badge, and either
+    /// state swaps the metadata line for a status line and surfaces Stop.
+    var activityStatus: SessionActivityMonitor.Status? = nil
     let isEditing: Bool
     let onSelect: () -> Void
     let onStartRename: () -> Void
@@ -752,6 +774,8 @@ private struct SessionRow: View {
     let onToggleArchive: () -> Void
     let onTogglePin: () -> Void
     let onExport: (ChatSessionSidebar.ExportFormat) -> Void
+    /// Stop this row's live run. Only rendered while `activityStatus` is set.
+    var onStop: (() -> Void)? = nil
     /// Optional callback for opening in a new window
     var onOpenInNewWindow: (() -> Void)? = nil
 
@@ -798,12 +822,23 @@ private struct SessionRow: View {
                         .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
 
-                // Agent indicator
-                if isDefaultAgent {
-                    defaultAgentIndicator
-                } else if let agent = agent {
-                    agentIndicatorView(agent)
+                // Agent indicator, ringed while the session's run is live.
+                Group {
+                    if isDefaultAgent {
+                        defaultAgentIndicator
+                    } else if let agent = agent {
+                        agentIndicatorView(agent)
+                    }
                 }
+                .overlay(
+                    Group {
+                        if let activityStatus {
+                            SessionActivityRing(status: activityStatus)
+                        }
+                    }
+                    .allowsHitTesting(false)
+                )
+                .animation(theme.springAnimation(responseMultiplier: 0.8), value: activityStatus)
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 5) {
@@ -828,12 +863,31 @@ private struct SessionRow: View {
                         }
                     }
 
-                    Text(metadataLine)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.secondaryText.opacity(0.85))
-                        .lineLimit(1)
+                    // Live status replaces the relative timestamp while the
+                    // session's run is active so the state is glanceable.
+                    Group {
+                        switch activityStatus {
+                        case .working:
+                            Text("Running…", bundle: .module)
+                                .foregroundColor(theme.accentColor)
+                        case .waitingForInput:
+                            Text("Needs your input", bundle: .module)
+                                .foregroundColor(theme.warningColor)
+                        case nil:
+                            Text(metadataLine)
+                                .foregroundColor(theme.secondaryText.opacity(0.85))
+                        }
+                    }
+                    .font(.system(size: 10))
+                    .lineLimit(1)
                 }
                 Spacer()
+
+                // Persistent (not hover-gated) Stop for the live run, so an
+                // active task can be halted straight from the sidebar.
+                if activityStatus != nil, let onStop {
+                    SessionStopButton(action: onStop)
+                }
 
                 if isHovered || showActionsPopover {
                     SidebarRowActionButton(
@@ -876,6 +930,18 @@ private struct SessionRow: View {
             }
             .animation(theme.springAnimation(responseMultiplier: 0.8), value: isSelected)
             .contextMenu {
+                if activityStatus != nil, let onStop {
+                    Button {
+                        onStop()
+                    } label: {
+                        Label {
+                            Text("Stop", bundle: .module)
+                        } icon: {
+                            Image(systemName: "stop.circle")
+                        }
+                    }
+                    Divider()
+                }
                 if let openInNewWindow = onOpenInNewWindow {
                     Button {
                         openInNewWindow()
@@ -1264,6 +1330,106 @@ private struct ActionsPopoverButton: View {
     private var hoverFill: Color {
         if isDestructive { return Color.red.opacity(0.12) }
         return theme.accentColor.opacity(0.12)
+    }
+}
+
+// MARK: - Session Activity Ring
+
+/// Ring drawn around a row's 24pt avatar while its run is live. `.working`
+/// continuously rotates an angular-gradient stroke (a steady ring under
+/// Reduce Motion); `.waitingForInput` renders a steady warning ring with a
+/// question-mark badge, matching `BackgroundTaskStatus.waitingForInput`'s
+/// iconography.
+private struct SessionActivityRing: View {
+    let status: SessionActivityMonitor.Status
+
+    @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isSpinning = false
+
+    private static let diameter: CGFloat = 30
+    private static let lineWidth: CGFloat = 2
+
+    var body: some View {
+        switch status {
+        case .working:
+            if reduceMotion {
+                ring(theme.accentColor.opacity(0.85))
+            } else {
+                Circle()
+                    .stroke(
+                        AngularGradient(
+                            gradient: Gradient(colors: [
+                                theme.accentColor.opacity(0.05),
+                                theme.accentColor,
+                            ]),
+                            center: .center
+                        ),
+                        style: StrokeStyle(lineWidth: Self.lineWidth, lineCap: .round)
+                    )
+                    .frame(width: Self.diameter, height: Self.diameter)
+                    .rotationEffect(.degrees(isSpinning ? 360 : 0))
+                    .animation(
+                        .linear(duration: 1.1).repeatForever(autoreverses: false),
+                        value: isSpinning
+                    )
+                    .onAppear { isSpinning = true }
+                    .onDisappear { isSpinning = false }
+            }
+        case .waitingForInput:
+            ring(theme.warningColor.opacity(0.9))
+                .overlay(alignment: .bottomTrailing) {
+                    ZStack {
+                        // Mask the ring/backdrop behind the badge glyph so it
+                        // stays legible at this size.
+                        Circle()
+                            .fill(theme.primaryBackground)
+                            .frame(width: 11, height: 11)
+                        Image(systemName: "questionmark.circle.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(theme.warningColor)
+                    }
+                    .offset(x: 2, y: 2)
+                }
+        }
+    }
+
+    private func ring(_ color: Color) -> some View {
+        Circle()
+            .stroke(color, lineWidth: Self.lineWidth)
+            .frame(width: Self.diameter, height: Self.diameter)
+    }
+}
+
+// MARK: - Session Stop Button
+
+/// Persistent (non-hover-gated) stop control for a row whose run is live.
+/// Styled like `SidebarRowActionButton` but tinted with the error color on
+/// hover to telegraph that it halts execution.
+private struct SessionStopButton: View {
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "stop.circle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(isHovered ? theme.errorColor : theme.secondaryText)
+                .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
+                .background(
+                    RoundedRectangle(
+                        cornerRadius: SidebarStyle.actionButtonCornerRadius, style: .continuous
+                    )
+                    .fill(isHovered ? theme.errorColor.opacity(0.12) : .clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .localizedHelp("Stop")
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.15), value: isHovered)
     }
 }
 

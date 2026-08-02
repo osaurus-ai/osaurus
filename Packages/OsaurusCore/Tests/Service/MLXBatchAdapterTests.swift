@@ -1284,6 +1284,13 @@ struct MLXBatchAdapterTests {
     @Test func compiledBatchDecodeDisabledForKnownUnsafeSoloModels() {
         #expect(
             !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "DeepSeek-V4-Flash-0731-JANG",
+                maxBatchSize: 1
+            ),
+            "DSV4 automatically uses its model-native compiled gate/SwiGLU path; Osaurus must not request the incompatible generic whole-cache compiler"
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
                 modelName: "JANGQ-AI/Hy3-preview-JANGTQ",
                 maxBatchSize: 1
             ),
@@ -1397,6 +1404,19 @@ struct MLXBatchAdapterTests {
                 maxBatchSize: 1,
                 cacheTopology: cacheListShape
             )
+        )
+        let dsv4HybridPoolShape = ModelCacheTopologySnapshot(
+            layerCount: 43,
+            rotatingKVLayerCount: 43,
+            hybridPoolLayerCount: 41
+        )
+        #expect(
+            !MLXBatchAdapter.shouldEnableCompiledBatchDecode(
+                modelName: "some-org/unrecognized-dsv4-bundle",
+                maxBatchSize: 1,
+                cacheTopology: dsv4HybridPoolShape
+            ),
+            "a DSV4-style hybrid-pool cache must keep its native compiled micrographs and skip the generic whole-cache trace even when the bundle name is unknown"
         )
         // A plain full-attention shape keeps the name-based rules in force:
         // eligible for a dense model, still denied for a known-unsafe family.

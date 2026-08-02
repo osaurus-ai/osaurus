@@ -179,6 +179,15 @@ public struct AgentLoopTranscript: Sendable, Codable {
         public let toolArgumentCharacters: Int
         /// Runtime-reported generated tokens for this step when available.
         public let completionTokens: Int?
+        /// Runtime-reported decode throughput for this step. This is never
+        /// estimated from wall time or character counts: nil means the runtime
+        /// did not publish authoritative completion info before the step ended.
+        public let decodeTokensPerSecond: Double?
+        /// Non-optional provenance for `decodeTokensPerSecond`. Tool-call steps
+        /// commonly dispatch as soon as the parsed call commits, before vMLX
+        /// emits `.info`; those steps are recorded as explicitly unavailable
+        /// instead of fabricating `0 tok/s` or silently leaving no attribution.
+        public let decodeThroughputAttribution: String
         /// Explicit request value. nil means dispatch policy/bundle defaults
         /// resolved the effective rail downstream.
         public let requestedEnableThinking: Bool?
@@ -197,6 +206,8 @@ public struct AgentLoopTranscript: Sendable, Codable {
             pendingToolName: String?,
             toolArgumentCharacters: Int,
             completionTokens: Int? = nil,
+            decodeTokensPerSecond: Double? = nil,
+            decodeThroughputAttribution: String? = nil,
             requestedEnableThinking: Bool?
         ) {
             self.step = step
@@ -209,10 +220,67 @@ public struct AgentLoopTranscript: Sendable, Codable {
             self.pendingToolName = pendingToolName
             self.toolArgumentCharacters = toolArgumentCharacters
             self.completionTokens = completionTokens
+            self.decodeTokensPerSecond = decodeTokensPerSecond
+            self.decodeThroughputAttribution = decodeThroughputAttribution
+                ?? (decodeTokensPerSecond != nil
+                    ? "measured_vmlx_info"
+                    : "unavailable_no_vmlx_info")
             self.requestedEnableThinking = requestedEnableThinking
             self.thinkingState = requestedEnableThinking.map {
                 $0 ? "explicitEnabled" : "explicitDisabled"
             } ?? "runtimeDefault"
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case step
+            case stopReason
+            case contentCharacterCount
+            case reasoningCharacterCount
+            case contentPreview
+            case reasoningPreview
+            case sawToolCallProgress
+            case pendingToolName
+            case toolArgumentCharacters
+            case completionTokens
+            case decodeTokensPerSecond
+            case decodeThroughputAttribution
+            case requestedEnableThinking
+            case thinkingState
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            step = try container.decode(Int.self, forKey: .step)
+            stopReason = try container.decodeIfPresent(String.self, forKey: .stopReason)
+            contentCharacterCount = try container.decode(Int.self, forKey: .contentCharacterCount)
+            reasoningCharacterCount = try container.decode(
+                Int.self,
+                forKey: .reasoningCharacterCount
+            )
+            contentPreview = try container.decodeIfPresent(String.self, forKey: .contentPreview)
+            reasoningPreview = try container.decodeIfPresent(String.self, forKey: .reasoningPreview)
+            sawToolCallProgress = try container.decode(Bool.self, forKey: .sawToolCallProgress)
+            pendingToolName = try container.decodeIfPresent(String.self, forKey: .pendingToolName)
+            toolArgumentCharacters = try container.decode(Int.self, forKey: .toolArgumentCharacters)
+            completionTokens = try container.decodeIfPresent(Int.self, forKey: .completionTokens)
+            decodeTokensPerSecond = try container.decodeIfPresent(
+                Double.self,
+                forKey: .decodeTokensPerSecond
+            )
+            decodeThroughputAttribution = try container.decodeIfPresent(
+                String.self,
+                forKey: .decodeThroughputAttribution
+            ) ?? (decodeTokensPerSecond != nil
+                ? "measured_vmlx_info"
+                : "unavailable_legacy_transcript")
+            requestedEnableThinking = try container.decodeIfPresent(
+                Bool.self,
+                forKey: .requestedEnableThinking
+            )
+            thinkingState = try container.decodeIfPresent(String.self, forKey: .thinkingState)
+                ?? requestedEnableThinking.map {
+                    $0 ? "explicitEnabled" : "explicitDisabled"
+                } ?? "runtimeDefault"
         }
     }
 
@@ -452,6 +520,95 @@ public enum AgentLoopSandboxMode: Sendable, Equatable {
     case pure
 }
 
+/// Count-only progress for long local agent-loop model steps. The live DSV4
+/// release lane proved that a reasoning-heavy step can actively decode for
+/// minutes while the case-level CLI line remains unchanged. Keep the stream
+/// observable without logging reasoning text, tool arguments, or user content.
+struct AgentLoopStepProgressTracker: Sendable {
+    enum Channel: String, Sendable {
+        case content
+        case reasoning
+        case toolEnvelope = "tool_envelope"
+    }
+
+    let step: Int
+    let startedAt: Date
+    let reportInterval: TimeInterval
+    private(set) var deltaCount = 0
+    private(set) var contentCharacters = 0
+    private(set) var reasoningCharacters = 0
+    private(set) var toolEnvelopeCharacters = 0
+    private var lastReportAt: Date?
+
+    init(step: Int, startedAt: Date, reportInterval: TimeInterval = 30) {
+        self.step = step
+        self.startedAt = startedAt
+        self.reportInterval = reportInterval
+    }
+
+    static func startMessage(step: Int) -> String {
+        "[evals][agent-loop] step=\(step) phase=model_start"
+    }
+
+    mutating func observe(
+        channel: Channel,
+        characterCount: Int,
+        at now: Date
+    ) -> String? {
+        deltaCount += 1
+        switch channel {
+        case .content:
+            contentCharacters += max(0, characterCount)
+        case .reasoning:
+            reasoningCharacters += max(0, characterCount)
+        case .toolEnvelope:
+            toolEnvelopeCharacters += max(0, characterCount)
+        }
+
+        let shouldReport = lastReportAt.map {
+            now.timeIntervalSince($0) >= reportInterval
+        } ?? true
+        guard shouldReport else { return nil }
+        lastReportAt = now
+        let elapsed = max(0, now.timeIntervalSince(startedAt))
+        return String(
+            format:
+                "[evals][agent-loop] step=%d phase=decode elapsed=%.1fs channel=%@ deltas=%d contentChars=%d reasoningChars=%d toolChars=%d",
+            locale: Locale(identifier: "en_US_POSIX"),
+            step,
+            elapsed,
+            channel.rawValue,
+            deltaCount,
+            contentCharacters,
+            reasoningCharacters,
+            toolEnvelopeCharacters
+        )
+    }
+
+    static func terminalMessage(
+        step: Int,
+        stopReason: String?,
+        contentCharacters: Int,
+        reasoningCharacters: Int,
+        toolEnvelopeCharacters: Int,
+        decodeTokensPerSecond: Double?,
+        throughputAttribution: String
+    ) -> String {
+        let throughput = decodeTokensPerSecond.map {
+            String(
+                format: "%.4f_tok_s(%@)",
+                locale: Locale(identifier: "en_US_POSIX"),
+                $0,
+                throughputAttribution
+            )
+        } ?? "unavailable(\(throughputAttribution))"
+        return "[evals][agent-loop] step=\(step) phase=terminal "
+            + "stop=\(stopReason ?? "unknown") contentChars=\(contentCharacters) "
+            + "reasoningChars=\(reasoningCharacters) toolChars=\(toolEnvelopeCharacters) "
+            + "decodeThroughput=\(throughput)"
+    }
+}
+
 // MARK: - Evaluator
 
 /// Entry point for the `agent_loop` behaviour evals. Main-actor-bound
@@ -459,6 +616,10 @@ public enum AgentLoopSandboxMode: Sendable, Equatable {
 /// registration are.
 @MainActor
 public enum AgentLoopEvaluator {
+
+    private static func emitStepProgress(_ message: String) {
+        FileHandle.standardError.write(Data("\(message)\n".utf8))
+    }
 
     /// Run the canonical agent loop against a seeded `workspace` folder
     /// and return the transcript. Folder tools (`file_read`,
@@ -766,8 +927,14 @@ public enum AgentLoopEvaluator {
             sawToolCallProgress: Bool,
             pendingToolName: String?,
             toolArgumentCharacters: Int,
-            completionTokens: Int? = nil
+            completionTokens: Int? = nil,
+            decodeTokensPerSecond: Double? = nil,
+            decodeThroughputAttribution: String? = nil
         ) {
+            let attribution = decodeThroughputAttribution
+                ?? (decodeTokensPerSecond != nil
+                    ? "measured_vmlx_info"
+                    : "unavailable_no_vmlx_info")
             stepDiagnostics.append(
                 .init(
                     step: step,
@@ -780,7 +947,20 @@ public enum AgentLoopEvaluator {
                     pendingToolName: pendingToolName,
                     toolArgumentCharacters: toolArgumentCharacters,
                     completionTokens: completionTokens,
+                    decodeTokensPerSecond: decodeTokensPerSecond,
+                    decodeThroughputAttribution: attribution,
                     requestedEnableThinking: enableThinking
+                )
+            )
+            Self.emitStepProgress(
+                AgentLoopStepProgressTracker.terminalMessage(
+                    step: step,
+                    stopReason: stopReason,
+                    contentCharacters: content.count,
+                    reasoningCharacters: reasoning.count,
+                    toolEnvelopeCharacters: toolArgumentCharacters,
+                    decodeTokensPerSecond: decodeTokensPerSecond,
+                    throughputAttribution: attribution
                 )
             )
         }
@@ -947,6 +1127,9 @@ public enum AgentLoopEvaluator {
                 peakContextTokens = max(peakContextTokens, stepInputTokens)
                 if firstStepInputTokens == nil { firstStepInputTokens = stepInputTokens }
                 modelStepCount += 1
+                Self.emitStepProgress(
+                    AgentLoopStepProgressTracker.startMessage(step: modelStepCount)
+                )
                 if streaming {
                     // Streaming path (default, matching chat): delta routing
                     // and tool-call assembly — where most local-model parser
@@ -962,7 +1145,13 @@ public enum AgentLoopEvaluator {
                     var streamedToolArgumentCharacters = 0
                     var sawToolCallProgress = false
                     var stepCompletionTokens: Int?
+                    var stepDecodeTokensPerSecond: Double?
+                    var stepThroughputAttribution = "unavailable_stream_ended_without_vmlx_info"
                     let stepStarted = Date()
+                    var stepProgress = AgentLoopStepProgressTracker(
+                        step: modelStepCount,
+                        startedAt: stepStarted
+                    )
                     let isFirstStep = !sawAnyModelStep
                     sawAnyModelStep = true
                     do {
@@ -977,6 +1166,13 @@ public enum AgentLoopEvaluator {
                                 firstStepTtftMs = Date().timeIntervalSince(stepStarted) * 1000
                             }
                             if let toolName = StreamingToolHint.decode(delta) {
+                                if let progress = stepProgress.observe(
+                                    channel: .toolEnvelope,
+                                    characterCount: toolName.count,
+                                    at: Date()
+                                ) {
+                                    Self.emitStepProgress(progress)
+                                }
                                 sawToolCallProgress = true
                                 streamedToolName = toolName.isEmpty ? nil : toolName
                                 // Local envelope-first parsing replays canonical
@@ -985,6 +1181,13 @@ public enum AgentLoopEvaluator {
                                 continue
                             }
                             if let fragment = StreamingToolHint.decodeArgs(delta) {
+                                if let progress = stepProgress.observe(
+                                    channel: .toolEnvelope,
+                                    characterCount: fragment.count,
+                                    at: Date()
+                                ) {
+                                    Self.emitStepProgress(progress)
+                                }
                                 sawToolCallProgress = true
                                 streamedToolArgumentCharacters += fragment.utf8.count
                                 if streamedToolArgumentCharacters
@@ -997,7 +1200,9 @@ public enum AgentLoopEvaluator {
                                         reasoning: reasoning,
                                         sawToolCallProgress: true,
                                         pendingToolName: streamedToolName,
-                                        toolArgumentCharacters: streamedToolArgumentCharacters
+                                        toolArgumentCharacters: streamedToolArgumentCharacters,
+                                        decodeThroughputAttribution:
+                                            "unavailable_oversized_tool_call_before_vmlx_info"
                                     )
                                     finalText = ""
                                     return .oversizedToolCall(
@@ -1008,6 +1213,13 @@ public enum AgentLoopEvaluator {
                                 continue
                             }
                             if let fragment = StreamingToolCallProgressHint.decode(delta) {
+                                if let progress = stepProgress.observe(
+                                    channel: .toolEnvelope,
+                                    characterCount: fragment.count,
+                                    at: Date()
+                                ) {
+                                    Self.emitStepProgress(progress)
+                                }
                                 sawToolCallProgress = true
                                 streamedToolArgumentCharacters += fragment.utf8.count
                                 if streamedToolArgumentCharacters
@@ -1020,7 +1232,9 @@ public enum AgentLoopEvaluator {
                                         reasoning: reasoning,
                                         sawToolCallProgress: true,
                                         pendingToolName: streamedToolName,
-                                        toolArgumentCharacters: streamedToolArgumentCharacters
+                                        toolArgumentCharacters: streamedToolArgumentCharacters,
+                                        decodeThroughputAttribution:
+                                            "unavailable_oversized_tool_call_before_vmlx_info"
                                     )
                                     finalText = ""
                                     return .oversizedToolCall(
@@ -1031,6 +1245,13 @@ public enum AgentLoopEvaluator {
                                 continue
                             }
                             if let fragment = StreamingReasoningHint.decode(delta) {
+                                if let progress = stepProgress.observe(
+                                    channel: .reasoning,
+                                    characterCount: fragment.count,
+                                    at: Date()
+                                ) {
+                                    Self.emitStepProgress(progress)
+                                }
                                 reasoning += fragment
                                 continue
                             }
@@ -1043,6 +1264,11 @@ public enum AgentLoopEvaluator {
                                 if stats.tokensPerSecond > 0, stats.tokenCount > 0 {
                                     decodeTpsWeightedSum += stats.tokensPerSecond * Double(stats.tokenCount)
                                     decodeTpsTokenWeight += stats.tokenCount
+                                    stepDecodeTokensPerSecond = stats.tokensPerSecond
+                                    stepThroughputAttribution = "measured_vmlx_info"
+                                } else if stepDecodeTokensPerSecond == nil {
+                                    stepThroughputAttribution =
+                                        "unavailable_nonpositive_vmlx_info"
                                 }
                                 completionTokensTotal += max(0, stats.tokenCount)
                                 stepCompletionTokens = max(0, stats.tokenCount)
@@ -1062,6 +1288,13 @@ public enum AgentLoopEvaluator {
                                 continue
                             }
                             if StreamingToolHint.isSentinel(delta) { continue }
+                            if let progress = stepProgress.observe(
+                                channel: .content,
+                                characterCount: delta.count,
+                                at: Date()
+                            ) {
+                                Self.emitStepProgress(progress)
+                            }
                             content += delta
                         }
                         finalText = content
@@ -1073,7 +1306,9 @@ public enum AgentLoopEvaluator {
                             sawToolCallProgress: sawToolCallProgress,
                             pendingToolName: streamedToolName,
                             toolArgumentCharacters: streamedToolArgumentCharacters,
-                            completionTokens: stepCompletionTokens
+                            completionTokens: stepCompletionTokens,
+                            decodeTokensPerSecond: stepDecodeTokensPerSecond,
+                            decodeThroughputAttribution: stepThroughputAttribution
                         )
                         if terminalStopReason == "length",
                             sawToolCallProgress,
@@ -1103,7 +1338,11 @@ public enum AgentLoopEvaluator {
                             sawToolCallProgress: true,
                             pendingToolName: streamedToolName,
                             toolArgumentCharacters: streamedToolArgumentCharacters,
-                            completionTokens: stepCompletionTokens
+                            completionTokens: stepCompletionTokens,
+                            decodeTokensPerSecond: stepDecodeTokensPerSecond,
+                            decodeThroughputAttribution: stepDecodeTokensPerSecond == nil
+                                ? "unavailable_tool_call_before_vmlx_info"
+                                : stepThroughputAttribution
                         )
                         // Interim prose preceding tool calls is NOT the
                         // final answer (never let it go stale into the
@@ -1128,7 +1367,11 @@ public enum AgentLoopEvaluator {
                             sawToolCallProgress: true,
                             pendingToolName: inv.toolName,
                             toolArgumentCharacters: inv.jsonArguments.utf8.count,
-                            completionTokens: stepCompletionTokens
+                            completionTokens: stepCompletionTokens,
+                            decodeTokensPerSecond: stepDecodeTokensPerSecond,
+                            decodeThroughputAttribution: stepDecodeTokensPerSecond == nil
+                                ? "unavailable_tool_call_before_vmlx_info"
+                                : stepThroughputAttribution
                         )
                         finalText = ""
                         return .toolCalls(
@@ -1149,7 +1392,11 @@ public enum AgentLoopEvaluator {
                         sawToolCallProgress: false,
                         pendingToolName: nil,
                         toolArgumentCharacters: 0,
-                        completionTokens: response.usage.completion_tokens
+                        completionTokens: response.usage.completion_tokens,
+                        decodeTokensPerSecond: response.usage.tokens_per_second,
+                        decodeThroughputAttribution: response.usage.tokens_per_second == nil
+                            ? "unavailable_response_without_vmlx_info"
+                            : "measured_vmlx_info"
                     )
                     return .finalResponse
                 }
@@ -1165,7 +1412,11 @@ public enum AgentLoopEvaluator {
                         sawToolCallProgress: false,
                         pendingToolName: nil,
                         toolArgumentCharacters: 0,
-                        completionTokens: response.usage.completion_tokens
+                        completionTokens: response.usage.completion_tokens,
+                        decodeTokensPerSecond: response.usage.tokens_per_second,
+                        decodeThroughputAttribution: response.usage.tokens_per_second == nil
+                            ? "unavailable_response_without_vmlx_info"
+                            : "measured_vmlx_info"
                     )
                     return AgentLoopModelStep.classifyTerminal(
                         contentIsBlank: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -1183,7 +1434,11 @@ public enum AgentLoopEvaluator {
                     sawToolCallProgress: true,
                     pendingToolName: calls.first?.function.name,
                     toolArgumentCharacters: calls.reduce(0) { $0 + $1.function.arguments.utf8.count },
-                    completionTokens: response.usage.completion_tokens
+                    completionTokens: response.usage.completion_tokens,
+                    decodeTokensPerSecond: response.usage.tokens_per_second,
+                    decodeThroughputAttribution: response.usage.tokens_per_second == nil
+                        ? "unavailable_tool_call_before_vmlx_info"
+                        : "measured_vmlx_info"
                 )
                 // Tool calls present: any prose on this turn is interim
                 // narration, not the final answer. `reasoning_content` is

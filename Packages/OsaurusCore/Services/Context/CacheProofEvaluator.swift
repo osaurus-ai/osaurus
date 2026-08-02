@@ -16,6 +16,7 @@
 //
 
 import Foundation
+@preconcurrency import MLXLMCommon
 
 /// One typed prefill-progress frame observed on the production streaming path.
 ///
@@ -132,6 +133,14 @@ public struct CacheProofTranscript: Sendable, Codable {
     /// Per-turn cache/prefill/terminal metrics from the same stream that
     /// produced `visibleTurns`.
     public let turnMetrics: [CacheProofTurnMetrics]?
+    /// Exact top-level safetensors bytes when the tested bundle's vMLX load
+    /// contract requires those weights to be resident. Nil means either the
+    /// bundle is mmap-capable or the requirement could not be established.
+    /// This is applicability evidence for an absolute peak-vs-budget gate;
+    /// it is not a measured footprint and never replaces the growth gate.
+    public let requiredResidentSafetensorsBytes: UInt64?
+    /// Stable source attribution for `requiredResidentSafetensorsBytes`.
+    public let requiredResidentSafetensorsAttribution: String?
 
     public init(
         visibleTurns: [String],
@@ -148,7 +157,9 @@ public struct CacheProofTranscript: Sendable, Codable {
         hybridTopology: Bool = false,
         decodeTokensPerSecond: Double? = nil,
         footprintAfterTurnMb: [Double] = [],
-        turnMetrics: [CacheProofTurnMetrics] = []
+        turnMetrics: [CacheProofTurnMetrics] = [],
+        requiredResidentSafetensorsBytes: UInt64? = nil,
+        requiredResidentSafetensorsAttribution: String? = nil
     ) {
         self.visibleTurns = visibleTurns
         self.error = error
@@ -165,6 +176,9 @@ public struct CacheProofTranscript: Sendable, Codable {
         self.decodeTokensPerSecond = decodeTokensPerSecond
         self.footprintAfterTurnMb = footprintAfterTurnMb
         self.turnMetrics = turnMetrics
+        self.requiredResidentSafetensorsBytes = requiredResidentSafetensorsBytes
+        self.requiredResidentSafetensorsAttribution =
+            requiredResidentSafetensorsAttribution
     }
 }
 
@@ -200,6 +214,9 @@ public enum CacheProofEvaluator {
             ?? ChatConfigurationStore.load().coreModelIdentifier
             ?? "foundation"
         let engine = ChatEngine()
+        let residentRequirement = residentSafetensorsRequirement(
+            for: resolvedModel
+        )
         var sessionId = UUID().uuidString
         var sessionNumber = 1
         let sessionBoundaryTurns = Set(startNewSessionBeforeTurns)
@@ -366,7 +383,9 @@ public enum CacheProofEvaluator {
                 visibleTurns: visibleTurns,
                 error: runError,
                 skipReason:
-                    "no local MLX engine resolved for '\(resolvedModel)'; cache telemetry unavailable"
+                    "no local MLX engine resolved for '\(resolvedModel)'; cache telemetry unavailable",
+                requiredResidentSafetensorsBytes: residentRequirement?.bytes,
+                requiredResidentSafetensorsAttribution: residentRequirement?.attribution
             )
         }
 
@@ -388,7 +407,24 @@ public enum CacheProofEvaluator {
             hybridTopology: after.hybridModelCount > 0,
             decodeTokensPerSecond: lastDecodeTps,
             footprintAfterTurnMb: footprintAfterTurnMb,
-            turnMetrics: turnMetrics
+            turnMetrics: turnMetrics,
+            requiredResidentSafetensorsBytes: residentRequirement?.bytes,
+            requiredResidentSafetensorsAttribution: residentRequirement?.attribution
+        )
+    }
+
+    private static func residentSafetensorsRequirement(
+        for model: String
+    ) -> (bytes: UInt64, attribution: String)? {
+        guard let installed = ModelManager.findInstalledMLXModel(named: model)
+        else { return nil }
+        let facts = LoadBundleFacts.inspect(bundleURL: installed.localDirectory)
+        guard facts.requiresResidentSafetensors,
+            facts.totalSafetensorsBytes > 0
+        else { return nil }
+        return (
+            facts.totalSafetensorsBytes,
+            "vmlx_load_bundle_facts_requires_resident_safetensors"
         )
     }
 }

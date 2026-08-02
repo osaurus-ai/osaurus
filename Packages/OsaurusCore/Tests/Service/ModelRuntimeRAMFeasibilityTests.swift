@@ -32,6 +32,13 @@ struct ModelRuntimeRAMFeasibilityTests {
         #expect(
             ModelRuntime.effectiveMLXCacheLimit(
                 dynamicLimit: 1024 * mib,
+                configuredLimits: [nil],
+                uncappedLimit: 16 * 1024 * mib
+            ) == 16 * 1024 * mib
+        )
+        #expect(
+            ModelRuntime.effectiveMLXCacheLimit(
+                dynamicLimit: 1024 * mib,
                 configuredLimits: [1024 * mib, 128 * mib, nil]
             ) == 128 * mib
         )

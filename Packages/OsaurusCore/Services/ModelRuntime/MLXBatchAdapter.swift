@@ -1203,10 +1203,13 @@ struct MLXBatchAdapter {
 
     /// Compiled B=1 decode eligibility. Architecture-driven when the REAL
     /// cache topology is known (the loaded container's per-layer cache list):
-    /// any SSM/Arrays/ZayaCCA companion or composite `CacheList` layer means
-    /// vmlx's compile stages can't trace the slot (`CacheFamily` `.mamba` /
-    /// `.zayaCCA` / `.heterogeneous` are not compile-eligible), so requesting
-    /// it only buys a per-iterator `eval(cache)` + failed promotion. The
+    /// any SSM/Arrays/ZayaCCA companion, DSV4 hybrid-pool layer, or composite
+    /// `CacheList` layer means vmlx's generic compile stages can't trace the
+    /// slot (`CacheFamily` `.mamba` / `.zayaCCA` / `.heterogeneous` are not
+    /// compile-eligible), so requesting it only buys a per-iterator
+    /// `eval(cache)` + failed promotion. DSV4's model-native compiled gate and
+    /// SwiGLU micrographs remain automatic; this policy only rejects the
+    /// incompatible whole-forward cache trace. The
     /// name matcher remains the fallback for call sites that run before the
     /// container is loaded (`pending_preload` stage) and as a belt for
     /// families with known non-topology denials.
@@ -1216,11 +1219,14 @@ struct MLXBatchAdapter {
         cacheTopology: ModelCacheTopologySnapshot? = nil
     ) -> Bool {
         if let cacheTopology,
-            cacheTopology.requiresSSMCompanionState || cacheTopology.cacheListLayerCount > 0
+            cacheTopology.requiresSSMCompanionState
+                || cacheTopology.hybridPoolLayerCount > 0
+                || cacheTopology.cacheListLayerCount > 0
         {
             return false
         }
         return maxBatchSize == 1
+            && !ModelFamilyNames.isDSV4Family(modelName)
             && !Hy3ReasoningProfile.matches(modelId: modelName)
             && !ModelFamilyNames.isMiniMaxFamily(modelName)
             && !ModelFamilyNames.isStepFamily(modelName)

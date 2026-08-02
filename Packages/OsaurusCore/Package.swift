@@ -120,12 +120,25 @@ let package = Package(
         // explicitly so solo, batched, and native-MTP cache writers retain
         // exact boundaries for fully restorable topologies and recurrent-safe
         // processor seeds for hybrid state, without persisting the warmup's
-        // throwaway decoded token. vmlx-swift#186-#188 correct FalconH1 key
+        // throwaway decoded token. vmlx-swift#198 prevents fully restorable,
+        // non-recurrent disk-only caches such as DSV4 from synchronously
+        // replaying older stable boundaries before warmup can finish and keeps
+        // DSV4 on its measured model-native compiled gate/SwiGLU path instead
+        // of the incompatible generic whole-cache compiled trace.
+        // vmlx-swift#199 captures DSV4's complete SWA/CSA/HSA prompt-minus-one
+        // disk seed during prefill so exact replay restores the longest valid
+        // prefix and re-feeds only the final prompt token. Warm restores do not
+        // recapture the seed or retain an unusable exact-prompt duplicate.
+        // Its follow-up persists that materialized seed before decode and drops
+        // the duplicate pool state so an uncached DSV4 turn keeps native speed.
+        // Reusable-prefix warmups publish that same seed so the visible request
+        // restores the warmed prefix instead of prefilling it a second time.
+        // vmlx-swift#186-#188 correct FalconH1 key
         // projection scaling, prefixed output-head loading, and gated RMSNorm
         // group normalization without changing the shared unload/cache APIs.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "3aeff8ed0652adf65efa8f0d59e4313243bb10db"
+            revision: "6c93611062bd3e42cc7d4b31323467677e44a340"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
