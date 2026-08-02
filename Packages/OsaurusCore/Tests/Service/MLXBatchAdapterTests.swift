@@ -315,6 +315,57 @@ struct MLXBatchAdapterTests {
         #expect(!effective.compiledBatchDecode)
     }
 
+    /// An agent-level `temperature: 0` silently defeats the bundle's sampler.
+    ///
+    /// Per-request always wins, and `AgentManager.effectiveTemperature` returns
+    /// the agent's stored value — so an agent saved with 0 forces argmax and
+    /// makes `top_p` inert, no matter what the model bundle ships.
+    ///
+    /// Observed live 2026-08-02: an agent stored `"temperature": 0` while
+    /// DSV4's generation_config declares `do_sample: true, temperature: 1.0,
+    /// top_p: 0.95`. Greedy decoding at ~12.5k tokens produced a verbatim
+    /// reasoning loop — the same five sentences repeating indefinitely. At
+    /// temperature 1.0 / top_p 0.95 verbatim repetition is essentially
+    /// impossible, which is what identified the sampler rather than the KV
+    /// cache or the tool parser.
+    ///
+    /// This pins the mechanism so the footgun is visible: `topP` still resolves
+    /// to 0.95 here, but it cannot influence an argmax sampler.
+    @Test func effectiveGenerationSettings_agentTemperatureZeroForcesGreedy() {
+        let generation = GenerationParameters(
+            temperature: 0,
+            maxTokens: 16_384,
+            maxTokensExplicit: false,
+            topPOverride: nil,
+            minPOverride: nil,
+            repetitionPenalty: nil
+        )
+        let defaults = LocalGenerationDefaults.Defaults(
+            maxTokens: 300,
+            temperature: 1.0,
+            topP: 0.95,
+            topK: 0,
+            minP: nil,
+            repetitionPenalty: nil,
+            doSample: true
+        )
+
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "dsv4/deepseek-v4-flash",
+            generation: generation,
+            runtimeDefaults: VMLXServerGenerationDefaults(topP: nil),
+            maxBatchSize: 1,
+            modelDefaults: defaults
+        )
+
+        #expect(
+            effective.temperature == 0,
+            "a stored agent temperature must still win — this is the documented precedence")
+        #expect(
+            effective.topP == 0.95,
+            "top_p is still resolved from the bundle, but argmax ignores it")
+    }
+
     @Test func lastEffectiveGenerationTelemetry_excludesChatPrefillWarmups() {
         let visibleRequest = GenerationParameters(
             temperature: nil,
