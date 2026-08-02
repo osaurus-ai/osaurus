@@ -112,13 +112,23 @@ final class ContextCompactionService {
     /// popover.
     static let manualTriggerThreshold: Double = 0.7
 
-    /// Recent user turns that always stay verbatim: the covered span ends
+    /// Recent user turns that preferably stay verbatim: the covered span ends
     /// at the second-from-last user turn, so the current exchange plus one
-    /// full prior exchange survive in full.
+    /// full prior exchange survive in full. When that cut covers nothing
+    /// (a conversation of only two exchanges), the boundary falls back to
+    /// the last user turn — keeping just the current exchange — provided the
+    /// covered span is token-heavy (see `minimumCoveredTokens`).
     static let recentUserTurnsToKeep = 2
 
-    /// Minimum turns a summary must cover to be worth an inference call.
+    /// A covered span is worth an inference call when it has at least this
+    /// many turns…
     static let minimumCoveredTurns = 4
+
+    /// …or, for short-but-huge conversations (e.g. a pasted document plus a
+    /// long answer), at least this many estimated tokens. Without this, a
+    /// two-exchange chat sitting at 96% of the budget had no compactable
+    /// span at all.
+    static let minimumCoveredTokens = 4_000
 
     private static let summaryMaxTokens = 1024
     private static let summaryTemperature: Double = 0.2
@@ -152,11 +162,19 @@ final class ContextCompactionService {
     /// Index into `turns` such that `turns[0..<cut]` is the span a new
     /// summary would cover, or nil when compaction has nothing useful to do.
     ///
-    /// The cut always lands ON a user turn (the second-from-last), so the
-    /// covered span ends at a completed exchange and can never split an
-    /// assistant tool-call from its tool results. An existing summary only
-    /// grows: when the new cut wouldn't cover more turns than the current
-    /// summary already does, there is nothing to compact.
+    /// The cut always lands ON a user turn, so the covered span ends at a
+    /// completed exchange and can never split an assistant tool-call from
+    /// its tool results. The preferred cut is the second-from-last user turn
+    /// (current exchange + one full prior exchange stay verbatim); when that
+    /// covers nothing — a conversation of only two exchanges — the cut falls
+    /// back to the last user turn, keeping just the current exchange.
+    ///
+    /// A span is accepted when it has enough turns (`minimumCoveredTurns`)
+    /// OR enough estimated tokens (`minimumCoveredTokens`) — the token rule
+    /// is what makes short-but-huge conversations (pasted documents, long
+    /// generations) compactable. An existing summary only grows: when the
+    /// cut wouldn't cover more turns than the current summary already does,
+    /// there is nothing to compact.
     static func compactionCutIndex(
         turns: [ChatTurn],
         existingSummary: ConversationSummary?
@@ -164,12 +182,32 @@ final class ContextCompactionService {
         let userIndices = turns.enumerated()
             .filter { $0.element.role == .user }
             .map(\.offset)
-        guard userIndices.count >= recentUserTurnsToKeep else { return nil }
-        let cut = userIndices[userIndices.count - recentUserTurnsToKeep]
-        guard cut >= minimumCoveredTurns else { return nil }
+        guard let lastUserIndex = userIndices.last else { return nil }
+
+        let preferred: Int? =
+            userIndices.count >= recentUserTurnsToKeep
+            ? userIndices[userIndices.count - recentUserTurnsToKeep] : nil
+
+        // The fallback only exists for the "preferred covers nothing" case.
+        // When a non-empty preferred span merely fails the size gate (or an
+        // existing summary already covers it), returning the fallback here
+        // would silently erode the keep-two-exchanges contract and make every
+        // new exchange re-trigger summarization at high utilization.
+        let cut: Int
+        if let preferred, preferred > 0 {
+            cut = preferred
+        } else {
+            cut = lastUserIndex
+        }
+        guard cut > 0 else { return nil }
         if let existing = existingSummary, cut <= existing.coveredTurnIds.count {
             return nil
         }
+        guard
+            cut >= minimumCoveredTurns
+                || ContextBudgetManager.estimateTokens(for: Array(turns[0 ..< cut]))
+                    >= minimumCoveredTokens
+        else { return nil }
         return cut
     }
 

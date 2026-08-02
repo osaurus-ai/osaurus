@@ -125,6 +125,80 @@ struct CompactionCutIndexTests {
             turns: grown, existingSummary: existing)
         #expect(cut == 10)
     }
+
+    // MARK: Token-aware acceptance (short-but-huge conversations)
+
+    /// ~8k estimated tokens of content — well past `minimumCoveredTokens`.
+    private var hugeText: String { String(repeating: "lorem ipsum dolor sit ", count: 1_500) }
+
+    @Test("two huge exchanges fall back to cutting at the last user turn")
+    func hugeTwoExchangeConversationIsCompactable() {
+        // A pasted document + long answer, then a follow-up: the preferred
+        // cut (second-from-last user turn) is index 0 and covers nothing,
+        // but the first exchange alone is worth reclaiming.
+        let turns = [
+            ChatTurn(role: .user, content: hugeText),
+            ChatTurn(role: .assistant, content: hugeText),
+            ChatTurn(role: .user, content: "follow-up"),
+            ChatTurn(role: .assistant, content: "short answer"),
+        ]
+        let cut = ContextCompactionService.compactionCutIndex(
+            turns: turns, existingSummary: nil)
+        #expect(cut == 2)
+        #expect(turns[2].role == .user)
+    }
+
+    @Test("a huge span below the turn minimum passes on tokens")
+    func hugeShortSpanPassesOnTokens() {
+        // Three exchanges; the preferred cut covers only the first (2 turns,
+        // below `minimumCoveredTurns`) but it is token-heavy.
+        let turns = [
+            ChatTurn(role: .user, content: hugeText),
+            ChatTurn(role: .assistant, content: hugeText),
+            ChatTurn(role: .user, content: "q1"),
+            ChatTurn(role: .assistant, content: "a1"),
+            ChatTurn(role: .user, content: "q2"),
+            ChatTurn(role: .assistant, content: "a2"),
+        ]
+        let cut = ContextCompactionService.compactionCutIndex(
+            turns: turns, existingSummary: nil)
+        #expect(cut == 2)
+    }
+
+    @Test("a single huge exchange still has nothing to compact")
+    func singleHugeExchangeReturnsNil() {
+        // The current exchange is all there is — covering it would remove
+        // the very context the user is working with.
+        let turns = [
+            ChatTurn(role: .user, content: hugeText),
+            ChatTurn(role: .assistant, content: hugeText),
+        ]
+        #expect(
+            ContextCompactionService.compactionCutIndex(
+                turns: turns, existingSummary: nil) == nil)
+    }
+
+    @Test("the fallback cut never erodes an existing summary's contract")
+    func fallbackRespectsExistingSummary() {
+        // Existing summary covers the huge first exchange; the preferred cut
+        // (index 2) covers no MORE than the summary already does, and the
+        // fallback must not fire just because the last user turn sits later.
+        let turns = [
+            ChatTurn(role: .user, content: hugeText),
+            ChatTurn(role: .assistant, content: hugeText),
+            ChatTurn(role: .user, content: "follow-up"),
+            ChatTurn(role: .assistant, content: "answer"),
+        ]
+        let existing = ConversationSummary(
+            summaryText: "covers the document exchange",
+            coveredTurnIds: [turns[0].id, turns[1].id],
+            modelIdentifier: "m",
+            savedTokensEstimate: 1_000
+        )
+        #expect(
+            ContextCompactionService.compactionCutIndex(
+                turns: turns, existingSummary: existing) == nil)
+    }
 }
 
 // MARK: - Summary validation
