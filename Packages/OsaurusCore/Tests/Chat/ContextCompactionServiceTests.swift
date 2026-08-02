@@ -165,17 +165,76 @@ struct CompactionCutIndexTests {
         #expect(cut == 2)
     }
 
-    @Test("a single huge exchange still has nothing to compact")
-    func singleHugeExchangeReturnsNil() {
-        // The current exchange is all there is — covering it would remove
-        // the very context the user is working with.
+    @Test("a single huge exchange is covered whole (last-resort cut)")
+    func singleHugeExchangeCoversWholeTranscript() {
+        // A pasted document + one answered question: no user-turn cut can
+        // cover anything, so the whole transcript becomes the covered span —
+        // follow-up questions run against the summary.
         let turns = [
             ChatTurn(role: .user, content: hugeText),
             ChatTurn(role: .assistant, content: hugeText),
         ]
         #expect(
             ContextCompactionService.compactionCutIndex(
+                turns: turns, existingSummary: nil) == turns.count)
+    }
+
+    @Test("token weight riding a document attachment counts toward the gate")
+    func attachmentTokensCountTowardGate() {
+        // The live repro: an 18-character question whose 200k tokens live in
+        // an attached document, plus one assistant answer. The turn content
+        // alone is tiny — the attachment must carry the size gate.
+        let doc = Attachment(
+            kind: .document(filename: "book.txt", content: hugeText, fileSize: hugeText.count)
+        )
+        let turns = [
+            ChatTurn(role: .user, content: "what is this about", attachments: [doc]),
+            ChatTurn(role: .assistant, content: "a short answer"),
+        ]
+        #expect(
+            ContextCompactionService.compactionCutIndex(
+                turns: turns, existingSummary: nil) == turns.count)
+    }
+
+    @Test("the last-resort cut requires a completed assistant reply")
+    func lastResortRequiresAssistantTail() {
+        // Mid-exchange (transcript ends on the user turn) nothing is covered.
+        let turns = [ChatTurn(role: .user, content: hugeText)]
+        #expect(
+            ContextCompactionService.compactionCutIndex(
                 turns: turns, existingSummary: nil) == nil)
+    }
+
+    @Test("a fully-covered transcript regrows into another whole cut only when heavy")
+    func fullCoverageGrowsOnlyWhenNewSpanIsHeavy() {
+        let first = [
+            ChatTurn(role: .user, content: hugeText),
+            ChatTurn(role: .assistant, content: hugeText),
+        ]
+        let existing = ConversationSummary(
+            summaryText: "covers the document exchange",
+            coveredTurnIds: first.map(\.id),
+            modelIdentifier: "m",
+            savedTokensEstimate: 1_000
+        )
+        // A small follow-up exchange is not worth another inference call…
+        let smallGrowth =
+            first + [
+                ChatTurn(role: .user, content: "follow-up"),
+                ChatTurn(role: .assistant, content: "answer"),
+            ]
+        #expect(
+            ContextCompactionService.compactionCutIndex(
+                turns: smallGrowth, existingSummary: existing) == nil)
+        // …but a token-heavy one is, and the cut covers everything again.
+        let heavyGrowth =
+            first + [
+                ChatTurn(role: .user, content: "another paste \(hugeText)"),
+                ChatTurn(role: .assistant, content: "answer"),
+            ]
+        #expect(
+            ContextCompactionService.compactionCutIndex(
+                turns: heavyGrowth, existingSummary: existing) == heavyGrowth.count)
     }
 
     @Test("the fallback cut never erodes an existing summary's contract")
@@ -239,8 +298,8 @@ struct SummaryValidationTests {
         #expect(!ContextCompactionService.summaryIsValid(summary, for: t))
     }
 
-    @Test("invalid when covered turns were deleted or cover everything")
-    func invalidWhenDeletedOrTotal() {
+    @Test("full-transcript coverage is valid; deletions and empties are not")
+    func fullCoverageValidDeletionsNot() {
         let t = turns(4)
         let coveringAll = ConversationSummary(
             summaryText: "s",
@@ -248,8 +307,13 @@ struct SummaryValidationTests {
             modelIdentifier: "m",
             savedTokensEstimate: 0
         )
-        // A summary must leave at least one live turn uncovered.
-        #expect(!ContextCompactionService.summaryIsValid(coveringAll, for: t))
+        // The whole-transcript last-resort cut produces exactly this state;
+        // the next user message extends the transcript past the prefix.
+        #expect(ContextCompactionService.summaryIsValid(coveringAll, for: t))
+
+        // Deleting covered turns leaves the summary covering MORE than the
+        // transcript holds — invalid.
+        #expect(!ContextCompactionService.summaryIsValid(coveringAll, for: Array(t.prefix(3))))
 
         let empty = ConversationSummary(
             summaryText: "s", coveredTurnIds: [], modelIdentifier: "m", savedTokensEstimate: 0)
@@ -297,6 +361,30 @@ struct CompactionTranscriptTests {
             covered: [old, newer], existingSummary: existing, charBudget: 100_000)
         #expect(!transcript.contains("ancient request"))
         #expect(transcript.contains("newer request"))
+    }
+
+    @Test("attached document text is fed to the summarizer, like the send path")
+    func attachedDocumentContentIncluded() {
+        // The send path prepends document text to the user message, so the
+        // assistant's answers are grounded in it — the compaction transcript
+        // must include it or a "pasted document + one question" chat
+        // summarizes down to just the question.
+        let doc = Attachment(
+            kind: .document(
+                filename: "novel.txt",
+                content: "Lucy visits Florence and meets George.",
+                fileSize: 38
+            )
+        )
+        let covered = [
+            ChatTurn(role: .user, content: "what is this about", attachments: [doc]),
+            ChatTurn(role: .assistant, content: "a novel about Lucy"),
+        ]
+        let transcript = ContextCompactionService.renderTranscript(
+            covered: covered, existingSummary: nil, charBudget: 100_000)
+        #expect(transcript.contains("[User attached document \"novel.txt\"]"))
+        #expect(transcript.contains("Lucy visits Florence and meets George."))
+        #expect(transcript.contains("[User]: what is this about"))
     }
 
     @Test("over-budget transcripts keep head and tail with an omission marker")

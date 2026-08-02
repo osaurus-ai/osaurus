@@ -162,8 +162,8 @@ final class ContextCompactionService {
     /// Index into `turns` such that `turns[0..<cut]` is the span a new
     /// summary would cover, or nil when compaction has nothing useful to do.
     ///
-    /// The cut always lands ON a user turn, so the covered span ends at a
-    /// completed exchange and can never split an assistant tool-call from
+    /// The cut preferably lands ON a user turn, so the covered span ends at
+    /// a completed exchange and can never split an assistant tool-call from
     /// its tool results. The preferred cut is the second-from-last user turn
     /// (current exchange + one full prior exchange stay verbatim); when that
     /// covers nothing — a conversation of only two exchanges — the cut falls
@@ -175,6 +175,15 @@ final class ContextCompactionService {
     /// generations) compactable. An existing summary only grows: when the
     /// cut wouldn't cover more turns than the current summary already does,
     /// there is nothing to compact.
+    ///
+    /// Last resort: when no user-turn cut yields a new span (e.g. a
+    /// single-exchange chat whose only user message carries a huge pasted
+    /// document, or the token weight sits in the current exchange itself),
+    /// the whole transcript becomes coverable — `cut == turns.count` — as
+    /// long as the last turn is a completed assistant reply and the turns
+    /// NOT already covered by the existing summary are themselves
+    /// token-heavy. The token gate on the *new* span is what keeps this
+    /// from re-summarizing every ordinary exchange at high utilization.
     static func compactionCutIndex(
         turns: [ChatTurn],
         existingSummary: ConversationSummary?
@@ -188,36 +197,47 @@ final class ContextCompactionService {
             userIndices.count >= recentUserTurnsToKeep
             ? userIndices[userIndices.count - recentUserTurnsToKeep] : nil
 
-        // The fallback only exists for the "preferred covers nothing" case.
-        // When a non-empty preferred span merely fails the size gate (or an
-        // existing summary already covers it), returning the fallback here
-        // would silently erode the keep-two-exchanges contract and make every
-        // new exchange re-trigger summarization at high utilization.
+        // The last-user-turn fallback only exists for the "preferred covers
+        // nothing" case. When a non-empty preferred span merely fails the
+        // size gate (or an existing summary already covers it), returning
+        // the fallback here would silently erode the keep-two-exchanges
+        // contract and make every new exchange re-trigger summarization at
+        // high utilization.
         let cut: Int
         if let preferred, preferred > 0 {
             cut = preferred
         } else {
             cut = lastUserIndex
         }
-        guard cut > 0 else { return nil }
-        if let existing = existingSummary, cut <= existing.coveredTurnIds.count {
-            return nil
-        }
-        guard
+        let alreadyCovered = existingSummary?.coveredTurnIds.count ?? 0
+        if cut > 0,
+            cut > alreadyCovered,
             cut >= minimumCoveredTurns
                 || ContextBudgetManager.estimateTokens(for: Array(turns[0 ..< cut]))
                     >= minimumCoveredTokens
+        {
+            return cut
+        }
+
+        // Whole-transcript last resort (see doc comment above).
+        guard turns.last?.role == .assistant,
+            turns.count > alreadyCovered,
+            ContextBudgetManager.estimateTokens(for: Array(turns[alreadyCovered...]))
+                >= minimumCoveredTokens
         else { return nil }
-        return cut
+        return turns.count
     }
 
     /// Whether the summary's covered turns still line up with the live
     /// transcript: the covered ids must be exactly the transcript's prefix,
     /// in order. Edits, regenerations, or deletions that touch covered
-    /// turns break this and invalidate the summary.
+    /// turns break this and invalidate the summary. Covering the ENTIRE
+    /// transcript is legal — the whole-transcript last-resort cut produces
+    /// that state, and the next user message simply extends the transcript
+    /// past the covered prefix.
     static func summaryIsValid(_ summary: ConversationSummary, for turns: [ChatTurn]) -> Bool {
         guard !summary.coveredTurnIds.isEmpty,
-            summary.coveredTurnIds.count < turns.count
+            summary.coveredTurnIds.count <= turns.count
         else { return false }
         for (index, coveredId) in summary.coveredTurnIds.enumerated() {
             guard turns[index].id == coveredId else { return false }
@@ -398,7 +418,22 @@ final class ContextCompactionService {
             if previouslyCovered.contains(turn.id) { continue }
             switch turn.role {
             case .user:
-                lines.append("[User]: \(clip(turn.content, to: 4_000))")
+                // The send path prepends attached-document text to the user
+                // message (`buildUserMessageText`), so the model's answers
+                // are grounded in it — the summary must see it too or a
+                // "pasted document + one question" chat summarizes down to
+                // just the question. Per-document clip is generous; the
+                // whole-transcript charBudget clip below is the real cap.
+                var parts: [String] = []
+                for doc in turn.attachments.filter(\.isDocument) {
+                    guard let text = doc.loadDocumentContent(), !text.isEmpty else { continue }
+                    let name = doc.filename ?? "attachment"
+                    parts.append(
+                        "[User attached document \"\(name)\"]:\n\(clip(text, to: 60_000))"
+                    )
+                }
+                parts.append("[User]: \(clip(turn.content, to: 4_000))")
+                lines.append(parts.joined(separator: "\n\n"))
             case .assistant:
                 var parts: [String] = []
                 if !turn.contentIsBlank {
