@@ -4445,6 +4445,13 @@ final class ChatSession: ObservableObject {
         // becomes a no-op.
         reconcilePromptShapeBeforeSend()
 
+        // DSV4 must not use the first visible response as its MLX/JIT warm-up.
+        // Promote a missing family warm-up to required handshake work before
+        // the generic scheduled-warm-up cancellation below.  The required
+        // task survives that cancellation and is awaited by the normal send
+        // lifecycle; every other model keeps the existing fast path.
+        warmupController.requireDSV4PreSendWarmupIfNeeded(session: self)
+
         // A scheduled-but-not-started warm-up must not fire mid-run.
         warmupController.cancelScheduledWarmup()
 

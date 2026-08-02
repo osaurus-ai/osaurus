@@ -271,10 +271,24 @@ final class ChatWarmupController: ObservableObject {
     /// cancelled by `send()` before dispatch: doing so made a settings edit
     /// reliably fall back to a visible full cold prefill whenever the user
     /// returned to chat inside the normal debounce window.
-    func handleContextShapeChange(session: ChatWarmupSessionContext) {
+    ///
+    /// `invalidatingShape` must stay `true` for a real prompt-shape edit: the
+    /// previously warmed fingerprint no longer describes the prompt, so it has
+    /// to be discarded. Pass `false` when the shape is UNCHANGED and the caller
+    /// only needs to guarantee that a warm-up happened (see
+    /// `requireDSV4PreSendWarmupIfNeeded`). Discarding the fingerprint there
+    /// destroys the only evidence that this exact payload is already warm, so
+    /// `performWarmup`'s fingerprint check can never short-circuit and the
+    /// identical prompt gets prefilled a second time.
+    func handleContextShapeChange(
+        session: ChatWarmupSessionContext,
+        invalidatingShape: Bool = true
+    ) {
         guard !isShutDown else { return }
 
-        invalidateWarmState()
+        if invalidatingShape {
+            invalidateWarmState()
+        }
         cancelScheduledWarmup()
 
         let previousRequiredWarmup = requiredContextWarmup
@@ -301,6 +315,61 @@ final class ChatWarmupController: ObservableObject {
             guard !Task.isCancelled else { return }
             await self.performWarmup(session: session)
         }
+    }
+
+    /// DeepSeek V4's first uncached decode is also its expensive MLX kernel
+    /// warm-up.  A normal scheduled chat warm-up is deliberately cancelled by
+    /// `send()` when it has not started yet, which puts that compilation back
+    /// on the visible response path.  Promote the missing DSV4 warm-up to
+    /// required pre-send work instead: the existing handshake shows loading /
+    /// prefill progress, waits for the one-token warm-up, and then dispatches
+    /// the user's turn against the warmed kernels and reusable prefix.
+    ///
+    /// Keep this family-scoped.  Other models retain the synchronous-send
+    /// behavior and may still cancel an idle speculative warm-up.
+    func requireDSV4PreSendWarmupIfNeeded(session: ChatWarmupSessionContext) {
+        guard Self.requiresDSV4PreSendWarmup(
+            model: session.selectedModel,
+            selectedModelIsLocal: session.selectedModelIsLocal,
+            isRemoteAgentTarget: session.isRemoteAgentTarget,
+            warmModelsOnLoad: ChatConfigurationStore.load().warmModelsOnLoad,
+            state: state,
+            selectedModelResident: selectedModelResident
+        ), let model = session.selectedModel else { return }
+
+        // This is no longer speculative background work: the user pressed
+        // Send for this exact local model.  Give the warm-up the same one-shot
+        // residency authority as an explicit picker change; the visible send
+        // would load/evict under foreground intent immediately afterwards
+        // anyway.  Without this grant, a stale smaller resident model makes
+        // the required warm-up refuse and puts DSV4's JIT back on the response.
+        userIntentWarmupModel = model
+        // The prompt shape did NOT change — Send is only asking that a warm-up
+        // exist before dispatch. Keep `warmedFingerprint` so `performWarmup`
+        // can recognize an identical already-warmed payload and return without
+        // prefilling it again; `selectedModelResident` lags the runtime by a
+        // residency snapshot, so the guard above fires routinely on a prompt
+        // that is in fact already warm, and invalidating here turned that lag
+        // into a visible second prefill of the same tokens.
+        handleContextShapeChange(session: session, invalidatingShape: false)
+    }
+
+    nonisolated static func requiresDSV4PreSendWarmup(
+        model: String?,
+        selectedModelIsLocal: Bool,
+        isRemoteAgentTarget: Bool,
+        warmModelsOnLoad: Bool,
+        state: WarmState,
+        selectedModelResident: Bool
+    ) -> Bool {
+        guard warmModelsOnLoad,
+            selectedModelIsLocal,
+            !isRemoteAgentTarget,
+            let model,
+            ModelFamilyNames.isDSV4Family(model)
+        else { return false }
+
+        return state != .warm || !selectedModelResident
     }
 
     /// A load from another surface (HTTP, plugin, subagent, another window)

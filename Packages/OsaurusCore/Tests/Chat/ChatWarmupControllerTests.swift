@@ -37,6 +37,121 @@ struct ChatConfigurationWarmModelsOnLoadTests {
 @MainActor
 struct ChatWarmupControllerPromptShapeTests {
 
+    @Test("DSV4 cold local send requires pre-send warm-up")
+    func dsv4ColdSendRequiresWarmup() {
+        #expect(
+            ChatWarmupController.requiresDSV4PreSendWarmup(
+                model: "DeepSeek-V4-Flash-0731-JANG",
+                selectedModelIsLocal: true,
+                isRemoteAgentTarget: false,
+                warmModelsOnLoad: true,
+                state: .cold,
+                selectedModelResident: false
+            )
+        )
+    }
+
+    @Test("DSV4 warm resident send retains the existing synchronous path")
+    func dsv4WarmResidentSendDoesNotRequireWarmup() {
+        #expect(
+            !ChatWarmupController.requiresDSV4PreSendWarmup(
+                model: "DeepSeek-V4-Flash-0731-JANG",
+                selectedModelIsLocal: true,
+                isRemoteAgentTarget: false,
+                warmModelsOnLoad: true,
+                state: .warm,
+                selectedModelResident: true
+            )
+        )
+    }
+
+    @Test("ordinary local models keep the existing send path")
+    func ordinaryModelDoesNotRequireDSV4Warmup() {
+        #expect(
+            !ChatWarmupController.requiresDSV4PreSendWarmup(
+                model: "Qwen3-8B",
+                selectedModelIsLocal: true,
+                isRemoteAgentTarget: false,
+                warmModelsOnLoad: true,
+                state: .cold,
+                selectedModelResident: false
+            )
+        )
+    }
+
+    @Test("DSV4 pre-send warm-up carries foreground load intent")
+    func dsv4PreSendWarmupMayReplaceStaleResidentModel() async throws {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.selectedModel = "DeepSeek-V4-Flash-0731-JANG"
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "DeepSeek-V4-Flash-0731-JANG",
+            messages: [ChatMessage(role: "system", content: "DSV4 warm-up")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "dsv4|required-pre-send"
+        )
+
+        let controller = ChatWarmupController()
+        controller.projectedLoadFeasibility = { _ in nil }
+        // A smaller model may still be resident when the restored DSV4
+        // selection becomes available.  A speculative warm-up would refuse;
+        // an explicit Send must be allowed to replace it.
+        controller.hasResidentModelOther = { _ in true }
+
+        controller.requireDSV4PreSendWarmupIfNeeded(session: session)
+        #expect(controller.needsPreSendHandshake)
+        controller.cancelScheduledWarmup()
+        await controller.awaitRequiredContextWarmup()
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.requestCount == 1)
+        let request = try #require(engine.lastRequest)
+        #expect(request.backgroundModelLoad == false)
+        #expect(controller.state == .warm)
+    }
+
+    @Test("DSV4 pre-send warm-up does not re-prefill an already-warm identical payload")
+    func dsv4PreSendWarmupDoesNotReprefillIdenticalPayload() async throws {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.selectedModel = "DeepSeek-V4-Flash-0731-JANG"
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "DeepSeek-V4-Flash-0731-JANG",
+            messages: [ChatMessage(role: "system", content: "DSV4 warm-up")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "dsv4|identical-payload"
+        )
+
+        let controller = ChatWarmupController()
+        controller.projectedLoadFeasibility = { _ in nil }
+        controller.hasResidentModelOther = { _ in false }
+
+        // First warm-up establishes the fingerprint for this exact payload.
+        controller.handleContextShapeChange(session: session)
+        await controller.awaitRequiredContextWarmup()
+        await controller.awaitInFlightWarmup()
+        #expect(engine.requestCount == 1)
+        #expect(controller.state == .warm)
+
+        // `selectedModelResident` lags the runtime by a residency snapshot, so
+        // the DSV4 pre-send guard fires routinely on a prompt that is already
+        // warm. Routing that through the shape-change path discarded
+        // `warmedFingerprint`, which defeated `performWarmup`'s identical-payload
+        // check and prefilled the same tokens a second time — the visible
+        // "prefill runs twice". The prompt shape has NOT changed here, so the
+        // fingerprint must survive and no second request may be issued.
+        controller.requireDSV4PreSendWarmupIfNeeded(session: session)
+        await controller.awaitRequiredContextWarmup()
+        await controller.awaitInFlightWarmup()
+
+        #expect(engine.requestCount == 1)
+        #expect(controller.state == .warm)
+    }
+
     @Test("settings prompt change survives send cancellation and warms the newest payload")
     func settingsPromptChangeWarmsNewestPayload() async throws {
         let engine = WarmupRecordingEngine()

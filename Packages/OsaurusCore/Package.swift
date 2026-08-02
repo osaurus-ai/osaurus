@@ -131,12 +131,14 @@ let package = Package(
         // recapture the seed or retain an unusable exact-prompt duplicate.
         // Its follow-up persists that materialized seed before decode and drops
         // the duplicate pool state so an uncached DSV4 turn keeps native speed.
+        // Reusable-prefix warmups publish that same seed so the visible request
+        // restores the warmed prefix instead of prefilling it a second time.
         // vmlx-swift#186-#188 correct FalconH1 key
         // projection scaling, prefixed output-head loading, and gated RMSNorm
         // group normalization without changing the shared unload/cache APIs.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "11f2000c9ff8fe774da5eb0a0635b6a51f752acd"
+            revision: "9d22ac14688a3de409683573ee141c34428e809b"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
