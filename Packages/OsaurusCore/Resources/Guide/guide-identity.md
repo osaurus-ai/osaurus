@@ -11,7 +11,7 @@ Osaurus gives every participant — you, each agent, and each device — a crypt
 ## The pieces
 
 - **Master address** — your root identity, generated on your Mac and stored in iCloud Keychain behind Face ID / Touch ID. All authority flows from it.
-- **Agent addresses** — each agent can be assigned its own address derived from the master. Assign, rotate, or revoke them in Management (⌘⇧M) → Identity; rotation and revocation automatically invalidate keys issued for the old address.
+- **Agent addresses** — each agent can be assigned its own address derived from the master. Assign, rotate, or revoke them under Privacy & Security → Identity; rotation and revocation automatically invalidate keys issued for the old address.
 - **Device ID** — a hardware-bound identity (Secure Enclave attestation) proving which physical device is making a request.
 
 ## Backup and recovery
@@ -24,7 +24,7 @@ Osaurus gives every participant — you, each agent, and each device — a crypt
 - Portable tokens (`osk-v1.…`) that let external tools, MCP clients, and remote agents authenticate against your Osaurus server without biometrics.
 - **Master-scoped** keys grant access to all agents; **agent-scoped** keys work only for one agent (cross-agent requests are rejected).
 - Expiration options: 30 days, 90 days, 1 year, or never (explicit opt-in only). The full key is shown once and never stored — only metadata (label, prefix, dates) is kept.
-- Revoke any key from the Identity view; revocation takes effect immediately, no server restart needed.
+- Generate master-scoped keys under Server → Access Keys; agent-scoped keys come from the agent's row in the Identity view (or from pairing). Revocation takes effect immediately, no server restart needed.
 
 ## Pairing
 

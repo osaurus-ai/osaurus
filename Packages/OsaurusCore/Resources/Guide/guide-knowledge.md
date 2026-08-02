@@ -1,6 +1,6 @@
 ---
 title: Knowledge Collections
-summary: Curated folders of markdown that agents search and read on demand — human-governed, never modified without approval.
+summary: Curated folders of documents that agents search and read on demand — human-governed, never modified without approval.
 order: 105
 ---
 
@@ -10,8 +10,8 @@ Knowledge is what you teach your agents: a library of your own documents (SOPs, 
 
 ## Setup
 
-1. Management (⌘⇧M) → Knowledge → **Add Collection** — point it at any folder of markdown (`.md`, `.markdown`, `.mdx`): your docs, an Obsidian vault, an exported wiki.
-2. Open a custom agent → Features → **Knowledge** — enable the toggle and check the collections that agent may use.
+1. Management (⌘⇧M) → Knowledge → **Add Collection** — point it at any folder of documents: your docs, an Obsidian vault, an exported wiki. Markdown works best, but plain text, code, PDF, Word, Excel, PowerPoint, and CSV files are indexed too.
+2. Open a custom agent → Abilities → Overview → **Knowledge** — enable the toggle and check the collections that agent may use.
 3. Chat. The agent gets `search_knowledge` / `read_knowledge` / `list_knowledge` and consults the library only when a task calls for it.
 
 Files are indexed in place and never moved or modified; edits to the folder are picked up within seconds. Optional YAML frontmatter (`type`, `title`, `description`, `tags`) improves search filtering.

@@ -6,7 +6,7 @@ order: 95
 
 # Agent Database and Self-Scheduling
 
-Two per-agent capabilities turn a stateless chat agent into something that remembers structured data across runs and wakes itself up to act on it. Both are off by default and independent — enable one, both, or neither in the agent's Configure → Features tab.
+Two per-agent capabilities turn a stateless chat agent into something that remembers structured data across runs and wakes itself up to act on it. Both are off by default and independent — enable one, both, or neither in the agent's Abilities → Overview tab.
 
 ## Agent Database
 
@@ -14,7 +14,7 @@ Two per-agent capabilities turn a stateless chat agent into something that remem
 - Every table gets `_created_at` / `_updated_at` / `_deleted_at` system columns. Deletes are **soft** — `db_delete` stamps a tombstone and `db_restore` brings the row back; there is no hard-delete tool.
 - Destructive SQL is blocked (`DROP TABLE`, `DELETE` without `WHERE` warnings, extension loading, writes to system tables). Every mutation is recorded in a changelog you can audit.
 - The agent detail view gains Home, Schema, Data, Views, and Activity tabs for browsing the schema, rows (Active/Deleted/All), saved views, and run history.
-- Each agent declares a storage quota; writes are rejected past the limit and a warning banner appears near it.
+- Storage is capped (100 MB by default); writes are rejected past the limit and a warning appears as usage approaches it.
 - This is distinct from Memory (global, conversation-derived) and Knowledge (your curated docs): the agent DB is per-agent structured storage the agent schemas itself.
 
 ## Self-Scheduling

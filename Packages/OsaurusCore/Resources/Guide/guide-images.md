@@ -6,12 +6,12 @@ order: 58
 
 # Image Generation
 
-Osaurus can create and edit images entirely on your Mac using local image models (Flux-family bundles via vMLX/mflux). No image ever leaves the device.
+Osaurus can create and edit images entirely on your Mac using local image models (FLUX, Qwen-Image, Z-Image Turbo, and other bundles via vMLX/mflux). No image ever leaves the device.
 
 ## Setup
 
-- Management (⌘⇧M) → Images → Models: browse and download on-device image model bundles, or import one from Hugging Face.
-- Management → Images → Settings: choose the default generation model and (separately) the default edit model, plus the permission and model load policy.
+- Models → Images → Models: browse and download on-device image model bundles, or import one from Hugging Face.
+- Models → Images → Settings: choose the default generation model and (separately) the default edit model, plus the permission and model load policy.
 - Image models are large; they load on demand and can temporarily displace the resident chat model while a job runs.
 
 ## Using it in chat
@@ -27,5 +27,5 @@ The server exposes an OpenAI-compatible endpoint at `POST /v1/images/generations
 
 ## Notes
 
-- Per-agent: image generation is a spawnable capability toggled in the agent's Configure tab.
-- If no image model is installed, the tool is not offered — download one in Management → Images → Models first.
+- Per-agent: enable **Image** under a custom agent's Subagents section (pick the gen/edit models and permission there). For the Default assistant it lives under General settings → Subagents → Main Chat Capabilities → Image.
+- If no image model is installed, the tool is not offered — download one in Models → Images → Models first.

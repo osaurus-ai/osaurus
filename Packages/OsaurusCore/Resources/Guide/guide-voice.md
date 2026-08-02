@@ -28,4 +28,4 @@ The Transcription tab enables system-wide dictation into any app via a global ho
 - Voice → Text-to-Speech: enable, pick an engine, and Preview.
 - Default engine: On-Device (PocketTTS) — English, ~700 MB one-time download, offline afterwards; choose a voice (default `alba`).
 - Alternative: any OpenAI-compatible TTS server (`/v1/audio/speech`) — endpoint, model, voice, speed, optional API key (Keychain).
-- In chat, a speaker button appears on assistant messages when TTS is on; agents can also be granted a `speak` tool (agent → Features → Output → Voice).
+- In chat, a speaker button appears on assistant messages when TTS is on; agents can also be granted a `speak` tool in the agent's Abilities settings.

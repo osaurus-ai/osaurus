@@ -14,7 +14,7 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 - Or ask the default Osaurus assistant: "create a coding agent" — it can create, update, and switch agents for you.
 - Switch agents from the agent menu in the chat window.
 
-## Per-agent features (agent → Configure → Features)
+## Per-agent features (agent → Abilities → Overview)
 
 - Tools (on by default) and Memory (on by default).
 - Off by default, opt in per agent: Charts, Voice output, Memory Recall (search past memory), Self-scheduling, Computer Use, Database (per-agent private SQLite), Knowledge collections, sandbox execution options.

@@ -22,7 +22,7 @@ Management → Watchers: point an agent at a folder and it runs when the folder'
 
 ## Agent self-scheduling
 
-- Per-agent, off by default: agent → Configure → Features → Self-scheduling.
+- Per-agent, off by default: agent → Abilities → Overview → Self-scheduling.
 - The agent gets `schedule_next_run` / `cancel_next_run` / `notify` tools and one pending "next run" slot; each wake is a fresh chat, and the agent must re-schedule to repeat.
 - Modes bound how often it can wake: Ambient (7-day horizon, max 6/day, quiet hours 22:00–07:00), Reactive (24h, up to 48/day), Project (30 days, 4/day, quiet hours).
 - A Next Run banner in the agent view shows the pending wake with Pause / Run now / Edit / Cancel.
