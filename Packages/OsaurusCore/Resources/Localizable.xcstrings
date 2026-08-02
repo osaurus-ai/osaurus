@@ -115039,20 +115039,20 @@
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Needs your input"
+            "state" : "translated",
+            "value" : "Benötigt deine Eingabe"
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Needs your input"
+            "state" : "translated",
+            "value" : "입력이 필요합니다"
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Needs your input"
+            "state" : "translated",
+            "value" : "Требуется ваш ввод"
           }
         },
         "zh-Hans" : {
@@ -167248,6 +167248,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在運行..."
+          }
+        }
+      }
+    },
+    "Running…" : {
+      "comment" : "Sidebar status line shown in place of the timestamp while a conversation's task is running.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Läuft…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "실행 중…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выполняется…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在运行…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在運行…"
           }
         }
       }

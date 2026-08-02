@@ -168,7 +168,17 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     private(set) var executionContext: ExecutionContext?
 
     /// Current status of the background task
-    @Published public var status: BackgroundTaskStatus
+    @Published public var status: BackgroundTaskStatus {
+        didSet {
+            guard status != oldValue else { return }
+            // Queued tasks haven't started streaming, so their ChatSession
+            // reports nothing to the sidebar activity monitor; bridge the
+            // registry-level queued state here. Running/waiting states are
+            // reported by the session itself.
+            guard let sessionId = chatSession?.sessionId else { return }
+            SessionActivityMonitor.shared.reportQueued(sessionId, isQueued: status == .queued)
+        }
+    }
 
     /// Description of current step being executed
     @Published public var currentStep: String?

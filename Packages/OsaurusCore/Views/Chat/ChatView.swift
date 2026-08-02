@@ -410,13 +410,46 @@ final class ChatSession: ObservableObject {
     /// True while a send is parked on the pre-send warm-up handshake (the
     /// in-flight warm-up generation may still be loading the model). Drives a
     /// placeholder typing-indicator row so the wait shows "Loading Model..."
-    /// instead of a silent gap under the user's message.
-    private var awaitingPreSendHandshake = false
+    /// instead of a silent gap under the user's message. Not `@Published`
+    /// (composer reads it through `isSendActiveForComposer`), so the sidebar
+    /// activity bridge hooks its transitions here.
+    private var awaitingPreSendHandshake = false {
+        didSet {
+            guard awaitingPreSendHandshake != oldValue else { return }
+            publishActivityState(
+                sessionId: sessionId,
+                working: isStreaming || awaitingPreSendHandshake,
+                waiting: promptQueue.current != nil || awaitingClarify != nil
+            )
+        }
+    }
     /// Composer-facing activity includes the outer warm-up handshake, before
     /// `isStreaming` flips. This keeps Stop/queue behavior available during a
     /// long model switch instead of presenting a second ordinary Send button.
     var isSendActiveForComposer: Bool {
         isStreaming || awaitingPreSendHandshake
+    }
+
+    /// Session id whose activity was last pushed to `SessionActivityMonitor`,
+    /// so a session switch/reset clears the stale entry. `nonisolated(unsafe)`
+    /// so `deinit` can read it for the final cleanup hop.
+    nonisolated(unsafe) private var lastReportedActivitySessionId: UUID?
+
+    /// Push this session's live activity into the shared monitor keyed by
+    /// persisted session id. Waiting (a mounted clarify/secret card or a
+    /// pending clarify answer) outranks working; neither means the entry is
+    /// removed. Called with the NEW values from the Combine bridge in `init`
+    /// (publishers emit on willSet) and from `awaitingPreSendHandshake.didSet`.
+    private func publishActivityState(sessionId: UUID?, working: Bool, waiting: Bool) {
+        let status: SessionActivityMonitor.Status? =
+            waiting ? .waitingForInput : (working ? .working : nil)
+        if let previous = lastReportedActivitySessionId, previous != sessionId {
+            SessionActivityMonitor.shared.reportSession(previous, status: nil)
+        }
+        if let sessionId {
+            SessionActivityMonitor.shared.reportSession(sessionId, status: status)
+        }
+        lastReportedActivitySessionId = sessionId
     }
     /// Stable placeholder assistant turn rendered (never persisted, never in
     /// `turns`) while `awaitingPreSendHandshake` is true. Stable identity so
@@ -514,6 +547,10 @@ final class ChatSession: ObservableObject {
     /// forward the prompt overlay wouldn't appear/disappear when the
     /// inner queue mutates `current`.
     nonisolated(unsafe) private var promptQueueCancellable: AnyCancellable?
+
+    /// Bridges this session's live activity (streaming / awaiting input) into
+    /// `SessionActivityMonitor` keyed by session id, for the History sidebar.
+    nonisolated(unsafe) private var activityMonitorCancellable: AnyCancellable?
 
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
@@ -688,6 +725,23 @@ final class ChatSession: ObservableObject {
             .sink { [weak self] _ in
                 self?.objectWillChange.send()
             }
+
+        // Mirror live activity into the shared sidebar monitor. `@Published`
+        // publishers emit the NEW value on willSet, so the closure computes
+        // from the emitted values (the properties themselves are still stale
+        // at this point); `awaitingPreSendHandshake` isn't published and
+        // reports through its own `didSet` instead.
+        activityMonitorCancellable = Publishers.CombineLatest4(
+            $isStreaming, $sessionId, $awaitingClarify, promptQueue.$current
+        )
+        .sink { [weak self] isStreaming, sessionId, clarify, promptItem in
+            guard let self else { return }
+            self.publishActivityState(
+                sessionId: sessionId,
+                working: isStreaming || self.awaitingPreSendHandshake,
+                waiting: promptItem != nil || clarify != nil
+            )
+        }
 
         // Same bridge for the per-session folder state: the folder chip and
         // context previews render from `folderState`, whose mutations must
@@ -1019,9 +1073,18 @@ final class ChatSession: ObservableObject {
         modelOptionsCancellable = nil
         agentAutoSpeakCancellable = nil
         promptQueueCancellable = nil
+        activityMonitorCancellable = nil
         contextEstimateCancellable = nil
         modelCacheCancellable = nil
         screenContextCancellable = nil
+        // Belt-and-suspenders: a session shouldn't dealloc while marked
+        // active, but a stale sidebar indicator with no live session to
+        // clear it would be permanent, so drop the entry on the way out.
+        if let staleId = lastReportedActivitySessionId {
+            Task { @MainActor in
+                SessionActivityMonitor.shared.reportSession(staleId, status: nil)
+            }
+        }
     }
 
     private func loadActiveModelOptions(for model: String?) {
@@ -7025,6 +7088,19 @@ struct ChatView: View {
                                     format: format,
                                     scope: .chat(windowState.windowId)
                                 )
+                            },
+                            onStop: { id in
+                                // This window's own run stops directly (the
+                                // hosting surface may not be registered with
+                                // ChatWindowManager); anything else routes
+                                // through the monitor, which prefers the
+                                // registry task so a detached run is also
+                                // marked cancelled.
+                                if session.sessionId == id {
+                                    session.stop()
+                                } else {
+                                    SessionActivityMonitor.shared.stop(sessionId: id)
+                                }
                             },
                             onOpenInNewWindow: { sessionData in
                                 // Open session in a new window via ChatWindowManager
