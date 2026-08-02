@@ -509,6 +509,18 @@ struct ModelManagerTests {
                 try await Task.sleep(nanoseconds: 25_000_000)
             }
             #expect(second.map(\.id) == ["gemma-4-E2B-it-qat-MXFP4"])
+
+            // The discovery loop above exits as soon as `discoverLocalModels()`
+            // returns the model, but `.localModelsChanged` is delivered through
+            // NotificationCenter and therefore lands independently. Asserting
+            // the count immediately makes this a race: under runner load the
+            // observer has not fired yet and the count reads 0. Wait for the
+            // notification itself, with a deadline, instead of assuming the
+            // preceding sleep covered it.
+            let notificationDeadline = Date().addingTimeInterval(2)
+            while completionNotifications.count < 1, Date() < notificationDeadline {
+                try await Task.sleep(nanoseconds: 5_000_000)
+            }
             #expect(completionNotifications.count == 1)
         }
     }
