@@ -17,69 +17,6 @@ private let heroAvatarDiameter: CGFloat = 64
 /// placeholder and `AgentAvatarView` monogram fallback).
 private let heroAvatarIconFontSize: CGFloat = 28
 
-// MARK: - Shimmer Fade-In
-
-/// One-shot shimmer + fade-in run when the bound `trigger` transitions to
-/// a non-empty value. Used by `ChatEmptyState` so AI-generated greetings,
-/// subtitles, and quick actions arrive with a subtle highlight sweep
-/// instead of a hard cut. Idempotent: an unchanged or empty trigger
-/// leaves content fully visible without animating, so the regular
-/// staggered entrance is unaffected.
-private struct ShimmerFadeIn: ViewModifier {
-    /// Hashable fingerprint of the content being shimmered. The shimmer
-    /// re-fires whenever this value changes to a non-nil, non-empty
-    /// string — empty / nil values are treated as "static, no animation".
-    let trigger: String?
-    /// Highlight color for the sweeping band. Defaults to a soft white
-    /// so the shimmer reads cleanly over both light and dark themes.
-    var highlight: Color = .white
-
-    /// Phase of the gradient sweep, in unit space across the masked
-    /// content. Starts past the trailing edge so the modifier renders
-    /// no shimmer at rest; gets reset to the leading edge when `run`
-    /// fires and animates back out.
-    @State private var phase: CGFloat = 1.5
-    /// Fade-in opacity, snapped to 1 at rest so the static path renders
-    /// the underlying view unchanged.
-    @State private var opacity: Double = 1
-
-    func body(content: Content) -> some View {
-        content
-            .opacity(opacity)
-            .overlay(
-                LinearGradient(
-                    colors: [.clear, highlight.opacity(0.7), .clear],
-                    startPoint: UnitPoint(x: phase - 0.18, y: 0.5),
-                    endPoint: UnitPoint(x: phase + 0.18, y: 0.5)
-                )
-                .blendMode(.plusLighter)
-                .allowsHitTesting(false)
-            )
-            .mask(content)
-            .onChange(of: trigger ?? "") { oldValue, newValue in
-                guard !newValue.isEmpty, oldValue != newValue else { return }
-                run()
-            }
-    }
-
-    private func run() {
-        // Pre-roll instantaneously so the previous run's residual state
-        // can't bleed into the new sweep.
-        phase = -0.5
-        opacity = 0
-        withAnimation(.easeOut(duration: 0.45)) { opacity = 1 }
-        withAnimation(.easeInOut(duration: 1.05).delay(0.05)) { phase = 1.5 }
-    }
-}
-
-extension View {
-    /// Adds a one-shot shimmer + fade-in run when `trigger` transitions to
-    /// a non-empty value. See `ShimmerFadeIn` for behavior details.
-    fileprivate func shimmerFadeIn(trigger: String?, highlight: Color = .white) -> some View {
-        modifier(ShimmerFadeIn(trigger: trigger, highlight: highlight))
-    }
-}
-
 // MARK: - Hero Agent Avatar
 
 /// Renders a hero-sized avatar for a given agent. Built-in and custom
@@ -111,15 +48,6 @@ struct ChatEmptyState: View {
     let agents: [Agent]
     let activeAgentId: UUID
     let quickActions: [AgentQuickAction]
-    /// Lifecycle of the AI-produced greeting/subtitle/actions. `.idle`,
-    /// `.loading`, and `.failed` all render the static defaults (the
-    /// agent's configured greeting + quick actions, or the time-of-day
-    /// fallback). Only `.ready(payload)` swaps in the AI content, with
-    /// a shimmer fade-in. We deliberately don't render a skeleton during
-    /// `.loading` — small Core Models can take several seconds to
-    /// produce a greeting, and a skeleton makes that wait feel slow
-    /// even though the static greeting is perfectly usable.
-    var generativeGreetingState: GenerativeGreetingState = .idle
     let onOpenModelManager: () -> Void
     let onUseFoundation: (() -> Void)?
     let onQuickAction: (String) -> Void
@@ -169,13 +97,6 @@ struct ChatEmptyState: View {
         agents.first { $0.id == activeAgentId } ?? Agent.default
     }
 
-    /// Unwrapped payload for `.ready` so the rest of the file can use a
-    /// plain optional check without re-pattern-matching the enum.
-    private var readyGreeting: GenerativeGreeting? {
-        if case .ready(let g) = generativeGreetingState { return g }
-        return nil
-    }
-
     /// True when this empty state heads a Mode 2 remote-agent conversation.
     private var isRemoteChat: Bool {
         activeRelayAgent != nil || activeDiscoveredAgent != nil
@@ -204,19 +125,14 @@ struct ChatEmptyState: View {
 
     /// Title text rendered above the subtitle. Resolution order:
     /// 1. Remote agent name (Mode 2 — this chat is the remote agent, not the
-    /// local one), 2. AI-generated greeting (when ready), 3. per-agent override
-    /// (`Agent.chatGreeting`), 4. time-of-day default. Whitespace-only strings
-    /// are treated as nil so a cleared field falls through to the next layer.
+    /// local one), 2. per-agent override (`Agent.chatGreeting`), 3. time-of-day
+    /// default. Whitespace-only strings are treated as nil so a cleared field
+    /// falls through to the next layer.
     private var greetingText: String {
         // A remote agent owns the conversation: never surface the local
-        // agent's generative/custom greeting here.
+        // agent's custom greeting here.
         if isRemoteChat {
             return remoteDisplayName
-        }
-        if let g = readyGreeting?.greeting,
-            !g.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
-            return g
         }
         if let custom = activeAgent.chatGreeting?.trimmingCharacters(in: .whitespacesAndNewlines),
             !custom.isEmpty
@@ -227,11 +143,11 @@ struct ChatEmptyState: View {
     }
 
     /// Subtitle rendered beneath the greeting. Same precedence as
-    /// `greetingText`: AI-generated → per-agent override
+    /// `greetingText`: remote description → per-agent override
     /// (`Agent.chatSubtitle`) → localized default.
     private var subtitleText: LocalizedStringKey {
         // Remote agent run: surface the remote agent's own description (so it
-        // introduces itself), never the local agent's generative/custom
+        // introduces itself), never the local agent's custom
         // subtitle. Falls back to the neutral default when it has none.
         if isRemoteChat {
             if let d = remoteAgentDescription?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -241,11 +157,6 @@ struct ChatEmptyState: View {
             }
             return "How can I help you today?"
         }
-        if let s = readyGreeting?.subtitle,
-            !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
-            return LocalizedStringKey(s)
-        }
         if let custom = activeAgent.chatSubtitle?.trimmingCharacters(in: .whitespacesAndNewlines),
             !custom.isEmpty
         {
@@ -254,9 +165,8 @@ struct ChatEmptyState: View {
         return "How can I help you today?"
     }
 
-    /// Quick actions to render. Generative actions override the agent's
-    /// configured shortcuts when they arrive; the user's custom shortcuts
-    /// (or the static defaults) act as the fallback.
+    /// Quick actions to render. Remote chats use the remote agent's advertised
+    /// actions; local chats use the selected agent's configured shortcuts.
     private var effectiveQuickActions: [AgentQuickAction] {
         // Mode 2: surface the remote agent's own Action Bar when it advertised
         // one over the Secure Channel; otherwise fall back to neutral chat
@@ -266,7 +176,6 @@ struct ChatEmptyState: View {
             if let remote = remoteAgentQuickActions, !remote.isEmpty { return remote }
             return AgentQuickAction.defaultChatQuickActions
         }
-        if let g = readyGreeting?.actions, !g.isEmpty { return g }
         return quickActions
     }
 
@@ -285,39 +194,6 @@ struct ChatEmptyState: View {
             return discovered.supportsSecureChannel ? .endToEndEncrypted : .peerNeedsUpgrade
         }
         return nil
-    }
-
-    /// Drives the SwiftUI `.animation(value:)` so the title/subtitle/actions
-    /// animate together when the generative payload swaps in.
-    private var generativeFingerprint: String {
-        guard let g = readyGreeting else { return "static" }
-        return "gen:\(g.greeting)|\(g.subtitle)|\(g.actions.count)"
-    }
-
-    /// Fingerprint for the quick-action grid so the shimmer + staggered entrance
-    /// re-fires when the actions change. Remote: keyed on the *stored* fetched
-    /// action ids (stable across renders) so it fires once when the Action Bar
-    /// lands. Local: reuse `generativeFingerprint` — default/generative actions
-    /// mint fresh ids per access, so id-keying there would churn every render.
-    private var quickActionsFingerprint: String {
-        if isRemoteChat {
-            guard let remote = remoteAgentQuickActions, !remote.isEmpty else { return "static" }
-            return "remote:\(remote.count):" + remote.map { $0.id.uuidString }.joined(separator: ",")
-        }
-        return generativeFingerprint
-    }
-
-    /// Stable identity for the subtitle Text so SwiftUI treats each
-    /// resolved variant (generative / agent-override / static default)
-    /// as a distinct node, enabling the cross-fade.
-    private var subtitleFingerprint: String {
-        if let s = readyGreeting?.subtitle { return "gen:\(s)" }
-        if let custom = activeAgent.chatSubtitle?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !custom.isEmpty
-        {
-            return "agent:\(custom)"
-        }
-        return "static"
     }
 
     var body: some View {
@@ -373,21 +249,12 @@ struct ChatEmptyState: View {
                 .scaleEffect(hasAppeared ? 1 : 0.85)
                 .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
 
-            // Always paint the greeting block. When the AI response
-            // arrives later (state flips to `.ready`), the
-            // `shimmerFadeIn` modifiers inside sweep a highlight
-            // across the new text + quick actions so the swap reads
-            // as intentional rather than a hard cut.
             greetingBlock
         }
         .padding(.horizontal, 40)
     }
 
-    /// Greeting + subtitle + quick actions block. Rendered for every
-    /// generative state — including `.loading` — so the empty state
-    /// always paints instantly. When `.ready` finally lands, the
-    /// `shimmerFadeIn` modifiers below sweep a highlight across the
-    /// freshly visible text and quick-action grid as a soft swap-in cue.
+    /// Greeting + subtitle + quick actions block.
     @ViewBuilder
     private var greetingBlock: some View {
         VStack(spacing: 14) {
@@ -396,35 +263,17 @@ struct ChatEmptyState: View {
                     Text(greetingText)
                         .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
                         .foregroundColor(theme.primaryText)
-                    if readyGreeting != nil {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: CGFloat(theme.bodySize) + 2, weight: .semibold))
-                            .foregroundColor(theme.accentColorLight.opacity(0.85))
-                            .transition(.scale.combined(with: .opacity))
-                    }
                 }
                 .id("greeting-\(greetingText)")
-                .shimmerFadeIn(
-                    trigger: readyGreeting?.greeting,
-                    highlight: theme.accentColorLight
-                )
-                // Pure-opacity transition for downstream generative
-                // refreshes — the slide-from-top duplicate the
-                // ZStack-level cross-fade and made the greeting wobble.
                 .transition(.opacity)
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : 20)
                 .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
 
                 Text(subtitleText, bundle: .module)
-                    .id("subtitle-\(subtitleFingerprint)")
                     .font(theme.font(size: CGFloat(theme.bodySize) + 2))
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)
-                    .shimmerFadeIn(
-                        trigger: readyGreeting?.subtitle,
-                        highlight: theme.accentColorLight
-                    )
                     .transition(.opacity)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 15)
@@ -437,15 +286,9 @@ struct ChatEmptyState: View {
                         .animation(theme.springAnimation().delay(0.24), value: hasAppeared)
                 }
             }
-            .animation(theme.springAnimation(), value: generativeFingerprint)
 
             if !effectiveQuickActions.isEmpty {
                 staggeredQuickActions
-                    .shimmerFadeIn(
-                        trigger: quickActionsFingerprint == "static" ? nil : quickActionsFingerprint,
-                        highlight: theme.accentColorLight
-                    )
-                    .animation(theme.springAnimation(), value: quickActionsFingerprint)
             }
         }
     }

@@ -87,7 +87,7 @@ struct GenerationParameters: Sendable {
     /// Whether this generation's model load may disturb a model someone else is
     /// using. `.interactive` (the default) keeps today's behaviour: a human is
     /// waiting, so the load may evict a resident model or cancel an in-flight
-    /// one. Housekeeping generations — memory distillation, greetings,
+    /// one. Housekeeping generations — memory distillation,
     /// voice-transcript cleanup, speculative warm-up — must pass `.background`,
     /// which makes `ModelRuntime` refuse the load rather than take the GPU out
     /// from under an active chat.

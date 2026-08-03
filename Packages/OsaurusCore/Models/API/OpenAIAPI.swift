@@ -800,8 +800,8 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// Local-only: when true, this request's model load must not disturb a model
     /// that is already resident or already loading — the runtime refuses the load
     /// instead of evicting. Set by housekeeping that nobody is waiting on
-    /// (speculative warm-up, greeting generation, transcript cleanup, memory
-    /// distillation). Never set for a request a human is waiting on: those are
+    /// (speculative warm-up, transcript cleanup, memory distillation). Never
+    /// set for a request a human is waiting on: those are
     /// entitled to the GPU.
     ///
     /// Not decoded from OpenAI JSON, not sent to providers.

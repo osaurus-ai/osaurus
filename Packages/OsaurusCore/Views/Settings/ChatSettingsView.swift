@@ -75,13 +75,6 @@ struct ChatSettingsView: View {
     /// debounced save baseline.
     @AppStorage(ContentBlock.ActivityRollupSetting.defaultsKey)
     private var activityRollupEnabled: Bool = false
-    /// Free-text "voice" instruction for AI-generated empty-state
-    /// greetings — the global default voice. The on/off is per-agent
-    /// (`AgentSettings.generativeGreetingsEnabled`). Empty = use the
-    /// built-in playful default. Per-agent overrides live on
-    /// `AgentSettings.greetingPersona`.
-    @State private var tempGreetingPersona: String = ""
-
     /// Model that runs LLM context compaction (summarizing older messages
     /// when a chat outgrows its context window). Same provider/name split
     /// as the Core Model picker; empty = "ask on first use" (the first-run
@@ -394,20 +387,6 @@ struct ChatSettingsView: View {
                     }
                 }
 
-                SettingsDivider()
-
-                SettingsSubsection(label: "Generative Greetings") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(
-                            "Default voice for AI-generated greetings + quick actions. Turn greetings on per agent under the agent's Appearance tab, where each agent can also override this voice.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-
-                        personalityEditorBlock
-                    }
-                }
             }
         }
     }
@@ -635,58 +614,6 @@ struct ChatSettingsView: View {
         .frame(maxWidth: 320)
     }
 
-    private var personalityEditorBlock: some View {
-        let defaultText = GenerativeGreetingService.defaultPersonaInstruction
-        let isAtDefault =
-            tempGreetingPersona.trimmingCharacters(in: .whitespacesAndNewlines)
-            == defaultText.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("Personality (default for all agents)", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                Spacer()
-                if !isAtDefault {
-                    Button {
-                        tempGreetingPersona = defaultText
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.uturn.backward")
-                                .font(.system(size: 10, weight: .semibold))
-                            Text("Reset to Default", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundColor(theme.accentColor)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            TextEditor(text: $tempGreetingPersona)
-                .font(.system(size: 13, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 100, maxHeight: 200)
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
-
-            Text(
-                "Shapes the voice of AI-generated empty-state greetings and quick actions. Each agent can override this in its Customization tab.",
-                bundle: .module
-            )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
-        }
-    }
-
     // MARK: - Success Toast
 
     private func showSuccess(_ message: String) {
@@ -718,7 +645,7 @@ struct ChatSettingsView: View {
         // The Default agent's persona and generation knobs live on
         // `DefaultAgentConfiguration` (split off from `ChatConfiguration`);
         // the numeric generation knobs (top-P and tool
-        // attempts) and clipboard / greeting voice live on `ChatConfiguration`.
+        // attempts) and clipboard settings live on `ChatConfiguration`.
         // Tools and memory are intentionally NOT surfaced here: the default
         // agent's tools toggle lives in the Agents tab and the global memory
         // switch lives in the Memory tab.
@@ -730,15 +657,6 @@ struct ChatSettingsView: View {
         tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
         tempWarmModelsOnLoad = chat.warmModelsOnLoad
         tempAutoGenerateChatTitles = chat.autoGenerateChatTitles
-        // Storage convention: empty string = "use the built-in default."
-        // The editor never displays an empty state — we hydrate it with the
-        // built-in default so the text is editable in place. `saveConfiguration`
-        // collapses an unedited default back to "" so future updates to the
-        // built-in copy still propagate to users who never changed it.
-        tempGreetingPersona =
-            chat.greetingPersona.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? GenerativeGreetingService.defaultPersonaInstruction
-            : chat.greetingPersona
         tempCompactionModelProvider = chat.compactionModelProvider ?? ""
         tempCompactionModelName = chat.compactionModelName ?? ""
 
@@ -760,7 +678,6 @@ struct ChatSettingsView: View {
         tempEnableClipboardMonitoring = chatDefaults.enableClipboardMonitoring
         tempWarmModelsOnLoad = chatDefaults.warmModelsOnLoad
         tempAutoGenerateChatTitles = chatDefaults.autoGenerateChatTitles
-        tempGreetingPersona = GenerativeGreetingService.defaultPersonaInstruction
         tempCompactionModelProvider = chatDefaults.compactionModelProvider ?? ""
         tempCompactionModelName = chatDefaults.compactionModelName ?? ""
 
@@ -779,7 +696,6 @@ struct ChatSettingsView: View {
         var enableClipboardMonitoring: Bool
         var warmModelsOnLoad: Bool
         var autoGenerateChatTitles: Bool
-        var greetingPersona: String
         var compactionModelProvider: String
         var compactionModelName: String
     }
@@ -794,7 +710,6 @@ struct ChatSettingsView: View {
             enableClipboardMonitoring: tempEnableClipboardMonitoring,
             warmModelsOnLoad: tempWarmModelsOnLoad,
             autoGenerateChatTitles: tempAutoGenerateChatTitles,
-            greetingPersona: tempGreetingPersona,
             compactionModelProvider: tempCompactionModelProvider,
             compactionModelName: tempCompactionModelName
         )
@@ -867,14 +782,6 @@ struct ChatSettingsView: View {
         chatCfg.enableClipboardMonitoring = tempEnableClipboardMonitoring
         chatCfg.warmModelsOnLoad = tempWarmModelsOnLoad
         chatCfg.autoGenerateChatTitles = tempAutoGenerateChatTitles
-        chatCfg.greetingPersona = {
-            // Collapse an unedited built-in default back to "" so storage stays
-            // in "inherit the default" mode.
-            let trimmed = tempGreetingPersona.trimmingCharacters(in: .whitespacesAndNewlines)
-            let defaultTrimmed = GenerativeGreetingService.defaultPersonaInstruction
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed == defaultTrimmed ? "" : tempGreetingPersona
-        }()
         chatCfg.compactionModelProvider =
             tempCompactionModelProvider.isEmpty ? nil : tempCompactionModelProvider
         chatCfg.compactionModelName =

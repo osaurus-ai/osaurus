@@ -101,8 +101,8 @@ private let _llmFactory = MLXLLM.LLMModelFactory.shared
 /// The runtime is strictly single-model by default: loading B evicts resident A
 /// and cancels an in-flight load of A. That is fine when a human is waiting on
 /// B — they asked for it. It is never fine on behalf of housekeeping (memory
-/// distillation, greeting generation, voice-transcript cleanup, speculative
-/// warm-up, a cron-fired agent), which must fill an *empty* slot or step aside.
+/// distillation, voice-transcript cleanup, speculative warm-up, a cron-fired
+/// agent), which must fill an *empty* slot or step aside.
 ///
 /// This has to be enforced inside the actor, at the moment of eviction. Callers
 /// used to probe `hasLoadInFlight()` / `hasResidentModelOther(than:)` and then

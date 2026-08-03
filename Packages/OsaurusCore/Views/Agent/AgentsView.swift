@@ -1271,24 +1271,11 @@ struct AgentDetailView: View {
     /// Editable mirror of `AutonomousExecConfig.sandboxAllowedDomains`
     /// (comma-joined). Committed (normalized + persisted) on submit.
     @State private var sandboxAllowedDomainsText: String = ""
-    /// Per-agent on/off for the chat empty-state generative greeting.
-    /// Default off, like the other capability flags; the agent opts in
-    /// from Appearance → Empty State, which also switches between the
-    /// AI personality editor and the manual greeting editor. Flows
-    /// through `loadAgent` / `saveAgent` like the other
-    /// `AgentSettings` fields.
-    @State private var generativeGreetingsEnabled: Bool = false
-    /// Per-agent override for the empty-state greeting voice. Empty-after-
-    /// trim falls through to the global persona on
-    /// `ChatConfiguration.greetingPersona`; both empty falls back to the
-    /// built-in default in `GenerativeGreetingService`.
-    @State private var greetingPersona: String = ""
     /// Manual override for `Agent.chatGreeting`. Empty-after-trim becomes
     /// `nil` on save so the chat empty state falls through to the
-    /// time-of-day default. Only rendered when `generativeGreetingsEnabled`
-    /// is OFF for this agent.
+    /// time-of-day default.
     @State private var chatGreetingDraft: String = ""
-    /// Manual override for `Agent.chatSubtitle`. Same gating and
+    /// Manual override for `Agent.chatSubtitle`. Uses the same
     /// trim-empty-to-nil semantics as `chatGreetingDraft`.
     @State private var chatSubtitleDraft: String = ""
     /// Bound to the `Delete Data` confirmation dialog. We require an
@@ -2219,91 +2206,14 @@ struct AgentDetailView: View {
         themeSection
     }
 
-    /// Customization → Empty State. Owns the Generative Greetings toggle
-    /// (it changes presentation, not model capability, so it lives here
-    /// with the editors it switches between):
-    /// - **on** → free-text Personality drives the generated greeting + actions.
-    /// - **off** → user-authored Greeting / Message / Action Bar.
-    /// We render only the active side so the surface stays calm.
+    /// Customization → Empty State. Provides user-authored Greeting, Message,
+    /// and Action Bar controls.
     private var emptyStateSection: some View {
         AgentDetailSection(title: L("Empty State"), icon: "sparkles") {
-            VStack(alignment: .leading, spacing: 14) {
-                featureCard(
-                    title: "Generative Greetings",
-                    subtitle:
-                        "Generate a fresh AI greeting and quick actions on your Core Model each time you open an empty chat. Off uses your custom greeting. The first generation can feel slow on small models like Foundation.",
-                    isOn: generativeGreetingsEnabled
-                ) { newValue in
-                    generativeGreetingsEnabled = newValue
-                    debouncedSave()
-                }
-                if generativeGreetingsEnabled {
-                    aiEmptyStateBody
-                } else {
-                    manualEmptyStateBody
-                }
-            }
-            .onChange(of: chatGreetingDraft) { debouncedSave() }
-            .onChange(of: chatSubtitleDraft) { debouncedSave() }
+            manualEmptyStateBody
+                .onChange(of: chatGreetingDraft) { debouncedSave() }
+                .onChange(of: chatSubtitleDraft) { debouncedSave() }
         }
-    }
-
-    /// AI side: just the Personality editor with one short helper line.
-    /// We drop the noisy "Generates a fresh greeting + four quick
-    /// actions on your Core Model. Falls back to the static defaults
-    /// silently on any failure." paragraph — that's runtime trivia,
-    /// not configuration the user needs to think about. The label row
-    /// also hosts a "Reset to Default" button that flips the editor
-    /// back to whatever the agent currently inherits.
-    private var aiEmptyStateBody: some View {
-        let isAtDefault =
-            greetingPersona.trimmingCharacters(in: .whitespacesAndNewlines)
-            == resolvedPersonaDefault.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("Personality", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                if !isAtDefault {
-                    Button {
-                        greetingPersona = resolvedPersonaDefault
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.uturn.backward")
-                                .font(.system(size: 10, weight: .semibold))
-                            Text("Reset to Default", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundColor(theme.accentColor)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            personalityEditor
-
-            Text(
-                "Inherits from the global personality in Settings → Chat. Edit to give this agent its own voice.",
-                bundle: .module
-            )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
-        }
-    }
-
-    /// Resolved default for the per-agent Personality field. The editor
-    /// inherits from the global persona on `ChatConfiguration.greetingPersona`
-    /// when the agent has no explicit override; if the global is also
-    /// empty we fall back to the built-in default. Same precedence the
-    /// runtime uses in `GenerativeGreetingService.resolvedPersona(...)`.
-    private var resolvedPersonaDefault: String {
-        let global = AppConfiguration.shared.chatConfig.greetingPersona
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return global.isEmpty
-            ? GenerativeGreetingService.defaultPersonaInstruction
-            : global
     }
 
     /// Manual side: Greeting / Message / Action Bar. The Action Bar's
@@ -2337,31 +2247,6 @@ struct AgentDetailView: View {
 
             actionBarBlock
         }
-    }
-
-    /// Personality `TextEditor` with matching panel chrome. The editor
-    /// is hydrated by `loadAgentData` with `resolvedPersonaDefault` when
-    /// the agent has no explicit override, so the empty-placeholder
-    /// branch we used to need is gone — the user always sees real text
-    /// they can edit, copy, or wipe to type their own. Persists on
-    /// change so the segmented picker doesn't need to push it onto the
-    /// manual side's onChange handlers.
-    private var personalityEditor: some View {
-        TextEditor(text: $greetingPersona)
-            .font(.system(size: 13, design: .monospaced))
-            .foregroundColor(theme.primaryText)
-            .scrollContentBackground(.hidden)
-            .frame(minHeight: 80, maxHeight: 200)
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
-            .onChange(of: greetingPersona) { debouncedSave() }
     }
 
     private var avatarSection: some View {
@@ -2819,8 +2704,7 @@ struct AgentDetailView: View {
         guard var current = agentManager.agent(for: agent.id) else { return }
         guard current.settings.schedule.mode != newMode else { return }
         // Mutate only the schedule preset so every other opt-in
-        // (DB, generative greetings, persona, the built-in tool gates)
-        // is preserved across a mode change.
+        // (DB and the built-in tool gates) is preserved across a mode change.
         current.settings.schedule = AgentScheduleSettings.defaults(for: newMode)
         current.updatedAt = Date()
         agentManager.update(current)
@@ -6316,19 +6200,6 @@ struct AgentDetailView: View {
         // Snapshot the global subagent config for the spawn-handoff warning.
         globalSubagentConfig = globalSpawnConfiguration
         hostWorkspacePath = agent.hostWorkspacePath
-        generativeGreetingsEnabled = agent.settings.generativeGreetingsEnabled
-        // Hydrate the Personality editor with the resolved default
-        // (global persona, falling back to built-in) when the agent has
-        // no explicit override. Mirrors the global Settings view: the
-        // editor never shows an empty placeholder, just selectable text
-        // the user can edit or wipe. `saveAgent` collapses an unedited
-        // default back to nil so future changes upstream still flow.
-        let savedPersona = agent.settings.greetingPersona?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        greetingPersona =
-            (savedPersona?.isEmpty ?? true)
-            ? resolvedPersonaDefault
-            : (agent.settings.greetingPersona ?? "")
         autoSpeak = agent.autoSpeak ?? false
         ttsVoice = agent.ttsVoice ?? ""
         avatar = agent.avatar
@@ -6513,21 +6384,6 @@ struct AgentDetailView: View {
                 dbEnabled: dbEnabled,
                 schedule: current.settings.schedule,
                 limits: current.settings.limits,
-                generativeGreetingsEnabled: generativeGreetingsEnabled,
-                greetingPersona: {
-                    // Collapse an unedited inherited default back to
-                    // nil so the agent stays in "inherit from global"
-                    // mode — that way upstream persona / built-in
-                    // changes still flow through. Trim before
-                    // comparison so trailing whitespace from the
-                    // editor doesn't accidentally diverge.
-                    let trimmed = greetingPersona.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if trimmed.isEmpty { return nil }
-                    let inheritedTrimmed =
-                        resolvedPersonaDefault
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    return trimmed == inheritedTrimmed ? nil : trimmed
-                }(),
                 renderChartEnabled: renderChartEnabled,
                 speakEnabled: speakEnabled,
                 searchMemoryEnabled: searchMemoryEnabled,
