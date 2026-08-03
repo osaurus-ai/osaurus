@@ -38505,6 +38505,40 @@
         }
       }
     },
+    "Chat Renamed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chat umbenannt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "채팅 이름 변경됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чат переименован"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "对话已重命名"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "對話已重新命名"
+          }
+        }
+      }
+    },
     "Chat Sandbox" : {
       "localizations" : {
         "de" : {
@@ -38535,6 +38569,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "聊天沙盒"
+          }
+        }
+      }
+    },
+    "Chat Title" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chat-Titel"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "채팅 제목"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Название чата"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "对话标题"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "對話標題"
           }
         }
       }
@@ -53449,6 +53517,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "無法匯出活動"
+          }
+        }
+      }
+    },
+    "Couldn't generate a title. Check that a model is available and try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Titel konnte nicht generiert werden. Prüfe, ob ein Modell verfügbar ist, und versuche es erneut."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "제목을 생성할 수 없습니다. 사용 가능한 모델이 있는지 확인한 후 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось сгенерировать название. Убедитесь, что модель доступна, и попробуйте снова."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法生成标题。请确认有可用的模型后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法生成標題。請確認有可用的模型後重試。"
           }
         }
       }
@@ -82949,6 +83051,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "生成訪問密鑰"
+          }
+        }
+      }
+    },
+    "Generate a title for this chat" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einen Titel für diesen Chat generieren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 채팅의 제목 생성"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сгенерировать название для этого чата"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "为此对话生成标题"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "為此對話生成標題"
           }
         }
       }
@@ -134702,6 +134838,40 @@
         }
       }
     },
+    "Pass an onGenerateTitle handler to enable /title" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Übergib einen onGenerateTitle-Handler, um /title zu aktivieren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "/title을 활성화하려면 onGenerateTitle 핸들러를 전달하세요"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Передайте обработчик onGenerateTitle, чтобы включить /title"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "传入 onGenerateTitle 处理程序以启用 /title"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "傳入 onGenerateTitle 處理器以啓用 /title"
+          }
+        }
+      }
+    },
     "Passphrase" : {
       "localizations" : {
         "de" : {
@@ -176646,6 +176816,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "从允许列表中的附件文件夹发送文件。"
+          }
+        }
+      }
+    },
+    "Send a message first, then use /title to name the chat." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sende zuerst eine Nachricht und verwende dann /title, um den Chat zu benennen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "먼저 메시지를 보낸 후 /title로 채팅 이름을 지정하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сначала отправьте сообщение, затем используйте /title, чтобы назвать чат."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请先发送一条消息，然后使用 /title 为对话命名。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請先傳送一則訊息，然後使用 /title 為對話命名。"
           }
         }
       }
