@@ -3926,6 +3926,9 @@ final class ChatSession: ObservableObject {
         // name the user just asked for.
         autoTitleGenerationStarted = true
         let fallbackModel = selectedModel
+        // Loading toast while the model thinks (up to the service's 8s
+        // timeout), updated in place to the success/error outcome.
+        let toastId = ToastManager.shared.loadingLocalized("Generating Title…")
         Task { [weak self] in
             guard
                 let generated = await ChatTitleService.shared.generateTitle(
@@ -3934,16 +3937,26 @@ final class ChatSession: ObservableObject {
                     fallbackModel: fallbackModel
                 )
             else {
-                ToastManager.shared.errorLocalized(
-                    "Chat Title",
-                    message: "Couldn't generate a title. Check that a model is available and try again."
+                ToastManager.shared.update(
+                    id: toastId,
+                    type: .error,
+                    title: L("Chat Title"),
+                    message: L("Couldn't generate a title. Check that a model is available and try again.")
                 )
                 return
             }
-            guard let self else { return }
+            guard let self else {
+                ToastManager.shared.dismiss(id: toastId)
+                return
+            }
             ChatSessionsManager.shared.renameQuietly(id: sid, title: generated)
             if self.sessionId == sid { self.title = generated }
-            ToastManager.shared.success(L("Chat Renamed"), message: generated)
+            ToastManager.shared.update(
+                id: toastId,
+                type: .success,
+                title: L("Chat Renamed"),
+                message: generated
+            )
         }
     }
 
