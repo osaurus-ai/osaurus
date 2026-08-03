@@ -357,9 +357,9 @@ private struct ImageGenerationSettingsTab: View {
             }
             Spacer(minLength: 8)
             if let output = job.outputURL, job.state == .completed {
-                Button("Open") { NSWorkspace.shared.open(output) }
+                Button(L("Open")) { NSWorkspace.shared.open(output) }
                     .buttonStyle(.borderless)
-                Button("Reveal") {
+                Button(L("Reveal")) {
                     NSWorkspace.shared.activateFileViewerSelecting([output])
                 }
                 .buttonStyle(.borderless)
