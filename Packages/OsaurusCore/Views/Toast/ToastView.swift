@@ -90,9 +90,10 @@ struct ToastView: View {
                 .frame(width: 28, height: 28)
 
             if toast.type == .loading {
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: accentColor))
-                    .scaleEffect(0.6)
+                // A TimelineView-driven arc, not ProgressView: a scaled
+                // CircularProgressViewStyle can render as a static circle in
+                // the toast overlay panel (no spin), reading as a bare dot.
+                ToastSpinnerIcon(accentColor: accentColor, size: 16)
             } else {
                 Image(systemName: toast.type.iconName)
                     .font(.system(size: 14, weight: .semibold))
@@ -164,6 +165,55 @@ struct ToastView: View {
         case .error: return theme.errorColor
         case .action, .loading: return theme.accentColor
         }
+    }
+}
+
+// MARK: - Toast Spinner Icon
+
+/// Loading indicator for `.loading` toasts: a smoothly spinning arc driven by
+/// `TimelineView`, same approach as `AnimatedProgressComponents`' spinner.
+private struct ToastSpinnerIcon: View {
+    let accentColor: Color
+    let size: CGFloat
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
+            let progress = spinProgress(for: timeline.date)
+            ToastSpinnerShape(progress: progress)
+                .stroke(accentColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .frame(width: size, height: size)
+        }
+    }
+
+    private func spinProgress(for date: Date) -> Double {
+        let seconds = date.timeIntervalSinceReferenceDate
+        return (seconds * 1.5).truncatingRemainder(dividingBy: 1.0)
+    }
+}
+
+private struct ToastSpinnerShape: Shape {
+    var progress: Double
+
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let radius = min(rect.width, rect.height) / 2
+        let startAngle = Angle(degrees: progress * 360 - 90)
+        let endAngle = Angle(degrees: progress * 360 + 200)
+
+        var path = Path()
+        path.addArc(
+            center: center,
+            radius: radius,
+            startAngle: startAngle,
+            endAngle: endAngle,
+            clockwise: false
+        )
+        return path
     }
 }
 
