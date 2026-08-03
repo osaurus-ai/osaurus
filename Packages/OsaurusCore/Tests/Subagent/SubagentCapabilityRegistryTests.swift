@@ -286,28 +286,30 @@ struct SubagentCapabilityRegistryTests {
     @Test("the registry represents every shipped kind")
     func allRepresentsEveryKind() {
         let ids = Set(SubagentCapabilityRegistry.all.map(\.id))
-        #expect(ids == ["computer_use", "browser_use", "spawn", "image", "applescript"])
+        #expect(ids == ["computer_use", "browser_use", "spawn", "image", "video", "applescript"])
     }
 
     @Test("the modelSource axis records how each kind resolves its model")
     func modelSourceAxis() {
-        // The image coordinator owns a dedicated, separately-configured model.
+        // The media coordinators own dedicated, separately-configured models.
         #expect(SubagentCapabilityRegistry.image.modelSource == .dedicatedConfigured)
+        #expect(SubagentCapabilityRegistry.video.modelSource == .dedicatedConfigured)
         // spawn runs the chosen agent's own model (local or remote).
         #expect(SubagentCapabilityRegistry.spawn.modelSource == .agent)
         // computer_use reuses the parent agent's model.
         #expect(SubagentCapabilityRegistry.computerUse.modelSource == .inheritsParent)
     }
 
-    @Test("supportsModelOverride is true for the chat-driven kinds and false for image")
+    @Test("supportsModelOverride is true for chat-driven kinds and false for media")
     func supportsModelOverrideFlag() {
         // The chat-driven kinds share the standard per-agent model picker
         // (`subagentModelOverrides` → `effectiveSubagentModel` →
         // `SubagentModelResolution`).
         #expect(SubagentCapabilityRegistry.computerUse.supportsModelOverride)
         #expect(SubagentCapabilityRegistry.spawn.supportsModelOverride)
-        // image owns its own dedicated gen/edit model system → no shared row.
+        // Media kinds own dedicated generation model systems → no shared row.
         #expect(!SubagentCapabilityRegistry.image.supportsModelOverride)
+        #expect(!SubagentCapabilityRegistry.video.supportsModelOverride)
     }
 
     @Test("capability(forPerAgentFlag:) maps each toggle flag to its descriptor")
@@ -318,6 +320,7 @@ struct SubagentCapabilityRegistryTests {
         )
         #expect(SubagentCapabilityRegistry.capability(forPerAgentFlag: .spawn)?.id == "spawn")
         #expect(SubagentCapabilityRegistry.capability(forPerAgentFlag: .image)?.id == "image")
+        #expect(SubagentCapabilityRegistry.capability(forPerAgentFlag: .video)?.id == "video")
         #expect(
             SubagentCapabilityRegistry.capability(forPerAgentFlag: .appleScript)?.id == "applescript"
         )
@@ -332,16 +335,13 @@ struct SubagentCapabilityRegistryTests {
     }
 
     @Test(
-        "per-agent toggle flags are computer_use, browser_use, spawn, image, applescript (each independent)"
+        "per-agent toggle flags include independent image and video controls"
     )
     func perAgentToggleFlagsAreDistinct() {
-        // One card per *flag*: computer_use, browser_use, spawn, image, and
-        // applescript are each their own per-agent toggle (image split out of
-        // the old shared spawn flag; applescript is its own kind), so the
-        // Subagents tab renders exactly five cards in registry order.
+        // One card per flag; image and video are independent media capabilities.
         #expect(
             SubagentCapabilityRegistry.perAgentToggleFlags
-                == [.computerUse, .browserUse, .spawn, .image, .appleScript]
+                == [.computerUse, .browserUse, .spawn, .image, .video, .appleScript]
         )
     }
 
@@ -356,6 +356,7 @@ struct SubagentCapabilityRegistryTests {
         #expect(SubagentToolVisibility.delegationToolNames == ToolRegistry.agentDelegationAllToolNames)
         #expect(ToolRegistry.agentDelegationSpawnToolNames == Set(SubagentCapabilityRegistry.spawn.toolNames))
         #expect(ToolRegistry.agentDelegationImageToolNames == Set(SubagentCapabilityRegistry.image.toolNames))
+        #expect(ToolRegistry.agentDelegationVideoToolNames == Set(SubagentCapabilityRegistry.video.toolNames))
         #expect(
             ToolRegistry.agentDelegationAppleScriptToolNames
                 == Set(SubagentCapabilityRegistry.appleScript.toolNames)
@@ -365,6 +366,7 @@ struct SubagentCapabilityRegistryTests {
             ToolRegistry.agentDelegationAllToolNames
                 == ToolRegistry.agentDelegationSpawnToolNames
                 .union(ToolRegistry.agentDelegationImageToolNames)
+                .union(ToolRegistry.agentDelegationVideoToolNames)
                 .union(ToolRegistry.agentDelegationAppleScriptToolNames)
         )
     }
