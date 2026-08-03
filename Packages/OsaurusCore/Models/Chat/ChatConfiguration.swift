@@ -113,15 +113,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// default here once it has proven regression-free.
     public var autoGenerateChatTitles: Bool
 
-    // MARK: - Generative Greetings
-    /// Free-text "voice" instruction that shapes the AI-generated empty-state
-    /// greetings and quick actions. Empty string means "use the built-in
-    /// playful default" baked into `GenerativeGreetingService`. This is the
-    /// global default voice; the on/off decision is per-agent
-    /// (`AgentSettings.generativeGreetingsEnabled`). Per-agent
-    /// `AgentSettings.greetingPersona` overrides this when non-empty.
-    public var greetingPersona: String
-
     public init(
         hotkey: Hotkey?,
         systemPrompt: String,
@@ -138,8 +129,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         disableTools: Bool = false,
         enableClipboardMonitoring: Bool = true,
         warmModelsOnLoad: Bool = true,
-        autoGenerateChatTitles: Bool = false,
-        greetingPersona: String = ""
+        autoGenerateChatTitles: Bool = false
     ) {
         self.hotkey = hotkey
         self.systemPrompt = systemPrompt
@@ -157,7 +147,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.enableClipboardMonitoring = enableClipboardMonitoring
         self.warmModelsOnLoad = warmModelsOnLoad
         self.autoGenerateChatTitles = autoGenerateChatTitles
-        self.greetingPersona = greetingPersona
     }
 
     public init(from decoder: Decoder) throws {
@@ -181,11 +170,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         warmModelsOnLoad = try container.decodeIfPresent(Bool.self, forKey: .warmModelsOnLoad) ?? true
         autoGenerateChatTitles =
             try container.decodeIfPresent(Bool.self, forKey: .autoGenerateChatTitles) ?? false
-        // The on/off for AI greetings is now per-agent
-        // (`AgentSettings.generativeGreetingsEnabled`). Any legacy
-        // `generativeGreetingsEnabled` boolean persisted here is ignored
-        // by the auto-synthesized decoder and dropped on the next save.
-        greetingPersona = try container.decodeIfPresent(String.self, forKey: .greetingPersona) ?? ""
     }
 
     public static var `default`: ChatConfiguration {
@@ -212,12 +196,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             coreModelName: defaultCoreModelNameIfAvailable,
             enableClipboardMonitoring: true,
             warmModelsOnLoad: true,
-            autoGenerateChatTitles: false,
-            // Empty persona = "use built-in playful default". This is the
-            // global default voice; the on/off is per-agent. Users opt
-            // into a custom voice from Settings → Chat (or a per-agent
-            // override in the Customization tab).
-            greetingPersona: ""
+            autoGenerateChatTitles: false
         )
     }
 

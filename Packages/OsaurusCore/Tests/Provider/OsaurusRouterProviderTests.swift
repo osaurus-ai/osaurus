@@ -225,7 +225,7 @@ struct OsaurusRouterProviderTests {
         #expect(call.function.arguments == #"{"path":"tetris.html","content":"<html></html>"}"#)
     }
 
-    /// The router is streaming-only, so `generateOneShot` (distillation, greetings,
+    /// The router is streaming-only, so `generateOneShot` (distillation,
     /// preflight) drains `streamDeltas` via `collectVisibleText`. The drain must
     /// return only model text and drop every `\u{FFFE}` hint sentinel
     /// (reasoning/billing/tool/prefill/stats) so they never pollute the result —

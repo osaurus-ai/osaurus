@@ -94,9 +94,7 @@ public actor CoreModelService {
     private static let circuitBreakerThreshold = 5
     /// Base cooldown after the breaker first opens. Doubles each cycle
     /// the breaker re-opens without a success in between (60s, 120s,
-    /// 240s, …) up to `circuitBreakerMaxCooldownSeconds`. The cap
-    /// matches the greeting pool's TTL so a wedged backend can't keep
-    /// the user locked out longer than a single fresh-greeting cycle.
+    /// 240s, …) up to `circuitBreakerMaxCooldownSeconds`.
     private static let circuitBreakerCooldownSeconds: TimeInterval = 60
     private static let circuitBreakerMaxCooldownSeconds: TimeInterval = 30 * 60
 
@@ -229,8 +227,8 @@ public actor CoreModelService {
             // crashes, or a remote provider returning malformed JSON.
             // `runWithRetries` already gave the primary three chances;
             // try the chat-model fallback once before bubbling so
-            // best-effort callers (greetings, preflight) still get
-            // useful output. If the fallback isn't viable (missing or
+            // best-effort callers still get useful output. If the fallback
+            // isn't viable (missing or
             // identical to primary), preserve the original error.
             guard let fb = fallback, fb != primary else { throw error }
             logger.warning(

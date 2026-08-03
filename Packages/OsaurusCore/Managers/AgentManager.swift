@@ -477,11 +477,6 @@ public final class AgentManager: ObservableObject {
             for: agent.id,
             percent: updated.settings.limits.storageWarnPercent
         )
-        // Drop any pre-generated empty-state greetings for this agent.
-        // Persona / system prompt / quick-action edits invalidate the
-        // pool's cached output — the next session open should pop a
-        // freshly generated greeting that reflects the new settings.
-        Task { await GenerativeGreetingPool.shared.invalidate(agentId: agent.id) }
         NotificationCenter.default.post(name: .agentUpdated, object: agent.id)
     }
 
@@ -666,12 +661,6 @@ public final class AgentManager: ObservableObject {
         // are never reused, so leaving the bindings behind would only
         // create permanent orphans in `agent-channels.json`.
         try? AgentChannelConnectionManager.shared.deleteBindings(agentId: id)
-
-        // Drop any greetings the pool was holding for this agent. We
-        // can't rely on per-agent settings drift here (the agent is
-        // gone) — explicit invalidation prevents the orphaned entries
-        // from sitting in memory until TTL.
-        await GenerativeGreetingPool.shared.invalidate(agentId: id)
 
         // Release the agent's in-memory vector index so a long-lived process
         // doesn't accumulate one VecturaKit instance per deleted agent.

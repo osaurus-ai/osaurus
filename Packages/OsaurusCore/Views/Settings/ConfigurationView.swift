@@ -838,9 +838,9 @@ struct ConfigurationView: View {
 
         // Load-modify-write: this view owns only the global hotkey and the
         // core model within `ChatConfiguration`. The chat-mode generation
-        // knobs (context length, top-P, tool attempts, clipboard, greeting
-        // persona) are owned by the Chat tab, so we preserve whatever is on
-        // disk for them rather than reconstructing the whole struct.
+        // knobs (context length, top-P, tool attempts, clipboard) are owned by
+        // the Chat tab, so we preserve whatever is on disk for them rather
+        // than reconstructing the whole struct.
         var chatCfg = previousChatCfg
         chatCfg.hotkey = tempChatHotkey
         chatCfg.coreModelProvider = tempCoreModelProvider.isEmpty ? nil : tempCoreModelProvider

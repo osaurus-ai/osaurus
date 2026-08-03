@@ -506,12 +506,6 @@ public enum OsaurusPaths {
     public static func searchProviderDefinitionsDirectory() -> URL {
         providers().appendingPathComponent("search-definitions", isDirectory: true)
     }
-    /// On-disk cache for `GenerativeGreetingPool` so app-launches start
-    /// with already-warmed greetings instead of a cold inference path.
-    /// One JSON file, tiny payload (a handful of strings per agent).
-    public static func greetingPoolCacheFile() -> URL {
-        cache().appendingPathComponent("greeting-pool.json")
-    }
     /// On-disk cache for model download sizes (see `ModelSizeCache`).
     /// Keyed by repo id, persisted so sizes survive relaunch and only
     /// re-fetch when a repo's HF revision changes.

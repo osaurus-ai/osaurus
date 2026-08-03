@@ -36,43 +36,6 @@ struct QueuedSend: Equatable {
     var oneOffSkillId: UUID?
 }
 
-/// Lifecycle of the generative greeting for a single chat session. Drives
-/// the empty-state UI: `.idle` and `.failed` render the static greeting +
-/// the agent's configured quick actions, `.loading` renders an animated
-/// skeleton, and `.ready` renders the freshly produced AI payload with a
-/// shimmer fade-in. A separate `.failed` (vs `.idle`) lets the UI know the
-/// loader actually completed without a result so it doesn't re-trigger
-/// from a stale state.
-enum GenerativeGreetingState: Equatable {
-    case idle
-    case loading
-    case ready(GenerativeGreeting)
-    case failed
-}
-
-/// Lifts the empty-state's "kick off a generative greeting" wiring out of
-/// `ChatView.body` so the closure stays small enough for the type checker.
-/// Re-runs `loadGenerativeGreetingIfNeeded` whenever the selected model or
-/// active agent changes; the session-level cache key absorbs idempotent
-/// re-fires (re-appearing the empty state, scrolling, etc.).
-private struct GenerativeGreetingTrigger: ViewModifier {
-    @ObservedObject var session: ChatSession
-    @ObservedObject var windowState: ChatWindowState
-
-    func body(content: Content) -> some View {
-        content
-            .onAppear { trigger() }
-            .onChange(of: session.selectedModel) { _, _ in trigger() }
-            .onChange(of: windowState.agentId) { _, _ in trigger() }
-    }
-
-    private func trigger() {
-        // AI greetings are a per-agent opt-in; the agent's own flag is
-        // the sole control.
-        session.loadGenerativeGreetingIfNeeded(agent: windowState.activeAgent)
-    }
-}
-
 /// Equatable wrapper around `ChatEmptyState` so it only re-renders when one of
 /// its actual inputs changes. `ChatView` observes the whole `ChatSession`
 /// object, so its body re-evaluates on any `@Published` mutation — including
@@ -90,7 +53,6 @@ private struct EmptyStateContent: View, Equatable {
     let agents: [Agent]
     let activeAgentId: UUID
     let quickActions: [AgentQuickAction]
-    let generativeGreetingState: GenerativeGreetingState
     let pendingLocalModelId: String?
     let temporaryCloudModelName: String?
     let activeDiscoveredAgent: DiscoveredAgent?
@@ -113,7 +75,6 @@ private struct EmptyStateContent: View, Equatable {
             && lhs.agents == rhs.agents
             && lhs.activeAgentId == rhs.activeAgentId
             && lhs.quickActions == rhs.quickActions
-            && lhs.generativeGreetingState == rhs.generativeGreetingState
             && lhs.pendingLocalModelId == rhs.pendingLocalModelId
             && lhs.temporaryCloudModelName == rhs.temporaryCloudModelName
             && lhs.activeDiscoveredAgent == rhs.activeDiscoveredAgent
@@ -131,7 +92,6 @@ private struct EmptyStateContent: View, Equatable {
             agents: agents,
             activeAgentId: activeAgentId,
             quickActions: quickActions,
-            generativeGreetingState: generativeGreetingState,
             onOpenModelManager: onOpenModelManager,
             onUseFoundation: onUseFoundation,
             onQuickAction: onQuickAction,
@@ -596,23 +556,6 @@ final class ChatSession: ObservableObject {
     /// Set to the assistant turn id when a streaming run finalizes successfully.
     /// `ChatView` observes this to drive auto-speak. Not set on stop/error.
     @Published var lastCompletedAssistantTurnId: UUID?
-
-    /// Lifecycle of the generative greeting for the current empty state.
-    /// Drives skeleton vs static vs AI-produced rendering — see
-    /// `GenerativeGreetingState`. Populated by
-    /// `loadGenerativeGreetingIfNeeded(...)`, reset on `reset()`.
-    @Published var generativeGreetingState: GenerativeGreetingState = .idle
-
-    /// In-flight generation, retained so we can cancel it on reset / send /
-    /// teardown. The state machine on `generativeGreetingState` is what the
-    /// UI observes; the task is kept here purely for cooperative cancel.
-    private var generativeGreetingTask: Task<Void, Never>?
-
-    /// Cache key for the most recently kicked-off generation. Encodes
-    /// session id, agent id, and model so the call only re-runs when one
-    /// of those actually changed (re-appearing the empty state for the
-    /// same context is a no-op).
-    private var generativeGreetingKey: String?
 
     /// Weak back-reference to the owning window state (set by ChatWindowState).
     weak var windowState: ChatWindowState?
@@ -1080,7 +1023,6 @@ final class ChatSession: ObservableObject {
         preSendHandshakeEpoch &+= 1
         preSendHandshakeTask?.cancel()
         currentTask?.cancel()
-        generativeGreetingTask?.cancel()
         if let observer = remoteModelsObserver {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -2546,7 +2488,6 @@ final class ChatSession: ObservableObject {
         visibleBlocksStore.blocks = []
         visibleBlocksStore.groupHeaderMap = [:]
 
-        resetGenerativeGreeting()
         warmupController.reset()
 
         applyEffectiveModel(for: agentId)
@@ -2783,167 +2724,6 @@ final class ChatSession: ObservableObject {
             default: break
             }
         }
-    }
-
-    // MARK: - Generative Greeting
-
-    /// Asynchronously fetch (and cache) a delightful greeting + four quick
-    /// actions for the current empty state. Idempotent for a given
-    /// `(session, agent, model)` combination — re-appearing the empty
-    /// state, scrolling, or theme changes won't re-fire the inference.
-    ///
-    /// State machine: `idle` (feature off / no model) → `loading` (task in
-    /// flight) → `ready(payload)` on success, `failed` on any throw or
-    /// cancellation. The UI uses `loading` to render a skeleton, and both
-    /// `idle` and `failed` to render the static fallback.
-    func loadGenerativeGreetingIfNeeded(agent: Agent) {
-        // No local greeting generation when the feature is off, or for a
-        // remote-agent chat (Mode 2) — the latter would load a local model
-        // purely for empty-state flavor text and stamp the local persona onto a
-        // remote conversation. The empty state shows the remote agent's
-        // name/avatar and the static greeting instead.
-        guard !isRemoteAgentTarget, agent.shouldUseGenerativeGreetings else {
-            resetGenerativeGreeting()
-            return
-        }
-
-        guard hasAnyModel else { return }
-        guard let model = selectedModel, !model.isEmpty else { return }
-
-        let sessionPart = sessionId?.uuidString ?? "draft"
-        let key = "\(sessionPart):\(agent.id.uuidString):\(model)"
-        if key == generativeGreetingKey { return }
-
-        generativeGreetingKey = key
-        generativeGreetingTask?.cancel()
-
-        let snapshot = agent
-        generativeGreetingTask = Task { [weak self] in
-            // Tell the pool which (agent, model) the user is looking
-            // at so its periodic ticker has a refill target even when
-            // no popFresh / warmUp call is in flight.
-            await GenerativeGreetingPool.shared.setActive(
-                agent: snapshot,
-                model: model
-            )
-
-            // Hot path: a pre-generated greeting is already waiting.
-            // Skip the loading skeleton entirely and ride straight to
-            // `.ready`, then fire a background warmUp to top the pool
-            // back up to target.
-            if let cached = await GenerativeGreetingPool.shared.popFresh(
-                for: snapshot,
-                model: model
-            ) {
-                // Commit to the UI atomically: only assign `.ready` if
-                // the task hasn't been cancelled and the cache key
-                // still matches. If it doesn't match (rapid hide/show,
-                // agent switch landed mid-pop), push the cached entry
-                // BACK into the pool — it cost us a model call to
-                // produce, throwing it away on every fast switch is
-                // wasteful. Returning a `Bool` from `MainActor.run`
-                // lets us keep the commit guard atomic without
-                // splitting it across two hops.
-                let didCommit = await MainActor.run { () -> Bool in
-                    guard let self = self else { return false }
-                    guard !Task.isCancelled,
-                        self.generativeGreetingKey == key
-                    else { return false }
-                    self.generativeGreetingState = .ready(cached)
-                    return true
-                }
-                if !didCommit {
-                    await GenerativeGreetingPool.shared.seed(
-                        cached,
-                        for: snapshot,
-                        model: model
-                    )
-                    return
-                }
-                await GenerativeGreetingPool.shared.warmUp(
-                    for: snapshot,
-                    model: model
-                )
-                return
-            }
-
-            // Don't start a local greeting generation while another window is
-            // already running a local model. The shared inference context runs
-            // one generation at a time, so a greeting load here would stall behind
-            // the active user stream (and on the strict-eviction path could
-            // disturb it). Fall back to the static greeting; the pool refills
-            // once inference goes idle. Remote/foundation greetings don't
-            // contend, so they're unaffected.
-            // Resolve whether the greeting model is local off the main thread.
-            // `findInstalledModel` funnels into `discoverLocalModels`, which
-            // blocks on a condition wait (up to the scan wait-limit) while the
-            // background disk scan runs. This closure inherits the main actor
-            // from its enclosing method, so the wait was freezing the app while
-            // an empty-state greeting loaded.
-            let greetingModelIsLocal = await Task.detached(priority: .userInitiated) {
-                ModelManager.findInstalledModel(named: model) != nil
-            }.value
-            let localStreamBusy = await MainActor.run {
-                ChatWindowManager.shared.isAnyWindowStreamingLocalModel
-            }
-            if greetingModelIsLocal, localStreamBusy {
-                await MainActor.run {
-                    guard let self = self else { return }
-                    guard self.generativeGreetingKey == key else { return }
-                    self.generativeGreetingState = .failed
-                }
-                return
-            }
-
-            // Cold path: pool was empty (first session of the run, or
-            // an invalidation just landed). Flip to `.loading` so the
-            // empty state renders the skeleton, then generate inline
-            // and seed the pool with the result so the *next* session
-            // open is hot.
-            await MainActor.run {
-                guard let self = self else { return }
-                guard self.generativeGreetingKey == key else { return }
-                self.generativeGreetingState = .loading
-            }
-            do {
-                let result = try await GenerativeGreetingService.shared.generate(
-                    agent: snapshot,
-                    fallbackModel: model
-                )
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    guard let self = self else { return }
-                    guard self.generativeGreetingKey == key else { return }
-                    self.generativeGreetingState = .ready(result)
-                }
-                await GenerativeGreetingPool.shared.warmUp(
-                    for: snapshot,
-                    model: model
-                )
-            } catch {
-                guard !Task.isCancelled else { return }
-                // Silent fallback — `.failed` flips the empty state back
-                // to the static greeting + the agent's configured quick
-                // actions. `.idle` is reserved for "feature is off" so
-                // the UI can distinguish the two.
-                await MainActor.run {
-                    guard let self = self else { return }
-                    guard self.generativeGreetingKey == key else { return }
-                    self.generativeGreetingState = .failed
-                }
-            }
-        }
-    }
-
-    /// Cancel any in-flight greeting generation and clear cached output.
-    /// Called from `reset()`, `deinit`, and `ChatWindowManager.hideWindow`
-    /// — the latter so re-opening the window pops a fresh entry from the
-    /// pool instead of briefly flashing the previous session's greeting.
-    func resetGenerativeGreeting() {
-        generativeGreetingTask?.cancel()
-        generativeGreetingTask = nil
-        generativeGreetingKey = nil
-        generativeGreetingState = .idle
     }
 
     /// Invalidate send-time token accounting (called when tools/skills or
@@ -8245,15 +8025,12 @@ struct ChatView: View {
         // `activeModelOptions`) can't re-render the greeting. `ChatView` observes
         // the whole session object, so its body re-evaluates on every published
         // change; `.equatable()` lets SwiftUI skip this subtree when the inputs
-        // below are unchanged. The `GenerativeGreetingTrigger` stays *outside*
-        // the equatable boundary so it keeps observing the session and still
-        // fires its onAppear / onChange greeting hooks.
+        // below are unchanged.
         EmptyStateContent(
             selectedModel: session.selectedModel,
             agents: windowState.agents,
             activeAgentId: windowState.agentId,
             quickActions: emptyStateQuickActions,
-            generativeGreetingState: session.generativeGreetingState,
             pendingLocalModelId: session.pendingLocalSetupModelId,
             temporaryCloudModelName: session.temporaryCloudModelDisplayName,
             activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
@@ -8280,12 +8057,6 @@ struct ChatView: View {
         )
         .equatable()
         .transition(.opacity.combined(with: .scale(scale: 0.98)))
-        .modifier(
-            GenerativeGreetingTrigger(
-                session: session,
-                windowState: windowState
-            )
-        )
     }
 
     // MARK: - Background

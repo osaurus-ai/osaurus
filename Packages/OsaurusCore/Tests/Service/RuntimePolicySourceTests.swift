@@ -1553,7 +1553,6 @@ struct RuntimePolicySourceTests {
     @Test("Background fallback LLM does not force no-think model options")
     func backgroundFallbackLLMDoesNotForceNoThinkOptions() throws {
         let coreModel = try Self.source("Services/Inference/CoreModelService.swift")
-        let greeting = try Self.source("Services/Chat/GenerativeGreetingService.swift")
 
         #expect(
             coreModel.contains("modelOptions: [String: ModelOptionValue]"),
@@ -1564,8 +1563,12 @@ struct RuntimePolicySourceTests {
             "CoreModelService.generate must thread modelOptions into GenerationParameters before routing to MLX/remote services"
         )
         #expect(
-            !greeting.contains("modelOptions: [\"reasoningEffort\": .string(\"no_think\")]"),
-            "GenerativeGreetingService must not force no_think for internal greeting calls; model generation_config/runtime defaults remain authoritative"
+            coreModel.contains("modelOptions: [:]"),
+            "CoreModelService's public generation path must default to no synthetic model options so model generation_config/runtime defaults remain authoritative"
+        )
+        #expect(
+            !coreModel.contains("modelOptions: [\"reasoningEffort\": .string(\"no_think\")]"),
+            "CoreModelService must not force no_think for background calls"
         )
     }
 
