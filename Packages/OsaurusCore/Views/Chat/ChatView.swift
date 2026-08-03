@@ -3903,9 +3903,9 @@ final class ChatSession: ObservableObject {
     /// surfaces failures as a toast instead of staying silent, because the
     /// user is waiting on the result.
     func generateTitleFromSlashCommand() {
-        guard let sid = sessionId else { return }
         let turnData = turns.map { ChatTurnData(from: $0) }
         guard
+            let sid = sessionId,
             let userTurn = turnData.first(where: {
                 $0.role == .user
                     && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
