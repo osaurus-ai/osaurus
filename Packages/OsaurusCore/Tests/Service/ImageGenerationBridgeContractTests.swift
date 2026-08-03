@@ -74,7 +74,7 @@ struct ImageGenerationBridgeContractTests {
             encoding: .utf8
         )
 
-        let expectedRevision = "087e43ef49ac2ddc6dbe2f7b4d7fb4d755896fa3"
+        let expectedRevision = "8e2c3d6ebca6a43be6a516eb3dc55ef49c174a5d"
         #expect(packageSwift.contains(#"revision: "\#(expectedRevision)""#))
         #expect(packageResolved.contains(#""revision" : "\#(expectedRevision)""#))
         #expect(workspaceResolved.contains(#""revision" : "\#(expectedRevision)""#))
