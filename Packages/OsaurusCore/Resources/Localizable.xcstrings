@@ -198,6 +198,469 @@
         }
       }
     },
+    "Apple Music" : {
+      "comment" : "Onboarding plugin picker display name for the Apple Music tool.",
+      "shouldTranslate" : false
+    },
+    "Apple Notes" : {
+      "comment" : "Onboarding plugin picker display name for the Apple Notes tool.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple Notizen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Apple Notes"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple 메모"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Заметки Apple"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple 备忘录"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple 備忘錄"
+          }
+        }
+      }
+    },
+    "Build PowerPoint decks." : {
+      "comment" : "Onboarding plugin picker blurb for PPTX.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "PowerPoint-Präsentationen erstellen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Build PowerPoint decks."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "PowerPoint 프레젠테이션을 만듭니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Создаёт презентации PowerPoint."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "制作 PowerPoint 演示文稿。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "製作 PowerPoint 簡報。"
+          }
+        }
+      }
+    },
+    "Control playback and search your library." : {
+      "comment" : "Onboarding plugin picker blurb for Apple Music.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wiedergabe steuern und die Mediathek durchsuchen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Control playback and search your library."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "재생을 제어하고 보관함을 검색합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Управляет воспроизведением и ищет в медиатеке."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "控制播放并搜索你的资料库。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "控制播放並搜尋您的資料庫。"
+          }
+        }
+      }
+    },
+    "Convert, resize, and optimize images." : {
+      "comment" : "Onboarding plugin picker blurb for Images.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilder konvertieren, skalieren und optimieren."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Convert, resize, and optimize images."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이미지를 변환하고, 크기를 조절하고, 최적화합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Конвертирует, изменяет размер и оптимизирует изображения."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "转换、调整大小和优化图像。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "轉換、調整大小和最佳化影像。"
+          }
+        }
+      }
+    },
+    "Find places and get directions." : {
+      "comment" : "Onboarding plugin picker blurb for Maps.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Orte finden und Routen abrufen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Find places and get directions."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "장소를 찾고 길안내를 받습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Находит места и прокладывает маршруты."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "查找地点并获取路线。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "尋找地點並取得路線。"
+          }
+        }
+      }
+    },
+    "Look up people and phone numbers." : {
+      "comment" : "Onboarding plugin picker blurb for Contacts.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Personen und Telefonnummern nachschlagen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Look up people and phone numbers."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "사람과 전화번호를 찾아봅니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ищет людей и номера телефонов."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "查找联系人和电话号码。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "查詢聯絡人和電話號碼。"
+          }
+        }
+      }
+    },
+    "Mail" : {
+      "comment" : "Onboarding plugin picker display name for the Apple Mail tool.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mail"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Mail"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mail"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Почта"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "邮件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "郵件"
+          }
+        }
+      }
+    },
+    "PPTX" : {
+      "comment" : "Onboarding plugin picker display name for the PowerPoint presentations tool.",
+      "shouldTranslate" : false
+    },
+    "Read and create Excel spreadsheets." : {
+      "comment" : "Onboarding plugin picker blurb for XLSX.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Excel-Tabellen lesen und erstellen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Read and create Excel spreadsheets."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Excel 스프레드시트를 읽고 생성합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Читает и создаёт таблицы Excel."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "读取和创建 Excel 电子表格。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "讀取和建立 Excel 試算表。"
+          }
+        }
+      }
+    },
+    "Read text from images and analyze photos." : {
+      "comment" : "Onboarding plugin picker blurb for Vision.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Text aus Bildern lesen und Fotos analysieren."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Read text from images and analyze photos."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이미지에서 텍스트를 읽고 사진을 분석합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Распознаёт текст на изображениях и анализирует фото."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "从图像中读取文字并分析照片。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "從影像中讀取文字並分析照片。"
+          }
+        }
+      }
+    },
+    "Read, search, and draft Apple Mail." : {
+      "comment" : "Onboarding plugin picker blurb for Mail.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple Mail lesen, durchsuchen und Entwürfe schreiben."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Read, search, and draft Apple Mail."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple Mail을 읽고, 검색하고, 초안을 작성합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Читает, ищет и создаёт черновики в Apple Mail."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "阅读、搜索和起草 Apple 邮件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "閱讀、搜尋和草擬 Apple 郵件。"
+          }
+        }
+      }
+    },
+    "Search and create notes." : {
+      "comment" : "Onboarding plugin picker blurb for Apple Notes.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Notizen durchsuchen und erstellen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Search and create notes."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "메모를 검색하고 생성합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ищет и создаёт заметки."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "搜索和创建备忘录。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "搜尋和建立備忘錄。"
+          }
+        }
+      }
+    },
+    "XLSX" : {
+      "comment" : "Onboarding plugin picker display name for the Excel spreadsheets tool.",
+      "shouldTranslate" : false
+    },
     "—" : {
       "comment" : "A placeholder text to indicate missing data.",
       "isCommentAutoGenerated" : true,
@@ -151724,6 +152187,7 @@
       }
     },
     "Read and write files in your projects." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -167760,6 +168224,7 @@
       }
     },
     "Run terminal commands inside the safety net." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -180856,6 +181321,7 @@
     },
     "Shell" : {
       "comment" : "Onboarding plugin picker display name for terminal command access.",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
