@@ -373,8 +373,21 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// The DEFAULT / main-chat agent's `image` enable. Custom agents carry their
     /// own `AgentSettings.imageEnabled`; this governs the main chat only.
     var imageDelegationEnabled: Bool
-    var defaultImageGenerationModelId: String?
+    /// Backend-qualified generation selection. Bare legacy model ids decode as
+    /// local targets so existing on-device selections keep working.
+    var defaultImageGenerationTarget: MediaModelTarget?
+    var defaultImageGenerationModelId: String? {
+        get { defaultImageGenerationTarget?.modelID }
+        set {
+            defaultImageGenerationTarget = Self.normalizedModelId(newValue).map {
+                MediaModelTarget(backend: .local, modelID: $0)
+            }
+        }
+    }
     var defaultImageEditModelId: String?
+    var videoDelegationEnabled: Bool
+    var defaultTextToVideoTarget: MediaModelTarget?
+    var defaultImageToVideoTarget: MediaModelTarget?
     var imageJobLoadPolicy: SubagentImageLoadPolicy
     /// The DEFAULT / main-chat agent's `applescript` enable. Custom agents carry
     /// their own `AgentSettings.appleScriptEnabled`; this governs the main chat
@@ -443,7 +456,11 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         spawnableAgentNames: [String] = [],
         imageDelegationEnabled: Bool = false,
         defaultImageGenerationModelId: String? = nil,
+        defaultImageGenerationTarget: MediaModelTarget? = nil,
         defaultImageEditModelId: String? = nil,
+        videoDelegationEnabled: Bool = false,
+        defaultTextToVideoTarget: MediaModelTarget? = nil,
+        defaultImageToVideoTarget: MediaModelTarget? = nil,
         imageJobLoadPolicy: SubagentImageLoadPolicy = .agentSingleResidency,
         appleScriptDelegationEnabled: Bool = false,
         defaultAppleScriptModelId: String? = nil,
@@ -463,8 +480,15 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         self.spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(spawnableAgentIDs)
         self.legacySpawnableAgentNames = spawnableAgentNames
         self.imageDelegationEnabled = imageDelegationEnabled
-        self.defaultImageGenerationModelId = defaultImageGenerationModelId
+        self.defaultImageGenerationTarget =
+            Self.normalizedTarget(defaultImageGenerationTarget)
+            ?? Self.normalizedModelId(defaultImageGenerationModelId).map {
+                MediaModelTarget(backend: .local, modelID: $0)
+            }
         self.defaultImageEditModelId = defaultImageEditModelId
+        self.videoDelegationEnabled = videoDelegationEnabled
+        self.defaultTextToVideoTarget = Self.normalizedTarget(defaultTextToVideoTarget)
+        self.defaultImageToVideoTarget = Self.normalizedTarget(defaultImageToVideoTarget)
         self.imageJobLoadPolicy = imageJobLoadPolicy
         self.appleScriptDelegationEnabled = appleScriptDelegationEnabled
         self.defaultAppleScriptModelId = Self.normalizedModelId(defaultAppleScriptModelId)
@@ -723,8 +747,11 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             spawnableAgentIDs: spawnableAgentIDs,
             spawnableAgentNames: legacySpawnableAgentNames,
             imageDelegationEnabled: imageDelegationEnabled,
-            defaultImageGenerationModelId: Self.normalizedModelId(defaultImageGenerationModelId),
+            defaultImageGenerationTarget: Self.normalizedTarget(defaultImageGenerationTarget),
             defaultImageEditModelId: Self.normalizedModelId(defaultImageEditModelId),
+            videoDelegationEnabled: videoDelegationEnabled,
+            defaultTextToVideoTarget: Self.normalizedTarget(defaultTextToVideoTarget),
+            defaultImageToVideoTarget: Self.normalizedTarget(defaultImageToVideoTarget),
             imageJobLoadPolicy: imageJobLoadPolicy,
             appleScriptDelegationEnabled: appleScriptDelegationEnabled,
             defaultAppleScriptModelId: Self.normalizedModelId(defaultAppleScriptModelId),
@@ -766,8 +793,13 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         /// Legacy decode-only key.
         case spawnableAgentNames
         case imageDelegationEnabled
+        case defaultImageGenerationTarget
+        /// Legacy decode-only key.
         case defaultImageGenerationModelId
         case defaultImageEditModelId
+        case videoDelegationEnabled
+        case defaultTextToVideoTarget
+        case defaultImageToVideoTarget
         case imageJobLoadPolicy
         case appleScriptDelegationEnabled
         case defaultAppleScriptModelId
@@ -786,6 +818,16 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedImageTarget =
+            try? container.decodeIfPresent(
+                MediaModelTarget.self,
+                forKey: .defaultImageGenerationTarget
+            )
+        let legacyImageModelID =
+            try container.decodeIfPresent(
+                String.self,
+                forKey: .defaultImageGenerationModelId
+            )
         self.init(
             localTextDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .localTextDelegationEnabled)
                 ?? true,
@@ -795,11 +837,25 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             )) ?? [],
             spawnableAgentNames: try container.decodeIfPresent([String].self, forKey: .spawnableAgentNames) ?? [],
             imageDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .imageDelegationEnabled) ?? false,
-            defaultImageGenerationModelId: try container.decodeIfPresent(
-                String.self,
-                forKey: .defaultImageGenerationModelId
-            ),
+            defaultImageGenerationModelId: nil,
+            defaultImageGenerationTarget:
+                decodedImageTarget
+                ?? legacyImageModelID.flatMap { Self.normalizedModelId($0) }.map {
+                    MediaModelTarget(backend: .local, modelID: $0)
+                },
             defaultImageEditModelId: try container.decodeIfPresent(String.self, forKey: .defaultImageEditModelId),
+            videoDelegationEnabled:
+                try container.decodeIfPresent(Bool.self, forKey: .videoDelegationEnabled) ?? false,
+            defaultTextToVideoTarget:
+                try? container.decodeIfPresent(
+                    MediaModelTarget.self,
+                    forKey: .defaultTextToVideoTarget
+                ),
+            defaultImageToVideoTarget:
+                try? container.decodeIfPresent(
+                    MediaModelTarget.self,
+                    forKey: .defaultImageToVideoTarget
+                ),
             // Enum fields use `(try? …) ?? default` so a single invalid/renamed
             // raw value falls back to its default instead of throwing — a throw
             // here would discard the ENTIRE delegation config (see the lenient
@@ -880,12 +936,21 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         try container.encode(value.spawnableAgentIDs, forKey: .spawnableAgentIDs)
         try container.encode(value.imageDelegationEnabled, forKey: .imageDelegationEnabled)
         try container.encodeIfPresent(
-            value.defaultImageGenerationModelId,
-            forKey: .defaultImageGenerationModelId
+            value.defaultImageGenerationTarget,
+            forKey: .defaultImageGenerationTarget
         )
         try container.encodeIfPresent(
             value.defaultImageEditModelId,
             forKey: .defaultImageEditModelId
+        )
+        try container.encode(value.videoDelegationEnabled, forKey: .videoDelegationEnabled)
+        try container.encodeIfPresent(
+            value.defaultTextToVideoTarget,
+            forKey: .defaultTextToVideoTarget
+        )
+        try container.encodeIfPresent(
+            value.defaultImageToVideoTarget,
+            forKey: .defaultImageToVideoTarget
         )
         try container.encode(value.imageJobLoadPolicy, forKey: .imageJobLoadPolicy)
         try container.encode(
@@ -925,6 +990,11 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func normalizedTarget(_ value: MediaModelTarget?) -> MediaModelTarget? {
+        guard let value, value.isValid else { return nil }
+        return MediaModelTarget(backend: value.backend, modelID: value.modelID)
     }
 
     /// Trim values and drop blank entries so a cleared picker (empty string)

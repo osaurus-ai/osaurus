@@ -125,6 +125,7 @@ struct AgentAbilityContextPreview: Equatable {
             browserUseEnabled: base.browserUseEnabled,
             spawnDelegationEnabled: base.spawnDelegationEnabled,
             imageEnabled: base.imageEnabled,
+            videoEnabled: base.videoEnabled,
             appleScriptEnabled: base.appleScriptEnabled,
             spawnableAgentIDs: base.spawnableAgentIDs,
             spawnableAgentNames: base.legacySpawnableAgentNames,

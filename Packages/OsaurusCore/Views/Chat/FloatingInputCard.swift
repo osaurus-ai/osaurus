@@ -1132,12 +1132,18 @@ private struct RAMBannerShape: Shape {
         path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
         path.addArc(
             center: CGPoint(x: rect.maxX - r, y: rect.minY + r),
-            radius: r, startAngle: .degrees(-90), endAngle: .degrees(0), clockwise: false
+            radius: r,
+            startAngle: .degrees(-90),
+            endAngle: .degrees(0),
+            clockwise: false
         )
         path.addLine(to: CGPoint(x: rect.maxX, y: bodyBottom - r))
         path.addArc(
             center: CGPoint(x: rect.maxX - r, y: bodyBottom - r),
-            radius: r, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false
+            radius: r,
+            startAngle: .degrees(0),
+            endAngle: .degrees(90),
+            clockwise: false
         )
         path.addLine(to: CGPoint(x: pointerCenterX + halfPointer, y: bodyBottom))
         path.addLine(to: CGPoint(x: pointerCenterX, y: rect.maxY))
@@ -1145,12 +1151,18 @@ private struct RAMBannerShape: Shape {
         path.addLine(to: CGPoint(x: rect.minX + r, y: bodyBottom))
         path.addArc(
             center: CGPoint(x: rect.minX + r, y: bodyBottom - r),
-            radius: r, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false
+            radius: r,
+            startAngle: .degrees(90),
+            endAngle: .degrees(180),
+            clockwise: false
         )
         path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
         path.addArc(
             center: CGPoint(x: rect.minX + r, y: rect.minY + r),
-            radius: r, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false
+            radius: r,
+            startAngle: .degrees(180),
+            endAngle: .degrees(270),
+            clockwise: false
         )
         path.closeSubpath()
         return path
@@ -1435,7 +1447,8 @@ extension FloatingInputCard {
             voiceConfig.pauseDuration > 0
         else { return }
 
-        let hasContent = TranscriptionTextNormalizer.hasVisibleText(speechService.currentTranscription)
+        let hasContent =
+            TranscriptionTextNormalizer.hasVisibleText(speechService.currentTranscription)
             || TranscriptionTextNormalizer.hasVisibleText(speechService.confirmedTranscription)
         let silenceDuration = Date().timeIntervalSince(lastSpeechTime)
 
@@ -2322,7 +2335,7 @@ extension FloatingInputCard {
             // token-budget semantics — those chips would all be inert. Swap
             // the whole row for the image config controls instead so they sit
             // right beside the model that owns them.
-            if isImageComposerActive {
+            if isMediaComposerActive {
                 // Scroll the config chips horizontally so a narrow (minimum-size)
                 // window can't compress them below their ideal width — that
                 // compression is what made the labels wrap character-by-character.
@@ -2334,7 +2347,9 @@ extension FloatingInputCard {
                 }
                 // The negative prompt sits where the token meter normally would,
                 // as a compact button that opens a themed editor on tap.
-                if imageCapabilities?.negativePrompt == true {
+                if selectedMediaPickerItem?.mediaModel != nil
+                    || imageCapabilities?.negativePrompt == true
+                {
                     negativePromptButton
                 }
             } else {
@@ -2532,7 +2547,15 @@ extension FloatingInputCard {
     }
 
     private var selectedImagePickerItem: ModelPickerItem? {
-        guard selectedPickerItem?.source.isImageGeneration == true else { return nil }
+        guard
+            selectedPickerItem?.source.isImageGeneration == true
+                || selectedPickerItem?.mediaModel?.kind == .image
+        else { return nil }
+        return selectedPickerItem
+    }
+
+    private var selectedMediaPickerItem: ModelPickerItem? {
+        guard selectedPickerItem?.isMediaGeneration == true else { return nil }
         return selectedPickerItem
     }
 
@@ -2542,6 +2565,10 @@ extension FloatingInputCard {
 
     private var isImageComposerActive: Bool {
         selectedImagePickerItem != nil
+    }
+
+    private var isMediaComposerActive: Bool {
+        selectedMediaPickerItem != nil
     }
 
     private var isSelectedModelDeprecated: Bool {
@@ -2594,7 +2621,8 @@ extension FloatingInputCard {
                 isDeprecated
                     ? String(
                         localized: "This model is outdated. Click to switch to a newer version.",
-                        bundle: .module)
+                        bundle: .module
+                    )
                     : helpText
             )
         }
@@ -2608,22 +2636,27 @@ extension FloatingInputCard {
                     ? String(localized: "Model loaded — ready to respond", bundle: .module)
                     : String(
                         localized: "Model not loaded — your next message loads it first",
-                        bundle: .module)
+                        bundle: .module
+                    )
             }
             switch warmupController.state {
             case .warm:
                 return String(
-                    localized: "Chat prefix warm — ready for a fast next response", bundle: .module)
+                    localized: "Chat prefix warm — ready for a fast next response",
+                    bundle: .module
+                )
             case .cold:
                 return warmupController.selectedModelResident
                     ? String(
                         localized:
                             "Chat prefix not pre-warmed — the next response may restore cache or prefill",
-                        bundle: .module)
+                        bundle: .module
+                    )
                     : String(
                         localized:
                             "Model not loaded — the next response loads the model first",
-                        bundle: .module)
+                        bundle: .module
+                    )
             case .warming:
                 guard let model = selectedModel, let phase = warmupProgressHub.phases[model] else {
                     return String(localized: "Warming up…", bundle: .module)
@@ -2634,7 +2667,9 @@ extension FloatingInputCard {
                 case .prefilling(let state):
                     guard state.totalUnitCount > 0 else {
                         return String(
-                            localized: "Warming up — prefilling context…", bundle: .module)
+                            localized: "Warming up — prefilling context…",
+                            bundle: .module
+                        )
                     }
                     let percent = Int(state.percentCompleted.rounded())
                     return state.totalUnitCount == 1
@@ -4044,7 +4079,10 @@ extension FloatingInputCard {
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(effectiveBorderStyle, lineWidth: isDragOver ? 2 : (inputStyle == .shadow ? 0.75 : (isFocused ? 1.5 : 0.5)))
+                .strokeBorder(
+                    effectiveBorderStyle,
+                    lineWidth: isDragOver ? 2 : (inputStyle == .shadow ? 0.75 : (isFocused ? 1.5 : 0.5))
+                )
         )
         .shadow(
             color: inputStyle == .shadow ? shadowColor : .clear,
@@ -4392,6 +4430,18 @@ extension FloatingInputCard {
 
     /// Placeholder text for the input field.
     private var placeholderText: String {
+        if let media = selectedMediaPickerItem?.mediaModel {
+            switch media.kind {
+            case .image:
+                return L("Describe the image...")
+            case .textToVideo:
+                return L("Describe the video...")
+            case .imageToVideo:
+                return pendingAttachments.loadImages().isEmpty
+                    ? L("Attach one image, then describe the video...")
+                    : L("Describe how the image should move...")
+            }
+        }
         if selectedImagePickerItem != nil {
             return L("Describe the image...")
         }
@@ -4411,6 +4461,10 @@ extension FloatingInputCard {
     /// chip (the model owns these settings, and the row's normal chips are inert
     /// for image models).
     private var imageComposerChips: some View {
+        Group {
+            if let media = selectedMediaPickerItem?.mediaModel {
+                catalogMediaComposerChips(media)
+            } else {
         HStack(spacing: 6) {
             sizeSelector
             stepsChip
@@ -4420,6 +4474,171 @@ extension FloatingInputCard {
                 strengthChip
             }
         }
+    }
+        }
+    }
+
+    @ViewBuilder
+    private func catalogMediaComposerChips(_ media: MediaModelInfo) -> some View {
+        HStack(spacing: 6) {
+            if media.kind == .image,
+                media.constraints.aspectRatios.isEmpty,
+                media.constraints.resolutions.isEmpty
+            {
+                sizeSelector
+            }
+            if !media.constraints.aspectRatios.isEmpty {
+                mediaChoiceChip(
+                    title: L("Aspect"),
+                    icon: "aspectratio",
+                    options: media.constraints.aspectRatios,
+                    selection: Binding(
+                        get: { imageComposerSettings.aspectRatio },
+                        set: { imageComposerSettings.aspectRatio = $0 }
+                    )
+                )
+            }
+            if !media.constraints.resolutions.isEmpty {
+                mediaChoiceChip(
+                    title: L("Resolution"),
+                    icon: "rectangle.inset.filled",
+                    options: media.constraints.resolutions,
+                    selection: Binding(
+                        get: { imageComposerSettings.resolution },
+                        set: { imageComposerSettings.resolution = $0 }
+                    )
+                )
+            }
+            if !media.constraints.qualities.isEmpty {
+                mediaChoiceChip(
+                    title: L("Quality"),
+                    icon: "sparkles",
+                    options: media.constraints.qualities,
+                    selection: Binding(
+                        get: { imageComposerSettings.quality },
+                        set: { imageComposerSettings.quality = $0 }
+                    )
+                )
+            }
+            if media.kind.isVideo, !media.constraints.durations.isEmpty {
+                mediaChoiceChip(
+                    title: L("Duration"),
+                    icon: "clock",
+                    options: media.constraints.durations,
+                    selection: Binding(
+                        get: { imageComposerSettings.duration },
+                        set: { imageComposerSettings.duration = $0 }
+                    )
+                )
+            }
+            if media.kind.isVideo, media.constraints.audioConfigurable {
+                Button {
+                    imageComposerSettings.audio =
+                        !(imageComposerSettings.audio ?? media.constraints.supportsAudio)
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(
+                            systemName: imageComposerSettings.audio == true
+                                ? "speaker.wave.2.fill" : "speaker.slash.fill"
+                        )
+                        Text(imageComposerSettings.audio == true ? L("Audio") : L("Muted"))
+                    }
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(chipBackground)
+                }
+                .buttonStyle(.plain)
+                .pointingHandCursor()
+            }
+            if media.kind == .image {
+                if media.constraints.defaultSteps != nil || media.constraints.maxSteps != nil {
+                    stepsChip
+                }
+                cfgChip
+                seedChip
+                mediaChoiceChip(
+                    title: L("Format"),
+                    icon: "doc",
+                    options: ImageOutputFormat.allCases.map(\.rawValue),
+                    selection: Binding(
+                        get: { Optional(imageComposerSettings.effectiveOutputFormat.rawValue) },
+                        set: {
+                            imageComposerSettings.outputFormat = $0.flatMap {
+                                ImageOutputFormat(rawValue: $0)
+                            }
+                        }
+                    )
+                )
+                mediaChoiceChip(
+                    title: L("Count"),
+                    icon: "square.stack.3d.up",
+                    options: (1 ... 4).map(String.init),
+                    selection: Binding(
+                        get: { Optional(String(imageComposerSettings.clampedImageCount)) },
+                        set: { imageComposerSettings.imageCount = $0.flatMap { Int($0) } }
+                    )
+                )
+            }
+            if let minimum = media.pricing?.minimumUSD {
+                Text(String(format: "From $%.4f", minimum))
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(chipBackground)
+            }
+            if media.kind == .imageToVideo {
+                Label("1 source image", systemImage: "photo")
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(
+                        pendingAttachments.loadImages().count == 1
+                            ? theme.secondaryText : Color.orange
+                    )
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(chipBackground)
+            }
+        }
+    }
+
+    private func mediaChoiceChip(
+        title: String,
+        icon: String,
+        options: [String],
+        selection: Binding<String?>
+    ) -> some View {
+        Menu {
+            ForEach(options, id: \.self) { option in
+                Button {
+                    selection.wrappedValue = option
+                } label: {
+                    if selection.wrappedValue == option {
+                        Label(option, systemImage: "checkmark")
+                    } else {
+                        Text(option)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .foregroundColor(theme.tertiaryText)
+                Text(selection.wrappedValue ?? title)
+                    .foregroundColor(theme.secondaryText)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(chipBackground)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help(Text(verbatim: title))
     }
 
     /// Shared pill backing so every composer control reads as one family of
@@ -4434,30 +4653,53 @@ extension FloatingInputCard {
     /// speed / detail trade-off (bare pixel numbers don't tell the user what
     /// they're choosing).
     private struct ImageSizeOption: Identifiable {
-        let dimension: Int
+        let width: Int
+        let height: Int
         let title: String
         let detail: String
-        var id: Int { dimension }
+        var id: String { "\(width)x\(height)" }
     }
 
     private var imageSizeOptions: [ImageSizeOption] {
-        [
+        var options = [
             ImageSizeOption(
-                dimension: 512,
+                width: 512,
+                height: 512,
                 title: L("512 × 512"),
                 detail: L("Fast drafts. Lowest detail, quickest to render.")
             ),
             ImageSizeOption(
-                dimension: 768,
+                width: 768,
+                height: 768,
                 title: L("768 × 768"),
                 detail: L("Balanced. Good detail at a moderate speed.")
             ),
             ImageSizeOption(
-                dimension: 1024,
+                width: 1024,
+                height: 1024,
                 title: L("1024 × 1024"),
                 detail: L("Sharpest. The size most models are trained for, but slowest.")
             ),
         ]
+        if selectedMediaPickerItem?.mediaModel != nil {
+            options.append(
+                ImageSizeOption(
+                    width: 1280,
+                    height: 720,
+                    title: L("1280 × 720"),
+                    detail: L("Landscape 16:9 for cinematic and banner compositions.")
+                )
+            )
+            options.append(
+                ImageSizeOption(
+                    width: 720,
+                    height: 1280,
+                    title: L("720 × 1280"),
+                    detail: L("Portrait 9:16 for mobile and vertical compositions.")
+                )
+            )
+        }
+        return options
     }
 
     private var selectedSizeLabel: String {
@@ -4502,11 +4744,11 @@ extension FloatingInputCard {
 
             ForEach(imageSizeOptions) { option in
                 let isSelected =
-                    imageComposerSettings.width == option.dimension
-                    && imageComposerSettings.height == option.dimension
+                    imageComposerSettings.width == option.width
+                    && imageComposerSettings.height == option.height
                 Button {
-                    imageComposerSettings.width = option.dimension
-                    imageComposerSettings.height = option.dimension
+                    imageComposerSettings.width = option.width
+                    imageComposerSettings.height = option.height
                     showImageSizePicker = false
                 } label: {
                     HStack(alignment: .top, spacing: 9) {
@@ -6281,7 +6523,9 @@ private struct WalletPopover: View {
                                 .fill(theme.warningColor.opacity(0.14))
                                 .overlay(
                                     Capsule().strokeBorder(
-                                        theme.warningColor.opacity(0.35), lineWidth: 1)
+                                        theme.warningColor.opacity(0.35),
+                                        lineWidth: 1
+                                    )
                                 )
                         )
                 }

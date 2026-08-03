@@ -141,6 +141,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// unless the agent opted in (custom agents) / the global image switch is on
     /// (Default agent).
     public let imageEnabled: Bool
+    /// Per-agent opt-in for billable remote `video`.
+    public let videoEnabled: Bool
     /// Per-agent opt-in for `applescript`. Enforced in `resolveTools` — stripped
     /// unless the agent opted in (custom agents) / the global AppleScript switch
     /// is on (Default agent), AND a curated AppleScript model is installed.
@@ -205,6 +207,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         browserUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
+        videoEnabled: Bool = false,
         appleScriptEnabled: Bool = false,
         spawnableAgentIDs: [UUID] = [],
         spawnableAgentNames: [String] = [],
@@ -236,6 +239,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.browserUseEnabled = browserUseEnabled
         self.spawnDelegationEnabled = spawnDelegationEnabled
         self.imageEnabled = imageEnabled
+        self.videoEnabled = videoEnabled
         self.appleScriptEnabled = appleScriptEnabled
         self.spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(spawnableAgentIDs)
         self.legacySpawnableAgentNames = spawnableAgentNames
@@ -332,6 +336,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             browserUseEnabled: caps.browserUseEnabled,
             spawnDelegationEnabled: caps.spawnDelegationEnabled,
             imageEnabled: caps.imageEnabled,
+            videoEnabled: caps.videoEnabled,
             appleScriptEnabled: caps.appleScriptEnabled,
             spawnableAgentIDs: caps.spawnableAgentIDs,
             spawnableAgentNames: caps.legacySpawnableAgentNames,

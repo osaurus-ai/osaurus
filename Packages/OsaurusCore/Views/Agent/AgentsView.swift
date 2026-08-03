@@ -1168,6 +1168,7 @@ struct AgentDetailView: View {
     private var browserUseEnabled: Bool { subagentToggles[.browserUse] ?? false }
     private var spawnDelegationEnabled: Bool { subagentToggles[.spawn] ?? false }
     private var imageEnabled: Bool { subagentToggles[.image] ?? false }
+    private var videoEnabled: Bool { subagentToggles[.video] ?? false }
     private var appleScriptEnabled: Bool { subagentToggles[.appleScript] ?? false }
     /// Per-agent `spawn_agent` allow-list (which agents this agent may spawn).
     /// Mirrored from / into `AgentSettings.spawnableAgentIDs`; empty hides the
@@ -1193,8 +1194,10 @@ struct AgentDetailView: View {
     /// Per-agent image model bundle ids (generation / edit). `nil` resolves to
     /// the first ready model at run time. Mirrored from / into
     /// `AgentSettings.imageGenerationModelId` / `imageEditModelId`.
-    @State private var imageGenerationModelId: String? = nil
+    @State private var imageGenerationTarget: MediaModelTarget? = nil
     @State private var imageEditModelId: String? = nil
+    @State private var textToVideoTarget: MediaModelTarget? = nil
+    @State private var imageToVideoTarget: MediaModelTarget? = nil
     /// Per-agent AppleScript model bundle id (`nil` resolves to the first
     /// installed catalog model at run time) and execution mode (confirm each
     /// script vs auto-run with a warning). Mirrored from / into
@@ -3681,7 +3684,14 @@ struct AgentDetailView: View {
                     flag: .image,
                     title: "Image",
                     subtitle:
-                        "Let the agent generate and edit images with a local model using the `image` tool."
+                        "Let the agent generate images with a configured local or hosted model, and edit with a local model."
+                )
+            case .video:
+                return PerAgentFeature(
+                    flag: .video,
+                    title: "Video",
+                    subtitle:
+                        "Let the agent queue billable text-to-video or image-to-video jobs after a quote-aware approval."
                 )
             case .appleScript:
                 return PerAgentFeature(
@@ -3755,12 +3765,15 @@ struct AgentDetailView: View {
                 || availability.modelTargets.contains { $0.state == .checking }
         }
 
-        let permissionKindId =
-            flag == .spawn
-            ? SubagentCapabilityRegistry.spawn.id
-            : SubagentCapabilityRegistry.image.id
+        let permissionKindId: String = {
+            switch flag {
+            case .spawn: return SubagentCapabilityRegistry.spawn.id
+            case .video: return SubagentCapabilityRegistry.video.id
+            default: return SubagentCapabilityRegistry.image.id
+            }
+        }()
         let permission: SubagentPermissionPolicy =
-            (flag == .spawn || flag == .image)
+            (flag == .spawn || flag == .image || flag == .video)
             ? subagentPermissions.policy(for: permissionKindId)
             : .ask
 
@@ -3773,6 +3786,7 @@ struct AgentDetailView: View {
             runnableSpawnTargetCount: runnableSpawnTargetCount,
             isCheckingSpawnTargets: checkingSpawnTargets,
             hasReadyImageModel: ModelPickerItemCache.shared.hasReadyImageModel,
+            hasReadyVideoModel: ModelPickerItemCache.shared.hasReadyVideoGenerationModel,
             hasReadyAppleScriptModel: ModelPickerItemCache.shared.hasReadyAppleScriptModel,
             permission: permission
         )
@@ -4018,6 +4032,16 @@ struct AgentDetailView: View {
             subagentFootnote(
                 "Image load policy is a system setting in the Images tab."
             )
+        case .video:
+            videoModelPickerRows
+            subagentPanelDivider
+            subagentPermissionRow(
+                for: SubagentCapabilityRegistry.video.id,
+                label: "Permission"
+            )
+            subagentFootnote(
+                "The approval includes the current price. Queued paid jobs continue recovery after Stop or relaunch."
+            )
         case .appleScript:
             // AppleScript owns its own dedicated model (supportsModelOverride is
             // false, so the generic override row above is skipped): pick which
@@ -4061,6 +4085,28 @@ struct AgentDetailView: View {
                 currentId: currentImageEditModelId
             )
         }
+    }
+
+    private var videoModelPickerRows: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            AgentSheetSectionLabel("Models")
+            subagentModelPicker(
+                title: "Text-to-video",
+                selection: textToVideoModelSelection,
+                candidates: videoCandidates(.textToVideo),
+                currentId: mediaPickerID(for: textToVideoTarget)
+            )
+            subagentModelPicker(
+                title: "Image-to-video",
+                selection: imageToVideoModelSelection,
+                candidates: videoCandidates(.imageToVideo),
+                currentId: mediaPickerID(for: imageToVideoTarget)
+            )
+        }
+    }
+
+    private func videoCandidates(_ kind: MediaGenerationKind) -> [ModelPickerItem] {
+        pickerItems.videoGenerationDelegateCandidates.filter { $0.mediaModel?.kind == kind }
     }
 
     /// The installed AppleScript models this agent can pick. AppleScript bundles
@@ -4220,9 +4266,12 @@ struct AgentDetailView: View {
     // permission, load policy) live in the Image Generation tab.
     private var imageGenerationModelSelection: Binding<String> {
         Binding(
-            get: { imageGenerationModelId ?? "" },
+            get: { mediaPickerID(for: imageGenerationTarget) ?? "" },
             set: {
-                imageGenerationModelId = normalizedModelSelection($0)
+                imageGenerationTarget = mediaTarget(
+                    forPickerID: normalizedModelSelection($0),
+                    candidates: pickerItems.imageGenerationDelegateCandidates
+                )
                 debouncedSave()
             }
         )
@@ -4238,9 +4287,55 @@ struct AgentDetailView: View {
         )
     }
 
-    private var currentImageGenerationModelId: String? { imageGenerationModelId }
+    private var currentImageGenerationModelId: String? {
+        mediaPickerID(for: imageGenerationTarget)
+    }
 
     private var currentImageEditModelId: String? { imageEditModelId }
+
+    private var textToVideoModelSelection: Binding<String> {
+        Binding(
+            get: { mediaPickerID(for: textToVideoTarget) ?? "" },
+            set: {
+                textToVideoTarget = mediaTarget(
+                    forPickerID: normalizedModelSelection($0),
+                    candidates: videoCandidates(.textToVideo)
+                )
+                debouncedSave()
+            }
+        )
+    }
+
+    private var imageToVideoModelSelection: Binding<String> {
+        Binding(
+            get: { mediaPickerID(for: imageToVideoTarget) ?? "" },
+            set: {
+                imageToVideoTarget = mediaTarget(
+                    forPickerID: normalizedModelSelection($0),
+                    candidates: videoCandidates(.imageToVideo)
+                )
+                debouncedSave()
+            }
+        )
+    }
+
+    private func mediaPickerID(for target: MediaModelTarget?) -> String? {
+        guard let target else { return nil }
+        let item = pickerItems.first {
+            ($0.mediaModel?.target ?? MediaModelTarget(backend: .local, modelID: $0.id))
+                == target
+        }
+        return item?.id ?? target.modelID
+    }
+
+    private func mediaTarget(
+        forPickerID pickerID: String?,
+        candidates: [ModelPickerItem]
+    ) -> MediaModelTarget? {
+        guard let pickerID else { return nil }
+        guard let item = candidates.first(where: { $0.id == pickerID }) else { return nil }
+        return item.mediaModel?.target ?? MediaModelTarget(backend: .local, modelID: item.id)
+    }
 
     private var appleScriptModelSelection: Binding<String> {
         Binding(
@@ -6204,8 +6299,10 @@ struct AgentDetailView: View {
         spawnableAgentIDs = agent.settings.spawnableAgentIDs
         spawnableModelNames = agent.settings.spawnableModelNames
         spawnableModelNotes = agent.settings.spawnableModelNotes
-        imageGenerationModelId = agent.settings.imageGenerationModelId
+        imageGenerationTarget = agent.settings.imageGenerationTarget
         imageEditModelId = agent.settings.imageEditModelId
+        textToVideoTarget = agent.settings.textToVideoTarget
+        imageToVideoTarget = agent.settings.imageToVideoTarget
         appleScriptModelId = agent.settings.appleScriptModelId
         appleScriptExecutionMode = agent.settings.appleScriptExecutionMode
         subagentPermissions = agent.settings.subagentPermissions
@@ -6442,6 +6539,7 @@ struct AgentDetailView: View {
                 browserUseEnabled: browserUseEnabled,
                 spawnDelegationEnabled: spawnDelegationEnabled,
                 imageEnabled: imageEnabled,
+                videoEnabled: videoEnabled,
                 // AppleScript enable + model + execution mode, declared right
                 // after imageEnabled to match the AgentSettings initializer's
                 // parameter order. Persist unconditionally (like the image
@@ -6468,8 +6566,10 @@ struct AgentDetailView: View {
                 // a stored model id is ignored while the capability is off, so a
                 // toggle round-trip keeps the user's choices (unlike the spawn
                 // allow-list, which gates tool visibility).
-                imageGenerationModelId: imageGenerationModelId,
+                imageGenerationTarget: imageGenerationTarget,
                 imageEditModelId: imageEditModelId,
+                textToVideoTarget: textToVideoTarget,
+                imageToVideoTarget: imageToVideoTarget,
                 subagentPermissions: reconciledSubagentPermissions,
                 subagentBudgets: subagentBudgets,
                 subagentModelOverrides: subagentModelOverrides,

@@ -29,6 +29,7 @@ public enum AgentCapabilityBlocker: String, Sendable, Hashable, CaseIterable {
     case noRunnableTargets = "no_runnable_targets"
     case checkingTargets = "checking_targets"
     case noImageModel = "no_image_model"
+    case noVideoModel = "no_video_model"
     case noAppleScriptModel = "no_applescript_model"
     case noKnowledgeCollections = "no_knowledge_collections"
     case permissionDenied = "permission_denied"
@@ -56,6 +57,8 @@ public enum AgentCapabilityBlocker: String, Sendable, Hashable, CaseIterable {
             return L("Checking configured targets…")
         case .noImageModel:
             return L("Needs setup: install a compatible image model")
+        case .noVideoModel:
+            return L("Needs setup: connect a compatible video provider")
         case .noAppleScriptModel:
             return L("Needs setup: install an AppleScript model")
         case .noKnowledgeCollections:
@@ -77,7 +80,7 @@ public enum AgentCapabilityBlocker: String, Sendable, Hashable, CaseIterable {
             return .disabled
         case .toolsDisabled, .globalToolsDisabled, .contextLimit:
             return .paused
-        case .noModelSelected, .noConfiguredTargets, .noImageModel, .noAppleScriptModel,
+        case .noModelSelected, .noConfiguredTargets, .noImageModel, .noVideoModel, .noAppleScriptModel,
             .noKnowledgeCollections:
             return .needsSetup
         case .noRunnableTargets, .checkingTargets, .permissionDenied,
@@ -136,6 +139,7 @@ public struct AgentCapabilityReadiness: Sendable, Equatable {
         runnableSpawnTargetCount: Int = 0,
         isCheckingSpawnTargets: Bool = false,
         hasReadyImageModel: Bool = false,
+        hasReadyVideoModel: Bool = false,
         hasReadyAppleScriptModel: Bool = false,
         permission: SubagentPermissionPolicy = .ask
     ) -> AgentCapabilityReadiness {
@@ -153,6 +157,9 @@ public struct AgentCapabilityReadiness: Sendable, Equatable {
             if permission == .deny { blockers.append(.permissionDenied) }
         case .image:
             if !hasReadyImageModel { blockers.append(.noImageModel) }
+            if permission == .deny { blockers.append(.permissionDenied) }
+        case .video:
+            if !hasReadyVideoModel { blockers.append(.noVideoModel) }
             if permission == .deny { blockers.append(.permissionDenied) }
         case .appleScript:
             if !hasReadyAppleScriptModel { blockers.append(.noAppleScriptModel) }

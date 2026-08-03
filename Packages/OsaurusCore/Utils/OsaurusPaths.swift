@@ -161,6 +161,14 @@ public enum OsaurusPaths {
         root().appendingPathComponent("generated-images", isDirectory: true)
     }
 
+    public static func generatedVideos() -> URL {
+        root().appendingPathComponent("generated-videos", isDirectory: true)
+    }
+
+    static func mediaJobsFile() -> URL {
+        runtime().appendingPathComponent("media-jobs.json", isDirectory: false)
+    }
+
     /// Disk KV cache directory used by vmlx-swift's `DiskCache` (L2 tier).
     /// Stores SQLite index + safetensors blocks keyed by model + token hash.
     public static func diskKVCache() -> URL {

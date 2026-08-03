@@ -86,6 +86,10 @@ public final class RemoteProviderManager: ObservableObject {
     /// without a second request. Empty until the router connects.
     private var osaurusRouterModelCatalog: [String: OsaurusRouterModel] = [:]
 
+    /// Billable image/video catalogs are intentionally separate from
+    /// `RemoteProviderState.discoveredModels`, which is chat/spawn-only.
+    private var mediaModelCatalogs: [UUID: [MediaModelInfo]] = [:]
+
     private init() {
         self.configuration = RemoteProviderConfigurationStore.load()
         ensureManagedOsaurusRouterProviderIfNeeded()
@@ -398,6 +402,12 @@ public final class RemoteProviderManager: ObservableObject {
                     )
                     discoveredModels = discovery.models
                     osaurusRouterModelCatalog = discovery.catalog
+                } else if RemoteProviderService.isVeniceProvider(provider) {
+                    let discovery = try await withRateLimitRetry {
+                        try await RemoteProviderService.fetchVeniceModelsDiscovery(from: provider)
+                    }
+                    discoveredModels = discovery.chatModelIDs
+                    mediaModelCatalogs[provider.id] = discovery.mediaModels
                 } else {
                     discoveredModels = try await withRateLimitRetry {
                         try await RemoteProviderService.fetchModels(from: provider)
@@ -467,6 +477,7 @@ public final class RemoteProviderManager: ObservableObject {
             state.lastError = errorMessage
             state.lastReplayDiagnostics = (error as? RemoteProviderServiceError)?.replayDiagnostics
             state.discoveredModels = []
+            mediaModelCatalogs.removeValue(forKey: providerId)
             state.lastFailureWasTransient = Self.isTransientConnectError(error)
             providerStates[providerId] = state
 
@@ -500,6 +511,7 @@ public final class RemoteProviderManager: ObservableObject {
             state.discoveredModels = []
             providerStates[providerId] = state
         }
+        mediaModelCatalogs.removeValue(forKey: providerId)
 
         if let provider = configuration.provider(id: providerId) {
             if provider.providerType == .osaurusRouter {
@@ -992,6 +1004,7 @@ public final class RemoteProviderManager: ObservableObject {
         else { return }
 
         let discovered: [String]
+        var mediaCatalogChanged = false
         do {
             if let override = testFetchModelsOverride {
                 discovered = try await override(provider)
@@ -1008,6 +1021,13 @@ public final class RemoteProviderManager: ObservableObject {
                         Self.visionModelIds(in: discovery.catalog)
                     )
                 }
+            } else if RemoteProviderService.isVeniceProvider(provider) {
+                let discovery = try await RemoteProviderService.fetchVeniceModelsDiscovery(
+                    from: provider
+                )
+                discovered = discovery.chatModelIDs
+                mediaCatalogChanged = mediaModelCatalogs[providerId] != discovery.mediaModels
+                mediaModelCatalogs[providerId] = discovery.mediaModels
             } else {
                 discovered = try await RemoteProviderService.fetchModels(from: provider)
             }
@@ -1017,7 +1037,7 @@ public final class RemoteProviderManager: ObservableObject {
 
         let merged = provider.mergedModelIds(discovered: discovered)
         lastModelRefetchAt[providerId] = Date()
-        guard merged != state.discoveredModels else { return }
+        guard mediaCatalogChanged || merged != state.discoveredModels else { return }
 
         state.discoveredModels = merged
         providerStates[providerId] = state
@@ -1104,6 +1124,12 @@ public final class RemoteProviderManager: ObservableObject {
         public let providerType: RemoteProviderType
         public let host: String
         public let models: [String]
+    }
+
+    struct CachedProviderMediaModels: Sendable {
+        let providerId: UUID
+        let providerName: String
+        let models: [MediaModelInfo]
     }
 
     /// One exact connected provider/model pair exposed to subagent spawning.
@@ -1213,6 +1239,33 @@ public final class RemoteProviderManager: ObservableObject {
         }
 
         return result
+    }
+
+    /// Connected billable media models. These never enter chat/spawn service
+    /// model lists, but are published to media pickers and tool availability.
+    func cachedMediaModels() -> [CachedProviderMediaModels] {
+        guard !isOffline else { return [] }
+        return configuration.providers.compactMap { provider in
+            guard
+                providerStates[provider.id]?.isConnected == true,
+                let models = mediaModelCatalogs[provider.id],
+                !models.isEmpty
+            else { return nil }
+            return CachedProviderMediaModels(
+                providerId: provider.id,
+                providerName: provider.name,
+                models: models
+            )
+        }
+    }
+
+    func mediaModel(for target: MediaModelTarget) -> MediaModelInfo? {
+        guard case .remoteProvider(let providerID) = target.backend else { return nil }
+        return mediaModelCatalogs[providerID]?.first { $0.target.modelID == target.modelID }
+    }
+
+    func configuredProvider(id: UUID) -> RemoteProvider? {
+        configuration.provider(id: id)
     }
 
     /// Current spawn-only remote catalog. A connected state without its live

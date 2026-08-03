@@ -87,6 +87,74 @@ actor OsaurusRouterAPIClient {
         return response.data
     }
 
+    // MARK: - Cloud media
+
+    func cloudMediaCatalog() async throws -> CloudMediaCatalogResponse {
+        try await get("/v1/media/models")
+    }
+
+    func cloudGenerateImage(
+        _ body: CloudImageGenerationBody
+    ) async throws -> CloudImageGenerationResponse {
+        try await post(
+            "/v1/media/images/generations",
+            body: body,
+            idempotencyKey: body.idempotencyKey
+        )
+    }
+
+    func cloudQuoteVideo(_ body: CloudVideoQuoteBody) async throws -> CloudVideoQuoteResponse {
+        try await post("/v1/media/videos/quote", body: body)
+    }
+
+    func cloudQueueVideo(_ body: CloudVideoJobBody) async throws -> CloudVideoJobResponse {
+        try await post(
+            "/v1/media/videos/jobs",
+            body: body,
+            idempotencyKey: body.idempotencyKey
+        )
+    }
+
+    func cloudVideoJob(id: String) async throws -> CloudVideoJobResponse {
+        try await get("/v1/media/videos/jobs/\(try mediaJobIDPathComponent(id))")
+    }
+
+    func cloudVideoContent(jobID: String) async throws -> URL {
+        let id = try mediaJobIDPathComponent(jobID)
+        let url = try url(path: "/v1/media/videos/jobs/\(id)/content")
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("video/mp4", forHTTPHeaderField: "Accept")
+        try await sign(request: &request, body: Data())
+        let temporaryURL: URL
+        let response: URLResponse
+        do {
+            (temporaryURL, response) = try await session.download(for: request)
+        } catch {
+            throw OsaurusRouterAPIError.transport(error.localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw OsaurusRouterAPIError.invalidResponse
+        }
+        guard (200 ..< 300).contains(http.statusCode) else {
+            let data = (try? Data(contentsOf: temporaryURL)) ?? Data()
+            try ensureOK(data: data, response: response)
+            throw OsaurusRouterAPIError.invalidResponse
+        }
+        return temporaryURL
+    }
+
+    func cloudDeleteVideoContent(jobID: String) async throws {
+        let id = try mediaJobIDPathComponent(jobID)
+        let url = try url(path: "/v1/media/videos/jobs/\(id)/content")
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        try await sign(request: &request, body: Data())
+        let (data, response) = try await perform(request)
+        try ensureOK(data: data, response: response)
+    }
+
     func estimate(model: String, inputTokens: Int, maxTokens: Int) async throws -> OsaurusRouterEstimateResponse {
         struct Body: Encodable {
             let model: String
@@ -171,6 +239,7 @@ actor OsaurusRouterAPIClient {
     private func post<Body: Encodable, T: Decodable>(
         _ path: String,
         body: Body,
+        idempotencyKey: String? = nil,
         session: URLSession? = nil
     ) async throws -> T {
         // Encode once with the canonical encoder: these exact bytes are both
@@ -178,6 +247,9 @@ actor OsaurusRouterAPIClient {
         let bodyData = try JSONEncoder.osaurusCanonical(prettyPrinted: false).encode(body)
         var request = try await signedJSONRequest(method: "POST", path: path, body: bodyData)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let idempotencyKey {
+            request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
+        }
         let (data, response) = try await perform(request, session: session)
         try ensureOK(data: data, response: response)
         return try decoder.decode(T.self, from: data)
@@ -234,5 +306,13 @@ actor OsaurusRouterAPIClient {
             throw OsaurusRouterAPIError.invalidURL
         }
         return url
+    }
+
+    private func mediaJobIDPathComponent(_ value: String) throws -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        guard !value.isEmpty, value.unicodeScalars.allSatisfy(allowed.contains) else {
+            throw OsaurusRouterAPIError.invalidURL
+        }
+        return value
     }
 }

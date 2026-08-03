@@ -177,7 +177,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// stamped newer than this is refused (forward-version fail-fast).
     /// Internal (not private) so migration-repair tests assert "reconciled
     /// to the latest" against the real constant instead of a stale literal.
-    static let latestSchemaVersion = 13
+    static let latestSchemaVersion = 14
 
     private func runMigrations() throws {
         let current = try getSchemaVersion()
@@ -206,6 +206,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if current < 11 { try runMigrationStep(11, migrateToV11) }
         if current < 12 { try runMigrationStep(12, migrateToV12) }
         if current < 13 { try runMigrationStep(13, migrateToV13) }
+        if current < 14 { try runMigrationStep(14, migrateToV14) }
     }
 
     /// Run one migration body atomically. Called only from `runMigrations`,
@@ -440,6 +441,14 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private func migrateToV13() throws {
         try addColumnIfMissing("turns", "model_context_excluded", "INTEGER NOT NULL DEFAULT 0")
         try setSchemaVersion(13)
+    }
+
+    /// v14: persist chat-local shared artifacts. Generated images, videos,
+    /// screenshots, and files already live under the session artifact directory;
+    /// this column retains the metadata needed to render them after chat reload.
+    private func migrateToV14() throws {
+        try addColumnIfMissing("turns", "shared_artifacts", "TEXT")
+        try setSchemaVersion(14)
     }
 
     // MARK: - Public API: sessions
@@ -1105,8 +1114,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
 
     /// Canonical SHA-256 over the persisted shape of a turn — used by
     /// `upsertTurnsIncrementally` to skip writes when nothing changed.
-    /// Hashes role + content + thinking + JSON-encoded attachments,
-    /// tool calls, tool call id, and tool results, in a stable order
+    /// Hashes role + content + thinking + JSON-encoded attachments and shared
+    /// artifacts, tool calls, tool call id, and tool results, in a stable order
     /// that matches the column binding order.
     static func contentHash(for turn: ChatTurnData) -> String {
         let encoder = JSONEncoder()
@@ -1117,6 +1126,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         hasher.update(data: Data(turn.thinking.utf8))
         if let attachments = try? encoder.encode(turn.attachments) {
             hasher.update(data: attachments)
+        }
+        if let sharedArtifacts = try? encoder.encode(turn.sharedArtifacts) {
+            hasher.update(data: sharedArtifacts)
         }
         if let calls = turn.toolCalls.flatMap({ try? encoder.encode($0) }) {
             hasher.update(data: calls)
@@ -1258,18 +1270,19 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
 
     private static let insertTurnSQL = """
         INSERT INTO turns
-            (id, session_id, seq, role, content, attachments,
+            (id, session_id, seq, role, content, attachments, shared_artifacts,
              tool_calls, tool_call_id, tool_results, thinking, content_hash,
              created_at, completed_at, generation_token_count, time_to_first_token,
              tool_call_durations, thinking_duration, router_billing, terminal_stop_reason,
              model_context_excluded)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
         ON CONFLICT(id) DO UPDATE SET
             session_id             = excluded.session_id,
             seq                    = excluded.seq,
             role                   = excluded.role,
             content                = excluded.content,
             attachments            = excluded.attachments,
+            shared_artifacts       = excluded.shared_artifacts,
             tool_calls             = excluded.tool_calls,
             tool_call_id           = excluded.tool_call_id,
             tool_results           = excluded.tool_results,
@@ -1287,7 +1300,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         """
 
     private static let selectTurnsSQL = """
-        SELECT id, role, content, attachments, tool_calls, tool_call_id, tool_results, thinking,
+        SELECT id, role, content, attachments, shared_artifacts,
+               tool_calls, tool_call_id, tool_results, thinking,
                created_at, completed_at, generation_token_count, time_to_first_token,
                tool_call_durations, thinking_duration, router_billing, terminal_stop_reason,
                model_context_excluded
@@ -1346,34 +1360,39 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             sqlite3_column_text(stmt, 3)
             .map { String(cString: $0) }
             .flatMap(decodeJSON) ?? []
-        let toolCalls: [ToolCall]? = sqlite3_column_text(stmt, 4)
+        let sharedArtifacts: [SharedArtifact] =
+            sqlite3_column_text(stmt, 4)
+            .map { String(cString: $0) }
+            .flatMap(decodeJSON) ?? []
+        let toolCalls: [ToolCall]? = sqlite3_column_text(stmt, 5)
             .map { String(cString: $0) }
             .flatMap(decodeJSON)
-        let toolCallId = sqlite3_column_text(stmt, 5).map { String(cString: $0) }
+        let toolCallId = sqlite3_column_text(stmt, 6).map { String(cString: $0) }
         let toolResults: [String: String] =
-            sqlite3_column_text(stmt, 6)
+            sqlite3_column_text(stmt, 7)
             .map { String(cString: $0) }
             .flatMap(decodeJSON) ?? [:]
-        let thinking = String(cString: sqlite3_column_text(stmt, 7))
-        let createdAt = readNullableDate(stmt, index: 8)
-        let completedAt = readNullableDate(stmt, index: 9)
-        let tokenCount = readNullableInt(stmt, index: 10)
-        let timeToFirstToken = readNullableDouble(stmt, index: 11)
+        let thinking = String(cString: sqlite3_column_text(stmt, 8))
+        let createdAt = readNullableDate(stmt, index: 9)
+        let completedAt = readNullableDate(stmt, index: 10)
+        let tokenCount = readNullableInt(stmt, index: 11)
+        let timeToFirstToken = readNullableDouble(stmt, index: 12)
         let toolCallDurations: [String: TimeInterval] =
-            sqlite3_column_text(stmt, 12)
+            sqlite3_column_text(stmt, 13)
             .map { String(cString: $0) }
             .flatMap(decodeJSON) ?? [:]
-        let thinkingDuration = readNullableDouble(stmt, index: 13)
-        let routerBilling: RouterBillingSummary? = sqlite3_column_text(stmt, 14)
+        let thinkingDuration = readNullableDouble(stmt, index: 14)
+        let routerBilling: RouterBillingSummary? = sqlite3_column_text(stmt, 15)
             .map { String(cString: $0) }
             .flatMap(decodeJSON)
-        let terminalStopReason = sqlite3_column_text(stmt, 15).map { String(cString: $0) }
-        let modelContextExcluded = sqlite3_column_int(stmt, 16) != 0
+        let terminalStopReason = sqlite3_column_text(stmt, 16).map { String(cString: $0) }
+        let modelContextExcluded = sqlite3_column_int(stmt, 17) != 0
         return ChatTurnData(
             id: UUID(uuidString: idStr) ?? UUID(),
             role: role,
             content: content,
             attachments: attachments,
+            sharedArtifacts: sharedArtifacts,
             toolCalls: toolCalls,
             toolCallId: toolCallId,
             toolResults: toolResults,
@@ -1418,20 +1437,21 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         bindText(stmt, index: 4, value: turn.role.rawValue)
         bindText(stmt, index: 5, value: turn.content)
         bindText(stmt, index: 6, value: encodeJSON(turn.attachments))
-        bindText(stmt, index: 7, value: turn.toolCalls.flatMap(encodeJSON))
-        bindText(stmt, index: 8, value: turn.toolCallId)
-        bindText(stmt, index: 9, value: encodeJSON(turn.toolResults))
-        bindText(stmt, index: 10, value: turn.thinking)
-        bindText(stmt, index: 11, value: contentHash ?? Self.contentHash(for: turn))
-        bindNullableDouble(stmt, index: 12, value: turn.createdAt?.timeIntervalSince1970)
-        bindNullableDouble(stmt, index: 13, value: turn.completedAt?.timeIntervalSince1970)
-        bindNullableInt(stmt, index: 14, value: turn.generationTokenCount)
-        bindNullableDouble(stmt, index: 15, value: turn.timeToFirstToken)
-        bindText(stmt, index: 16, value: turn.toolCallDurations.isEmpty ? nil : encodeJSON(turn.toolCallDurations))
-        bindNullableDouble(stmt, index: 17, value: turn.thinkingDuration)
-        bindText(stmt, index: 18, value: turn.routerBilling.flatMap(encodeJSON))
-        bindText(stmt, index: 19, value: turn.terminalStopReason)
-        sqlite3_bind_int(stmt, 20, turn.modelContextExcluded ? 1 : 0)
+        bindText(stmt, index: 7, value: turn.sharedArtifacts.isEmpty ? nil : encodeJSON(turn.sharedArtifacts))
+        bindText(stmt, index: 8, value: turn.toolCalls.flatMap(encodeJSON))
+        bindText(stmt, index: 9, value: turn.toolCallId)
+        bindText(stmt, index: 10, value: encodeJSON(turn.toolResults))
+        bindText(stmt, index: 11, value: turn.thinking)
+        bindText(stmt, index: 12, value: contentHash ?? Self.contentHash(for: turn))
+        bindNullableDouble(stmt, index: 13, value: turn.createdAt?.timeIntervalSince1970)
+        bindNullableDouble(stmt, index: 14, value: turn.completedAt?.timeIntervalSince1970)
+        bindNullableInt(stmt, index: 15, value: turn.generationTokenCount)
+        bindNullableDouble(stmt, index: 16, value: turn.timeToFirstToken)
+        bindText(stmt, index: 17, value: turn.toolCallDurations.isEmpty ? nil : encodeJSON(turn.toolCallDurations))
+        bindNullableDouble(stmt, index: 18, value: turn.thinkingDuration)
+        bindText(stmt, index: 19, value: turn.routerBilling.flatMap(encodeJSON))
+        bindText(stmt, index: 20, value: turn.terminalStopReason)
+        sqlite3_bind_int(stmt, 21, turn.modelContextExcluded ? 1 : 0)
     }
 
     static func bindNullableDouble(_ stmt: OpaquePointer, index: Int, value: Double?) {

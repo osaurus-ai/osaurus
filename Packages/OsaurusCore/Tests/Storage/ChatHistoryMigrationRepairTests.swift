@@ -82,6 +82,7 @@ struct ChatHistoryMigrationRepairTests {
     private static let alterV13 = [
         "ALTER TABLE turns ADD COLUMN model_context_excluded INTEGER NOT NULL DEFAULT 0"
     ]
+    private static let alterV14 = ["ALTER TABLE turns ADD COLUMN shared_artifacts TEXT"]
 
     // MARK: - Reporter-exact legacy state: v1 stuck before v8 router_billing
 
@@ -126,6 +127,7 @@ struct ChatHistoryMigrationRepairTests {
             #expect(self.diskUserVersion() == ChatHistoryDatabase.latestSchemaVersion)
             #expect(self.diskColumns(table: "turns").contains("router_billing"))
             #expect(self.diskColumns(table: "turns").contains("model_context_excluded"))
+            #expect(self.diskColumns(table: "turns").contains("shared_artifacts"))
 
             let loaded = db.loadSession(id: sid)
             #expect(loaded != nil)
@@ -151,7 +153,7 @@ struct ChatHistoryMigrationRepairTests {
     // MARK: - v1 stuck, every turn-column migration already present
 
     /// A store whose `user_version` is stuck at 1 but already carries every
-    /// migrated turn column (including v13). Every migration ALTER must be skipped, the
+    /// migrated turn column (including v14). Every migration ALTER must be skipped, the
     /// version reconciled to the latest, and data must still load + save.
     @Test
     func stuckV1WithAllColumnsPresentOpensCleanly() async throws {
@@ -163,7 +165,7 @@ struct ChatHistoryMigrationRepairTests {
             statements.append(Self.createTurnsV1)
             statements +=
                 Self.alterV2 + Self.alterV5 + Self.alterV6 + Self.alterV7
-                + Self.alterV8 + Self.alterV12 + Self.alterV13
+                + Self.alterV8 + Self.alterV12 + Self.alterV13 + Self.alterV14
             statements += [
                 """
                 INSERT INTO sessions (id, title, created_at, updated_at, source, turn_count, archived, capabilities)

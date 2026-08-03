@@ -795,6 +795,34 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleImageUpscale(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/images/cancel" {
                 handleImageCancel(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/videos/quote" {
+                handleVideoQuote(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/videos/generations" {
+                handleVideoGeneration(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET,
+                path.hasPrefix("/videos/jobs/"),
+                path.hasSuffix("/content")
+            {
+                handleVideoContent(
+                    path: path,
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path.hasPrefix("/videos/jobs/") {
+                handleVideoJob(
+                    path: path,
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if path.hasPrefix("/plugins/") {
                 handlePluginRoute(
                     head: head,
@@ -6302,6 +6330,65 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return Data(base64Encoded: value)
     }
 
+    /// Decode an image that will leave the machine for a remote media
+    /// provider. Unlike the local-engine helper, this intentionally rejects
+    /// `file://` references so an API caller cannot turn Osaurus into a local
+    /// file exfiltration proxy.
+    static func decodeImageInputWithMIME(_ value: String) -> (data: Data, mimeType: String)? {
+        if value.hasPrefix("data:") {
+            guard
+                let comma = value.firstIndex(of: ","),
+                let semicolon = value[..<comma].firstIndex(of: ";"),
+                value[value.index(after: semicolon) ..< comma].lowercased() == "base64"
+            else { return nil }
+            let mime = String(value[value.index(value.startIndex, offsetBy: 5) ..< semicolon]).lowercased()
+            guard ["image/png", "image/jpeg", "image/webp"].contains(mime),
+                let data = Data(base64Encoded: String(value[value.index(after: comma)...])),
+                sniffedImageMIME(data) == mime
+            else { return nil }
+            return (data, mime)
+        }
+        guard !value.hasPrefix("file://"),
+            !value.hasPrefix("http://"),
+            !value.hasPrefix("https://"),
+            let data = Data(base64Encoded: value),
+            let mime = sniffedImageMIME(data)
+        else { return nil }
+        return (data, mime)
+    }
+
+    private static func sniffedImageMIME(_ data: Data) -> String? {
+        let bytes = [UInt8](data.prefix(12))
+        if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+            return "image/png"
+        }
+        if bytes.starts(with: [0xFF, 0xD8, 0xFF]) {
+            return "image/jpeg"
+        }
+        if bytes.count >= 12,
+            Array(bytes[0 ..< 4]) == Array("RIFF".utf8),
+            Array(bytes[8 ..< 12]) == Array("WEBP".utf8)
+        {
+            return "image/webp"
+        }
+        return nil
+    }
+
+    private static func redactedMediaRequestBody(_ body: String?) -> String? {
+        guard let body else { return nil }
+        guard
+            let data = body.data(using: .utf8),
+            var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return body }
+        if object["source_image"] != nil {
+            object["source_image"] = "[REDACTED IMAGE]"
+        }
+        guard
+            let redacted = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        else { return body }
+        return String(decoding: redacted, as: UTF8.self)
+    }
+
     /// Resolve width/height from explicit fields or an OpenAI-style `WxH` size.
     static func resolveImageSize(size: String?, width: Int?, height: Int?) -> (Int?, Int?) {
         if let width, let height { return (width, height) }
@@ -6431,6 +6518,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         userAgent: String?
     ) {
         let (data, bodyString) = requestBodyData()
+        let loggedBody = Self.redactedMediaRequestBody(bodyString)
         guard let req = try? JSONDecoder().decode(ImageGenerationRequestDTO.self, from: data) else {
             sendImageError(
                 head: head,
@@ -6440,19 +6528,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 path: "/images/generations",
                 startTime: startTime,
                 userAgent: userAgent,
-                requestBody: bodyString
+                requestBody: loggedBody
             )
             return
         }
-        // Resolve the model: explicit request value wins; otherwise fall back to
-        // the configured default (Settings → Agent Delegation), matching the
-        // agent `image` tool.
         let trimmedModel = req.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let configuredTarget = SubagentConfigurationStore.snapshot().defaultImageGenerationTarget
+        let selectedTarget =
+            req.target?.target()
+            ?? (trimmedModel?.isEmpty == false
+                ? MediaModelTarget(backend: .local, modelID: trimmedModel!)
+                : configuredTarget)
         guard
-            let modelId =
-                (trimmedModel?.isEmpty == false ? trimmedModel : nil)
-                    ?? SubagentConfigurationStore.snapshot().defaultImageGenerationModelId,
-            !modelId.isEmpty
+            let selectedTarget,
+            selectedTarget.isValid
         else {
             sendImageError(
                 head: head,
@@ -6467,6 +6556,33 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
+        if selectedTarget.backend != .local {
+            guard req.allow_remote_media_spend == true else {
+                sendImageError(
+                    head: head,
+                    context: context,
+                    status: .forbidden,
+                    message:
+                        "Remote image generation requires allow_remote_media_spend=true.",
+                    path: "/images/generations",
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    requestBody: bodyString
+                )
+                return
+            }
+            handleRemoteImageGeneration(
+                request: req,
+                target: selectedTarget,
+                head: head,
+                context: context,
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: bodyString
+            )
+            return
+        }
+        let modelId = selectedTarget.modelID
         let (w, h) = Self.resolveImageSize(size: req.size, width: req.width, height: req.height)
         let params = ImageGenerationParameters(
             model: modelId,
@@ -6497,6 +6613,453 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             responseFormat: req.response_format ?? "url",
             jobID: jobID
         ) { await ImageGenerationService.shared.generate(params, jobID: jobID) }
+    }
+
+    private func handleRemoteImageGeneration(
+        request req: ImageGenerationRequestDTO,
+        target: MediaModelTarget,
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        requestBody: String?
+    ) {
+        let (width, height) = Self.resolveImageSize(
+            size: req.size,
+            width: req.width,
+            height: req.height
+        )
+        let request = MediaImageGenerationRequest(
+            target: target,
+            prompt: req.prompt,
+            negativePrompt: req.negative_prompt,
+            width: width,
+            height: height,
+            aspectRatio: req.aspect_ratio,
+            resolution: req.resolution,
+            quality: req.quality,
+            steps: req.steps,
+            guidance: req.guidance,
+            seed: req.seed.flatMap(Int.init(exactly:)),
+            count: min(4, max(1, req.n ?? 1)),
+            format: Self.imageOutputFormat(req.output_format)
+        )
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            do {
+                let generated = try await MediaGenerationCoordinator.shared.generateImage(request)
+                guard !generated.isEmpty else {
+                    throw MediaGenerationError.invalidResponse
+                }
+                let results = try generated.map { media -> ImageResultDTO in
+                    if req.response_format == "b64_json" {
+                        let bytes = try Data(contentsOf: media.url)
+                        return ImageResultDTO(
+                            url: nil,
+                            b64_json: bytes.base64EncodedString(),
+                            seed: req.seed ?? 0
+                        )
+                    }
+                    return ImageResultDTO(
+                        url: media.url.absoluteString,
+                        b64_json: nil,
+                        seed: req.seed ?? 0
+                    )
+                }
+                let response = ImagesResponseDTO(
+                    created: Int(Date().timeIntervalSince1970),
+                    data: results
+                )
+                let json = String(
+                    decoding: try JSONEncoder.osaurusCanonical().encode(response),
+                    as: UTF8.self
+                )
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .ok,
+                        headers: headers,
+                        body: json
+                    )
+                }
+                self.logRequest(
+                    method: "POST",
+                    path: "/images/generations",
+                    userAgent: userAgent,
+                    requestBody: requestBody,
+                    responseBody: json,
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            } catch {
+                let status = Self.mediaErrorStatus(error)
+                hop {
+                    self.sendImageError(
+                        head: head,
+                        context: ctx.value,
+                        status: status,
+                        message: error.localizedDescription,
+                        path: "/images/generations",
+                        startTime: startTime,
+                        userAgent: userAgent,
+                        requestBody: requestBody
+                    )
+                }
+            }
+        }
+    }
+
+    func handleVideoQuote(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let (data, bodyString) = requestBodyData()
+        let loggedBody = Self.redactedMediaRequestBody(bodyString)
+        guard
+            let dto = try? JSONDecoder().decode(VideoGenerationRequestDTO.self, from: data),
+            let request = dto.request()
+        else {
+            sendImageError(
+                head: head,
+                context: context,
+                status: .badRequest,
+                message: "Invalid video request or target",
+                path: "/videos/quote",
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: bodyString
+            )
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            do {
+                let quote = try await MediaGenerationCoordinator.shared.quoteVideo(request)
+                let receipt = await MediaQuoteStore.shared.issue(for: request, quote: quote)
+                let response = VideoQuoteResponseDTO(
+                    quote_usd: quote.usd,
+                    quote_token: receipt.token,
+                    expires_at: ISO8601DateFormatter().string(from: receipt.expiresAt)
+                )
+                let json = String(
+                    decoding: try JSONEncoder.osaurusCanonical().encode(response),
+                    as: UTF8.self
+                )
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .ok,
+                        headers: headers,
+                        body: json
+                    )
+                }
+                self.logRequest(
+                    method: "POST",
+                    path: "/videos/quote",
+                    userAgent: userAgent,
+                    requestBody: loggedBody,
+                    responseBody: json,
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            } catch {
+                let status = Self.mediaErrorStatus(error)
+                hop {
+                    self.sendImageError(
+                        head: head,
+                        context: ctx.value,
+                        status: status,
+                        message: error.localizedDescription,
+                        path: "/videos/quote",
+                        startTime: startTime,
+                        userAgent: userAgent,
+                        requestBody: loggedBody
+                    )
+                }
+            }
+        }
+    }
+
+    func handleVideoGeneration(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let (data, bodyString) = requestBodyData()
+        let loggedBody = Self.redactedMediaRequestBody(bodyString)
+        guard
+            let dto = try? JSONDecoder().decode(VideoGenerationRequestDTO.self, from: data),
+            let request = dto.request(),
+            let quoteToken = dto.quote_token?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !quoteToken.isEmpty
+        else {
+            sendImageError(
+                head: head,
+                context: context,
+                status: .badRequest,
+                message: "A valid target and prior quote_token are required",
+                path: "/videos/generations",
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: loggedBody
+            )
+            return
+        }
+        guard dto.allow_remote_media_spend == true else {
+            sendImageError(
+                head: head,
+                context: context,
+                status: .forbidden,
+                message: "Remote video generation requires allow_remote_media_spend=true.",
+                path: "/videos/generations",
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: loggedBody
+            )
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            do {
+                let approvedQuote = try await MediaQuoteStore.shared.consume(
+                    token: quoteToken,
+                    for: request
+                )
+                let job = try await MediaGenerationCoordinator.shared.queueVideo(
+                    request,
+                    approvedQuote: approvedQuote
+                )
+                let response = VideoJobResponseDTO(job)
+                let json = String(
+                    decoding: try JSONEncoder.osaurusCanonical().encode(response),
+                    as: UTF8.self
+                )
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .accepted,
+                        headers: headers,
+                        body: json
+                    )
+                }
+                self.logRequest(
+                    method: "POST",
+                    path: "/videos/generations",
+                    userAgent: userAgent,
+                    requestBody: loggedBody,
+                    responseBody: json,
+                    responseStatus: 202,
+                    startTime: startTime
+                )
+            } catch {
+                let status = Self.mediaErrorStatus(error)
+                hop {
+                    self.sendImageError(
+                        head: head,
+                        context: ctx.value,
+                        status: status,
+                        message: error.localizedDescription,
+                        path: "/videos/generations",
+                        startTime: startTime,
+                        userAgent: userAgent,
+                        requestBody: loggedBody
+                    )
+                }
+            }
+        }
+    }
+
+    func handleVideoJob(
+        path: String,
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let rawID = String(path.dropFirst("/videos/jobs/".count))
+        guard !rawID.contains("/"), let id = UUID(uuidString: rawID) else {
+            sendImageError(
+                head: head,
+                context: context,
+                status: .badRequest,
+                message: "Invalid video job id",
+                path: path,
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: nil
+            )
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            guard let job = await MediaGenerationCoordinator.shared.videoJob(id: id) else {
+                hop {
+                    self.sendImageError(
+                        head: head,
+                        context: ctx.value,
+                        status: .notFound,
+                        message: "Video job not found",
+                        path: path,
+                        startTime: startTime,
+                        userAgent: userAgent,
+                        requestBody: nil
+                    )
+                }
+                return
+            }
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(VideoJobResponseDTO(job)))
+                .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .ok,
+                    headers: headers,
+                    body: json
+                )
+            }
+            self.logRequest(
+                method: "GET",
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: json,
+                responseStatus: 200,
+                startTime: startTime
+            )
+        }
+    }
+
+    func handleVideoContent(
+        path: String,
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let prefix = "/videos/jobs/"
+        let suffix = "/content"
+        let rawID = String(path.dropFirst(prefix.count).dropLast(suffix.count))
+        guard !rawID.contains("/"), let id = UUID(uuidString: rawID) else {
+            sendImageError(
+                head: head,
+                context: context,
+                status: .badRequest,
+                message: "Invalid video job id",
+                path: path,
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: nil
+            )
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        runRequestTask(priority: .userInitiated) {
+            guard let job = await MediaGenerationCoordinator.shared.videoJob(id: id) else {
+                self.sendPluginErrorFromTask(
+                    loop: loop,
+                    ctxBound: ctx,
+                    version: head.version,
+                    status: .notFound,
+                    message: "Video job not found",
+                    corsHeaders: cors,
+                    startTime: startTime,
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent
+                )
+                return
+            }
+            guard job.state == .completed, let output = job.outputURL else {
+                self.sendPluginErrorFromTask(
+                    loop: loop,
+                    ctxBound: ctx,
+                    version: head.version,
+                    status: .conflict,
+                    message: "Video content is not available yet",
+                    corsHeaders: cors,
+                    startTime: startTime,
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent
+                )
+                return
+            }
+            do {
+                let data = try Data(contentsOf: output, options: .mappedIfSafe)
+                self.sendBinaryPluginResponse(
+                    loop: loop,
+                    ctxBound: ctx,
+                    version: head.version,
+                    status: .ok,
+                    headers: [("Content-Type", "video/mp4")] + cors,
+                    body: data,
+                    startTime: startTime,
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent
+                )
+            } catch {
+                self.sendPluginErrorFromTask(
+                    loop: loop,
+                    ctxBound: ctx,
+                    version: head.version,
+                    status: .internalServerError,
+                    message: "Stored video content is unavailable",
+                    corsHeaders: cors,
+                    startTime: startTime,
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent
+                )
+            }
+        }
+    }
+
+    private static func mediaErrorStatus(_ error: Error) -> HTTPResponseStatus {
+        guard let media = error as? MediaGenerationError else {
+            return .internalServerError
+        }
+        switch media {
+        case .authenticationRequired: return .unauthorized
+        case .insufficientFunds: return HTTPResponseStatus(statusCode: 402)
+        case .contentPolicy, .invalidRequest, .invalidTarget: return .badRequest
+        case .regionRestricted: return .forbidden
+        case .providerUnavailable, .modelUnavailable: return .notFound
+        case .queuedJobContinues: return .accepted
+        case .unsupported: return .notImplemented
+        case .server(let status, _): return HTTPResponseStatus(statusCode: status)
+        case .invalidResponse, .transport: return .badGateway
+        }
     }
 
     func handleImageEdits(

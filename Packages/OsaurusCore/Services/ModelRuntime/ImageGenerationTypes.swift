@@ -13,7 +13,7 @@ import Foundation
 
 /// Output container format. PNG is the only fully-wired writer in the engine
 /// today; jpeg/webp are accepted for forward compatibility.
-public enum ImageOutputFormat: String, Sendable, Codable {
+public enum ImageOutputFormat: String, Sendable, Codable, CaseIterable {
     case png
     case jpeg
     case webp
@@ -194,6 +194,13 @@ public struct ImageComposerSettings: Sendable, Codable, Equatable {
     public var height: Int
     public var seed: String
     public var strength: Double
+    public var aspectRatio: String?
+    public var resolution: String?
+    public var quality: String?
+    public var duration: String?
+    public var audio: Bool?
+    public var outputFormat: ImageOutputFormat?
+    public var imageCount: Int?
 
     public init(
         negativePrompt: String = "",
@@ -202,7 +209,14 @@ public struct ImageComposerSettings: Sendable, Codable, Equatable {
         width: Int = 512,
         height: Int = 512,
         seed: String = "",
-        strength: Double = 0.75
+        strength: Double = 0.75,
+        aspectRatio: String? = nil,
+        resolution: String? = nil,
+        quality: String? = nil,
+        duration: String? = nil,
+        audio: Bool? = nil,
+        outputFormat: ImageOutputFormat? = .png,
+        imageCount: Int? = 1
     ) {
         self.negativePrompt = negativePrompt
         self.steps = steps
@@ -211,6 +225,13 @@ public struct ImageComposerSettings: Sendable, Codable, Equatable {
         self.height = height
         self.seed = seed
         self.strength = strength
+        self.aspectRatio = aspectRatio
+        self.resolution = resolution
+        self.quality = quality
+        self.duration = duration
+        self.audio = audio
+        self.outputFormat = outputFormat
+        self.imageCount = imageCount
     }
 
     public var normalizedNegativePrompt: String? {
@@ -244,6 +265,14 @@ public struct ImageComposerSettings: Sendable, Codable, Equatable {
         Float(min(1, max(0, strength)))
     }
 
+    public var effectiveOutputFormat: ImageOutputFormat {
+        outputFormat ?? .png
+    }
+
+    public var clampedImageCount: Int {
+        min(4, max(1, imageCount ?? 1))
+    }
+
     public mutating func applyModelDefaults(steps: Int?, guidance: Float?) {
         if let steps {
             self.steps = min(50, max(1, steps))
@@ -253,8 +282,16 @@ public struct ImageComposerSettings: Sendable, Codable, Equatable {
         }
     }
 
+    mutating func applyMediaDefaults(_ constraints: MediaModelConstraints) {
+        aspectRatio = constraints.defaultAspectRatio ?? constraints.aspectRatios.first
+        resolution = constraints.defaultResolution ?? constraints.resolutions.first
+        quality = constraints.defaultQuality ?? constraints.qualities.first
+        duration = constraints.durations.first
+        audio = constraints.audioConfigurable ? constraints.supportsAudio : nil
+    }
+
     private static func clampDimension(_ value: Int) -> Int {
-        let bounded = min(1024, max(256, value))
+        let bounded = min(4096, max(256, value))
         let rounded = (bounded / 16) * 16
         return max(256, rounded)
     }

@@ -44,6 +44,10 @@ final class ModelPickerItemCache: ObservableObject {
         hasReadyImageGenerationModel || hasReadyImageEditModel
     }
 
+    var hasReadyVideoGenerationModel: Bool {
+        items.contains(where: \.isVideoGenerationDelegateCandidate)
+    }
+
     /// Whether at least one curated AppleScript model is installed. AppleScript
     /// bundles are discovered as ordinary `.local` MLX models (so they sit in
     /// `items`) but are hidden from the chat picker via the grouping helpers;
@@ -74,7 +78,11 @@ final class ModelPickerItemCache: ObservableObject {
     private func registerObservers() {
         guard !observersRegistered else { return }
         observersRegistered = true
-        for name: Notification.Name in [.localModelsChanged, .remoteProviderModelsChanged] {
+        for name: Notification.Name in [
+            .localModelsChanged,
+            .remoteProviderModelsChanged,
+            .cloudMediaCatalogChanged,
+        ] {
             NotificationCenter.default.addObserver(
                 forName: name,
                 object: nil,
@@ -86,6 +94,21 @@ final class ModelPickerItemCache: ObservableObject {
                     // (e.g. ChatView.init) could observe an empty list. The
                     // serialized rebuild below atomically replaces `items`
                     // when finished and coalesces concurrent requests.
+                    await self?.buildModelPickerItems()
+                }
+            }
+        }
+        for name: Notification.Name in [
+            .osaurusIdentityChanged,
+            .remoteProviderStatusChanged,
+        ] {
+            NotificationCenter.default.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    await MediaGenerationCoordinator.shared.refreshCloudCatalog()
                     await self?.buildModelPickerItems()
                 }
             }
@@ -215,6 +238,18 @@ final class ModelPickerItemCache: ObservableObject {
             routerMetadata: { manager.osaurusRouterMetadata(for: $0) }
         )
         options.append(contentsOf: remote.items)
+        for provider in manager.cachedMediaModels() {
+            options.append(
+                contentsOf: provider.models.map {
+                    .fromMediaModel($0, providerId: provider.providerId)
+                }
+            )
+        }
+        options.append(
+            contentsOf: await MediaGenerationCoordinator.shared.cachedCloudModels().map {
+                .fromMediaModel($0, providerId: RemoteProviderManager.osaurusRouterProviderId)
+            }
+        )
 
         // Atomically replace the dynamic reasoning option catalog BEFORE the
         // rebuilt items are published, so the option normalizer/UI never see

@@ -5272,7 +5272,62 @@ extension RemoteProviderService {
             return try await fetchFireworksModels(from: provider)
         }
 
+        if isVeniceProvider(provider) {
+            return try await fetchVeniceModelsDiscovery(from: provider).chatModelIDs
+        }
+
         return try await fetchOpenAICompatibleModels(from: provider)
+    }
+
+    static func isVeniceProvider(_ provider: RemoteProvider) -> Bool {
+        provider.host.lowercased() == "api.venice.ai"
+    }
+
+    /// Venice's OpenAI-compatible `/models` response also includes billable
+    /// image/video entries. Decode those into a separate media catalog and
+    /// return only `type=text` ids to chat/spawn consumers.
+    static func fetchVeniceModelsDiscovery(
+        from provider: RemoteProvider
+    ) async throws -> VeniceModelDiscovery {
+        guard let url = provider.url(for: "/models?type=all") else {
+            throw RemoteProviderServiceError.invalidURL
+        }
+        let request = modelDiscoveryRequest(
+            url: url,
+            headers: await provider.resolvedHeadersOffMainActor(),
+            timeout: provider.timeout
+        )
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+        } catch {
+            throw RemoteProviderServiceError.requestFailed(
+                "Network error: \(ProviderDiagnosticRedactor.safe(error.localizedDescription, maxLength: 240))"
+            )
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw RemoteProviderServiceError.invalidResponse
+        }
+        if let rateLimited = RemoteProviderServiceError.rateLimited(from: http) {
+            throw rateLimited
+        }
+        guard http.statusCode < 400 else {
+            throw RemoteProviderServiceError.requestFailed(
+                extractErrorMessage(from: data, statusCode: http.statusCode)
+            )
+        }
+        do {
+            return try VeniceModelDiscovery.decode(
+                data,
+                providerID: provider.id,
+                providerName: provider.name
+            )
+        } catch {
+            throw RemoteProviderServiceError.requestFailed(
+                "Invalid Venice /models response: \(ProviderDiagnosticRedactor.safe(error.localizedDescription, maxLength: 240))"
+            )
+        }
     }
 
     /// Fetch models from an OpenAI-compatible `/models` endpoint.

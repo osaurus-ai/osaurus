@@ -53,6 +53,7 @@ public struct SubagentCapability: Sendable {
         case browserUse
         case spawn
         case image
+        case video
         case appleScript
 
         /// The resolved per-agent flag for the `resolveTools` strip.
@@ -62,6 +63,7 @@ public struct SubagentCapability: Sendable {
             case .browserUse: return snapshot.browserUseEnabled
             case .spawn: return snapshot.spawnDelegationEnabled
             case .image: return snapshot.imageEnabled
+            case .video: return snapshot.videoEnabled
             case .appleScript: return snapshot.appleScriptEnabled
             }
         }
@@ -73,6 +75,7 @@ public struct SubagentCapability: Sendable {
             case .browserUse: return settings.browserUseEnabled
             case .spawn: return settings.spawnDelegationEnabled
             case .image: return settings.imageEnabled
+            case .video: return settings.videoEnabled
             case .appleScript: return settings.appleScriptEnabled
             }
         }
@@ -84,6 +87,7 @@ public struct SubagentCapability: Sendable {
             case .browserUse: settings.browserUseEnabled = value
             case .spawn: settings.spawnDelegationEnabled = value
             case .image: settings.imageEnabled = value
+            case .video: settings.videoEnabled = value
             case .appleScript: settings.appleScriptEnabled = value
             }
         }
@@ -261,6 +265,23 @@ public enum SubagentCapabilityRegistry {
         guidanceLabelKey: "Image Generation"
     )
 
+    public static let video = SubagentCapability(
+        id: "video",
+        toolNames: ["video"],
+        gate: .delegation,
+        perAgentFlag: .video,
+        modelSource: .dedicatedConfigured,
+        supportsModelOverride: false,
+        displayLabel: "Video",
+        iconName: "video",
+        guidance:
+            "Use `video` for text-to-video or image-to-video generation. It is billable: "
+            + "the tool obtains and presents a current quote before queueing. For image-to-video, "
+            + "pass exactly one local source image path. Generated video is displayed automatically.",
+        guidanceSectionId: "videoGeneration",
+        guidanceLabelKey: "Video Generation"
+    )
+
     /// The AppleScript family — two sibling tools, one shared capability + one
     /// on-device model (the curated `AppleScriptModelCatalog`): `applescript`
     /// (state-changing automation, the user's confirm gate) and `mac_query`
@@ -289,10 +310,12 @@ public enum SubagentCapabilityRegistry {
     /// Every capability, in guidance-render order (computer_use, then
     /// browser_use, then image, then applescript; spawn renders its own
     /// dynamic guidance block in the composer).
-    public static let all: [SubagentCapability] = [computerUse, browserUse, spawn, image, appleScript]
+    public static let all: [SubagentCapability] = [
+        computerUse, browserUse, spawn, image, video, appleScript,
+    ]
 
     /// The delegation-gated capabilities (spawn + image + applescript).
-    public static let delegationFamily: [SubagentCapability] = [spawn, image, appleScript]
+    public static let delegationFamily: [SubagentCapability] = [spawn, image, video, appleScript]
 
     /// Distinct per-agent toggle flags, in registry order (computer_use, spawn,
     /// image, applescript). One entry per *toggle* (deduped, so a future kind
@@ -431,6 +454,14 @@ public enum SubagentToolVisibility {
         isDefault ? config.imageDelegationActive : perAgentEnabled
     }
 
+    static func videoAvailable(
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        perAgentEnabled: Bool
+    ) -> Bool {
+        isDefault ? config.videoDelegationEnabled : perAgentEnabled
+    }
+
     /// Whether `applescript` is available for an agent. The Default / main chat
     /// is governed by its own AppleScript switch (`appleScriptDelegationActive`);
     /// a custom agent by its own toggle. There is no global master switch. The
@@ -492,6 +523,7 @@ public enum SubagentToolVisibility {
         snapshot: AgentConfigSnapshot,
         config: SubagentConfiguration,
         hasReadyImageModel: Bool,
+        hasReadyVideoModel: Bool = false,
         hasReadyAppleScriptModel: Bool = false
     ) -> Set<String> {
         let isDefault = (agentId == Agent.defaultId)
@@ -532,6 +564,15 @@ public enum SubagentToolVisibility {
         {
             names.formUnion(SubagentCapabilityRegistry.image.toolNames)
         }
+        if hasReadyVideoModel,
+            videoAvailable(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: snapshot.videoEnabled
+            )
+        {
+            names.formUnion(SubagentCapabilityRegistry.video.toolNames)
+        }
         // AppleScript gates like image: the per-agent / global switch can be ON,
         // but the tool is withheld until a curated AppleScript model is installed
         // (so the model is never offered a capability the runtime can't satisfy).
@@ -571,6 +612,20 @@ public enum SubagentToolVisibility {
             return isEdit ? config.defaultImageEditModelId : config.defaultImageGenerationModelId
         }
         return isEdit ? settings?.imageEditModelId : settings?.imageGenerationModelId
+    }
+
+    static func effectiveVideoTarget(
+        imageToVideo: Bool,
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        settings: AgentSettings?
+    ) -> MediaModelTarget? {
+        if isDefault {
+            return imageToVideo
+                ? config.defaultImageToVideoTarget
+                : config.defaultTextToVideoTarget
+        }
+        return imageToVideo ? settings?.imageToVideoTarget : settings?.textToVideoTarget
     }
 
     /// The configured AppleScript model id for an agent. Default / main chat

@@ -13,11 +13,34 @@ import Foundation
 
 // MARK: - Requests
 
+struct MediaTargetRequestDTO: Decodable {
+    let backend: String
+    let provider_id: UUID?
+    let model: String
+
+    func target() -> MediaModelTarget? {
+        let value = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        switch backend {
+        case "local":
+            return MediaModelTarget(backend: .local, modelID: value)
+        case "remote_provider":
+            guard let provider_id else { return nil }
+            return MediaModelTarget(backend: .remoteProvider(provider_id), modelID: value)
+        case "osaurus_cloud":
+            return MediaModelTarget(backend: .osaurusCloud, modelID: value)
+        default:
+            return nil
+        }
+    }
+}
+
 struct ImageGenerationRequestDTO: Decodable {
     /// Optional: when omitted/empty the handler falls back to the configured
     /// `defaultImageGenerationModelId` (Settings → Agent Delegation), matching
     /// the agent `image` tool's default-resolution behavior.
     let model: String?
+    let target: MediaTargetRequestDTO?
     let prompt: String
     let negative_prompt: String?
     let n: Int?
@@ -30,6 +53,10 @@ struct ImageGenerationRequestDTO: Decodable {
     let response_format: String?  // "url" | "b64_json"
     let output_format: String?  // "png" | "jpeg" | "webp"
     let stream: Bool?
+    let aspect_ratio: String?
+    let resolution: String?
+    let quality: String?
+    let allow_remote_media_spend: Bool?
 }
 
 struct ImageEditRequestDTO: Decodable {
@@ -67,6 +94,72 @@ struct ImageUpscaleRequestDTO: Decodable {
 
 struct ImageCancelRequestDTO: Decodable {
     let job_id: String
+}
+
+struct VideoGenerationRequestDTO: Decodable {
+    let target: MediaTargetRequestDTO
+    let prompt: String
+    let negative_prompt: String?
+    let source_image: String?
+    let duration: String
+    let aspect_ratio: String?
+    let resolution: String?
+    let audio: Bool?
+    let quote_token: String?
+    let allow_remote_media_spend: Bool?
+
+    func request() -> MediaVideoGenerationRequest? {
+        guard let target = target.target(), target.backend != .local else { return nil }
+        let source = source_image.flatMap(HTTPHandler.decodeImageInputWithMIME)
+        if source_image != nil, source == nil { return nil }
+        return MediaVideoGenerationRequest(
+            target: target,
+            prompt: prompt,
+            negativePrompt: negative_prompt,
+            sourceImage: source?.data,
+            sourceImageMIMEType: source?.mimeType,
+            duration: duration,
+            aspectRatio: aspect_ratio,
+            resolution: resolution,
+            audio: audio
+        )
+    }
+}
+
+struct VideoQuoteResponseDTO: Encodable {
+    let quote_usd: Double
+    let quote_token: String
+    let expires_at: String
+}
+
+struct VideoResultResponseDTO: Encodable {
+    let created: Int
+    let url: String
+    let mime_type: String
+    let model: String
+}
+
+struct VideoJobResponseDTO: Encodable {
+    let id: String
+    let status: String
+    let model: String
+    let kind: String
+    let quote_usd: Double?
+    let url: String?
+    let error: String?
+
+    init(_ job: DurableMediaJob) {
+        id = job.id.uuidString.lowercased()
+        status = job.state.rawValue
+        model = job.modelID
+        kind = job.kind.rawValue
+        quote_usd = job.quoteUSD
+        url =
+            job.outputURL == nil
+            ? nil
+            : "/v1/videos/jobs/\(job.id.uuidString.lowercased())/content"
+        error = job.errorMessage
+    }
 }
 
 // MARK: - Models list

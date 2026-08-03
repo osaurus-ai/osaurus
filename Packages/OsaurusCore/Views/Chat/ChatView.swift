@@ -765,7 +765,10 @@ final class ChatSession: ObservableObject {
         // at this point); `awaitingPreSendHandshake` isn't published and
         // reports through its own `didSet` instead.
         activityMonitorCancellable = Publishers.CombineLatest4(
-            $isStreaming, $sessionId, $awaitingClarify, promptQueue.$current
+            $isStreaming,
+            $sessionId,
+            $awaitingClarify,
+            promptQueue.$current
         )
         .sink { [weak self] isStreaming, sessionId, clarify, promptItem in
             guard let self else { return }
@@ -842,7 +845,8 @@ final class ChatSession: ObservableObject {
             guard let snapshot = note.object as? ModelRuntimeResidencySnapshot else { return }
             Task { @MainActor in
                 guard let self else { return }
-                let isSessionActive = self.windowState.map {
+                let isSessionActive =
+                    self.windowState.map {
                     ChatWindowManager.shared.isChatWindowActive(id: $0.windowId)
                 } ?? false
                 self.warmupController.handleRuntimeResidencyChanged(
@@ -1473,6 +1477,7 @@ final class ChatSession: ObservableObject {
         guard let option = pickerItems.first(where: { $0.id == modelId }) else { return false }
         // Image-edit models accept image input (osaurus image-edit feature).
         if option.imageCapabilities?.imageEdit == true { return true }
+        if option.mediaModel?.kind == .imageToVideo { return true }
         if option.isVLM { return true }
         if case .remote = option.source { return !option.isEmbedding }
         return false
@@ -1496,15 +1501,29 @@ final class ChatSession: ObservableObject {
 
     var selectedImagePickerItem: ModelPickerItem? {
         guard let model = selectedModel else { return nil }
-        return pickerItems.first { $0.id == model && $0.source.isImageGeneration }
+        return pickerItems.first {
+            $0.id == model
+                && ($0.source.isImageGeneration || $0.mediaModel?.kind == .image)
+        }
+    }
+
+    var selectedVideoPickerItem: ModelPickerItem? {
+        guard let model = selectedModel else { return nil }
+        return pickerItems.first {
+            $0.id == model && $0.mediaModel?.kind.isVideo == true
+        }
     }
 
     private func applyImageModelDefaults(for model: String?) {
         guard let model,
-            let item = pickerItems.first(where: { $0.id == model && $0.source.isImageGeneration })
+            let item = pickerItems.first(where: { $0.id == model && $0.isMediaGeneration })
         else { return }
         var settings = imageComposerSettings
+        if let media = item.mediaModel {
+            settings.applyMediaDefaults(media.constraints)
+        } else {
         settings.applyModelDefaults(steps: item.imageDefaultSteps, guidance: item.imageDefaultGuidance)
+        }
         imageComposerSettings = settings
     }
 
@@ -1758,8 +1777,9 @@ final class ChatSession: ObservableObject {
         if let activeThinkingBlockId {
             activeIds.insert(activeThinkingBlockId)
             if let groupId = ContentBlock.enclosingActivityGroupId(
-                forChildId: activeThinkingBlockId, in: blocks)
-            {
+                forChildId: activeThinkingBlockId,
+                in: blocks
+            ) {
                 activeIds.insert(groupId)
             }
         }
@@ -3422,7 +3442,7 @@ final class ChatSession: ObservableObject {
         guard let sessionId else { return toolResult }
         let contextId = sessionId.uuidString
         let outcome = await Task.detached(priority: .userInitiated) {
-            NativeImageToolArtifactBridge.processFirstImageArtifact(
+            GeneratedMediaToolArtifactBridge.processFirstMediaArtifact(
                 toolName: toolName,
                 toolResult: toolResult,
                 contextId: contextId,
@@ -4033,7 +4053,8 @@ final class ChatSession: ObservableObject {
         // Keep an honest incomplete/failure fallback visible in the chat, but
         // never index it as a completed assistant answer or feed it into
         // long-term memory. The next clean turn can establish completion.
-        let assistantContent = runCompletedCleanly
+        let assistantContent =
+            runCompletedCleanly
             ? turns.last(where: { $0.role == .assistant })?.content
             : nil
 
@@ -4695,7 +4716,17 @@ final class ChatSession: ObservableObject {
         #endif
         guard let id, !id.isEmpty else { return false }
         return ModelPickerItemCache.shared.items.contains {
-            $0.id == id && $0.source.isImageGeneration
+            $0.id == id && ($0.source.isImageGeneration || $0.mediaModel?.kind == .image)
+        }
+    }
+
+    func isVideoGenerationModel(_ id: String?) -> Bool {
+        #if DEBUG
+            if forceChatEngineRouteForTests { return false }
+        #endif
+        guard let id, !id.isEmpty else { return false }
+        return ModelPickerItemCache.shared.items.contains {
+            $0.id == id && $0.mediaModel?.kind.isVideo == true
         }
     }
 
@@ -4724,6 +4755,17 @@ final class ChatSession: ObservableObject {
         guard let imageItem = selectedImagePickerItem else {
             turn.content = L("Image generation failed: selected model is not an image model.")
             rebuildVisibleBlocks()
+            return
+        }
+        if let mediaModel = imageItem.mediaModel {
+            await runRemoteImageGeneration(
+                prompt: prompt,
+                attachments: attachments,
+                settings: settings,
+                model: mediaModel,
+                into: turn,
+                runId: runId
+            )
             return
         }
 
@@ -4824,6 +4866,269 @@ final class ChatSession: ObservableObject {
             }
         }
         isDirty = true
+    }
+
+    private func runRemoteImageGeneration(
+        prompt: String,
+        attachments: [Attachment],
+        settings: ImageComposerSettings,
+        model: MediaModelInfo,
+        into turn: ChatTurn,
+        runId: UUID
+    ) async {
+        guard attachments.loadImages().isEmpty else {
+            turn.content = L("Remote image editing is not supported yet. Remove the source image.")
+            rebuildVisibleBlocks()
+            return
+        }
+        if let limit = model.constraints.promptCharacterLimit, prompt.count > limit {
+            turn.content = String(format: L("The image prompt exceeds this model's %d character limit."), limit)
+            rebuildVisibleBlocks()
+            return
+        }
+
+        turn.content = L("Generating image…")
+        rebuildVisibleBlocks()
+        let usesCatalogSize =
+            !model.constraints.aspectRatios.isEmpty || !model.constraints.resolutions.isEmpty
+        let request = MediaImageGenerationRequest(
+            target: model.target,
+            prompt: prompt,
+            negativePrompt: settings.normalizedNegativePrompt,
+            width: usesCatalogSize ? nil : settings.clampedWidth,
+            height: usesCatalogSize ? nil : settings.clampedHeight,
+            aspectRatio: settings.aspectRatio,
+            resolution: settings.resolution,
+            quality: settings.quality,
+            steps: model.constraints.defaultSteps == nil ? nil : settings.clampedSteps,
+            guidance: Double(settings.clampedGuidance),
+            seed: settings.normalizedSeed.flatMap(Int.init(exactly:)),
+            count: settings.clampedImageCount,
+            format: settings.effectiveOutputFormat
+        )
+        do {
+            var approvalValues: [String: Any] = [
+                "prompt": prompt,
+                "resolved_model": model.displayName,
+                "backend": Self.mediaBackendDescription(model),
+                "billing_notice": "Approving starts a billable remote image generation.",
+            ]
+            if let privacy = model.privacy {
+                approvalValues["privacy"] = privacy
+            }
+            if let minimum = model.pricing?.minimumUSD {
+                approvalValues["estimated_minimum_usd"] = minimum
+            }
+            approvalValues["aspect_ratio"] = settings.aspectRatio
+            approvalValues["resolution"] = settings.resolution
+            approvalValues["quality"] = settings.quality
+            let approved = await ToolPermissionPromptService.requestApproval(
+                toolName: "image",
+                description:
+                    "Generate a billable remote image. Review the provider, privacy policy, "
+                    + "estimated minimum price, and selected options.",
+                argumentsJSON: SubagentApprovalArguments.enrichedJSON(
+                    from: "{}",
+                    values: approvalValues
+                )
+            )
+            guard approved else {
+                turn.content = L("Remote image generation cancelled before billing.")
+                rebuildVisibleBlocks()
+                return
+            }
+            let generated = try await MediaGenerationCoordinator.shared.generateImage(request)
+            guard !generated.isEmpty else {
+                throw MediaGenerationError.invalidResponse
+            }
+            guard isRunActive(runId) else { return }
+            for media in generated {
+                attachGeneratedMedia(media, prompt: prompt, to: turn)
+            }
+            if generated.count > 1 {
+                let cost = generated.compactMap(\.settledCostUSD).first
+                turn.content = "\(L("Generated images")): \(generated.count)"
+                if let cost {
+                    turn.content += " · \(String(format: "$%.4f", cost))"
+                }
+            }
+        } catch is CancellationError {
+            turn.content = L("Image generation cancelled.")
+        } catch {
+            debugLog(
+                "[MediaGeneration] image generation failed "
+                    + "backend=\(model.target.backend) model=\(model.target.modelID) "
+                    + "error=\(String(reflecting: error))"
+            )
+            turn.content = "\(L("Image generation failed:")) \(error.localizedDescription)"
+        }
+        isDirty = true
+        rebuildVisibleBlocks()
+    }
+
+    private static func mediaBackendDescription(_ model: MediaModelInfo) -> String {
+        switch model.target.backend {
+        case .local:
+            return "Local"
+        case .remoteProvider:
+            return model.providerName
+        case .osaurusCloud:
+            return "Osaurus Cloud"
+        }
+    }
+
+    func runVideoGeneration(
+        prompt: String,
+        attachments: [Attachment],
+        settings: ImageComposerSettings,
+        into turn: ChatTurn,
+        runId: UUID
+    ) async {
+        guard let model = selectedVideoPickerItem?.mediaModel else {
+            turn.content = L("Video generation failed: selected model is unavailable.")
+            rebuildVisibleBlocks()
+            return
+        }
+        let sourceImages = attachments.loadImages()
+        switch model.kind {
+        case .imageToVideo:
+            guard sourceImages.count == 1, sourceImages.count == attachments.count else {
+                turn.content = L("Attach exactly one source image for image-to-video generation.")
+                rebuildVisibleBlocks()
+                return
+            }
+        case .textToVideo:
+            guard attachments.isEmpty else {
+                turn.content = L("This text-to-video model does not accept attachments.")
+                rebuildVisibleBlocks()
+                return
+            }
+        case .image:
+            turn.content = L("The selected model is not a video model.")
+            rebuildVisibleBlocks()
+            return
+        }
+        guard let duration = settings.duration ?? model.constraints.durations.first else {
+            turn.content = L("The selected video model does not advertise a duration.")
+            rebuildVisibleBlocks()
+            return
+        }
+        if let limit = model.constraints.promptCharacterLimit, prompt.count > limit {
+            turn.content = String(format: L("The video prompt exceeds this model's %d character limit."), limit)
+            rebuildVisibleBlocks()
+            return
+        }
+
+        let request = MediaVideoGenerationRequest(
+            target: model.target,
+            prompt: prompt,
+            negativePrompt: settings.normalizedNegativePrompt,
+            sourceImage: sourceImages.first,
+            sourceImageMIMEType: sourceImages.isEmpty ? nil : "image/png",
+            duration: duration,
+            aspectRatio: settings.aspectRatio,
+            resolution: settings.resolution,
+            audio: model.constraints.audioConfigurable ? settings.audio : nil
+        )
+
+        do {
+            turn.content = L("Getting video quote…")
+            rebuildVisibleBlocks()
+            let quote = try await MediaGenerationCoordinator.shared.quoteVideo(request)
+            var approvalValues: [String: Any] = [
+                "prompt": prompt,
+                "resolved_model": model.displayName,
+                "duration": duration,
+                "quote_usd": quote.usd,
+                "billing_notice": "Approving queues a billable remote job that cannot be cancelled upstream.",
+            ]
+            approvalValues["resolution"] = settings.resolution
+            approvalValues["aspect_ratio"] = settings.aspectRatio
+            approvalValues["audio"] = settings.audio
+            let approvalJSON = SubagentApprovalArguments.enrichedJSON(
+                from: "{}",
+                values: approvalValues
+            )
+            let approved = await ToolPermissionPromptService.requestApproval(
+                toolName: "video",
+                description: VideoTool.toolDescription,
+                argumentsJSON: approvalJSON
+            )
+            guard approved else {
+                turn.content = L("Video generation cancelled before queueing.")
+                rebuildVisibleBlocks()
+                return
+            }
+
+            turn.content = String(format: L("Queueing video (quoted $%.4f)…"), quote.usd)
+            rebuildVisibleBlocks()
+            let turnID = turn.id
+            let media = try await MediaGenerationCoordinator.shared.generateVideo(
+                request,
+                approvedQuote: quote
+            ) { [weak self] event in
+                Task { @MainActor in
+                    guard
+                        let self,
+                        let turn = self.turns.first(where: { $0.id == turnID }),
+                        self.isRunActive(runId)
+                    else { return }
+                    switch event {
+                    case .queued(let jobID):
+                        turn.content = jobID.map { "Video queued (\($0))…" } ?? L("Video queued…")
+                    case .running(let progress, let eta):
+                        let percent = progress.map { " \(Int($0 * 100))%" } ?? ""
+                        let estimate = eta.map { " · ~\(Int($0))s remaining" } ?? ""
+                        turn.content = "Generating video…\(percent)\(estimate)"
+                    case .completed:
+                        break
+                    case .failed(let message):
+                        turn.content = "\(L("Video generation failed:")) \(message)"
+                    case .cancelled:
+                        turn.content = L("Video generation cancelled.")
+                    }
+                    self.rebuildVisibleBlocks()
+                }
+            }
+            guard isRunActive(runId) else { return }
+            attachGeneratedMedia(media, prompt: prompt, to: turn)
+        } catch let error as MediaGenerationError {
+            turn.content =
+                error.errorDescription
+                ?? L("Video generation failed.")
+        } catch is CancellationError {
+            turn.content = L("Video generation cancelled.")
+        } catch {
+            turn.content = "\(L("Video generation failed:")) \(error.localizedDescription)"
+        }
+        isDirty = true
+        rebuildVisibleBlocks()
+    }
+
+    private func attachGeneratedMedia(_ media: GeneratedMedia, prompt: String, to turn: ChatTurn) {
+        guard let contextID = sessionId?.uuidString else {
+            turn.content = media.url.absoluteString
+            return
+        }
+        switch SharedArtifact.processTrustedLocalFileResult(
+            fileURL: media.url,
+            filename: media.url.lastPathComponent,
+            mimeType: media.mimeType,
+            description: prompt,
+            contextId: contextID,
+            contextType: .chat
+        ) {
+        case .success(let processed):
+            turn.sharedArtifacts.append(processed.artifact)
+            let label = media.kind.isVideo ? L("Generated video") : L("Generated image")
+            if let cost = media.settledCostUSD {
+                turn.content = "\(label) · \(String(format: "$%.4f", cost))"
+            } else {
+                turn.content = label
+            }
+        case .failure(let failure):
+            turn.content = "\(L("Generated media could not be displayed:")) \(failure)"
+        }
     }
 
     /// Freeze this run's memory + screen-context blocks onto the latest user
@@ -5187,6 +5492,16 @@ final class ChatSession: ObservableObject {
                 // (a second MLX graph, gated exclusive to LLM eval) instead of
                 // the chat engine. The same run lifecycle (defer finalizeRun,
                 // currentTask cancellation) applies.
+                                    if self.isVideoGenerationModel(self.selectedModel) {
+                                        await self.runVideoGeneration(
+                                            prompt: trimmed,
+                                            attachments: attachments,
+                                            settings: imageSettings,
+                                            into: assistantTurn,
+                                            runId: runId
+                                        )
+                                        return
+                                    }
                 if self.isImageGenerationModel(self.selectedModel) {
                     await self.runImageGeneration(
                         prompt: trimmed,
@@ -5245,7 +5560,9 @@ final class ChatSession: ObservableObject {
                     // (executionMode, toolMode) fingerprint flipped since the
                     // last turn — otherwise stale dynamically-loaded tools
                     // would leak into the new mode's schema.
-                    let liveToolMode = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId)
+                                        let liveToolMode = AgentManager.shared.effectiveToolSelectionMode(
+                                            for: effectiveAgentId
+                                        )
                     let liveFingerprint = SessionToolState.fingerprint(
                         executionMode: executionMode,
                         toolMode: liveToolMode
@@ -5314,7 +5631,8 @@ final class ChatSession: ObservableObject {
                     var skillReferencedTools: LoadedTools = []
                     if let skillId = pendingOneOffSkillId {
                         pendingOneOffSkillId = nil
-                        if !isRemoteAgentTarget, let skill = SkillManager.shared.skill(for: skillId) {
+                                            if !isRemoteAgentTarget, let skill = SkillManager.shared.skill(for: skillId)
+                                            {
                             let body = await SkillManager.shared.buildFullInstructions(for: skill)
                             oneOffSkillSection = (skill.name, body)
                             let granted = AgentManager.shared
@@ -5460,7 +5778,9 @@ final class ChatSession: ObservableObject {
                         )
                     }
 
-                    let effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(for: effectiveAgentId)
+                                        let effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(
+                                            for: effectiveAgentId
+                                        )
 
                     // KV-cache-aware history compaction: shared window
                     // resolution + reservations via `AgentLoopBudget` (parity
@@ -5587,7 +5907,9 @@ final class ChatSession: ObservableObject {
                     // unrelated future failures get a fresh budget.
                     let maxTransientRetries = 2
                     var transientRetries = 0
-                    let effectiveTemp = AgentManager.shared.effectiveTemperature(for: effectiveAgentId)
+                                        let effectiveTemp = AgentManager.shared.effectiveTemperature(
+                                            for: effectiveAgentId
+                                        )
 
                     ttftTrace?.mark("pre_ttft_done")
 
@@ -5780,9 +6102,13 @@ final class ChatSession: ObservableObject {
                                 executionMode: executionMode
                             )
                             if let artifact = SharedArtifact.fromEnrichedToolResult(resultText) {
-                                await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
+                                                    await PluginManager.shared.notifyArtifactHandlers(
+                                                        artifact: artifact
+                                                    )
                             }
-                        } else if NativeImageToolArtifactBridge.isNativeImageTool(inv.toolName) {
+                                            } else if GeneratedMediaToolArtifactBridge.isGeneratedMediaTool(
+                                                inv.toolName
+                                            ) {
                             // Enrich for the artifact card only; the model keeps
                             // the compact `toolPayload` in `resultText`. The bridge
                             // returns its input unchanged on failure, so a changed
@@ -5794,7 +6120,9 @@ final class ChatSession: ObservableObject {
                             if enriched != resultText {
                                 toolCardOverrides[callId] = enriched
                                 if let artifact = SharedArtifact.fromEnrichedToolResult(enriched) {
-                                    await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
+                                                        await PluginManager.shared.notifyArtifactHandlers(
+                                                            artifact: artifact
+                                                        )
                                 }
                             }
                         }
@@ -5874,7 +6202,9 @@ final class ChatSession: ObservableObject {
                             )
 
                             if executionMode.usesSandboxTools {
-                                await SandboxToolRegistrar.shared.registerTools(for: effectiveAgentId)
+                                                    await SandboxToolRegistrar.shared.registerTools(
+                                                        for: effectiveAgentId
+                                                    )
                                 if !self.isRunActive(runId) {
                                     // Run was cancelled before execution; the
                                     // driver's post-call cancellation probe
@@ -5913,7 +6243,11 @@ final class ChatSession: ObservableObject {
                                             }
                                     }
                                 }
-                            return await postProcessToolResult(inv, callId: callId, resultText: resultText)
+                                                return await postProcessToolResult(
+                                                    inv,
+                                                    callId: callId,
+                                                    resultText: resultText
+                                                )
                         } catch {
                             // Store rejection/error as the result so UI shows "Rejected" instead of hanging.
                             // The structured envelope replaces the legacy `[REJECTED] …` string so
@@ -5953,11 +6287,16 @@ final class ChatSession: ObservableObject {
                         // Serial fallback for batches of one — identical to
                         // the historical single-call path.
                         if calls.count == 1, let only = calls.first {
-                            let execution = await executeSingleToolCall(only.invocation, callId: only.callId)
+                                                let execution = await executeSingleToolCall(
+                                                    only.invocation,
+                                                    callId: only.callId
+                                                )
                             // Cancelled before execution produced anything:
                             // report "never ran" rather than an empty
                             // envelope the driver would record.
-                            if execution.result.isEmpty, !execution.isError, !self.isRunActive(runId) {
+                                                if execution.result.isEmpty, !execution.isError,
+                                                    !self.isRunActive(runId)
+                                                {
                                 return []
                             }
                             return [execution]
@@ -6006,7 +6345,9 @@ final class ChatSession: ObservableObject {
                                     call.invocation,
                                     callId: call.callId
                                 )
-                                if execution.result.isEmpty, !execution.isError, !self.isRunActive(runId) {
+                                                    if execution.result.isEmpty, !execution.isError,
+                                                        !self.isRunActive(runId)
+                                                    {
                                     break
                                 }
                                 serialExecutions.append(execution)
@@ -6023,7 +6364,10 @@ final class ChatSession: ObservableObject {
                             return serialExecutions
                         }
 
-                        var executions = [AgentLoopToolExecution?](repeating: nil, count: calls.count)
+                                            var executions = [AgentLoopToolExecution?](
+                                                repeating: nil,
+                                                count: calls.count
+                                            )
 
                         if executionMode.usesSandboxTools {
                             await SandboxToolRegistrar.shared.registerTools(for: effectiveAgentId)
@@ -6036,7 +6380,8 @@ final class ChatSession: ObservableObject {
                         // persisted by `onBatchComplete` in slot order, so
                         // the transcript can never interleave a denial ahead
                         // of an earlier approved call's result.
-                        var approved: [(slot: Int, invocation: ServiceToolInvocation, callId: String)] = []
+                                            var approved:
+                                                [(slot: Int, invocation: ServiceToolInvocation, callId: String)] = []
                         var denied = false
                         for (slot, call) in calls.enumerated() {
                             if denied {
@@ -6050,7 +6395,10 @@ final class ChatSession: ObservableObject {
                                         "Skipped: an earlier tool call in this batch was rejected, so this call did not run.",
                                     tool: call.invocation.toolName
                                 )
-                                executions[slot] = AgentLoopToolExecution(result: envelope, isError: false)
+                                                    executions[slot] = AgentLoopToolExecution(
+                                                        result: envelope,
+                                                        isError: false
+                                                    )
                                 continue
                             }
                             do {
@@ -6060,8 +6408,14 @@ final class ChatSession: ObservableObject {
                                 )
                                 approved.append((slot, call.invocation, call.callId))
                             } catch {
-                                let envelope = ToolEnvelope.fromError(error, tool: call.invocation.toolName)
-                                executions[slot] = AgentLoopToolExecution(result: envelope, isError: true)
+                                                    let envelope = ToolEnvelope.fromError(
+                                                        error,
+                                                        tool: call.invocation.toolName
+                                                    )
+                                                    executions[slot] = AgentLoopToolExecution(
+                                                        result: envelope,
+                                                        isError: true
+                                                    )
                                 denied = true
                             }
                         }
@@ -6078,13 +6432,16 @@ final class ChatSession: ObservableObject {
                             let results = await AgentToolLoop.runBatchInParallel(
                                 approved.map { ($0.invocation, $0.callId) }
                             ) { inv, callId in
-                                try await ChatExecutionContext.$toolExecutionScope.withValue(toolScope) {
+                                                    try await ChatExecutionContext.$toolExecutionScope.withValue(
+                                                        toolScope
+                                                    ) {
                                     try await ChatExecutionContext.$currentSessionId.withValue(
                                         todoSessionIdForRun
                                     ) {
-                                        try await ChatExecutionContext.$currentAssistantTurnId.withValue(turnIdForTools)
-                                        {
-                                            try await ChatExecutionContext.$currentToolCallId.withValue(callId) {
+                                                            try await ChatExecutionContext.$currentAssistantTurnId
+                                                                .withValue(turnIdForTools) {
+                                                                    try await ChatExecutionContext.$currentToolCallId
+                                                                        .withValue(callId) {
                                                 try await ToolRegistry.shared.execute(
                                                     name: inv.toolName,
                                                     argumentsJSON: inv.jsonArguments,
@@ -6149,7 +6506,8 @@ final class ChatSession: ObservableObject {
                             // recent pairs stay intact, and the system prefix
                             // is untouched. No-op while within budget.
                             let preTrimTokens = ContextBudgetManager.estimateTokens(for: msgs)
-                            let trimResult = AgentLoopBudget.trimPreservingSystemPrefixReportingOverflow(
+                                                let trimResult =
+                                                    AgentLoopBudget.trimPreservingSystemPrefixReportingOverflow(
                                 msgs,
                                 with: loopBudgetManager,
                                 watermark: self.compactionWatermark
@@ -6211,7 +6569,8 @@ final class ChatSession: ObservableObject {
                                 // tight window is exactly when offloading bulk
                                 // reading to a worker pays for itself.
                                 let spawnVisible = toolSpecs.contains {
-                                    $0.function.name == SubagentCapabilityRegistry.spawnAgentToolName
+                                                        $0.function.name
+                                                            == SubagentCapabilityRegistry.spawnAgentToolName
                                         || $0.function.name
                                             == SubagentCapabilityRegistry.spawnModelToolName
                                 }
@@ -6257,7 +6616,9 @@ final class ChatSession: ObservableObject {
                             let convTokens =
                                 msgs
                                 .filter { $0.role != "system" }
-                                .reduce(0) { $0 + ContextBudgetManager.estimateTokens(for: $1.content) }
+                                                    .reduce(0) {
+                                                        $0 + ContextBudgetManager.estimateTokens(for: $1.content)
+                                                    }
                                 - max(0, currentInjectedTokens - automationContextTokens)
                                 - summaryMessageTokens
                             self.budgetTracker.updateConversation(
@@ -6283,13 +6644,15 @@ final class ChatSession: ObservableObject {
                                 if attempt == 1 {
                                     var promptDump = "═══ FULL PROMPT DUMP ═══\n"
                                     for (i, m) in msgs.enumerated() {
-                                        promptDump += "── [\(i)] role=\(m.role) chars=\(m.content?.count ?? 0) ──\n"
+                                                            promptDump +=
+                                                                "── [\(i)] role=\(m.role) chars=\(m.content?.count ?? 0) ──\n"
                                         promptDump += (m.content ?? "(nil)") + "\n"
                                     }
                                     if let tools = toolSpecs.isEmpty ? nil : toolSpecs {
                                         promptDump += "── TOOLS (\(tools.count)) ──\n"
                                         for t in tools {
-                                            promptDump += "  - \(t.function.name): \(t.function.description ?? "")\n"
+                                                                promptDump +=
+                                                                    "  - \(t.function.name): \(t.function.description ?? "")\n"
                                         }
                                     }
                                     promptDump += "═══ END PROMPT DUMP ═══"
@@ -6625,16 +6988,19 @@ final class ChatSession: ObservableObject {
                         pendingTodoCount: {
                             // Feeds the driver's staleness nudge — todo is
                             // session-scoped, so only chat provides this.
-                            guard let todo = await AgentTodoStore.shared.todo(
+                                                guard
+                                                    let todo = await AgentTodoStore.shared.todo(
                                 for: todoSessionIdForRun
                             )
                             else { return 0 }
                             return todo.totalCount - todo.doneCount
                         },
                         todoProgressSnapshot: {
-                            guard let todo = await AgentTodoStore.shared.todo(
+                                                guard
+                                                    let todo = await AgentTodoStore.shared.todo(
                                 for: todoSessionIdForRun
-                            ) else { return nil }
+                                                    )
+                                                else { return nil }
                             return AgentTodoProgressSnapshot(
                                 done: todo.doneCount,
                                 total: todo.totalCount
@@ -6828,7 +7194,9 @@ final class ChatSession: ObservableObject {
                                 let message =
                                     "The agent reached the configured step limit, and its final wrap-up failed: "
                                     + error.localizedDescription
-                                debugLog("send: final wrap-up call failed: \(error.localizedDescription)")
+                                                    debugLog(
+                                                        "send: final wrap-up call failed: \(error.localizedDescription)"
+                                                    )
                                 assistantTurn.content = message
                                 lastStreamError = message
                                 rebuildVisibleBlocks()

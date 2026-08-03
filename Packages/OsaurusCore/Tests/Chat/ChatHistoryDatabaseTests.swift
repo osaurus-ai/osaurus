@@ -116,6 +116,39 @@ struct ChatHistoryDatabaseTests {
     }
 
     @Test
+    func sharedArtifactsRoundTripAndInvalidateContentHash() throws {
+        let db = try openInMemory()
+        let id = UUID()
+        var session = makeSession(id: id, turnCount: 2)
+        try db.saveSession(session)
+
+        let artifacts = [
+            SharedArtifact(
+                contextId: id.uuidString,
+                contextType: .chat,
+                filename: "generated-image.png",
+                mimeType: "image/png",
+                fileSize: 123,
+                hostPath: "/tmp/generated-image.png",
+                description: "Generated image"
+            ),
+            SharedArtifact(
+                contextId: id.uuidString,
+                contextType: .chat,
+                filename: "generated-video.mp4",
+                mimeType: "video/mp4",
+                fileSize: 456,
+                hostPath: "/tmp/generated-video.mp4",
+                description: "Generated video"
+            ),
+        ]
+        session.turns[1].sharedArtifacts = artifacts
+        try db.saveSession(session)
+
+        #expect(db.loadSession(id: id)?.turns[1].sharedArtifacts == artifacts)
+    }
+
+    @Test
     func saveSession_replacesTurnsOnReSave() throws {
         let db = try openInMemory()
         let id = UUID()

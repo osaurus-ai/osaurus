@@ -250,6 +250,9 @@ public final class ToolRegistry: ObservableObject {
             // → edit). Tool body enforces the separate Agent Delegation permission
             // defaults and low-RAM unload policy.
             ImageTool(),
+            // Billable remote text/image-to-video generation. The subagent kind
+            // obtains a live quote before permission and persists queued jobs.
+            VideoTool(),
             // Agent DB feature (spec §6). The system prompt composer
             // gates these per-agent via `Agent.settings.dbEnabled`;
             // registering them as built-ins means agents that *do*
@@ -1890,6 +1893,9 @@ public final class ToolRegistry: ObservableObject {
     /// Image-family tool names, derived from the capability registry.
     static var agentDelegationImageToolNames: Set<String> {
         Set(SubagentCapabilityRegistry.image.toolNames)
+    }
+    static var agentDelegationVideoToolNames: Set<String> {
+        Set(SubagentCapabilityRegistry.video.toolNames)
     }
     /// AppleScript-family tool names, derived from the capability registry.
     static var agentDelegationAppleScriptToolNames: Set<String> {

@@ -255,18 +255,65 @@ struct ModelPickerView: View {
     }
 
     private func row(for model: ModelPickerItem, providerLabel: String? = nil) -> ModelPickerRow {
-        ModelPickerRow(
+        let media = model.mediaModel
+        return ModelPickerRow(
             modelId: model.id,
             sourceKey: model.source.uniqueKey,
             displayName: model.displayName,
-            description: model.description,
+            description: media.map(Self.mediaDetails) ?? model.description,
             parameterCount: model.parameterCount,
             quantization: model.quantization,
             isVLM: model.isVLM,
+            mediaKind: media?.kind,
+            mediaPrivacy: media?.privacy.map(Self.mediaPrivacyLabel),
+            mediaPrice: media?.pricing?.minimumUSD.map {
+                String(format: "From $%.4f", $0)
+            },
             isMLXFormat: model.isMLXFormat,
             providerLabel: providerLabel,
             isFavorite: favoritesStore.isFavorite(model.favoriteKey)
         )
+    }
+
+    private static func mediaPrivacyLabel(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .capitalized
+    }
+
+    private static func mediaDetails(_ model: MediaModelInfo) -> String? {
+        let constraints = model.constraints
+        var details: [String] = []
+        if !constraints.aspectRatios.isEmpty {
+            details.append("AR: \(constraints.aspectRatios.joined(separator: ", "))")
+        }
+        if !constraints.resolutions.isEmpty {
+            details.append("Res: \(constraints.resolutions.joined(separator: ", "))")
+        }
+        if !constraints.qualities.isEmpty {
+            details.append("Quality: \(constraints.qualities.joined(separator: ", "))")
+        }
+        if !constraints.durations.isEmpty {
+            details.append("Duration: \(constraints.durations.joined(separator: ", "))")
+        }
+        if let defaultSteps = constraints.defaultSteps, let maxSteps = constraints.maxSteps {
+            details.append("Steps: \(defaultSteps)–\(maxSteps)")
+        } else if let maxSteps = constraints.maxSteps {
+            details.append("Steps: ≤\(maxSteps)")
+        } else if let defaultSteps = constraints.defaultSteps {
+            details.append("Steps: \(defaultSteps)")
+        }
+        if constraints.supportsAudio {
+            details.append(constraints.audioConfigurable ? "Optional audio" : "Audio")
+        }
+        if let limit = constraints.promptCharacterLimit {
+            details.append("Prompt: \(limit.formatted(.number.notation(.compactName)))")
+        }
+        if let divisor = constraints.dimensionDivisor, divisor > 1 {
+            details.append("\(divisor) px increments")
+        }
+        return details.isEmpty ? nil : details.joined(separator: " · ")
     }
 
     private func makeRows(for tab: ModelPickerTab, providerLabel: String? = nil) -> [ModelPickerRow] {
