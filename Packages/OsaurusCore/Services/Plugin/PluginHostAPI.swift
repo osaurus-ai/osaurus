@@ -259,6 +259,30 @@ final class PluginHostContext: @unchecked Sendable {
     /// "already open" common path is essentially free.
     private let dbOpenLogLock = OSAllocatedUnfairLock<Bool>(initialState: false)
 
+    /// In-flight gate for plugin SQL (`dbExec` / `dbQuery`). Plugins can
+    /// call `host->db_query` from threads the host never sees — a
+    /// `DispatchQueue.global()` poller, a plugin-owned timer — which
+    /// `ExternalPlugin.shutdown()`'s queue drains cannot cover. Without
+    /// this gate a straggler could race `teardown()` two ways (production
+    /// crash APPLE-MACOS-18J):
+    ///  - `teardown()` closes the database while the call is mid-flight
+    ///    (the per-DB queue serializes the close itself, but not the
+    ///    surrounding lazy-open/exec sequence);
+    ///  - a call that lands *after* `teardown()` silently re-opens the
+    ///    database via `ensureDatabaseOpen()`, resurrecting a connection
+    ///    nobody will ever close — an orphaned fd that storage
+    ///    convergence/rekey then swaps the file under.
+    ///
+    /// Contract (mirrors `ExternalPlugin.inFlightCallbacks`): SQL entry
+    /// points `enter()` BEFORE reading the `isTornDown` latch and `leave()`
+    /// when the call returns; `teardown()` flips the latch, then waits on
+    /// the group before closing the database. Enter-before-check makes
+    /// that sound: a call either entered before the wait began (the wait
+    /// covers it) or observes the latch and returns an error envelope
+    /// without touching the database.
+    private let inFlightDatabaseCalls = DispatchGroup()
+    private let isTornDown = OSAllocatedUnfairLock<Bool>(initialState: false)
+
     /// Lazy-open the per-plugin database on first SQL call.
     /// Idempotent — `PluginDatabase.open()` short-circuits when the
     /// connection is already up. Called from every `dbExec` /
@@ -357,11 +381,21 @@ final class PluginHostContext: @unchecked Sendable {
     // MARK: - Database Callbacks
 
     func dbExec(sql: String, paramsJSON: String?) -> String {
+        inFlightDatabaseCalls.enter()
+        defer { inFlightDatabaseCalls.leave() }
+        guard !isTornDown.withLock({ $0 }) else {
+            return #"{"error":"Plugin is shutting down"}"#
+        }
         ensureDatabaseOpen()
         return database.exec(sql: sql, paramsJSON: paramsJSON)
     }
 
     func dbQuery(sql: String, paramsJSON: String?) -> String {
+        inFlightDatabaseCalls.enter()
+        defer { inFlightDatabaseCalls.leave() }
+        guard !isTornDown.withLock({ $0 }) else {
+            return #"{"error":"Plugin is shutting down"}"#
+        }
         ensureDatabaseOpen()
         return database.query(sql: sql, paramsJSON: paramsJSON)
     }
@@ -2851,8 +2885,19 @@ final class PluginHostContext: @unchecked Sendable {
     }
 
     /// Removes this context from the global registry and closes the database.
+    ///
+    /// Ordering matters: the registry entry goes first (new trampoline
+    /// lookups resolve to `context_unavailable`), then the SQL latch flips
+    /// and the in-flight group is drained (see `inFlightDatabaseCalls`),
+    /// and only then does the database close — so no straggler can be
+    /// mid-`sqlite3_step` during the close, and none can lazily re-open
+    /// the connection afterwards. The wait is bounded by SQLite's 5s
+    /// `busy_timeout`; callers (PluginManager unload paths, tests) are
+    /// never on the main thread with a live query in flight.
     func teardown() {
         PluginHostContext.removeContext(for: pluginId)
+        isTornDown.withLock { $0 = true }
+        inFlightDatabaseCalls.wait()
         database.close()
     }
 }
