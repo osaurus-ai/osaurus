@@ -1117,6 +1117,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     keyEquivalent: ""
                 )
             )
+            menu.addItem(
+                NSMenuItem(
+                    title: "Reset & Test Import History Prompt",
+                    action: #selector(dockResetImportHistoryPrompt),
+                    keyEquivalent: ""
+                )
+            )
         #endif
         return menu
     }
@@ -1155,6 +1162,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         @objc private func dockResetProductHuntLaunch() {
             ProductHuntLaunchCampaign.shared.resetForDebugTesting()
             presentProductHuntLaunchDialogIfEligible()
+        }
+
+        /// Clear the import prompt's seen flag and run the normal
+        /// eligibility/presentation path — including the modal/alert
+        /// deferrals — without requiring a fresh install or a full
+        /// onboarding pass. Dismissing re-persists seen; pick this item
+        /// again to test another pass.
+        @objc private func dockResetImportHistoryPrompt() {
+            ImportHistoryPromptGate.shared.resetForDebugTesting()
+            presentImportHistoryPromptIfEligible()
         }
     #endif
 
@@ -2209,6 +2226,11 @@ extension AppDelegate {
             }
 
             let themeManager = ThemeManager.shared
+            // Read before building the view: `completeOnboarding()` flips
+            // `hasCompletedOnboarding` before `onComplete` runs, so freshness
+            // must be captured up front. Re-onboarding users (version bump)
+            // are not fresh and never see the import prompt.
+            let wasFreshInstall = OnboardingService.shared.isFreshInstall
             let contentView = OnboardingView(
                 onPreferredSizeChange: { [weak self] newSize in
                     self?.resizeOnboardingWindow(to: newSize)
@@ -2222,11 +2244,18 @@ extension AppDelegate {
                     ModelPickerItemCache.shared.invalidateCache()
                     // Open ChatView after onboarding completes
                     self?.showChatOverlay()
-                    // Fresh installs during the Product Hunt launch window
-                    // deferred the launch dialog behind onboarding; recheck
-                    // now that the chat window is up to host it.
                     Task { @MainActor [weak self] in
                         try? await Task.sleep(for: .seconds(1))
+                        // Brand-new users get the one-time import-history
+                        // suggestion first, once the chat window is up to
+                        // host it.
+                        if wasFreshInstall {
+                            self?.presentImportHistoryPromptIfEligible()
+                        }
+                        // Fresh installs during the Product Hunt launch window
+                        // deferred the launch dialog behind onboarding; recheck
+                        // now that the chat window is up to host it. Its guard
+                        // defers again while the import prompt is on screen.
                         self?.presentProductHuntLaunchDialogIfEligible()
                     }
                 }
@@ -2595,6 +2624,82 @@ extension AppDelegate {
                 width: 400,
                 onDismiss: {
                     campaign.didDismiss()
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
+    }
+}
+
+// MARK: - Import History Prompt
+extension AppDelegate {
+    /// Present the one-time post-onboarding "import your chat history"
+    /// suggestion for brand-new users. The caller has already verified
+    /// the completing user is a fresh install; this checks the persisted
+    /// once-per-user gate and defers behind any competing modal. A
+    /// blocked attempt does not consume eligibility, but in practice the
+    /// only trigger is onboarding completion, so a deferred prompt is
+    /// simply never shown — the sidebar's Import button remains the
+    /// discoverable entry point.
+    @MainActor
+    func presentImportHistoryPromptIfEligible() {
+        guard !keychainDisabledTestMode else { return }
+
+        let gate = ImportHistoryPromptGate.shared
+        guard gate.isEligible else { return }
+
+        guard NSApp.modalWindow == nil else { return }
+        guard !NSApp.windows.contains(where: { $0.attachedSheet != nil }) else { return }
+        guard !ThemedAlertCenter.shared.hasAnyActiveAlert else { return }
+
+        // Host in the user's landing window (same routing as the Product
+        // Hunt dialog): the chat window that just opened after onboarding,
+        // else the management window, else the screen-level toast overlay.
+        let scope: ThemedAlertScope
+        if let chatId = ChatWindowManager.shared.lastFocusedWindowId,
+            ChatWindowManager.shared.windowExists(id: chatId) {
+            scope = .chat(chatId)
+        } else if WindowManager.shared.isVisible(.management) {
+            scope = .management
+        } else {
+            scope = .toastOverlay
+        }
+
+        // Seen is persisted at presentation time, so even a force-quit
+        // while the dialog is up can't make it reappear.
+        gate.willPresent()
+        FeatureTelemetry.importHistoryPromptShown()
+
+        let requestId = UUID()
+        let sheet = ImportGuideSheet(showsSkipToggle: false) {
+            FeatureTelemetry.importHistoryPromptClicked(action: "import")
+            ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+            // nil agent = default agent. `onOpen` stays nil: post-onboarding
+            // there is no sidebar selection to route through; imported
+            // sessions still refresh every window via `.chatSessionsImported`.
+            ChatSessionImportCoordinator.run(
+                agentId: nil, scope: scope, source: .onboardingPrompt, onOpen: nil)
+        }
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: L("Import your chat history"),
+                message: nil,
+                // Skip carries the cancel role so the corner X, Escape, and
+                // an outside click all follow the same permanent-dismiss
+                // path — and all count as "skip". Choose File dismisses the
+                // alert directly, so the two actions can't double-fire.
+                buttons: [
+                    .cancel(L("Skip")) {
+                        FeatureTelemetry.importHistoryPromptClicked(action: "skip")
+                    }
+                ],
+                showsCloseButton: true,
+                customContent: AnyView(sheet),
+                width: 470,
+                onDismiss: {
+                    gate.didDismiss()
                     ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
                 }
             ),

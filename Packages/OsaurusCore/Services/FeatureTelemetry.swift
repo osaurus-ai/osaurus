@@ -313,6 +313,47 @@ enum FeatureTelemetry {
         service.track("product_hunt_launch_dialog_clicked", ["action": action])
     }
 
+    // MARK: - Import history prompt (post-onboarding, one-shot)
+
+    /// The one-time post-onboarding import-history prompt was presented
+    /// to a brand-new user. Count only.
+    static func importHistoryPromptShown(service: TelemetryService = .shared) {
+        service.track("import_history_prompt_shown")
+    }
+
+    /// The user dismissed the import-history prompt. `action` is a closed
+    /// two-value enum token: `import` (opened the file picker) or `skip`
+    /// (Skip button, corner X, Escape, or outside click).
+    static func importHistoryPromptClicked(
+        action: String,
+        service: TelemetryService = .shared
+    ) {
+        service.track("import_history_prompt_clicked", ["action": action])
+    }
+
+    /// A chat-history import saved at least one conversation. `source` is a
+    /// closed two-value entry-point token: `sidebar` or `onboarding_prompt`.
+    /// Counts only — never file names, provider formats, or content.
+    static func chatHistoryImported(
+        source: String,
+        imported: Int,
+        duplicates: Int,
+        unreadable: Int,
+        failedFiles: Int,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "chat_history_imported",
+            [
+                "source": source,
+                "imported": imported,
+                "duplicates": duplicates,
+                "unreadable": unreadable,
+                "failed_files": failedFiles,
+            ]
+        )
+    }
+
     // MARK: - Derivation helpers
 
     /// Whether a chat request counts as a new top-level message for the

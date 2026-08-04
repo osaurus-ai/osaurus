@@ -468,6 +468,7 @@ struct ChatSessionSidebar: View {
             ChatSessionImportCoordinator.run(
                 agentId: agentId == Agent.defaultId ? nil : agentId,
                 scope: scope,
+                source: .sidebar,
                 // A single-conversation import opens immediately so the
                 // user isn't left hunting the list for it.
                 onOpen: { onSelect($0) }

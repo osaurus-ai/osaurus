@@ -29,6 +29,12 @@ final class ImportGuidePreference: ObservableObject {
 }
 
 struct ImportGuideSheet: View {
+    /// Whether the "Don't show this again" checkbox is rendered. The
+    /// sidebar's repeatable Import button keeps it; the one-time
+    /// post-onboarding prompt hides it because that prompt can never
+    /// appear a second time anyway.
+    var showsSkipToggle: Bool = true
+
     /// Invoked when the user taps Choose File. The caller is
     /// responsible for dismissing the alert and opening the panel.
     let onChooseFile: () -> Void
@@ -116,12 +122,14 @@ struct ImportGuideSheet: View {
                 .padding(.top, 14)
 
             HStack {
-                Toggle(isOn: $pref.skip) {
-                    Text("Don't show this again", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                if showsSkipToggle {
+                    Toggle(isOn: $pref.skip) {
+                        Text("Don't show this again", bundle: .module)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                    .toggleStyle(.checkbox)
                 }
-                .toggleStyle(.checkbox)
 
                 Spacer()
 

@@ -451,6 +451,56 @@ struct FeatureTelemetryEventTests {
         #expect(recorder.events.isEmpty)
     }
 
+    // MARK: - Import history prompt
+
+    @Test func importHistoryPrompt_shown_and_clicked_shapes() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.importHistoryPromptShown(service: service)
+        FeatureTelemetry.importHistoryPromptClicked(action: "import", service: service)
+        FeatureTelemetry.importHistoryPromptClicked(action: "skip", service: service)
+
+        #expect(
+            rec.events.map(\.name) == [
+                "import_history_prompt_shown",
+                "import_history_prompt_clicked",
+                "import_history_prompt_clicked",
+            ]
+        )
+        // Shown carries no event-specific props; clicked carries only the
+        // closed two-value action token.
+        #expect(business(rec.events[0].props).isEmpty)
+        #expect(rec.events[1].props["action"] as? String == "import")
+        #expect(business(rec.events[1].props).count == 1)
+        #expect(rec.events[2].props["action"] as? String == "skip")
+    }
+
+    /// A completed import carries the closed entry-point token and the four
+    /// summary counts — never file names, provider formats, or content.
+    @Test func chatHistoryImported_carries_source_and_counts_only() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.chatHistoryImported(
+            source: "onboarding_prompt",
+            imported: 12,
+            duplicates: 3,
+            unreadable: 1,
+            failedFiles: 0,
+            service: service
+        )
+
+        #expect(rec.events.map(\.name) == ["chat_history_imported"])
+        let props = rec.events[0].props
+        #expect(props["source"] as? String == "onboarding_prompt")
+        #expect(props["imported"] as? Int == 12)
+        #expect(props["duplicates"] as? Int == 3)
+        #expect(props["unreadable"] as? Int == 1)
+        #expect(props["failed_files"] as? Int == 0)
+        #expect(business(props).count == 5)
+    }
+
     // MARK: - Hardware RAM bucket (attached to every event)
 
     /// Every emitted event must carry the coarse `total_memory_gb` bucket so

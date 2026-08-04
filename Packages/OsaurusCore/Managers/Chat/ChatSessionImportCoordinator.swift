@@ -101,6 +101,14 @@ enum ChatSessionImportCoordinator {
         var firstError: Error?
     }
 
+    /// Where an import run was started from. Closed token set carried on
+    /// the `chat_history_imported` telemetry event so the post-onboarding
+    /// prompt's funnel can be measured against the sidebar entry point.
+    enum EntryPoint: String {
+        case sidebar
+        case onboardingPrompt = "onboarding_prompt"
+    }
+
     /// Presents the open panel, parses the chosen export files and saves
     /// each conversation as an `.imported` session for `agentId`.
     /// Conversations whose `externalSessionKey` already exists are
@@ -112,6 +120,7 @@ enum ChatSessionImportCoordinator {
     static func run(
         agentId: UUID?,
         scope: ThemedAlertScope = .unspecified,
+        source: EntryPoint = .sidebar,
         onOpen: ((ChatSessionData) -> Void)? = nil
     ) {
         let panel = NSOpenPanel()
@@ -178,6 +187,17 @@ enum ChatSessionImportCoordinator {
             var summary = persist(outcome.conversations, agentId: agentId)
             summary.unreadable = outcome.unreadable
             summary.failedFiles = outcome.failedFiles
+            // Successful import = at least one conversation saved.
+            // Duplicate-only re-imports and total failures don't fire.
+            if summary.imported > 0 {
+                FeatureTelemetry.chatHistoryImported(
+                    source: source.rawValue,
+                    imported: summary.imported,
+                    duplicates: summary.skippedDuplicates,
+                    unreadable: summary.unreadable,
+                    failedFiles: summary.failedFiles.count
+                )
+            }
             NotificationCenter.default.post(name: .chatSessionsImported, object: nil)
             presentSummary(summary)
             if summary.importedSessions.count == 1, let only = summary.importedSessions.first {
