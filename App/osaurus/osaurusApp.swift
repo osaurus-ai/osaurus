@@ -150,7 +150,7 @@ private extension osaurusApp {
                     themeManager.setAppearanceMode(.system, clearActiveTheme: true)
                 } label: {
                     HStack {
-                        Text(verbatim: L("Follow System Appearance"))
+                        Text(verbatim: L("System"))
                         if themeManager.activeCustomTheme == nil && themeManager.appearanceMode == .system {
                             Spacer()
                             Image(systemName: "checkmark")

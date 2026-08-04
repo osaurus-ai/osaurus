@@ -101,6 +101,24 @@ func themeMatches(
     }
 }
 
+/// Whether the synthetic "System" card is visible under the current filter +
+/// search. The card applies the OS-following appearance mode rather than a
+/// disk theme, so `themeMatches` can't cover it: it rides the Built-in bucket
+/// (and All) and matches searches against its localized display name.
+func systemThemeCardMatches(filter: ThemeFilter, search: String) -> Bool {
+    let trimmed = search.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !trimmed.isEmpty {
+        let name = AppearanceMode.system.displayName
+        if name.range(of: trimmed, options: .caseInsensitive) == nil { return false }
+    }
+    switch filter {
+    case .all, .builtIn:
+        return true
+    case .local, .imported, .shared, .needsReview, .duplicates:
+        return false
+    }
+}
+
 struct ThemesView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var managementState = ManagementStateManager.shared
@@ -527,14 +545,15 @@ struct ThemesView: View {
 
     @ViewBuilder
     private var defaultBrowsingContent: some View {
-        if !builtInThemes.isEmpty {
-            themesSection(
-                title: L("Built-in Themes"),
-                count: builtInThemes.count,
-                themes: builtInThemes
-            )
-            .transition(.opacity)
-        }
+        // The synthetic System card is always present, so the Built-in section
+        // renders even if the disk built-ins failed to install.
+        themesSection(
+            title: L("Built-in Themes"),
+            count: builtInThemes.count + 1,
+            themes: builtInThemes,
+            showsSystemCard: true
+        )
+        .transition(.opacity)
 
         if !customThemes.isEmpty {
             themesSection(
@@ -553,14 +572,16 @@ struct ThemesView: View {
 
     @ViewBuilder
     private var filteredContent: some View {
-        if visibleThemes.isEmpty {
+        let showsSystemCard = systemThemeCardMatches(filter: selectedFilter, search: searchText)
+        if visibleThemes.isEmpty && !showsSystemCard {
             noResultsView
         } else {
             themesSection(
                 title: searchActive ? L("Search Results") : sectionTitle(for: selectedFilter),
-                count: visibleThemes.count,
+                count: visibleThemes.count + (showsSystemCard ? 1 : 0),
                 subtitle: resultsSubtitle,
-                themes: visibleThemes
+                themes: visibleThemes,
+                showsSystemCard: showsSystemCard
             )
             .transition(.opacity)
         }
@@ -839,7 +860,9 @@ struct ThemesView: View {
             Spacer()
 
             Button(action: {
-                themeManager.clearCustomTheme()
+                // "Default" is the System theme: follow the OS appearance
+                // rather than whatever fixed mode was last pinned.
+                themeManager.setAppearanceMode(.system, clearActiveTheme: true)
                 showToast(L("Reset to default theme"))
             }) {
                 HStack(spacing: 4) {
@@ -875,7 +898,8 @@ struct ThemesView: View {
         title: String,
         count: Int,
         subtitle: String? = nil,
-        themes: [CustomTheme]
+        themes: [CustomTheme],
+        showsSystemCard: Bool = false
     ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
@@ -908,6 +932,9 @@ struct ThemesView: View {
                 ],
                 spacing: 16
             ) {
+                if showsSystemCard {
+                    systemThemeCard
+                }
                 ForEach(themes, id: \.metadata.id) { themeItem in
                     card(for: themeItem)
                 }
@@ -944,6 +971,24 @@ struct ThemesView: View {
             return themeManager.activeCustomTheme == nil && themeManager.appearanceMode == mode
         }
         return themeManager.activeCustomTheme?.metadata.id == themeItem.metadata.id
+    }
+
+    /// The default "System" theme card. Synthetic (no backing `CustomTheme` on
+    /// disk): applying it switches to `AppearanceMode.system`, which resolves
+    /// to the built-in Dark or Light theme and follows macOS appearance
+    /// transitions live.
+    private var systemThemeCard: some View {
+        SystemThemeCard(
+            isActive: isSystemThemeActive,
+            onApply: {
+                themeManager.setAppearanceMode(.system, clearActiveTheme: true)
+                showToast(L("Applied \"\(AppearanceMode.system.displayName)\""))
+            }
+        )
+    }
+
+    private var isSystemThemeActive: Bool {
+        themeManager.activeCustomTheme == nil && themeManager.appearanceMode == .system
     }
 
     // MARK: - Empty / No-result States
@@ -1936,6 +1981,212 @@ private struct ThemePreviewArt: View, Equatable {
                 self.kind = .image
             }
         }
+    }
+}
+
+// MARK: - System Theme Card
+
+/// Bottom-right triangular half used to composite the dark half of the
+/// System card's split preview over the light half.
+private struct DiagonalSplitShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// Gallery card for the default "System" theme. Unlike `ThemePreviewCard`
+/// there is no backing `CustomTheme` on disk — applying it switches the app
+/// to `AppearanceMode.system`, which resolves to the built-in Dark or Light
+/// theme and follows macOS appearance transitions live. The split preview
+/// mirrors the macOS "Auto" appearance picker (light top-left, dark
+/// bottom-right), so no edit/export/share/delete actions apply.
+private struct SystemThemeCard: View {
+    let isActive: Bool
+    let onApply: () -> Void
+
+    @Environment(\.theme) private var currentTheme
+    @State private var isHovered = false
+
+    private let lightResolved: ResolvedThemePreviewColors
+    private let darkResolved: ResolvedThemePreviewColors
+    private let lightBackground: ThemePreviewArt.BackgroundDescriptor
+    private let darkBackground: ThemePreviewArt.BackgroundDescriptor
+    private let lightThemeID: UUID
+    private let darkThemeID: UUID
+
+    init(isActive: Bool, onApply: @escaping () -> Void) {
+        self.isActive = isActive
+        self.onApply = onApply
+        let light = CustomTheme.lightDefault
+        let dark = CustomTheme.darkDefault
+        self.lightResolved = ResolvedThemePreviewColors(light)
+        self.darkResolved = ResolvedThemePreviewColors(dark)
+        self.lightBackground = ThemePreviewArt.BackgroundDescriptor(theme: light)
+        self.darkBackground = ThemePreviewArt.BackgroundDescriptor(theme: dark)
+        self.lightThemeID = light.metadata.id
+        self.darkThemeID = dark.metadata.id
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            previewArt
+            cardInfo
+        }
+        .background(currentTheme.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(borderColor, lineWidth: isActive ? 2 : 1)
+        )
+        .shadow(
+            color: Color.black.opacity(isActive ? 0.12 : 0.07),
+            radius: isActive ? 10 : 6,
+            x: 0,
+            y: isActive ? 4 : 2
+        )
+        .onHover { isHovered = $0 }
+    }
+
+    /// Light preview with the dark preview composited over its bottom-right
+    /// half. Both mockups share the same layout, so the diagonal reads as one
+    /// interface split between the two appearances.
+    private var previewArt: some View {
+        ZStack {
+            ThemePreviewArt(
+                themeID: lightThemeID,
+                resolved: lightResolved,
+                background: lightBackground,
+                cachedImage: nil
+            )
+            .equatable()
+
+            ThemePreviewArt(
+                themeID: darkThemeID,
+                resolved: darkResolved,
+                background: darkBackground,
+                cachedImage: nil
+            )
+            .equatable()
+            .clipShape(DiagonalSplitShape())
+        }
+        .frame(height: 124)
+        .overlay(alignment: .topTrailing) {
+            if isActive {
+                activePill
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if !isActive { onApply() }
+        }
+    }
+
+    private var activePill: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 9, weight: .bold))
+            Text("Active", bundle: .module)
+                .font(.system(size: 9, weight: .bold))
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(currentTheme.accentColor))
+        .padding(8)
+    }
+
+    private var cardInfo: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("System", bundle: .module)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(currentTheme.primaryText)
+                    .lineLimit(1)
+
+                Text("Matches macOS appearance", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(currentTheme.tertiaryText)
+                    .lineLimit(1)
+            }
+
+            HStack(spacing: 6) {
+                badge("Built-in", color: currentTheme.secondaryText)
+                badge("Auto Dark/Light", color: currentTheme.accentColor)
+                Spacer(minLength: 0)
+            }
+
+            swatchRow
+            applyButton
+        }
+        .padding(12)
+        .background(currentTheme.cardBackground)
+    }
+
+    private var swatchRow: some View {
+        HStack(spacing: 4) {
+            splitSwatch(lightResolved.primaryBackground, darkResolved.primaryBackground)
+            splitSwatch(lightResolved.accent, darkResolved.accent)
+            splitSwatch(lightResolved.success, darkResolved.success)
+            splitSwatch(lightResolved.warning, darkResolved.warning)
+            splitSwatch(lightResolved.error, darkResolved.error)
+        }
+    }
+
+    private var applyButton: some View {
+        Button(action: { if !isActive { onApply() } }) {
+            HStack(spacing: 6) {
+                Image(systemName: isActive ? "checkmark.circle.fill" : "paintbrush.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(isActive ? "Active" : "Apply Theme", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .frame(maxWidth: .infinity)
+            .foregroundColor(isActive ? currentTheme.successColor : Color.white)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isActive ? currentTheme.successColor.opacity(0.14) : currentTheme.accentColor)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .disabled(isActive)
+    }
+
+    private var borderColor: Color {
+        if isActive { return currentTheme.accentColor }
+        if isHovered { return currentTheme.accentColor.opacity(0.5) }
+        return currentTheme.cardBorder
+    }
+
+    private func splitSwatch(_ light: Color, _ dark: Color) -> some View {
+        ZStack {
+            Circle().fill(light)
+            DiagonalSplitShape().fill(dark)
+        }
+        .frame(width: 16, height: 16)
+        .clipShape(Circle())
+        .overlay(
+            Circle()
+                .stroke(currentTheme.primaryBorder, lineWidth: 1)
+        )
+    }
+
+    private func badge(_ label: String, color: Color) -> some View {
+        Text(LocalizedStringKey(label), bundle: .module)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundColor(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                Capsule()
+                    .fill(color.opacity(0.14))
+            )
     }
 }
 
