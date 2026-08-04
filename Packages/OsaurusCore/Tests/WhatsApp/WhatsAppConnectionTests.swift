@@ -1360,6 +1360,69 @@ struct WhatsAppConnectionServiceTests {
         }
     }
 
+    @Test func artifactReplyStagesIntoMediaRootAndHonorsAttachmentToggle() async throws {
+        try await withIsolatedWhatsAppStores {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osaurus-wa-artreply-\(UUID().uuidString)", isDirectory: true)
+            let artifactsDir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osaurus-wa-artsrc-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: artifactsDir, withIntermediateDirectories: true)
+            defer {
+                try? FileManager.default.removeItem(at: root)
+                try? FileManager.default.removeItem(at: artifactsDir)
+            }
+            // The artifact lives outside the media fence, like the real
+            // ~/.osaurus/artifacts store does.
+            let artifactPath = artifactsDir.appendingPathComponent("cat.png").path
+            try Data(repeating: 0xAB, count: 64).write(to: URL(fileURLWithPath: artifactPath))
+
+            let transport = FakeWhatsAppTransport()
+            transport.setResponse(
+                for: WhatsAppRPCMethod.sendAttachment, result: ["message_id": "WAMID-A"]
+            )
+            let service = WhatsAppConnectionService(transport: transport)
+
+            // Attachments toggle off: refused before any staging or dispatch.
+            try service.saveConfiguration(
+                WhatsAppConnectionConfiguration(
+                    writableChatIds: [Self.dmChat],
+                    writeEnabled: true,
+                    attachmentIngestionEnabled: false,
+                    allowedAttachmentRoots: [root.path]
+                )
+            )
+            await #expect(throws: WhatsAppConnectionServiceError.attachmentNotAllowed(artifactPath)) {
+                try await service.sendArtifactReply(
+                    chatId: Self.dmChat, hostPath: artifactPath, caption: nil
+                )
+            }
+            #expect(transport.calls(for: WhatsAppRPCMethod.sendAttachment).isEmpty)
+
+            try service.saveConfiguration(
+                WhatsAppConnectionConfiguration(
+                    writableChatIds: [Self.dmChat],
+                    writeEnabled: true,
+                    attachmentIngestionEnabled: true,
+                    allowedAttachmentRoots: [root.path]
+                )
+            )
+            try await service.sendArtifactReply(
+                chatId: Self.dmChat, hostPath: artifactPath, caption: "your cat"
+            )
+            let call = transport.calls(for: WhatsAppRPCMethod.sendAttachment).last
+            #expect(call?["to"] as? String == Self.dmChat)
+            #expect(call?["caption"] as? String == "your cat")
+            let stagedPath = try #require(call?["path"] as? String)
+            #expect(stagedPath.hasPrefix(root.appendingPathComponent("agent-replies").path + "/"))
+            #expect(stagedPath.hasSuffix("-cat.png"))
+            // The staged copy is transient: cleaned up after the send.
+            #expect(!FileManager.default.fileExists(atPath: stagedPath))
+            // The original artifact is untouched.
+            #expect(FileManager.default.fileExists(atPath: artifactPath))
+        }
+    }
+
     @Test func listConnectionsMarksWhatsAppConfiguredOnlyWithHelperAndChats() async throws {
         try await withIsolatedWhatsAppStores {
             let transport = FakeWhatsAppTransport()

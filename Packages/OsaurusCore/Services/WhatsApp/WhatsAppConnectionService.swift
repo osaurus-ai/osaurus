@@ -853,6 +853,34 @@ final class WhatsAppConnectionService: @unchecked Sendable {
         ]
     }
 
+    /// Delivers an agent-produced shared artifact as a media send during an
+    /// auto-reply. The source lives in the trusted host artifacts store, which
+    /// sits outside the attachment fence, so the file is staged into the first
+    /// allowed media root and then pushed through the regular `sendAttachment`
+    /// gates (attachments toggle, write allowlist, size cap). The staged copy
+    /// is removed afterwards either way.
+    func sendArtifactReply(chatId: String, hostPath: String, caption: String?) async throws {
+        let config = configuration()
+        guard config.attachmentIngestionEnabled,
+            let root = config.allowedAttachmentRoots.first
+        else {
+            throw WhatsAppConnectionServiceError.attachmentNotAllowed(hostPath)
+        }
+        let filename = (hostPath as NSString).lastPathComponent
+        let stagingDir = URL(fileURLWithPath: root)
+            .appendingPathComponent("agent-replies", isDirectory: true)
+        try FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
+        let staged = stagingDir.appendingPathComponent("\(UUID().uuidString)-\(filename)")
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: hostPath), to: staged)
+        defer { try? FileManager.default.removeItem(at: staged) }
+        _ = try await sendAttachment(
+            chatId: chatId,
+            path: staged.path,
+            caption: caption,
+            confirmSend: true
+        )
+    }
+
     func setReaction(
         chatId: String,
         messageId: String,
@@ -1228,6 +1256,7 @@ final class WhatsAppConnectionService: @unchecked Sendable {
             trustLevel: .verified
         )
         let responder: AgentChannelInboundReplyHandler?
+        let attachmentResponder: AgentChannelInboundAttachmentReplyHandler?
         if settings.autoReplyEnabled {
             responder = { [weak self] reply in
                 guard let self else {
@@ -1241,8 +1270,21 @@ final class WhatsAppConnectionService: @unchecked Sendable {
                     confirmSend: true
                 )
             }
+            attachmentResponder = { [weak self] path, caption in
+                guard let self else {
+                    throw WhatsAppConnectionServiceError.helper(
+                        "WhatsApp connection was released before replying."
+                    )
+                }
+                try await self.sendArtifactReply(
+                    chatId: event.roomId,
+                    hostPath: path,
+                    caption: caption
+                )
+            }
         } else {
             responder = nil
+            attachmentResponder = nil
         }
         return await AgentChannelInboundRelay.shared.submit(
             AgentChannelInboundRelayRequest(
@@ -1257,7 +1299,8 @@ final class WhatsAppConnectionService: @unchecked Sendable {
                 attachments: event.attachments,
                 settings: settings,
                 sourceLabel: "WhatsApp chat \(event.roomId), sender \(senderId)",
-                reply: responder
+                reply: responder,
+                replyAttachment: attachmentResponder
             )
         )
     }

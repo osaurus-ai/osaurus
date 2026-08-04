@@ -9,6 +9,13 @@ import Foundation
 
 typealias AgentChannelInboundReplyHandler = @Sendable (String) async throws -> Void
 
+/// Delivers one agent-produced file (a shared artifact staged on the host) back
+/// to the channel as a native attachment. `path` is a trusted host path inside
+/// `~/.osaurus/artifacts/`; providers stage it into their own fenced media root
+/// before sending so the regular outbound gates still apply.
+typealias AgentChannelInboundAttachmentReplyHandler =
+    @Sendable (_ path: String, _ caption: String?) async throws -> Void
+
 struct AgentChannelInboundRelayRequest: Sendable {
     var identity: ChannelIdentity
     var connectionId: String
@@ -19,6 +26,7 @@ struct AgentChannelInboundRelayRequest: Sendable {
     var settings: AgentChannelInboundDispatchConfiguration
     var sourceLabel: String
     var reply: AgentChannelInboundReplyHandler?
+    var replyAttachment: AgentChannelInboundAttachmentReplyHandler?
 
     init(
         identity: ChannelIdentity,
@@ -29,7 +37,8 @@ struct AgentChannelInboundRelayRequest: Sendable {
         attachments: [AgentChannelStoredAttachment] = [],
         settings: AgentChannelInboundDispatchConfiguration,
         sourceLabel: String,
-        reply: AgentChannelInboundReplyHandler? = nil
+        reply: AgentChannelInboundReplyHandler? = nil,
+        replyAttachment: AgentChannelInboundAttachmentReplyHandler? = nil
     ) {
         self.identity = identity
         self.connectionId = connectionId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -40,6 +49,7 @@ struct AgentChannelInboundRelayRequest: Sendable {
         self.settings = settings
         self.sourceLabel = sourceLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         self.reply = reply
+        self.replyAttachment = replyAttachment
     }
 }
 
@@ -197,6 +207,10 @@ final class AgentChannelInboundRelay {
             }
         }
 
+        // Artifacts created before this run belong to earlier turns of a
+        // reused channel session and must not be re-sent with this reply.
+        let runStartedAt = Date()
+
         let taskId: UUID
         if let replyableId = taskManager.replyableTaskId(
             source: .channel,
@@ -232,9 +246,9 @@ final class AgentChannelInboundRelay {
             taskId = handle.id
         }
 
-        let terminal = await waitForReply(taskId: taskId)
+        let terminal = await waitForReply(taskId: taskId, runStartedAt: runStartedAt)
         switch terminal {
-        case .reply(let text, let awaitingClarification):
+        case .reply(let text, let awaitingClarification, let artifacts):
             guard request.settings.autoReplyEnabled, let responder = request.reply else {
                 await auditLog.record(
                     AgentChannelAuditEvent(
@@ -260,6 +274,29 @@ final class AgentChannelInboundRelay {
             )
             do {
                 try await responder(sanitized.text)
+                var metadata = [
+                    "redacted": sanitized.redacted ? "true" : "false",
+                    "truncated": sanitized.truncated ? "true" : "false",
+                ]
+                if let attachmentResponder = request.replyAttachment, !artifacts.isEmpty {
+                    var sent = 0
+                    var failed = 0
+                    for artifact in artifacts.prefix(Self.maxReplyArtifacts) {
+                        do {
+                            try await attachmentResponder(artifact.hostPath, artifact.description)
+                            sent += 1
+                        } catch {
+                            failed += 1
+                            NSLog(
+                                "[AgentChannelInboundRelay] Artifact reply '%@' failed: %@",
+                                artifact.filename,
+                                error.localizedDescription
+                            )
+                        }
+                    }
+                    if sent > 0 { metadata["artifacts_sent"] = "\(sent)" }
+                    if failed > 0 { metadata["artifacts_failed"] = "\(failed)" }
+                }
                 await auditLog.record(
                     AgentChannelAuditEvent(
                         kind: .replySent,
@@ -268,10 +305,7 @@ final class AgentChannelInboundRelay {
                         agentId: agentId,
                         sessionId: taskId,
                         auditKey: request.providerEventId,
-                        metadata: [
-                            "redacted": sanitized.redacted ? "true" : "false",
-                            "truncated": sanitized.truncated ? "true" : "false",
-                        ]
+                        metadata: metadata
                     )
                 )
                 await activityCenter.record(
@@ -315,11 +349,15 @@ final class AgentChannelInboundRelay {
     }
 
     private enum TerminalReply {
-        case reply(String, awaitingClarification: Bool)
+        case reply(String, awaitingClarification: Bool, artifacts: [SharedArtifact])
         case failed(String)
     }
 
-    private func waitForReply(taskId: UUID) async -> TerminalReply {
+    /// Upper bound on artifacts forwarded per reply so a runaway agent can't
+    /// flood a chat with media sends.
+    private static let maxReplyArtifacts = 5
+
+    private func waitForReply(taskId: UUID, runStartedAt: Date) async -> TerminalReply {
         let deadline = Date().addingTimeInterval(Self.maxReplyWait)
         while !Task.isCancelled {
             if Date() >= deadline {
@@ -332,7 +370,14 @@ final class AgentChannelInboundRelay {
                        $0.role == .assistant
                            && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                    })?.content {
-                    return .reply(text, awaitingClarification: false)
+                    return .reply(
+                        text,
+                        awaitingClarification: false,
+                        artifacts: Self.replyArtifacts(
+                            stored.turns.flatMap(\.sharedArtifacts),
+                            createdAfter: runStartedAt
+                        )
+                    )
                 }
                 return .failed("The channel task disappeared before producing a reply.")
             }
@@ -345,7 +390,7 @@ final class AgentChannelInboundRelay {
                     if !clarification.options.isEmpty {
                         text += "\n\n" + clarification.options.map { "• \($0)" }.joined(separator: "\n")
                     }
-                    return .reply(text, awaitingClarification: true)
+                    return .reply(text, awaitingClarification: true, artifacts: [])
                 }
                 return .failed("The agent is waiting for input but did not provide a clarification question.")
             case .completed:
@@ -353,7 +398,14 @@ final class AgentChannelInboundRelay {
                     $0.role == .assistant
                         && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 })?.content {
-                    return .reply(text, awaitingClarification: false)
+                    return .reply(
+                        text,
+                        awaitingClarification: false,
+                        artifacts: Self.replyArtifacts(
+                            (state.chatSession?.turns ?? []).flatMap(\.sharedArtifacts),
+                            createdAfter: runStartedAt
+                        )
+                    )
                 }
                 return .failed("The agent completed without a visible reply.")
             case .failed(let summary):
@@ -363,6 +415,26 @@ final class AgentChannelInboundRelay {
             }
         }
         return .failed("The channel task was cancelled.")
+    }
+
+    /// Artifacts eligible for channel delivery: created by this run, backed by
+    /// a real host file (not a directory), deduplicated by host path.
+    static func replyArtifacts(
+        _ artifacts: [SharedArtifact],
+        createdAfter runStartedAt: Date
+    ) -> [SharedArtifact] {
+        var seenPaths = Set<String>()
+        return artifacts.filter { artifact in
+            guard artifact.createdAt >= runStartedAt,
+                !artifact.isDirectory,
+                !artifact.hostPath.isEmpty
+            else { return false }
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: artifact.hostPath, isDirectory: &isDirectory),
+                !isDirectory.boolValue
+            else { return false }
+            return seenPaths.insert(artifact.hostPath).inserted
+        }
     }
 
     private func recordFailure(
