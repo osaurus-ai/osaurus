@@ -155,6 +155,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        // Lift the default 256-fd soft limit before the NIO server, plugin
+        // host, and storage layer start opening descriptors — SwiftNIO dies
+        // fatally on `kqueue(): Too many open files` (APPLE-MACOS-19T).
+        FileDescriptorLimit.raiseToMaximum()
+
         // sequoia fallback. Tahoe already ran this in
         // `applicationWillFinishLaunching`.
         if #unavailable(macOS 26.0) {
