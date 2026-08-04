@@ -8360,7 +8360,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "透過 %lld 發現了 %@ 個工具。"
+            "value" : "透過 %2$@ 發現了 %1$lld 個工具。"
           }
         }
       }
