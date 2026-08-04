@@ -1058,9 +1058,16 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             }
         }
 
+        // DSV4's bundle contract (jang_config chat.reasoning) declares
+        // default_mode="thinking" with default_effort="low" — and "low" adds
+        // no effort preface. An absent enable_thinking therefore means the
+        // thinking rail; only an explicit false selects chat. Defaulting the
+        // absent case to .chat rendered a closed </think> tail while the
+        // model options chip displayed the "Low" thinking default — the
+        // user saw "reasoning: Low" and got zero reasoning.
         let enableThinking = additionalContext?["enable_thinking"] as? Bool
         let thinkingMode: MLXLMCommon.DeepseekV4ThinkingMode =
-            enableThinking == true ? .thinking : .chat
+            enableThinking == false ? .chat : .thinking
 
         let effort: MLXLMCommon.DeepseekV4ReasoningEffort?
         if thinkingMode == .thinking {
