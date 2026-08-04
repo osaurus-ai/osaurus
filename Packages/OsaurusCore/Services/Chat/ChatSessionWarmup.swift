@@ -36,9 +36,17 @@ extension ChatSession: ChatWarmupSessionContext {
         let cachedSession: SessionToolState?
         if let sid = sessionId {
             let key = sid.uuidString
+            // Same preserve set as the send path (`ChatView`): warm-up and
+            // send must resolve one identical tool union after a fingerprint
+            // flip, or the warmed `<tools>` prefill diverges from the bytes
+            // the real send composes and the warm work is wasted.
+            let modeIndependentDynamicNames = Set(
+                ToolRegistry.shared.listDynamicTools().map(\.name)
+            )
             await SessionToolStateStore.shared.invalidateIfFingerprintChanged(
                 key,
-                liveFingerprint: liveFingerprint
+                liveFingerprint: liveFingerprint,
+                preservingLoadedToolNames: modeIndependentDynamicNames
             )
             cachedSession = await SessionToolStateStore.shared.get(key)
         } else {
