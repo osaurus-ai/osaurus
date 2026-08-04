@@ -874,11 +874,21 @@ public final class ToolRegistry: ObservableObject {
                 && (ChatExecutionContext.currentAgentId != Agent.defaultId
                     || Self.configureWriteToolNames.contains(name))
             if loadGateAllows, loadableCodes.isSuperset(of: toolAvailability.reasonCodes) {
+                // Name the loader tool this request actually exposes. Chat
+                // surfaces publish the merged `capabilities` gateway and NOT
+                // the legacy `capabilities_load`, so hinting the legacy name
+                // sends the model straight into a second tool_not_found dead
+                // end (#2279). Fall back to `capabilities` when neither is in
+                // scope — it is the only loader small models can discover.
+                let loaderName =
+                    scope.permits("capabilities")
+                    ? "capabilities"
+                    : (scope.permits("capabilities_load") ? "capabilities_load" : "capabilities")
                 return ToolErrorEnvelope(
                     kind: .toolNotFound,
                     reason:
                         "\(name) exists but is not loaded in this conversation. "
-                        + "Call capabilities_load with ids: [\"tool/\(name)\"] to load it, "
+                        + "Call \(loaderName) with ids: [\"tool/\(name)\"] to load it, "
                         + "then retry this call.",
                     toolName: name,
                     retryable: true
