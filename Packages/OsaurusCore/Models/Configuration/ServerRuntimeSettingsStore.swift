@@ -742,6 +742,12 @@ public enum ServerRuntimeSettingsStore {
     }
 
     private nonisolated static func writeLegacyConcurrencyMigrationMarker() {
+        // Called from every `load()` and `save(_:)`, both of which can run
+        // on the main thread. The marker is write-once by design, so skip
+        // the disk touch when it already exists — re-writing an empty file
+        // on every settings save stalled the main thread on contended disks
+        // (production hang APPLE-MACOS-1B7).
+        guard !legacyConcurrencyMigrationCompleted else { return }
         let url = legacyConcurrencyMigrationMarkerURL()
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         try? Data().write(to: url, options: [.atomic])
