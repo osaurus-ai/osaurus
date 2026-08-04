@@ -4,7 +4,8 @@
 //
 //  Pins the execution-scope gate's error contract (#2145). A registered,
 //  enabled dynamic tool the turn simply never exposed must come back as a
-//  RETRYABLE tool_not_found pointing at `capabilities_load`, so the model
+//  RETRYABLE tool_not_found pointing at the loader tool the request
+//  exposes (`capabilities` on chat, `capabilities_load` legacy), so the model
 //  can load it and recover instead of apologizing and giving up. A name the
 //  registry does not know keeps the opaque, non-retryable refusal — the
 //  gate must not reveal anything about tools that were deliberately
@@ -61,8 +62,39 @@ struct ToolScopeGateRecoveryTests {
         #expect(parsed?["kind"] as? String == "tool_not_found")
         #expect(parsed?["retryable"] as? Bool == true)
         let message = parsed?["message"] as? String ?? ""
-        #expect(message.contains("capabilities_load"))
+        // Empty scope exposes neither loader, so the hint falls back to the
+        // only discoverable one on chat surfaces: `capabilities`.
+        #expect(message.contains("Call capabilities with ids"))
         #expect(message.contains("tool/\(tool.name)"))
+    }
+
+    @Test
+    func unscopedButLoadableTool_hintsLegacyLoaderWhenThatIsWhatTheRequestExposes() async throws {
+        let tool = ScopeProbeTool(name: "test_scope_gate_legacy_loader_probe")
+        ToolRegistry.shared.registerPluginTool(tool)
+        ToolRegistry.shared.setEnabled(true, for: tool.name)
+        defer {
+            ToolRegistry.shared.setEnabled(false, for: tool.name)
+            ToolRegistry.shared.unregister(names: [tool.name])
+        }
+
+        let loadSpec = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "capabilities_load",
+                description: "legacy loader",
+                parameters: nil
+            )
+        )
+        let scope = ToolExecutionScope(exposed: [loadSpec])
+        let result = try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+            try await ToolRegistry.shared.execute(name: tool.name, argumentsJSON: "{}")
+        }
+
+        let parsed = try envelope(result)
+        #expect(parsed?["retryable"] as? Bool == true)
+        let message = parsed?["message"] as? String ?? ""
+        #expect(message.contains("Call capabilities_load with ids"))
     }
 
     @Test
@@ -80,7 +112,7 @@ struct ToolScopeGateRecoveryTests {
         let parsed = try envelope(result)
         #expect(parsed?["retryable"] as? Bool == false)
         let message = parsed?["message"] as? String ?? ""
-        #expect(!message.contains("capabilities_load"))
+        #expect(!message.contains("Call capabilities"))
     }
 
     @Test
@@ -97,7 +129,7 @@ struct ToolScopeGateRecoveryTests {
         #expect(parsed?["kind"] as? String == "tool_not_found")
         #expect(parsed?["retryable"] as? Bool == false)
         let message = parsed?["message"] as? String ?? ""
-        #expect(!message.contains("capabilities_load"))
+        #expect(!message.contains("Call capabilities"))
     }
 
     @Test
@@ -118,7 +150,7 @@ struct ToolScopeGateRecoveryTests {
         let parsed = try envelope(result)
         #expect(parsed?["retryable"] as? Bool == false)
         let message = parsed?["message"] as? String ?? ""
-        #expect(!message.contains("capabilities_load"))
+        #expect(!message.contains("Call capabilities"))
     }
 
     @Test
