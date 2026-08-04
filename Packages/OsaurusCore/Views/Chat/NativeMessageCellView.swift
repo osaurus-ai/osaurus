@@ -1075,6 +1075,13 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
     private var didApplyInitialFocus = false
     private var lastLayoutWidth: CGFloat = 0
 
+    /// Undo state scoped to this editor's lifetime. Without this, NSTextView
+    /// registers undo actions with the WINDOW's undo manager; after the edit
+    /// UI is torn down those stale actions still target the deallocated text
+    /// view, and a later Cmd+Z crashes in `-[NSUndoManager undoNestedGroup]`
+    /// (production crash APPLE-MACOS-TG).
+    private let editorUndoManager = UndoManager()
+
     override init(frame frameRect: NSRect) {
         // TextKit 1 from birth — avoids the lazy TextKit 2 → 1 downgrade on
         // first `.layoutManager` access (see EditableTextView.makeNSView).
@@ -1386,6 +1393,10 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
     @objc private func confirmTapped() {
         guard !textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         onConfirm?()
+    }
+
+    func undoManager(for view: NSTextView) -> UndoManager? {
+        editorUndoManager
     }
 
     func textDidChange(_ notification: Notification) {

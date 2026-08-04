@@ -212,8 +212,24 @@ struct EditableTextView: NSViewRepresentable {
         var lastScrollerMaxHeight: CGFloat = -1
         var lastScrollerText: String = ""
 
+        /// Undo state scoped to this editor's lifetime. Without this,
+        /// NSTextView registers undo actions with the WINDOW's undo manager;
+        /// once the editor is torn down those stale actions still target the
+        /// deallocated text view, and a later Cmd+Z crashes in
+        /// `-[NSUndoManager undoNestedGroup]` (production crash APPLE-MACOS-TG).
+        /// Created lazily in the delegate callback because `UndoManager` is
+        /// main-actor-bound.
+        private var editorUndoManager: UndoManager?
+
         init(_ parent: EditableTextView) {
             self.parent = parent
+        }
+
+        func undoManager(for view: NSTextView) -> UndoManager? {
+            if let editorUndoManager { return editorUndoManager }
+            let manager = UndoManager()
+            editorUndoManager = manager
+            return manager
         }
 
         func textDidChange(_ notification: Notification) {

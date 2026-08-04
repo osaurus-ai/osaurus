@@ -783,8 +783,21 @@ private struct ThemedNSTextView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ThemedNSTextView
 
+        /// Undo state scoped to this editor's lifetime — keeps stale undo
+        /// actions targeting a deallocated text view out of the window's
+        /// undo manager (production crash APPLE-MACOS-TG). Created lazily in
+        /// the delegate callback because `UndoManager` is main-actor-bound.
+        private var editorUndoManager: UndoManager?
+
         init(_ parent: ThemedNSTextView) {
             self.parent = parent
+        }
+
+        func undoManager(for view: NSTextView) -> UndoManager? {
+            if let editorUndoManager { return editorUndoManager }
+            let manager = UndoManager()
+            editorUndoManager = manager
+            return manager
         }
 
         func textDidChange(_ notification: Notification) {
