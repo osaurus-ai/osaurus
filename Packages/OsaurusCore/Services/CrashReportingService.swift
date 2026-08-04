@@ -223,17 +223,68 @@ public final class CrashReportingService {
                 primary?.subsystem ?? "uninstrumented",
                 primary?.operation ?? "unknown",
             ]
+            // Machine-condition tags so the (deliberately coarse)
+            // "uninstrumented" group can still be segmented in Sentry:
+            // production data (APPLE-MACOS-1BV) shows these stalls cluster
+            // on memory-starved / low-power machines, and tags — unlike the
+            // SDK's device context — are filterable and aggregatable.
+            let thermal: String
+            switch ProcessInfo.processInfo.thermalState {
+            case .nominal: thermal = "nominal"
+            case .fair: thermal = "fair"
+            case .serious: thermal = "serious"
+            case .critical: thermal = "critical"
+            @unknown default: thermal = "unknown"
+            }
+            let availableMemory = currentAvailableMemoryBytes()
+
             event.tags = [
                 "stall.subsystem": primary?.subsystem ?? "uninstrumented",
                 "stall.operation": primary?.operation ?? "unknown",
+                "stall.available_memory": availableMemory.map(availableMemoryBucket) ?? "unknown",
+                "stall.low_power": ProcessInfo.processInfo.isLowPowerModeEnabled ? "yes" : "no",
+                "stall.thermal": thermal,
             ]
-            event.context = [
-                "main_thread_stall": [
-                    "threshold_seconds": thresholdSeconds,
-                    "operations": opsSummary,
-                ]
+            var stallContext: [String: Any] = [
+                "threshold_seconds": thresholdSeconds,
+                "operations": opsSummary,
             ]
+            if let availableMemory {
+                stallContext["available_memory_bytes"] = availableMemory
+            }
+            event.context = ["main_thread_stall": stallContext]
             SentrySDK.capture(event: event)
+        }
+    }
+
+    /// Reclaimable-now memory (free + inactive pages), the closest cheap
+    /// proxy for "how much headroom did this machine have when the main
+    /// thread stalled". Called off the main thread (the main thread is, by
+    /// definition, blocked).
+    private nonisolated static func currentAvailableMemoryBytes() -> UInt64? {
+        var stats = vm_statistics64_data_t()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<vm_statistics64_data_t>.stride / MemoryLayout<integer_t>.stride
+        )
+        let result = withUnsafeMutablePointer(to: &stats) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        let pageSize = UInt64(getpagesize())
+        return (UInt64(stats.free_count) + UInt64(stats.inactive_count)) &* pageSize
+    }
+
+    /// Coarse buckets keep the tag's cardinality Sentry-friendly while still
+    /// separating "genuinely starved" from "plenty of headroom".
+    private nonisolated static func availableMemoryBucket(_ bytes: UInt64) -> String {
+        switch bytes {
+        case ..<(512 << 20): return "<512MB"
+        case ..<(1 << 30): return "512MB-1GB"
+        case ..<(2 << 30): return "1-2GB"
+        case ..<(4 << 30): return "2-4GB"
+        default: return ">=4GB"
         }
     }
 
