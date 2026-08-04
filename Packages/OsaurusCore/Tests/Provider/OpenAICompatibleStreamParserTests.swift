@@ -221,6 +221,16 @@ struct OpenAICompatibleStreamParserTests {
         #expect(invocation.jsonArguments == "{}")
     }
 
+    /// Argument fragments with MORE closers than openers outside strings
+    /// (garbage or mid-token truncation) drove the repair pass's bracket and
+    /// brace counters negative, and `0 ..< negative` traps (production crash
+    /// APPLE-MACOS-12S). Unrepairable input must come back flagged, never trap.
+    @Test(arguments: ["}]", "]}", "\"key\": 1}}", "[1, 2]]", "}}}}"])
+    func validateToolCallJSON_survivesUnbalancedClosers(fragment: String) {
+        let validated = OpenAICompatibleToolCallAccumulator.validateToolCallJSON(fragment)
+        #expect(validated.wasRepaired)
+    }
+
     /// The full router wire shape that failed live: a name-only tool-call
     /// delta (no `arguments` field at all) followed by a clean
     /// `finish_reason=tool_calls` must dispatch the call with `{}` args.

@@ -396,10 +396,13 @@ struct OpenAICompatibleToolCallAccumulator {
             repaired = String(trimmedForComma.dropLast())
         }
 
-        for _ in 0 ..< bracketCount {
+        // Counts go NEGATIVE when the fragment has more closers than openers
+        // outside strings (garbage or mid-token truncation like `"}]"`), and
+        // `0 ..< negative` traps at runtime (production crash APPLE-MACOS-12S).
+        for _ in 0 ..< max(0, bracketCount) {
             repaired.append("]")
         }
-        for _ in 0 ..< braceCount {
+        for _ in 0 ..< max(0, braceCount) {
             repaired.append("}")
         }
 
