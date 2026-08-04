@@ -5350,9 +5350,18 @@ final class ChatSession: ObservableObject {
                     let cachedSession: SessionToolState?
                     if let sid = sessionId {
                         let key = sessionStateKey(sid)
+                        // MCP/plugin tools loaded via `capabilities` are
+                        // mode-independent; carry them across a mode flip so
+                        // the model doesn't have to reload them every turn.
+                        // (Manual mode never persists loads, so the carried
+                        // set is empty there by construction.)
+                        let modeIndependentDynamicNames = Set(
+                            ToolRegistry.shared.listDynamicTools().map(\.name)
+                        )
                         await SessionToolStateStore.shared.invalidateIfFingerprintChanged(
                             key,
-                            liveFingerprint: liveFingerprint
+                            liveFingerprint: liveFingerprint,
+                            preservingLoadedToolNames: modeIndependentDynamicNames
                         )
                         cachedSession = await SessionToolStateStore.shared.get(key)
                     } else {

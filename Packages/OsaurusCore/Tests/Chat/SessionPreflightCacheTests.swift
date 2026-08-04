@@ -61,6 +61,65 @@ struct SessionPreflightCacheTests {
     }
 
     @Test
+    func fingerprintFlip_preservesModeIndependentLoadedTools() async {
+        let sessionId = "fingerprint-flip-\(UUID().uuidString)"
+        await SessionToolStateStore.shared.appendLoadedTools(
+            sessionId,
+            names: ["runalyze_mcp_get_activities", "sandbox_only_tool"],
+            fallbackAlwaysLoadedNames: ["capabilities"]
+        )
+        await SessionToolStateStore.shared.setInitial(
+            sessionId,
+            alwaysLoadedNames: ["capabilities"],
+            toolSpecs: nil,
+            fingerprint: "none/auto",
+            manifest: "frozen manifest"
+        )
+
+        let invalidated = await SessionToolStateStore.shared.invalidateIfFingerprintChanged(
+            sessionId,
+            liveFingerprint: "sandbox/auto",
+            preservingLoadedToolNames: ["runalyze_mcp_get_activities"]
+        )
+        #expect(invalidated)
+
+        let state = await SessionToolStateStore.shared.get(sessionId)
+        // The mode-independent load survives; everything mode-owned resets.
+        #expect(state?.loadedToolNames == ["runalyze_mcp_get_activities"])
+        #expect(state?.sessionFingerprint == "sandbox/auto")
+        #expect(state?.initialAlwaysLoadedNames == nil)
+        #expect(state?.initialToolSpecs == nil)
+        #expect(state?.frozenManifest == nil)
+
+        await SessionToolStateStore.shared.invalidate(sessionId)
+    }
+
+    @Test
+    func fingerprintFlip_withNothingToPreserveDropsEntry() async {
+        let sessionId = "fingerprint-flip-drop-\(UUID().uuidString)"
+        await SessionToolStateStore.shared.appendLoadedTools(
+            sessionId,
+            names: ["sandbox_only_tool"],
+            fallbackAlwaysLoadedNames: nil
+        )
+        await SessionToolStateStore.shared.setInitial(
+            sessionId,
+            alwaysLoadedNames: [],
+            toolSpecs: nil,
+            fingerprint: "none/auto",
+            manifest: nil
+        )
+
+        let invalidated = await SessionToolStateStore.shared.invalidateIfFingerprintChanged(
+            sessionId,
+            liveFingerprint: "sandbox/auto"
+        )
+        #expect(invalidated)
+        let state = await SessionToolStateStore.shared.get(sessionId)
+        #expect(state == nil)
+    }
+
+    @Test
     func resolveTools_includesAdditionalToolNames() async {
         await withSessionPreflightAgent { agentId in
 

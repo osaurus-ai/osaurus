@@ -162,11 +162,22 @@ actor SessionToolStateStore {
     /// before reading the cache so dynamically-loaded tools from one mode
     /// cannot leak into another, and a manual-mode empty-preflight cache
     /// cannot survive a flip back to auto.
+    ///
+    /// `preservingLoadedToolNames` survives the flip: mode-independent
+    /// dynamic tools (MCP / plugin) the model loaded via `capabilities` must
+    /// not silently vanish when the execution mode resolves differently
+    /// between turns (sandbox runtime registering late, folder context
+    /// attaching after turn 1). Losing them forced the model to reload every
+    /// turn — and small models never recovered (#2279). Callers pass the set
+    /// of names that are safe to carry across modes; everything else
+    /// (frozen specs, manifest, always-loaded snapshot, mode-owned tools)
+    /// is still dropped so the next compose re-resolves from scratch.
     /// Returns `true` if an invalidation actually happened.
     @discardableResult
     func invalidateIfFingerprintChanged(
         _ sessionId: String,
-        liveFingerprint: String
+        liveFingerprint: String,
+        preservingLoadedToolNames preserved: Set<String> = []
     ) -> Bool {
         guard let entry = states[sessionId] else { return false }
         // Legacy entries (pre-fingerprint) get stamped on first inspection
@@ -179,9 +190,16 @@ actor SessionToolStateStore {
             return false
         }
         if recorded == liveFingerprint { return false }
+        let carried = entry.loadedToolNames.intersection(preserved)
         states.removeValue(forKey: sessionId)
         lastSendCacheHint.removeValue(forKey: sessionId)
         lastConversationSend.removeValue(forKey: sessionId)
+        if !carried.isEmpty {
+            states[sessionId] = SessionToolState(
+                loadedToolNames: carried,
+                sessionFingerprint: liveFingerprint
+            )
+        }
         return true
     }
 
