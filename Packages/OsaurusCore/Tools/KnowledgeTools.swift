@@ -303,6 +303,7 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
 
         // Locate the document among granted collections via the index.
         var matches: [(collection: KnowledgeCollection, document: KnowledgeDocument)] = []
+        var effectivePath = relPath
         for collection in collections {
             if let document = try? KnowledgeDatabase.shared.getDocument(
                 collectionId: collection.id.uuidString,
@@ -311,10 +312,38 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
                 matches.append((collection, document))
             }
         }
+        // Search/list results are printed as `[Collection Name] path`, so
+        // models routinely join them into `Collection Name/path`. Accept that
+        // form: when the exact path missed and its first segment names a
+        // granted collection, retry the remainder inside that collection
+        // (#2279 — small models retried the joined form five times and never
+        // recovered from the bare not-found).
+        if matches.isEmpty, let slash = relPath.firstIndex(of: "/") {
+            let head = String(relPath[..<slash]).trimmingCharacters(in: .whitespaces)
+            let rest = String(relPath[relPath.index(after: slash)...])
+                .trimmingCharacters(in: .whitespaces)
+            if !rest.isEmpty,
+                let collection = collections.first(where: {
+                    $0.name.caseInsensitiveCompare(head) == .orderedSame
+                }),
+                let document = try? KnowledgeDatabase.shared.getDocument(
+                    collectionId: collection.id.uuidString,
+                    relPath: rest
+                )
+            {
+                matches.append((collection, document))
+                effectivePath = rest
+            }
+        }
         guard let match = matches.first else {
+            let granted = collections.map(\.name).joined(separator: ", ")
             return ToolEnvelope.failure(
                 kind: .notFound,
-                message: "No knowledge document at `\(relPath)` in the granted collections.",
+                message:
+                    "No knowledge document at `\(relPath)` in the granted collections. "
+                    + "`path` is relative to a collection (do not prefix the collection name); "
+                    + "pass the collection separately via `collection`. "
+                    + "Granted collections: \(granted). Use list_knowledge to see document paths.",
                 tool: name
             )
         }
@@ -334,7 +363,7 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
         // read verbatim; other formats extract through the same document
         // adapters the indexer used.
         let folderURL = match.collection.folderURL.standardizedFileURL
-        let fileURL = folderURL.appendingPathComponent(relPath).standardizedFileURL
+        let fileURL = folderURL.appendingPathComponent(effectivePath).standardizedFileURL
         let folderPrefix = folderURL.path.hasSuffix("/") ? folderURL.path : folderURL.path + "/"
         guard fileURL.path.hasPrefix(folderPrefix) else {
             return ToolEnvelope.failure(
@@ -400,7 +429,7 @@ final class ReadKnowledgeTool: OsaurusTool, @unchecked Sendable {
         }
 
         let document = match.document
-        var out = "[\(match.collection.name)] \(relPath)\(sectionNote)\n"
+        var out = "[\(match.collection.name)] \(effectivePath)\(sectionNote)\n"
         if !document.title.isEmpty { out += "title: \(document.title)\n" }
         if !document.effectiveType.isEmpty {
             out += "type: \(document.effectiveType)\(document.isTypeInferred ? " (inferred)" : "")\n"
