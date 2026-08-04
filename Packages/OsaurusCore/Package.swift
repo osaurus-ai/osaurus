@@ -136,9 +136,22 @@ let package = Package(
         // vmlx-swift#186-#188 correct FalconH1 key
         // projection scaling, prefixed output-head loading, and gated RMSNorm
         // group normalization without changing the shared unload/cache APIs.
+        // vmlx-swift#210 round-trips LFM2/LFM2.5 short-conv prefix-cache
+        // state: the v2 disk payload persists the single occupied MambaCache
+        // slot (a stateless tagged mamba layer is an atomic required miss,
+        // retiring KV-only pseudo-hits), the paged companion rail recovers
+        // per-layer arity so 1-slot conv layers no longer cross-wire, and
+        // LFM2Configuration reads stock intermediate_size configs. It also
+        // pins the LFM2.5-2.6B template ({% generation %}, Pythonic tool
+        // envelope, unconditional <think> generation prompt) and the
+        // qwen3-reasoning + lfm2-tool capability stamp resolution.
+        // vmlx-swift#211 advances LFM2/LFM2.5 short-conv cache offsets each
+        // forward so the #208 boundary-offset guard admits the family's
+        // paged/disk stores instead of vetoing every one (conv layers were
+        // stuck at offset 0; observed live as zero kv_v2 entries).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "8e2c3d6ebca6a43be6a516eb3dc55ef49c174a5d"
+            revision: "e040ac0ff69f87fce639c361bc45399fb56d14ec"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
