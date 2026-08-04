@@ -101,6 +101,9 @@ struct FeatureTelemetryEventTests {
         #expect(event.props["model"] as? String == "mlx-community/Qwen2.5-7B-4bit")
         #expect(event.props["is_agent"] as? Bool == false)
         #expect(event.props["stream"] as? Bool == true)
+        // A generative local model (not an installed embedding bundle) is
+        // chat-capability traffic.
+        #expect(event.props["capability"] as? String == "chat")
         // Built-in models never carry a hash.
         #expect(event.props["model_hash"] == nil)
     }
@@ -125,6 +128,7 @@ struct FeatureTelemetryEventTests {
         #expect(event.props["model"] as? String == "foundation")
         #expect(event.props["model_hash"] == nil)
         #expect(event.props["stream"] as? Bool == false)
+        #expect(event.props["capability"] as? String == "chat")
     }
 
     /// Remote routes must NOT carry the raw model id in plaintext; they carry
@@ -155,6 +159,68 @@ struct FeatureTelemetryEventTests {
         let hash = event.props["model_hash"] as? String
         #expect(hash != nil)
         #expect(hash != remoteModel)
+        // Remote routes are always chat-capability traffic (the default).
+        #expect(event.props["capability"] as? String == "chat")
+    }
+
+    // MARK: - capability dimension (model-TYPE check, not a name denylist)
+
+    /// Builds an on-disk bundle directory with the given config.json so the
+    /// classifier resolves it exactly like a real HF-cache/LM Studio import.
+    private func makeBundle(config: [String: Any]) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("feature-telemetry-bundle-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: config)
+            .write(to: dir.appendingPathComponent("config.json"))
+        return dir
+    }
+
+    /// Encoder-only bundles are classified `embedding` from config.json
+    /// (`model_type` / `architectures`) — never from the model NAME, so a
+    /// new potion size or a lowercase id variant can't reopen the hole a
+    /// name denylist would leave.
+    @Test func localModelCapability_classifies_embedding_bundle_by_model_type() throws {
+        // minishlab/potion-* style model2vec static embedding bundle.
+        let embeddingDir = try makeBundle(config: [
+            "model_type": "model2vec",
+            "architectures": ["StaticModel"],
+        ])
+        defer { try? FileManager.default.removeItem(at: embeddingDir) }
+
+        #expect(
+            FeatureTelemetry.localModelCapability(
+                "minishlab/potion-base-32m",
+                resolveBundleDirectory: { _ in embeddingDir }
+            ) == "embedding"
+        )
+    }
+
+    @Test func localModelCapability_keeps_generative_bundles_chat() throws {
+        let chatDir = try makeBundle(config: [
+            "model_type": "qwen2",
+            "architectures": ["Qwen2ForCausalLM"],
+        ])
+        defer { try? FileManager.default.removeItem(at: chatDir) }
+
+        #expect(
+            FeatureTelemetry.localModelCapability(
+                "mlx-community/Qwen2.5-7B-4bit",
+                resolveBundleDirectory: { _ in chatDir }
+            ) == "chat"
+        )
+    }
+
+    /// An id that can't be resolved to an installed bundle stays `chat` —
+    /// the classifier must never hide generative traffic behind a lookup
+    /// miss.
+    @Test func localModelCapability_defaults_to_chat_when_bundle_unresolvable() {
+        #expect(
+            FeatureTelemetry.localModelCapability(
+                "not-installed/model",
+                resolveBundleDirectory: { _ in nil }
+            ) == "chat"
+        )
     }
 
     // MARK: - brain_source dimension + persistence
@@ -182,8 +248,8 @@ struct FeatureTelemetryEventTests {
         let (service, rec, cleanup) = makeRecordingService()
         defer { cleanup() }
 
-        // Default init leaves `brainSource` nil (e.g. non-chat sources, or an
-        // install that predates the onboarding choice).
+        // Default init leaves `brainSource` nil (non-chat sources only —
+        // chat-UI sends always derive a value via `messageInfo`).
         let info = MessageTelemetryInfo(
             source: "http_api",
             modelSource: "local",
@@ -198,10 +264,16 @@ struct FeatureTelemetryEventTests {
         #expect(rec.events[0].props["brain_source"] == nil)
     }
 
-    @Test func recordOnboardingBrainSource_persists_and_does_not_clobber() {
+    /// Isolated defaults suite for brain-source persistence tests.
+    private func makeBrainDefaults() -> (UserDefaults, () -> Void) {
         let suiteName = "feature-telemetry-brain-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        return (defaults, { defaults.removePersistentDomain(forName: suiteName) })
+    }
+
+    @Test func recordOnboardingBrainSource_persists_and_does_not_clobber() {
+        let (defaults, cleanup) = makeBrainDefaults()
+        defer { cleanup() }
 
         #expect(FeatureTelemetry.persistedBrainSource(defaults: defaults) == nil)
 
@@ -212,6 +284,101 @@ struct FeatureTelemetryEventTests {
         FeatureTelemetry.recordOnboardingBrainSource(nil, defaults: defaults)
         FeatureTelemetry.recordOnboardingBrainSource("", defaults: defaults)
         #expect(FeatureTelemetry.persistedBrainSource(defaults: defaults) == "hosted")
+    }
+
+    /// The vocabulary is a dashboard contract; a silent token rename would
+    /// fork the dimension.
+    @Test func brainSource_fallback_tokens_match_the_documented_contract() {
+        #expect(FeatureTelemetry.brainSourceNone == "none")
+        #expect(FeatureTelemetry.brainSourcePreChoice == "pre_choice")
+        #expect(FeatureTelemetry.brainSourceUnknown == "unknown")
+    }
+
+    /// An onboarding run that ends without a commit records `none`, but only
+    /// when nothing was persisted yet — a later early-closed re-run can't
+    /// clobber a real choice (or a legacy `pre_choice` stamp).
+    @Test func recordOnboardingBrainSourceAbsent_writes_none_only_when_unset() {
+        let (defaults, cleanup) = makeBrainDefaults()
+        defer { cleanup() }
+
+        FeatureTelemetry.recordOnboardingBrainSourceAbsent(defaults: defaults)
+        #expect(FeatureTelemetry.persistedBrainSource(defaults: defaults) == "none")
+
+        // A real commit on a later run overwrites the `none` placeholder…
+        FeatureTelemetry.recordOnboardingBrainSource("local", defaults: defaults)
+        #expect(FeatureTelemetry.persistedBrainSource(defaults: defaults) == "local")
+
+        // …but another early-closed run never clobbers the real choice.
+        FeatureTelemetry.recordOnboardingBrainSourceAbsent(defaults: defaults)
+        #expect(FeatureTelemetry.persistedBrainSource(defaults: defaults) == "local")
+    }
+
+    /// Launch migration: only installs that completed onboarding before the
+    /// brain choice existed get the `pre_choice` stamp — fresh installs and
+    /// installs with a recorded choice are untouched. Idempotent.
+    @Test func stampLegacyBrainSource_stamps_only_completed_installs_without_choice() {
+        let (defaults, cleanup) = makeBrainDefaults()
+        defer { cleanup() }
+
+        // Fresh install (onboarding never completed) → nothing stamped;
+        // onboarding's own writers handle it.
+        FeatureTelemetry.stampLegacyBrainSourceIfNeeded(defaults: defaults)
+        #expect(FeatureTelemetry.persistedBrainSource(defaults: defaults) == nil)
+
+        // Legacy install: onboarding completed, no choice recorded.
+        defaults.set(true, forKey: "hasCompletedOnboarding")
+        FeatureTelemetry.stampLegacyBrainSourceIfNeeded(defaults: defaults)
+        #expect(FeatureTelemetry.persistedBrainSource(defaults: defaults) == "pre_choice")
+
+        // Idempotent across launches.
+        FeatureTelemetry.stampLegacyBrainSourceIfNeeded(defaults: defaults)
+        #expect(FeatureTelemetry.persistedBrainSource(defaults: defaults) == "pre_choice")
+
+        // A real re-run commit still wins, and the stamp never reverts it.
+        FeatureTelemetry.recordOnboardingBrainSource("provider_key", defaults: defaults)
+        FeatureTelemetry.stampLegacyBrainSourceIfNeeded(defaults: defaults)
+        #expect(FeatureTelemetry.persistedBrainSource(defaults: defaults) == "provider_key")
+    }
+
+    /// Chat-UI sends must always carry a `brain_source` value: the persisted
+    /// choice when one exists, the explicit `unknown` fallback otherwise —
+    /// omission would silently reopen the coverage gap. Non-chat sources
+    /// stay bare.
+    @Test func messageInfo_brain_source_is_total_for_chat_ui_sends() {
+        let (defaults, cleanup) = makeBrainDefaults()
+        defer { cleanup() }
+
+        let unknownInfo = FeatureTelemetry.messageInfo(
+            service: StubService(id: "mlx"),
+            effectiveModel: "mlx-community/Qwen2.5-7B-4bit",
+            source: .chatUI,
+            isAgent: false,
+            stream: true,
+            defaults: defaults
+        )
+        #expect(unknownInfo.brainSource == "unknown")
+
+        FeatureTelemetry.recordOnboardingBrainSource("hosted", defaults: defaults)
+        let hostedInfo = FeatureTelemetry.messageInfo(
+            service: StubService(id: "mlx"),
+            effectiveModel: "mlx-community/Qwen2.5-7B-4bit",
+            source: .chatUI,
+            isAgent: false,
+            stream: true,
+            defaults: defaults
+        )
+        #expect(hostedInfo.brainSource == "hosted")
+
+        // The dimension would be misleading on HTTP-API/plugin traffic.
+        let apiInfo = FeatureTelemetry.messageInfo(
+            service: StubService(id: "mlx"),
+            effectiveModel: "mlx-community/Qwen2.5-7B-4bit",
+            source: .httpAPI,
+            isAgent: false,
+            stream: true,
+            defaults: defaults
+        )
+        #expect(apiInfo.brainSource == nil)
     }
 
     // MARK: - Prepaid balance / top-up
@@ -499,6 +666,57 @@ struct FeatureTelemetryEventTests {
         #expect(props["unreadable"] as? Int == 1)
         #expect(props["failed_files"] as? Int == 0)
         #expect(business(props).count == 5)
+    }
+
+    // MARK: - Settings engagement
+
+    /// `settings_opened` carries exactly the stable tab token and the
+    /// activation-join flag — never setting names or values.
+    @Test func settingsOpened_carries_tab_token_and_activation_flag() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+        let (flags, flagCleanup) = makeFlagDefaults()
+        defer { flagCleanup() }
+
+        // Before any chat message this install ever sent.
+        FeatureTelemetry.settingsOpened(tab: .computerUse, service: service, defaults: flags)
+
+        #expect(rec.events.count == 1)
+        #expect(rec.events[0].name == "settings_opened")
+        #expect(rec.events[0].props["tab"] as? String == "computer_use")
+        #expect(rec.events[0].props["before_first_message"] as? Bool == true)
+        #expect(business(rec.events[0].props).count == 2)
+
+        // After the first chat message, the flag flips.
+        FeatureTelemetry.firstTimeChatUsed(service: service, defaults: flags)
+        FeatureTelemetry.settingsOpened(tab: .models, service: service, defaults: flags)
+
+        let after = rec.events[2]
+        #expect(after.name == "settings_opened")
+        #expect(after.props["tab"] as? String == "models")
+        #expect(after.props["before_first_message"] as? Bool == false)
+    }
+
+    /// Every settings tab must map to a non-empty, unique, snake_case token
+    /// so the dashboard vocabulary stays closed and stable across sidebar
+    /// renames or tab-id migrations.
+    @Test func settingsTabToken_covers_every_tab_with_stable_snake_case_tokens() {
+        let tokens = ManagementTab.allCases.map(FeatureTelemetry.settingsTabToken)
+
+        #expect(tokens.allSatisfy { !$0.isEmpty })
+        #expect(Set(tokens).count == ManagementTab.allCases.count)
+        #expect(
+            tokens.allSatisfy { token in
+                token.allSatisfy { $0.isLowercase || $0.isNumber || $0 == "_" }
+            }
+        )
+
+        // Pin the tokens most likely to drift: the display-renamed General
+        // tab and the camelCase raw values.
+        #expect(FeatureTelemetry.settingsTabToken(.settings) == "general")
+        #expect(FeatureTelemetry.settingsTabToken(.computerUse) == "computer_use")
+        #expect(FeatureTelemetry.settingsTabToken(.imageGeneration) == "image_generation")
+        #expect(FeatureTelemetry.settingsTabToken(.agentChannels) == "agent_channels")
     }
 
     // MARK: - Hardware RAM bucket (attached to every event)

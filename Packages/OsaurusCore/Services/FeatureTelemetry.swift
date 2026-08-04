@@ -47,11 +47,19 @@ struct MessageTelemetryInfo: Sendable {
     let isAgent: Bool
     /// Whether the caller requested a streaming response.
     let stream: Bool
-    /// The brain source the user picked during onboarding (`local` | `hosted`
-    /// | `provider_key`), attached only to chat-UI sends so the funnel can
-    /// join the path choice to the first message. `nil` for non-chat sources
-    /// and for installs that predate the choice. Low-cardinality enum.
+    /// The brain source recorded at onboarding (`local` | `hosted` |
+    /// `provider_key`) or one of the explicit fallback tokens (`none` |
+    /// `pre_choice` | `unknown`), attached only to chat-UI sends so the
+    /// funnel can join the path choice to the first message. `nil` for
+    /// non-chat sources. Low-cardinality closed enum — a chat-UI send
+    /// always carries a value, so the dimension's coverage is total.
     let brainSource: String?
+    /// What the request asked the model to do: `chat` for generative
+    /// traffic, `embedding` when the resolved local bundle is an
+    /// encoder-only model (see `localModelCapability`). Closed enum —
+    /// future API families (e.g. `search`) extend it, so dashboards can
+    /// segment by capability instead of maintaining model-name denylists.
+    let capability: String
 
     init(
         source: String,
@@ -61,7 +69,8 @@ struct MessageTelemetryInfo: Sendable {
         modelHash: String?,
         isAgent: Bool,
         stream: Bool,
-        brainSource: String? = nil
+        brainSource: String? = nil,
+        capability: String = "chat"
     ) {
         self.source = source
         self.modelSource = modelSource
@@ -71,6 +80,7 @@ struct MessageTelemetryInfo: Sendable {
         self.isAgent = isAgent
         self.stream = stream
         self.brainSource = brainSource
+        self.capability = capability
     }
 }
 
@@ -92,6 +102,7 @@ enum FeatureTelemetry {
             "provider_type": info.providerType,
             "is_agent": info.isAgent,
             "stream": info.stream,
+            "capability": info.capability,
         ]
         if let model = info.model { props["model"] = model }
         if let modelHash = info.modelHash { props["model_hash"] = modelHash }
@@ -113,8 +124,25 @@ enum FeatureTelemetry {
     /// without a main-actor hop.
     nonisolated static let brainSourceDefaultsKey = "ai.osaurus.onboarding.brain_source"
 
-    /// The brain source recorded at onboarding finish, or `nil` for installs
-    /// that completed onboarding before this choice existed.
+    // Explicit fallback tokens that keep the `brain_source` vocabulary
+    // closed and its chat-UI coverage total. Before these existed the
+    // dimension was simply omitted whenever no choice was persisted, which
+    // left an unattributable gap in the dashboard (~20% of chat messages on
+    // 0.22.x).
+
+    /// An onboarding run ended without the user committing a brain on the
+    /// Configure AI step (early close, or finishing without a selection).
+    nonisolated static let brainSourceNone = "none"
+    /// The install completed onboarding before the brain choice existed
+    /// (0.19.x and earlier); stamped once at launch by
+    /// `stampLegacyBrainSourceIfNeeded`.
+    nonisolated static let brainSourcePreChoice = "pre_choice"
+    /// Belt-and-suspenders: a chat-UI send with no persisted value at all
+    /// (should be unreachable once the two writers above are in place).
+    nonisolated static let brainSourceUnknown = "unknown"
+
+    /// The brain source recorded at onboarding finish, or `nil` when no
+    /// writer has run yet.
     nonisolated static func persistedBrainSource(defaults: UserDefaults = .standard) -> String? {
         defaults.string(forKey: brainSourceDefaultsKey)
     }
@@ -125,6 +153,28 @@ enum FeatureTelemetry {
     static func recordOnboardingBrainSource(_ value: String?, defaults: UserDefaults = .standard) {
         guard let value, !value.isEmpty else { return }
         defaults.set(value, forKey: brainSourceDefaultsKey)
+    }
+
+    /// Record the explicit `none` token when an onboarding run ends without
+    /// a brain commit. Writes only when no value exists yet, so neither a
+    /// prior real choice nor a legacy `pre_choice` stamp is ever clobbered
+    /// by a later run that was closed early.
+    static func recordOnboardingBrainSourceAbsent(defaults: UserDefaults = .standard) {
+        guard defaults.string(forKey: brainSourceDefaultsKey) == nil else { return }
+        defaults.set(brainSourceNone, forKey: brainSourceDefaultsKey)
+    }
+
+    /// One-time launch migration: installs that completed onboarding before
+    /// the brain choice existed get an explicit `pre_choice` stamp, so their
+    /// chat sends land in an attributable bucket instead of the historical
+    /// coverage gap. A later re-run of onboarding with a real commit still
+    /// overwrites it via `recordOnboardingBrainSource`. The key literal is
+    /// `OnboardingService`'s completion flag.
+    static func stampLegacyBrainSourceIfNeeded(defaults: UserDefaults = .standard) {
+        guard defaults.bool(forKey: "hasCompletedOnboarding"),
+            defaults.string(forKey: brainSourceDefaultsKey) == nil
+        else { return }
+        defaults.set(brainSourcePreChoice, forKey: brainSourceDefaultsKey)
     }
 
     // MARK: - Prepaid balance / top-up
@@ -297,6 +347,66 @@ enum FeatureTelemetry {
         service.track("agent_created")
     }
 
+    // MARK: - Settings engagement
+
+    /// The management (settings) window was opened, or the user switched to
+    /// another settings tab while it was open. `tab` is the stable token from
+    /// `settingsTabToken`; `before_first_message` marks visits that happen
+    /// before this install ever sent a chat message — the dimension that
+    /// tests whether early settings detours depress activation. Never fired
+    /// by the hidden launch-time window prewarm; only real opens/switches
+    /// reach the two call sites. No setting names or values are attached.
+    static func settingsOpened(
+        tab: ManagementTab,
+        service: TelemetryService = .shared,
+        defaults: UserDefaults = .standard
+    ) {
+        service.track(
+            "settings_opened",
+            [
+                "tab": settingsTabToken(tab),
+                "before_first_message": !defaults.bool(forKey: firstChatUsedTrackedKey),
+            ]
+        )
+    }
+
+    /// Stable, snake_case analytics token for a settings tab. Decoupled from
+    /// `ManagementTab.rawValue` (a persisted UI identifier) and from the
+    /// localized display label, so neither a sidebar rename nor an id
+    /// migration can silently shift the dashboard vocabulary.
+    nonisolated static func settingsTabToken(_ tab: ManagementTab) -> String {
+        switch tab {
+        case .settings: return "general"
+        case .chat: return "chat"
+        case .voice: return "voice"
+        case .themes: return "themes"
+        case .models: return "models"
+        case .providers: return "providers"
+        case .imageGeneration: return "image_generation"
+        case .agents: return "agents"
+        case .agentChannels: return "agent_channels"
+        case .memory: return "memory"
+        case .knowledge: return "knowledge"
+        case .tools: return "tools"
+        case .search: return "search"
+        case .skills: return "skills"
+        case .commands: return "commands"
+        case .plugins: return "plugins"
+        case .schedules: return "schedules"
+        case .watchers: return "watchers"
+        case .sandbox: return "sandbox"
+        case .computerUse: return "computer_use"
+        case .browser: return "browser"
+        case .server: return "server"
+        case .privacy: return "privacy"
+        case .permissions: return "permissions"
+        case .identity: return "identity"
+        case .storage: return "storage"
+        case .credits: return "credits"
+        case .insights: return "insights"
+        }
+    }
+
     // MARK: - Product Hunt launch dialog (July 2026, one-shot)
 
     /// The one-time Product Hunt launch dialog was presented. Count only.
@@ -381,6 +491,36 @@ enum FeatureTelemetry {
         }
     }
 
+    /// What the request asked the resolved local model to do, classified by
+    /// model TYPE, not name: the bundle's config.json (`model_type` /
+    /// `architectures`, via `EmbeddingDetection`) decides whether this is an
+    /// encoder-only embedding model. A name denylist here would reopen with
+    /// every new embedding model (`potion-base-32m`, lowercase variants, …);
+    /// the config check classifies future models structurally. Unresolvable
+    /// ids stay `chat` — the classifier never hides generative traffic.
+    nonisolated static func localModelCapability(
+        _ modelId: String,
+        resolveBundleDirectory: (String) -> URL? = defaultBundleDirectoryResolver
+    ) -> String {
+        guard let directory = resolveBundleDirectory(modelId) else { return "chat" }
+        return EmbeddingDetection.isEmbedding(at: directory) ? "embedding" : "chat"
+    }
+
+    /// Model-id → on-disk bundle directory, delegating to the single source
+    /// of truth (`findInstalledMLXModel` accepts short and `ORG/REPO` forms,
+    /// case-insensitive). Same main-thread guard as
+    /// `LocalReasoningCapability`: the blocking lookup can park on the
+    /// cold-cache launch scan, but `messageInfo` runs on the `ChatEngine`
+    /// actor, so production always takes the authoritative branch.
+    nonisolated private static let defaultBundleDirectoryResolver: @Sendable (String) -> URL? = { modelId in
+        let cacheOnly = Thread.isMainThread && !RuntimeEnvironment.isUnderTests
+        let found =
+            cacheOnly
+            ? ModelManager.findInstalledMLXModelFromCache(named: modelId)
+            : ModelManager.findInstalledMLXModel(named: modelId)
+        return found?.localDirectory
+    }
+
     /// Derive the privacy-reviewed `message_sent` dimensions from a resolved
     /// route. `nonisolated` so the `ChatEngine` actor can call it directly;
     /// it only reads `Sendable`, nonisolated state (`RemoteProviderService`'s
@@ -390,12 +530,14 @@ enum FeatureTelemetry {
         effectiveModel: String,
         source: InferenceSource,
         isAgent: Bool,
-        stream: Bool
+        stream: Bool,
+        defaults: UserDefaults = .standard
     ) -> MessageTelemetryInfo {
         let modelSource: String
         let model: String?
         let providerType: String
         let modelHash: String?
+        let capability: String
 
         if let remote = service as? RemoteProviderService {
             // User-configured remote: omit the (possibly identifying) model
@@ -405,27 +547,38 @@ enum FeatureTelemetry {
             model = nil
             providerType = remote.provider.providerType.rawValue
             modelHash = TelemetryService.anonymizedRemoteId(effectiveModel)
+            capability = "chat"
         } else if service.id == FoundationModelService.serviceId {
             modelSource = "foundation"
             model = effectiveModel
             providerType = "foundation"
             modelHash = nil
+            capability = "chat"
         } else {
             // Local MLX catalog model — id is curated and safe to send.
+            // Local discovery also includes embedding bundles (HF cache, LM
+            // Studio imports) that clients can still point chat requests at;
+            // classify by model type so the headline chat KPI can exclude
+            // them structurally.
             modelSource = "local"
             model = effectiveModel
             providerType = "mlx"
             modelHash = nil
+            capability = localModelCapability(effectiveModel)
         }
 
         // Attach the onboarding brain choice only to chat-UI sends — it's a
         // funnel join for "did the user who picked path X send a message", and
-        // it would be misleading on HTTP-API / plugin traffic.
+        // it would be misleading on HTTP-API / plugin traffic. The fallback
+        // keeps the dimension total: after the `none`/`pre_choice` writers,
+        // `unknown` should be unreachable, but omission would silently reopen
+        // the coverage gap this vocabulary exists to close.
         let isChatUI: Bool = {
             if case .chatUI = source { return true }
             return false
         }()
-        let brainSource = isChatUI ? persistedBrainSource() : nil
+        let brainSource =
+            isChatUI ? (persistedBrainSource(defaults: defaults) ?? brainSourceUnknown) : nil
 
         return MessageTelemetryInfo(
             source: sourceToken(source),
@@ -435,7 +588,8 @@ enum FeatureTelemetry {
             modelHash: modelHash,
             isAgent: isAgent,
             stream: stream,
-            brainSource: brainSource
+            brainSource: brainSource,
+            capability: capability
         )
     }
 }

@@ -101,6 +101,15 @@ are skipped. Only the message *role* is inspected — never the content.)
 | `model_hash` | string | **Remote only.** Salted, truncated hash of the remote model id (see "Remote identifiers"). Omitted otherwise. |
 | `is_agent` | bool | Whether the turn came from an autonomous agent run (the `/agents/{id}/run` endpoint) vs a plain completion |
 | `stream` | bool | Whether a streaming response was requested |
+| `capability` | string | What the request asked the model to do: `chat`, or `embedding` when a chat request resolved to a local encoder-only bundle. Classified from the bundle's `config.json` model type (never a model-name list), so new embedding models are bucketed automatically. Reserved for future API families (e.g. `search`). |
+| `brain_source` | string | **Chat-UI sends only** (omitted for `http_api`/`plugin`). The onboarding brain choice joined to activation: `local`, `hosted`, `provider_key` — or an explicit fallback: `none` (onboarding ended without committing a brain), `pre_choice` (install completed onboarding before the choice existed), `unknown` (defensive; should not occur). Always present on chat-UI sends, so coverage of this dimension is total by construction. |
+
+**Note on `brain_source` history.** Before the fallback tokens existed, the
+property was simply omitted whenever no choice had been persisted, which left
+an unattributable gap (roughly 20% of chat-UI messages on 0.22.x). Events from
+those older versions cannot be backfilled; from the version introducing the
+tokens onward, every chat-UI send carries a named bucket and the historical
+gap is explained by the `none` / `pre_choice` composition.
 
 ### `chat_session_started`
 
@@ -180,6 +189,18 @@ Emitted when a user configures an MCP (tool) provider.
 
 Emitted when a user creates an agent. Built-in agents seeded by the app are
 excluded. No properties — count only, with no name or configuration.
+
+### `settings_opened`
+
+Emitted when the Settings (management) window is opened, and again on each
+tab switch while it is open. The hidden launch-time window prewarm never
+emits. Exists to measure whether early detours into settings correlate with
+lower activation. No setting names or values are ever attached.
+
+| Property | Type | Values / meaning |
+|----------|------|------------------|
+| `tab` | string | Stable token for the settings tab (closed enum): `general`, `chat`, `voice`, `themes`, `models`, `providers`, `image_generation`, `agents`, `agent_channels`, `memory`, `knowledge`, `tools`, `search`, `skills`, `commands`, `plugins`, `schedules`, `watchers`, `sandbox`, `computer_use`, `browser`, `server`, `privacy`, `permissions`, `identity`, `storage`, `credits`, `insights` |
+| `before_first_message` | bool | Whether this install has never sent a chat-UI message yet — separates pre-activation settings visits from post-activation ones |
 
 ### Onboarding funnel
 

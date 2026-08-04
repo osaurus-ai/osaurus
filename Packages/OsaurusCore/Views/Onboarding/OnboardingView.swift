@@ -531,9 +531,14 @@ public struct OnboardingView: View {
 
         // Persist the brain choice so the first chat-UI `message_sent` can carry
         // the `brain_source` dimension that joins the path choice to activation.
+        // A run that ends without a commit (early close, or finishing without
+        // choosing) records the explicit `none` token instead, keeping the
+        // dimension's coverage total; the absent-writer never clobbers a
+        // prior real choice.
         FeatureTelemetry.recordOnboardingBrainSource(
             configureAIState.selectedBrainSource?.telemetryValue
         )
+        FeatureTelemetry.recordOnboardingBrainSourceAbsent()
 
         // The managed Router stays at its persisted default unless the user
         // explicitly chose the Cloud-only path. Local and BYOK choices never
