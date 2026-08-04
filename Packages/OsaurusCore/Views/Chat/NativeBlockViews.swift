@@ -1110,6 +1110,15 @@ final class NativeMarkdownTableView: NSView {
     private var cellTexts: [[String]] = []
     private let separator = NSBox()
 
+    // Per-row measurement cache. A streaming table reconfigures once per
+    // delta, and re-running TextKit layout for EVERY row of the whole table
+    // on each tick made large tables O(rows) per delta — a >3s main-thread
+    // hang in production (APPLE-MACOS-19C). Only rows whose text changed
+    // since the last measure (or a new column width) are re-measured.
+    private var measuredRowTexts: [[String]] = []
+    private var measuredRowHeights: [CGFloat] = []
+    private var measuredColumnWidth: CGFloat = -1
+
     /// Called after the grid re-measures and its height changes.
     var onHeightChanged: (() -> Void)?
 
@@ -1185,11 +1194,22 @@ final class NativeMarkdownTableView: NSView {
     private func updateCells(theme: any ThemeProtocol, rerenderAll: Bool) {
         let columnCount = max(headers.count, rows.map(\.count).max() ?? 0)
 
+        // A theme or typography-scale change re-renders cells without
+        // changing their source text, so cached row heights are stale.
+        if rerenderAll {
+            measuredRowTexts.removeAll()
+            measuredRowHeights.removeAll()
+            measuredColumnWidth = -1
+        }
+
         // A column-count change invalidates per-cell reuse; start over.
         if columnCount == 0 || cellFields.first?.count != columnCount {
             for row in cellFields { for cell in row { cell.removeFromSuperview() } }
             cellFields.removeAll()
             cellTexts.removeAll()
+            measuredRowTexts.removeAll()
+            measuredRowHeights.removeAll()
+            measuredColumnWidth = -1
         }
         guard columnCount > 0 else { return }
 
@@ -1342,9 +1362,20 @@ final class NativeMarkdownTableView: NSView {
         let usable = max(width - totalGaps, CGFloat(columnCount) * 40)
         let columnWidth = floor(usable / CGFloat(columnCount))
 
-        // Measure row heights via each cell's own TextKit layout
+        // Measure row heights via each cell's own TextKit layout, reusing the
+        // cached height for rows whose text hasn't changed since the last
+        // measure at this column width (see `measuredRowTexts`).
+        let cacheUsable = columnWidth == measuredColumnWidth
         var rowHeights: [CGFloat] = []
-        for row in cellFields {
+        for (rowIdx, row) in cellFields.enumerated() {
+            if cacheUsable,
+                rowIdx < measuredRowTexts.count,
+                rowIdx < cellTexts.count,
+                measuredRowTexts[rowIdx] == cellTexts[rowIdx]
+            {
+                rowHeights.append(measuredRowHeights[rowIdx])
+                continue
+            }
             var maxH: CGFloat = 0
             for cell in row {
                 cell.textContainer?.containerSize = NSSize(
@@ -1359,6 +1390,9 @@ final class NativeMarkdownTableView: NSView {
             }
             rowHeights.append(max(maxH, 18))
         }
+        measuredRowTexts = cellTexts
+        measuredRowHeights = rowHeights
+        measuredColumnWidth = columnWidth
 
         // Place cells
         var y: CGFloat = 0
