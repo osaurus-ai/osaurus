@@ -146,15 +146,15 @@ struct KeychainTests {
         #expect(backend.operations == ["update", "add"])
     }
 
-    @Test("a non-not-found update failure is surfaced, not hidden behind an add")
+    @Test("a non-not-found, non-denied update failure is surfaced, not hidden behind an add")
     func writeSurfacesUpdateFailureWithoutAdding() {
         let backend = FakeKeychainBackend()
         backend.seed(service: Self.service, account: "a", data: Data("old".utf8))
-        backend.updateStatus = errSecAuthFailed
+        backend.updateStatus = errSecParam
         withFakeBackend(backend) {
             let outcome = Keychain.writeItem(
                 service: Self.service, account: "a", data: Data("new".utf8))
-            #expect(outcome == .accessDenied(errSecAuthFailed))
+            #expect(outcome == .failure(errSecParam))
         }
         // The add path must not run: it would report errSecDuplicateItem and
         // mask the real error. The stored value must survive untouched.
@@ -167,7 +167,6 @@ struct KeychainTests {
         let cases: [(OSStatus, KeychainMutationOutcome)] = [
             (errSecInteractionNotAllowed, .unavailable(errSecInteractionNotAllowed)),
             (errSecNotAvailable, .unavailable(errSecNotAvailable)),
-            (errSecAuthFailed, .accessDenied(errSecAuthFailed)),
             (errSecParam, .failure(errSecParam)),
         ]
         for (status, expected) in cases {
@@ -182,7 +181,41 @@ struct KeychainTests {
         }
     }
 
-    @Test("write never deletes (so it cannot wipe the item it just wrote)")
+    @Test("an ACL-denied update recovers by deleting and re-adding the item")
+    func writeRecoversFromDeniedUpdate() {
+        // An access-denied update means the existing item was written by a
+        // differently signed build and is unreadable to this process anyway,
+        // so write reclaims the account with delete + add.
+        let backend = FakeKeychainBackend()
+        backend.seed(service: Self.service, account: "a", data: Data("orphaned".utf8))
+        backend.updateStatus = errSecAuthFailed
+        withFakeBackend(backend) {
+            let outcome = Keychain.writeItem(
+                service: Self.service, account: "a", data: Data("new".utf8))
+            #expect(outcome == .success)
+        }
+        #expect(backend.operations == ["update", "delete", "add"])
+        #expect(backend.value(service: Self.service, account: "a") == Data("new".utf8))
+    }
+
+    @Test("a denied update whose recovery delete fails reports the original denial")
+    func writeDeniedRecoveryDeleteFailure() {
+        let backend = FakeKeychainBackend()
+        backend.seed(service: Self.service, account: "a", data: Data("orphaned".utf8))
+        backend.updateStatus = errSecAuthFailed
+        backend.deleteStatus = errSecAuthFailed
+        withFakeBackend(backend) {
+            let outcome = Keychain.writeItem(
+                service: Self.service, account: "a", data: Data("new".utf8))
+            #expect(outcome == .accessDenied(errSecAuthFailed))
+        }
+        // The add path must not run after a failed delete: the orphaned item
+        // still owns the account and an add would just report a duplicate.
+        #expect(backend.operations == ["update", "delete"])
+        #expect(backend.value(service: Self.service, account: "a") == Data("orphaned".utf8))
+    }
+
+    @Test("write never deletes outside denied-update recovery")
     func writeNeverDeletes() {
         let backend = FakeKeychainBackend()
         backend.seed(service: Self.service, account: "a", data: Data("old".utf8))
