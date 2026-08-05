@@ -3338,8 +3338,10 @@ struct RuntimePolicySourceTests {
             "The UI may pass the agent/profile temperature, but implicit sampling must be preserved by the runtime rather than rewritten to greedy native-MTP defaults."
         )
         #expect(
-            chatView.contains("tools: toolSpecs.isEmpty ? nil : toolSpecs"),
-            "Chat UI should only send tool schemas when the composer resolved a non-empty tool set."
+            chatView.contains(
+                "tools: iterationToolSpecs.isEmpty ? nil : iterationToolSpecs"
+            ),
+            "Chat UI should send the current run schema, including tools loaded for the next iteration."
         )
         #expect(
             chatView.contains("let requestedToolChoice = ChatToolChoicePolicy.resolve(")
@@ -3347,10 +3349,10 @@ struct RuntimePolicySourceTests {
             "Chat UI should route explicit tool-use prompts through the shared policy instead of hard-coding auto for every tool-enabled turn."
         )
         #expect(
-            chatView.contains("tools: toolSpecs,")
+            chatView.contains("tools: iterationToolSpecs,")
                 && chatView.contains("userText: trimmed,")
                 && chatView.contains("attempt: attempt"),
-            "Chat UI tool-choice policy must see the resolved tools, original user text, and attempt count so first-turn required routing cannot become a repeated tool loop."
+            "Chat UI tool-choice policy must see the current iteration tools, original user text, and attempt count so first-turn required routing cannot become a repeated tool loop."
         )
         #expect(
             chatView.contains("finalReq.samplingParametersAreImplicit = true"),
