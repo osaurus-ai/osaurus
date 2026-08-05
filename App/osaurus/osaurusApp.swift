@@ -41,6 +41,10 @@ struct osaurusApp: SwiftUI.App {
     private var watcherManager = WatcherManager.shared
     @ObservedObject private var vadService = VADService.shared
     @ObservedObject private var speechModelManager = SpeechModelManager.shared
+    /// Chat settings toggle: ⌘N starts a new chat in the frontmost chat
+    /// window instead of opening a new window (see `NewChatShortcutSetting`).
+    @AppStorage(NewChatShortcutSetting.defaultsKey)
+    private var cmdNStartsNewChatInCurrentWindow: Bool = false
 
     var body: some SwiftUI.Scene {
         Settings {
@@ -66,6 +70,23 @@ private extension osaurusApp {
 
     var fileMenuCommands: some Commands {
         CommandGroup(replacing: .newItem) {
+            // With the Chat setting on, ⌘N matches the sidebar "New Chat"
+            // button (new chat in the frontmost window) and "New Window"
+            // moves to ⇧⌘N, matching most chat apps. Default keeps the
+            // historical ⌘N = New Window behavior.
+            if cmdNStartsNewChatInCurrentWindow {
+                Button {
+                    Task { @MainActor in
+                        if !ChatWindowManager.shared.startNewChatInLastFocusedWindow() {
+                            ChatWindowManager.shared.createWindow()
+                        }
+                    }
+                } label: {
+                    Text(verbatim: L("New Chat"))
+                }
+                .keyboardShortcut("n", modifiers: .command)
+            }
+
             Button {
                 Task { @MainActor in
                     ChatWindowManager.shared.createWindow()
@@ -73,7 +94,10 @@ private extension osaurusApp {
             } label: {
                 Text(verbatim: L("New Window"))
             }
-            .keyboardShortcut("n", modifiers: .command)
+            .keyboardShortcut(
+                "n",
+                modifiers: cmdNStartsNewChatInCurrentWindow ? [.command, .shift] : .command
+            )
 
             Menu {
                 ForEach(AgentManager.shared.agents, id: \.id) { agent in
