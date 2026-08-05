@@ -148,6 +148,33 @@ struct CapabilitiesToolTests {
         #expect(!ToolEnvelope.isError(result))
         #expect(result.contains("\"tool\":\"capabilities\""))
         #expect(!result.contains("capabilities_load"))
+        #expect(!result.contains("capabilities_discover"))
+    }
+
+    @Test @MainActor
+    func loadResultUsesSingleGatewayVocabulary() async throws {
+        let dynamic = CapabilityPolicyFixtureTool(
+            name: "gateway_load_result_\(UUID().uuidString)",
+            description: "Dynamic gateway load-result fixture"
+        )
+        ToolRegistry.shared.registerPluginTool(dynamic)
+        ToolRegistry.shared.setEnabled(true, for: dynamic.name)
+        defer { ToolRegistry.shared.unregister(names: [dynamic.name]) }
+        _ = await CapabilityLoadBuffer.shared.drain()
+
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+            try await CapabilitiesTool().execute(
+                argumentsJSON: #"{"ids":["tool/\#(dynamic.name)"]}"#
+            )
+        }
+        let loaded = await CapabilityLoadBuffer.shared.drain()
+
+        #expect(!ToolEnvelope.isError(result))
+        #expect(result.contains(#""tool":"capabilities""#))
+        #expect(result.contains("capabilities"))
+        #expect(!result.contains("capabilities_load"))
+        #expect(!result.contains("capabilities_discover"))
+        #expect(loaded.map(\.function.name) == [dynamic.name])
     }
 }
 

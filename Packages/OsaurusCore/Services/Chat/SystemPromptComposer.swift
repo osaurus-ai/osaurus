@@ -598,6 +598,7 @@ public struct SystemPromptComposer: Sendable {
             snapshot: snapshot,
             agentId: agentId,
             tools: resolvedTools,
+            executionMode: executionMode,
             effectiveToolsOff: effectiveToolsOff,
             frozenManifest: frozenManifest,
             trace: trace
@@ -623,9 +624,10 @@ public struct SystemPromptComposer: Sendable {
     /// section is gated off or has no content.
     ///
     /// The manifest is a static prefix section, so this is gated only on
-    /// session-constant facts — auto mode, tools enabled, and
-    /// `capabilities_load` present in the schema (the section tells the model
-    /// to call it to use a listed capability). The deliberately-dropped
+    /// session-constant facts — auto mode, tools enabled, and a capability
+    /// loader present in the schema. Custom chat publishes the unified
+    /// `capabilities` gateway; compatibility surfaces may publish the legacy
+    /// loader. The deliberately-dropped
     /// trivial-input gate keeps the static prefix byte-identical across
     /// turns. A non-`nil` `frozenManifest` is reused verbatim so turn 2+
     /// never recompute or reorder; `nil` means "freeze fresh now".
@@ -634,12 +636,15 @@ public struct SystemPromptComposer: Sendable {
         snapshot: AgentConfigSnapshot,
         agentId: UUID,
         tools: [Tool],
+        executionMode: ExecutionMode,
         effectiveToolsOff: Bool,
         frozenManifest: String? = nil,
         trace: TTFTTrace?
     ) -> String? {
-        guard snapshot.toolMode == .auto, !effectiveToolsOff,
-            tools.contains(where: { $0.function.name == "capabilities_load" })
+        let schemaNames = Set(tools.map(\.function.name))
+        guard snapshot.toolMode == .auto, !executionMode.usesHostFolderTools, !effectiveToolsOff,
+            let capabilityNames = capabilityToolNames(inSchema: schemaNames),
+            schemaNames.contains(capabilityNames.load)
         else { return nil }
         // The Default agent carries `capabilities_load` only to lazy-load its
         // deferred configure write tools on small local models. Its own
@@ -651,7 +656,17 @@ public struct SystemPromptComposer: Sendable {
             trace?.set("enabledManifestSource", "frozen")
             return frozenManifest
         }
-        let groups = deriveEnabledManifest(agentId: agentId)
+        let groups = deriveEnabledManifest(
+            agentId: agentId,
+            includeAgentChannelTools: false
+        )
+        // Standalone skills are universally discoverable, but restoring their
+        // whole catalog to every lean custom prompt would undo #2250's minimal
+        // surface. Emit the manifest only when this agent actually has at
+        // least one assigned, loadable dynamic tool (the plugin regression
+        // this section repairs); that manifest may then include related and
+        // standalone skills as before.
+        guard groups.contains(where: { !$0.tools.isEmpty }) else { return nil }
         // `prefersCompactPrompt` already folds the small/tiny-window cases
         // (existing behaviour) and the local-small-model case (large window,
         // ≤ param ceiling). Compact tiers the manifest to one `plugin/<id>`
@@ -661,7 +676,8 @@ public struct SystemPromptComposer: Sendable {
         let compact = ContextSizeResolver.resolve(modelId: snapshot.model).prefersCompactPrompt
         let section = SystemPromptTemplates.enabledCapabilitiesManifest(
             groups: groups,
-            compact: compact
+            compact: compact,
+            names: capabilityNames
         )
         if section != nil {
             let toolCount = groups.reduce(0) { $0 + $1.tools.count }
@@ -669,6 +685,20 @@ public struct SystemPromptComposer: Sendable {
             trace?.set("enabledManifestSource", "fresh")
         }
         return section
+    }
+
+    /// Resolve the capability search/load names actually published to this
+    /// request. Prefer the unified chat gateway when both contracts exist.
+    static func capabilityToolNames(
+        inSchema schemaNames: Set<String>
+    ) -> SystemPromptTemplates.CapabilityToolNames? {
+        if schemaNames.contains("capabilities") { return .gateway }
+        if schemaNames.contains("capabilities_load")
+            || schemaNames.contains("capabilities_discover")
+        {
+            return .legacy
+        }
+        return nil
     }
 
     /// Append every gated "deterministic" prompt section given the
@@ -703,6 +733,7 @@ public struct SystemPromptComposer: Sendable {
     ///  18. agentDBSchema             dynamic, live schema snapshot (mutates mid-session)
     ///  19. sandboxState              dynamic, installed packages + secrets (mutate mid-session)
     ///  20. sandboxUnavailable        dynamic, gated on registrar failure
+    ///  21. channelDestinations       dynamic, source-scoped publish bindings
     ///
     /// Statics come before dynamics so the cached prefix
     /// (`PromptManifest.staticPrefixContent`) reaches as far as possible —
@@ -741,6 +772,19 @@ public struct SystemPromptComposer: Sendable {
         let tools = toolset.tools
         let effectiveToolsOff = toolset.effectiveToolsOff
         let resolvedNames = Set(tools.map { $0.function.name })
+        let channelDestinationsSection: String?
+        if !effectiveToolsOff, resolvedNames.contains(AgentChannelPublishTool.toolName) {
+            channelDestinationsSection = Self.channelDestinationsSection(
+                bindings: AgentChannelAutoDestinationResolver.effectiveConfiguration()
+                    .usableBindings(
+                        agentId: agentId,
+                        source: ChatExecutionContext.currentSessionSource
+                    ),
+                source: ChatExecutionContext.currentSessionSource
+            )
+        } else {
+            channelDestinationsSection = nil
+        }
 
         // Production's default harness contract is intentionally small.
         // Tool schemas are the operational source of truth; security is
@@ -751,12 +795,19 @@ public struct SystemPromptComposer: Sendable {
             || executionMode.usesHostFolderTools
             || executionMode.usesSandboxTools
         {
+            let capabilityNames = Self.capabilityToolNames(inSchema: resolvedNames)
+            var sandboxStateSection: String?
+            var agentDBSchemaSection: String?
+
             if executionMode.usesSandboxTools, let soulSection {
                 composer.append(
                     .static(
                         id: "soul",
                         label: "Soul",
-                        content: SystemPromptTemplates.soulSection(soulSection)
+                        content: SystemPromptTemplates.soulSection(
+                            soulSection,
+                            names: capabilityNames ?? .legacy
+                        )
                     )
                 )
             }
@@ -791,13 +842,7 @@ public struct SystemPromptComposer: Sendable {
                     )
                 )
                 if !state.isEmpty {
-                    composer.append(
-                        .dynamic(
-                            id: "sandboxState",
-                            label: L("Sandbox State"),
-                            content: state
-                        )
-                    )
+                    sandboxStateSection = state
                 }
             } else if !effectiveToolsOff, let folder = executionMode.folderContext {
                 composer.append(
@@ -817,14 +862,72 @@ public struct SystemPromptComposer: Sendable {
                     allowOpen: allowBlockingDBOpen
                 )
                 if !schema.isEmpty {
+                    agentDBSchemaSection = schema
+                }
+            }
+
+            // Keep the lean custom-agent contract: expose only the frozen
+            // enabled-capabilities manifest needed to use assigned plugins.
+            // Rich grounding/nudge/model-family guidance remains off this
+            // path, and host-folder agents retain their workspace-only prompt.
+            if snapshot.agentId != Agent.defaultId,
+                !executionMode.usesHostFolderTools,
+                !effectiveToolsOff,
+                let capabilityNames,
+                let manifestSection = toolset.enabledManifest,
+                !manifestSection.isEmpty
+            {
+                composer.append(
+                    .static(
+                        id: "enabledManifest",
+                        label: L("Enabled Capabilities"),
+                        content: manifestSection
+                    )
+                )
+                if SystemPromptTemplates.enabledManifestNeedsSkillGovernance(
+                    manifestSection,
+                    compact: toolset.prefersCompactPrompt
+                ) {
                     composer.append(
-                        .dynamic(
-                            id: "agentDBSchema",
-                            label: L("Agent DB Schema"),
-                            content: schema
+                        .static(
+                            id: "skillsGovern",
+                            label: L("Skills that govern tool groups"),
+                            content: SystemPromptTemplates.skillsGovernToolGroups(
+                                names: capabilityNames
+                            )
                         )
                     )
                 }
+            }
+
+            // Dynamics follow every static section so the frozen manifest
+            // remains inside the reusable KV prefix.
+            if let agentDBSchemaSection {
+                composer.append(
+                    .dynamic(
+                        id: "agentDBSchema",
+                        label: L("Agent DB Schema"),
+                        content: agentDBSchemaSection
+                    )
+                )
+            }
+            if let sandboxStateSection {
+                composer.append(
+                    .dynamic(
+                        id: "sandboxState",
+                        label: L("Sandbox State"),
+                        content: sandboxStateSection
+                    )
+                )
+            }
+            if let channelDestinationsSection {
+                composer.append(
+                    .dynamic(
+                        id: "channelDestinations",
+                        label: L("Channel Destinations"),
+                        content: channelDestinationsSection
+                    )
+                )
             }
             return
         }
@@ -1315,7 +1418,9 @@ public struct SystemPromptComposer: Sendable {
                     .static(
                         id: "skillsGovern",
                         label: L("Skills that govern tool groups"),
-                        content: SystemPromptTemplates.skillsGovernToolGroups
+                        content: SystemPromptTemplates.skillsGovernToolGroups(
+                            names: Self.capabilityToolNames(inSchema: resolvedNames) ?? .legacy
+                        )
                     )
                 )
             }
@@ -1420,19 +1525,12 @@ public struct SystemPromptComposer: Sendable {
         // the store each turn without rewriting the cached static prefix.
         // Gated on the publish tool actually being in the schema so the
         // prompt never advertises a capability the model can't invoke.
-        if !effectiveToolsOff,
-            resolvedNames.contains(AgentChannelPublishTool.toolName),
-            let destinationsSection = Self.channelDestinationsSection(
-                bindings: AgentChannelAutoDestinationResolver.effectiveConfiguration()
-                    .usableBindings(agentId: agentId),
-                source: ChatExecutionContext.currentSessionSource
-            )
-        {
+        if let channelDestinationsSection {
             composer.append(
                 .dynamic(
                     id: "channelDestinations",
                     label: L("Channel Destinations"),
-                    content: destinationsSection
+                    content: channelDestinationsSection
                 )
             )
         }
@@ -1573,7 +1671,8 @@ public struct SystemPromptComposer: Sendable {
     /// `list: "enabled"` mode reuses this derivation so its listing and the
     /// prompt manifest can never disagree about what is enabled.
     static func deriveEnabledManifest(
-        agentId: UUID
+        agentId: UUID,
+        includeAgentChannelTools: Bool = true
     ) -> [SystemPromptTemplates.ManifestPluginGroup] {
         let allowedTools = AgentManager.shared.effectiveEnabledToolNames(for: agentId).map(Set.init)
 
@@ -1582,19 +1681,31 @@ public struct SystemPromptComposer: Sendable {
         // no enabled-minus-loaded subtraction, so the manifest stays constant
         // as the agent loads tools mid-session.
         var toolsByGroup: [String: [SystemPromptTemplates.ManifestCapability]] = [:]
-        let hasEnabledAgentChannel = Self.hasAnyConfiguredAgentChannel(
-            configuration: AgentChannelConfigurationStore.load()
-        )
+        var ungroupedTools: [SystemPromptTemplates.ManifestCapability] = []
+        let hasEnabledAgentChannel =
+            includeAgentChannelTools
+            && Self.hasAnyConfiguredAgentChannel(
+                configuration: AgentChannelConfigurationStore.load()
+            )
         for entry in ToolRegistry.shared.listDynamicTools() {
             guard allowedTools?.contains(entry.name) ?? true,
                 hasEnabledAgentChannel
-                    || !ToolRegistry.agentChannelToolNames.contains(entry.name),
-                let group = ToolRegistry.shared.groupName(for: entry.name),
-                !group.isEmpty
+                    || !ToolRegistry.agentChannelToolNames.contains(entry.name)
             else { continue }
-            toolsByGroup[group, default: []].append(
-                .init(name: entry.name, description: entry.description)
+            let capability = SystemPromptTemplates.ManifestCapability(
+                name: entry.name,
+                description: entry.description
             )
+            if let group = ToolRegistry.shared.groupName(for: entry.name), !group.isEmpty {
+                toolsByGroup[group, default: []].append(capability)
+            } else if allowedTools != nil,
+                ToolRegistry.shared.manifestsIndividually(entry.name)
+            {
+                // A small set of intentional ungrouped fixtures expose their
+                // exact tool id rather than a nonexistent `plugin/<id>` alias.
+                // Ordinary anonymous registry entries remain omitted.
+                ungroupedTools.append(capability)
+            }
         }
 
         // Plugin skills (pluginId != nil), plus standalone skills
@@ -1626,6 +1737,16 @@ public struct SystemPromptComposer: Sendable {
                 pluginDisplay: pluginDisplayName(for: groupId),
                 skills: (skillsByGroup[groupId] ?? []).sorted { $0.name < $1.name },
                 tools: (toolsByGroup[groupId] ?? []).sorted { $0.name < $1.name }
+            )
+        }
+
+        if !ungroupedTools.isEmpty {
+            groups.append(
+                SystemPromptTemplates.ManifestPluginGroup(
+                    pluginDisplay: "Other enabled tools",
+                    skills: [],
+                    tools: ungroupedTools.sorted { $0.name < $1.name }
+                )
             )
         }
 
@@ -2098,6 +2219,7 @@ public struct SystemPromptComposer: Sendable {
             snapshot: snapshot,
             agentId: snapshot.agentId,
             tools: tools,
+            executionMode: executionMode,
             effectiveToolsOff: effectiveToolsOff,
             frozenManifest: nil,
             trace: nil

@@ -5488,14 +5488,12 @@ final class ChatSession: ObservableObject {
                         sys += "\n\n## Active Skill: \(oneOff.name)\n\n\(oneOff.body)"
                     }
 
-                    // FROZEN for the whole run (deferred-schema / KV-prefix
-                    // stability): the rendered `<tools>` block never changes
-                    // mid-run, even after `capabilities_load`. Loaded tools are
-                    // callable immediately by name and their schemas ride in the
-                    // tool result (see `CapabilitiesLoadTool.loadedSchemaBlock`);
-                    // they fold into `<tools>` on the next user turn. In Mode 2
-                    // we send no tools: the remote agent advertises and executes
-                    // its own tools server-side and only streams text back.
+                    // Initial request schema. `ToolExecutionScope` appends tools
+                    // loaded through `capabilities` for the NEXT model iteration;
+                    // constrained decoders cannot emit a tool name absent from
+                    // the request schema, even when its schema rides in the tool
+                    // result. In Mode 2 we send no tools: the remote agent
+                    // advertises and executes its own tools server-side.
                     let toolSpecs = isRemoteAgentTarget ? [] : context.tools
                     let isManualTools = liveToolMode == .manual
                     cachedContext = context
@@ -5842,16 +5840,12 @@ final class ChatSession: ObservableObject {
                             // etc.) so the model sees the rejection.
                         }
 
-                        // Tools loaded via capabilities_load / sandbox_plugin_register.
-                        // Deferred-schema policy (KV-prefix stability): the loaded
-                        // tools are callable IMMEDIATELY — the registry dispatches
-                        // by name and their schemas ride in the tool result (see
-                        // `CapabilitiesLoadTool.loadedSchemaBlock`) — but
-                        // `toolSpecs` stays FROZEN for the rest of this run.
-                        // Rewriting the rendered `<tools>` block mid-run busts the
-                        // paged-KV prefix for the whole conversation. The loaded
-                        // names persist into the session's tool union so the NEXT
-                        // user turn composes their full schemas into `<tools>`.
+                        // Tools loaded via capabilities / sandbox_plugin_register.
+                        // Add their schemas to the next model iteration as well as
+                        // the execution scope. Returning a schema only in tool
+                        // result text is insufficient for constrained decoders:
+                        // they substitute a hot schema tool when the intended
+                        // loaded name is absent from the request's `tools` array.
                         if inv.toolName == "capabilities_load"
                             || inv.toolName == "capabilities"
                             || inv.toolName == "sandbox_plugin_register"
@@ -5860,11 +5854,8 @@ final class ChatSession: ObservableObject {
                             // unrelated run; persist only in auto mode (manual
                             // mode keeps the user's explicit tool set fixed).
                             let newTools = await CapabilityLoadBuffer.shared.drain()
-                            // These tools were just made callable to the model — their schemas ride
-                            // in the tool result — while `toolSpecs` stays frozen. Authorize them
-                            // for the rest of THIS run, or the allowlist above would refuse the very
-                            // tools the model was just handed.
-                            toolScope.activate(newTools.map { $0.function.name })
+                            // Authorize and publish them for the rest of this run.
+                            toolScope.activate(newTools)
                             if !newTools.isEmpty, !isManualTools, let sid = self.sessionId {
                                 let names = newTools.map { $0.function.name }
                                 let snapshot = context.alwaysLoadedNames
@@ -6425,6 +6416,7 @@ final class ChatSession: ObservableObject {
                             )
                         },
                         modelStep: { msgs, attempt in
+                            let iterationToolSpecs = toolScope.modelVisibleSpecs
                             ttftTrace?.set("messageCount", msgs.count)
                             ttftTrace?.set("conversationTurns", self.turns.count)
 
@@ -6437,7 +6429,9 @@ final class ChatSession: ObservableObject {
                                                                 "── [\(i)] role=\(m.role) chars=\(m.content?.count ?? 0) ──\n"
                                         promptDump += (m.content ?? "(nil)") + "\n"
                                     }
-                                    if let tools = toolSpecs.isEmpty ? nil : toolSpecs {
+                                    if let tools =
+                                        iterationToolSpecs.isEmpty ? nil : iterationToolSpecs
+                                    {
                                         promptDump += "── TOOLS (\(tools.count)) ──\n"
                                         for t in tools {
                                                                 promptDump +=
@@ -6449,7 +6443,7 @@ final class ChatSession: ObservableObject {
                                 }
                             #endif
                             let requestedToolChoice = ChatToolChoicePolicy.resolve(
-                                tools: toolSpecs,
+                                tools: iterationToolSpecs,
                                 userText: trimmed,
                                 attempt: attempt
                             )
@@ -6469,7 +6463,7 @@ final class ChatSession: ObservableObject {
                                 presence_penalty: nil,
                                 stop: nil,
                                 n: nil,
-                                tools: toolSpecs.isEmpty ? nil : toolSpecs,
+                                tools: iterationToolSpecs.isEmpty ? nil : iterationToolSpecs,
                                 tool_choice: requestedToolChoice,
                                 session_id: self.sessionId?.uuidString
                             )
@@ -6505,7 +6499,8 @@ final class ChatSession: ObservableObject {
                             // but the cap finalizer below intentionally removes
                             // them; the explicit marker keeps both paths on the
                             // same reasoning policy.
-                            req.isAgentRequest = !toolSpecs.isEmpty || self.isRemoteAgentTarget
+                            req.isAgentRequest =
+                                !iterationToolSpecs.isEmpty || self.isRemoteAgentTarget
                             turnGenerationControls.apply(to: &req)
                             req.backgroundModelLoad = (self.loadIntent == .background)
                             req.ttftTrace = ttftTrace

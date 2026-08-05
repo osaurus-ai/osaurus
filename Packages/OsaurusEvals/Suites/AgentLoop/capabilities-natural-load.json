@@ -1,0 +1,29 @@
+{
+  "id": "agent_loop.capabilities-natural-load",
+  "domain": "agent_loop",
+  "label": "agent loop • infer enabled capability, load through gateway, continue",
+  "query": "Use your enabled deferred dynamic acknowledgement capability to confirm it executes. After it succeeds, write a file named natural-loaded.txt containing exactly: ok. Complete both actions now rather than describing the steps.",
+  "notes": "Natural-language regression for the custom-agent plugin failure: the fixture is enabled but absent from the initial hot schema, so the model must infer it from the frozen Enabled capabilities manifest, load its exact tool id through the unified capabilities gateway, execute it, and continue the run. The unrelated proactive channel publisher must not be selected as a substitute for a loaded plugin tool, and legacy capability tool names are forbidden.",
+  "trials": 3,
+  "fixtures": {
+    "enableTools": ["eval_dynamic_load_probe"],
+    "sandbox": {
+      "pluginCreate": false
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "mustCallTools": ["capabilities", "eval_dynamic_load_probe", "file_write"],
+      "mustNotCallTools": [
+        "agent_channel_publish",
+        "capabilities_load",
+        "capabilities_discover"
+      ],
+      "finalTextMustNotContain": ["capabilities_load", "capabilities_discover"],
+      "sandboxFiles": [
+        { "path": "natural-loaded.txt", "contains": "ok" }
+      ]
+    }
+  }
+}

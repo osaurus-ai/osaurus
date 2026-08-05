@@ -44,7 +44,9 @@ struct EnabledCapabilitiesManifestTests {
 
         #expect(rendered.contains("## Enabled capabilities"))
         #expect(!rendered.contains("not yet loaded"))
-        #expect(rendered.contains("capabilities_load"))
+        #expect(rendered.contains("`capabilities`"))
+        #expect(!rendered.contains("capabilities_load"))
+        #expect(!rendered.contains("capabilities_discover"))
         #expect(rendered.contains("Worked example"))
         #expect(rendered.contains("<plugin: Osaurus Mail>"))
         #expect(rendered.contains("  tool/list_messages — List inbox messages"))
@@ -171,7 +173,9 @@ struct EnabledCapabilitiesManifestTests {
             SystemPromptTemplates.enabledCapabilitiesManifest(groups: groups)
         )
         #expect(rendered.contains("## Enabled capabilities"))
-        #expect(rendered.contains("capabilities_load"))
+        #expect(rendered.contains("`capabilities`"))
+        #expect(!rendered.contains("capabilities_load"))
+        #expect(!rendered.contains("capabilities_discover"))
         #expect(rendered.contains("<plugin: Skills (no plugin)>"))
         #expect(rendered.contains("  skill/data-viz — Render charts inline"))
         #expect(rendered.contains("  skill/code-review — Catch obvious smells"))
@@ -206,7 +210,9 @@ struct EnabledCapabilitiesManifestTests {
         // Compact intro teaches plugin loading and drops the worked example.
         #expect(rendered.contains("## Enabled capabilities"))
         #expect(rendered.contains("plugin/<id>"))
-        #expect(rendered.contains("capabilities_load"))
+        #expect(rendered.contains("`capabilities`"))
+        #expect(!rendered.contains("capabilities_load"))
+        #expect(!rendered.contains("capabilities_discover"))
         #expect(!rendered.contains("Worked example"))
     }
 
@@ -244,7 +250,7 @@ struct EnabledCapabilitiesManifestTests {
         // With the universal library, every installed skill is a manifest
         // candidate — the render must stay bounded no matter how many the
         // user imports. Past `enabledManifestSkillCap`, skills collapse to
-        // a +N pointer that routes through capabilities_discover.
+        // a +N pointer that routes through the unified capabilities gateway.
         let cap = SystemPromptTemplates.enabledManifestSkillCap
         let skills = (0 ..< cap + 3).map { Cap(name: "skill_\($0)", description: "d") }
         let groups = [
@@ -256,7 +262,9 @@ struct EnabledCapabilitiesManifestTests {
         #expect(rendered.contains("  skill/skill_0 — d"))
         #expect(rendered.contains("  skill/skill_\(cap - 1) — d"))
         #expect(!rendered.contains("skill/skill_\(cap) — d"))
-        #expect(rendered.contains("+3 more skill(s) — call capabilities_discover to list them."))
+        #expect(
+            rendered.contains("+3 more skill(s) — search with `capabilities` to list them.")
+        )
     }
 
     @Test("compact mode also caps the inline standalone-skills list")
@@ -276,7 +284,9 @@ struct EnabledCapabilitiesManifestTests {
         #expect(rendered.contains("  skill/skill_0"))
         #expect(rendered.contains("  skill/skill_\(cap - 1)"))
         #expect(!rendered.contains("skill/skill_\(cap)\n"))
-        #expect(rendered.contains("+2 more skill(s) — capabilities_discover lists them."))
+        #expect(
+            rendered.contains("+2 more skill(s) — search with `capabilities` to list them.")
+        )
     }
 
     @Test("intro warns that the frozen list may miss later installs")
@@ -295,6 +305,26 @@ struct EnabledCapabilitiesManifestTests {
             SystemPromptTemplates.enabledCapabilitiesManifest(groups: groups, compact: true)
         )
         #expect(compact.contains("frozen at session start"))
+    }
+
+    @Test("renderer follows an explicitly published legacy compatibility schema")
+    func legacyCompatibilityNamesRemainAvailableWhenRequested() throws {
+        let rendered = try #require(
+            SystemPromptTemplates.enabledCapabilitiesManifest(
+                groups: [
+                    Group(
+                        pluginDisplay: "P",
+                        skills: [],
+                        tools: [Cap(name: "t", description: "d")]
+                    )
+                ],
+                names: .legacy
+            )
+        )
+
+        #expect(rendered.contains("capabilities_load"))
+        #expect(rendered.contains("capabilities_discover"))
+        #expect(!rendered.contains("`capabilities`"))
     }
 
     @Test("token cap collapses overflow plugins to a pointer line")
@@ -317,7 +347,9 @@ struct EnabledCapabilitiesManifestTests {
         // collapses to a +N pointer instead of per-tool lines.
         #expect(rendered.contains("  tool/tool_0 — d"))
         #expect(rendered.contains("<plugin: LatePlugin>"))
-        #expect(rendered.contains("+3 more tool(s) — call capabilities_discover to list them."))
+        #expect(
+            rendered.contains("+3 more tool(s) — search with `capabilities` to list them.")
+        )
         #expect(!rendered.contains("late_tool_a — d"))
     }
 }

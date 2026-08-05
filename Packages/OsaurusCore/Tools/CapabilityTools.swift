@@ -183,7 +183,7 @@ final class CapabilitiesTool: OsaurusTool, @unchecked Sendable {
             let result = try await CapabilitiesLoadTool().execute(
                 argumentsJSON: String(decoding: data, as: UTF8.self)
             )
-            return relabel(result)
+            return relabel(Self.normalizeLegacyNames(result))
         }
         if let query = args["query"] as? String,
             !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -192,9 +192,7 @@ final class CapabilitiesTool: OsaurusTool, @unchecked Sendable {
             let result = try await CapabilitiesDiscoverTool(agentId: agentId).execute(
                 argumentsJSON: String(decoding: data, as: UTF8.self)
             )
-            return relabel(
-                result.replacingOccurrences(of: "`capabilities_load`", with: "`capabilities`")
-            )
+            return relabel(Self.normalizeLegacyNames(result))
         }
         return ToolEnvelope.failure(
             kind: .invalidArgs,
@@ -203,6 +201,15 @@ final class CapabilitiesTool: OsaurusTool, @unchecked Sendable {
             expected: "non-empty query string or ids array",
             tool: name
         )
+    }
+
+    /// Wrapped compatibility tools compose result and failure text using their
+    /// own legacy names. Never teach those unpublished names back to a custom
+    /// chat session using the unified gateway.
+    private static func normalizeLegacyNames(_ result: String) -> String {
+        result
+            .replacingOccurrences(of: "capabilities_load", with: "capabilities")
+            .replacingOccurrences(of: "capabilities_discover", with: "capabilities")
     }
 
     private func relabel(_ result: String) -> String {

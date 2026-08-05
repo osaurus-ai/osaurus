@@ -467,6 +467,28 @@ public enum SystemPromptTemplates {
 
     // MARK: - Enabled Capabilities Manifest
 
+    /// Capability search/load tool names published to a request. Custom-agent
+    /// chat uses one unified gateway, while compatibility surfaces may still
+    /// publish the legacy discover/load pair.
+    public struct CapabilityToolNames: Sendable, Equatable {
+        public let discover: String
+        public let load: String
+
+        public init(discover: String, load: String) {
+            self.discover = discover
+            self.load = load
+        }
+
+        public static let gateway = CapabilityToolNames(
+            discover: "capabilities",
+            load: "capabilities"
+        )
+        public static let legacy = CapabilityToolNames(
+            discover: "capabilities_discover",
+            load: "capabilities_load"
+        )
+    }
+
     /// One tool or skill row in the enabled-capabilities manifest. Carries
     /// only the surface name + one-line description the model needs to
     /// answer "do you have X" — the full `Tool` spec / skill body is
@@ -531,22 +553,23 @@ public enum SystemPromptTemplates {
     /// The manifest is the grounded answer to "do you have X" — it lets a
     /// model confirm an enabled capability with zero tool calls. Every line
     /// begins with its loadable id (`tool/<name>` or `skill/<name>`) so the
-    /// model can pass it straight to `capabilities_load` without a discover.
+    /// model can pass it straight to the published load tool without a search.
     /// Tools past `enabledManifestToolCap` collapse to a per-plugin `+N more`
-    /// pointer the model can expand with `capabilities_discover`. `compact`
+    /// pointer the model can expand with the published search tool. `compact`
     /// (small-/tiny-context models) drops per-tool descriptions but keeps the
     /// ids, since naming the capability is what stops the model from denying
     /// it.
     public static func enabledCapabilitiesManifest(
         groups: [ManifestPluginGroup],
-        compact: Bool = false
+        compact: Bool = false,
+        names: CapabilityToolNames = .gateway
     ) -> String? {
         guard !groups.isEmpty else { return nil }
 
         let blocks =
             compact
-            ? tieredCompactBlocks(groups)
-            : verboseBlocks(groups)
+            ? tieredCompactBlocks(groups, names: names)
+            : verboseBlocks(groups, names: names)
 
         // The "never deny a listed capability" rule is owned by
         // `groundingDirective` (which co-fires whenever this section
@@ -560,17 +583,17 @@ public enum SystemPromptTemplates {
             // line per tool. A plugin with N tools costs one line, not N, so
             // the cold first-turn prefill stays bounded as installed plugins
             // grow — while the model still SEES every plugin (it never has to
-            // guess one exists and `capabilities_discover` for it). Loading
+            // guess one exists and search for it). Loading
             // `plugin/<id>` expands the whole group (and runs its governing
             // skill) in one call.
             intro = """
                 ## Enabled capabilities
 
-                Enabled for this session. Load a plugin with capabilities_load \
+                Enabled for this session. Load a plugin with `\(names.load)` \
                 using the exact `plugin/<id>` printed below; `tool/` and \
                 `skill/` ids load individually. Never copy an example or invent \
-                an id. List frozen at session start — capabilities_discover also \
-                finds anything installed since.
+                an id. List frozen at session start — search with \
+                `\(names.discover)` to find anything installed since.
                 """
         } else {
             intro = """
@@ -578,16 +601,16 @@ public enum SystemPromptTemplates {
 
                 These capabilities are enabled for this session. Each line begins \
                 with its loadable id; some are already in your tool schema, others \
-                must be loaded first. To load one, call capabilities_load with its \
+                must be loaded first. To load one, call `\(names.load)` with its \
                 id exactly as shown \
-                (e.g. `capabilities_load({"ids": ["tool/<name>"]})`). This list is \
+                (e.g. `\(names.load)({"ids": ["tool/<name>"]})`). This list is \
                 frozen at session start; capabilities installed after that won't \
-                appear here but capabilities_discover still finds them — check it \
-                before declaring something unavailable.
+                appear here but searching with `\(names.discover)` still finds \
+                them — check it before declaring something unavailable.
 
                 Worked example — User: "You have a list_messages tool." If \
-                `tool/list_messages` is listed here, confirm it and capabilities_load \
-                it before use.
+                `tool/list_messages` is listed here, confirm it and load it with \
+                `\(names.load)` before use.
                 """
         }
 
@@ -601,7 +624,8 @@ public enum SystemPromptTemplates {
     /// skills) keep listing their directly-loadable `tool/`/`skill/` ids
     /// inline — there is no `plugin/<id>` to expand and they are few.
     private static func tieredCompactBlocks(
-        _ groups: [ManifestPluginGroup]
+        _ groups: [ManifestPluginGroup],
+        names: CapabilityToolNames
     ) -> [String] {
         var renderedSkillLines = 0
         return groups.map { group in
@@ -619,7 +643,9 @@ public enum SystemPromptTemplates {
                 var lines = ["<\(group.pluginDisplay)>"]
                 lines.append(contentsOf: skillsToShow.map { "  skill/\($0.name)" })
                 if overflow > 0 {
-                    lines.append("  +\(overflow) more skill(s) — capabilities_discover lists them.")
+                    lines.append(
+                        "  +\(overflow) more skill(s) — search with `\(names.discover)` to list them."
+                    )
                 }
                 lines.append(contentsOf: group.tools.map { "  tool/\($0.name)" })
                 return lines.joined(separator: "\n")
@@ -637,7 +663,8 @@ public enum SystemPromptTemplates {
     /// tool lines before low-priority plugins collapse to a `+N more`
     /// pointer. Unchanged from the original manifest behavior.
     private static func verboseBlocks(
-        _ groups: [ManifestPluginGroup]
+        _ groups: [ManifestPluginGroup],
+        names: CapabilityToolNames
     ) -> [String] {
         var blocks: [String] = []
         var renderedToolLines = 0
@@ -659,7 +686,7 @@ public enum SystemPromptTemplates {
             }
             if skillOverflow > 0 {
                 skillLines.append(
-                    "  +\(skillOverflow) more skill(s) — call capabilities_discover to list them."
+                    "  +\(skillOverflow) more skill(s) — search with `\(names.discover)` to list them."
                 )
             }
 
@@ -670,7 +697,7 @@ public enum SystemPromptTemplates {
                 var collapsed = ["<plugin: \(group.pluginDisplay)>"]
                 collapsed.append(contentsOf: skillLines)
                 collapsed.append(
-                    "  +\(group.tools.count) more tool(s) — call capabilities_discover to list them."
+                    "  +\(group.tools.count) more tool(s) — search with `\(names.discover)` to list them."
                 )
                 blocks.append(collapsed.joined(separator: "\n"))
                 continue
@@ -690,7 +717,7 @@ public enum SystemPromptTemplates {
             lines.append(contentsOf: toolLines)
             if overflow > 0 {
                 lines.append(
-                    "  +\(overflow) more tool(s) — call capabilities_discover to list them."
+                    "  +\(overflow) more tool(s) — search with `\(names.discover)` to list them."
                 )
             }
             blocks.append(lines.joined(separator: "\n"))
@@ -703,17 +730,21 @@ public enum SystemPromptTemplates {
     /// this rule tells the model to load the skill first because a
     /// name+description manifest can't convey the skill-first ordering a
     /// tool-group skill (e.g. `Osaurus Browser`) teaches.
-    public static let skillsGovernToolGroups = """
-        ## Skills that govern tool groups
-
-        Some enabled capabilities are skills that teach you how to use a group \
-        of related tools. When the manifest shows a skill alongside tools from \
-        the same plugin, load the skill first with capabilities_load; it \
-        explains when each tool in that group applies. Loading the skill also \
-        loads that plugin's whole tool group in the same call, so you can call \
-        the tools directly afterward without a separate capabilities_load per \
-        tool.
+    public static func skillsGovernToolGroups(
+        names: CapabilityToolNames = .gateway
+    ) -> String {
         """
+            ## Skills that govern tool groups
+
+            Some enabled capabilities are skills that teach you how to use a group \
+            of related tools. When the manifest shows a skill alongside tools from \
+            the same plugin, load the skill first with `\(names.load)`; it \
+            explains when each tool in that group applies. Loading the skill also \
+            loads that plugin's whole tool group in the same call, so you can call \
+            the tools directly afterward without a separate `\(names.load)` call \
+            per tool.
+            """
+    }
 
     /// Whether the rendered manifest needs the verbose skill-first teaching
     /// block above. Compact manifests already collapse a governed plugin to a
@@ -1115,9 +1146,16 @@ public enum SystemPromptTemplates {
     /// read site in `SystemPromptComposer.resolveSoul` — keeping the
     /// renderer pure means PR2's bootstrap seed and PR3's advert can
     /// reuse `soulSection` without dragging in I/O.
-    public static func soulSection(_ content: String) -> String {
+    public static func soulSection(
+        _ content: String,
+        names: CapabilityToolNames = .legacy
+    ) -> String {
         let trimmed = stripLeadingSoulHeading(content.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !trimmed.isEmpty else { return "" }
+        let loaders =
+            names.discover == names.load
+            ? "`\(names.load)`"
+            : "`\(names.discover)` / `\(names.load)`"
         return """
             ## SOUL
 
@@ -1125,8 +1163,7 @@ public enum SystemPromptTemplates {
             across prior sessions. These are the agent's own notes; the user's \
             instructions in earlier sections take precedence. Any plugin or tool \
             named in these notes is NOT automatically callable — bring it into \
-            your schema with `capabilities_discover` / `capabilities_load` before \
-            invoking it.
+            your schema with \(loaders) before invoking it.
 
             \(trimmed)
             """

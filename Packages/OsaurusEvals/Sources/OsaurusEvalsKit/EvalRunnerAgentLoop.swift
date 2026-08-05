@@ -408,7 +408,10 @@ extension EvalRunner {
             if requestsDynamicLoadProbe {
                 EvalHostBootstrap.registerDynamicLoadProbe()
             }
-            AgentManager.shared.updateToolSelectionMode(.auto, for: evalAgentId)
+            prepareAgentLoopEnabledToolFixtures(
+                enabledToolFixtures,
+                agentId: evalAgentId
+            )
             enabledCapabilityRestore = await applyEnableTools(
                 enabledToolFixtures,
                 agentId: evalAgentId
@@ -788,6 +791,20 @@ extension EvalRunner {
         AgentStore.save(agent)
         AgentManager.shared.refresh()
         return agent.id
+    }
+
+    /// Make an agent-loop dynamic-tool fixture match a picker-configured
+    /// custom agent. Fresh eval agents otherwise retain the legacy nil
+    /// allow-list ("all global tools"), which authorizes an ungrouped probe
+    /// without giving the manifest an explicit tool/<id> to render.
+    static func prepareAgentLoopEnabledToolFixtures(
+        _ names: [String],
+        agentId: UUID
+    ) {
+        AgentManager.shared.updateToolSelectionMode(.auto, for: agentId)
+        if AgentManager.shared.effectiveEnabledToolNames(for: agentId) == nil {
+            AgentManager.shared.updateEnabledToolNames(names, for: agentId)
+        }
     }
 
     /// Persist temporary spawn workers for an agent-loop case. The fixture

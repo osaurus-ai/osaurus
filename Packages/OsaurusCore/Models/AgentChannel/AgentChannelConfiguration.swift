@@ -1004,6 +1004,15 @@ struct AgentChannelConfiguration: Codable, Equatable, Sendable {
         bindings(agentId: agentId).filter(\.isUsable)
     }
 
+    /// Bindings usable by this agent from the exact run provenance. A missing
+    /// or lateral/external source is not authorized to publish proactively.
+    func usableBindings(agentId: UUID, source: SessionSource?) -> [AgentChannelBinding] {
+        guard let source,
+            let runSource = AgentChannelBindingRunSource(sessionSource: source)
+        else { return [] }
+        return usableBindings(agentId: agentId).filter { $0.allows(source: runSource) }
+    }
+
     private static func normalizedConnections(
         _ connections: [AgentChannelConnection]
     ) -> [AgentChannelConnection] {

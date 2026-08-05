@@ -93,6 +93,22 @@ struct SystemPromptComposerToolResolutionTests {
         FolderToolManager.shared._unregisterAllForTesting()
     }
 
+    private func capabilityManifestFixtureTool() -> SandboxPluginTool {
+        let plugin = SandboxPlugin(
+            name: "Capability Manifest Fixture \(UUID().uuidString.prefix(6))",
+            description: "Manifest composition fixture plugin"
+        )
+        return SandboxPluginTool(
+            spec: SandboxToolSpec(
+                id: "probe",
+                description: "Return a deterministic acknowledgement for manifest tests.",
+                parameters: [:],
+                run: "echo manifest-fixture"
+            ),
+            plugin: plugin
+        )
+    }
+
     /// Minimal snapshot for the gate tests that exercise `resolveTools`
     /// directly (no `AgentManager` round-trip). A fresh random `agentId`
     /// keeps it off the Default-agent allowlist path so the only thing
@@ -268,6 +284,164 @@ struct SystemPromptComposerToolResolutionTests {
             pluginQuery.map { $0.canonicalHashPayload() }
                 == unrelatedQuery.map { $0.canonicalHashPayload() }
         )
+    }
+
+    @Test("custom plain chat publishes an enabled-tool manifest for the unified gateway")
+    func customPlainChatPublishesGatewayAlignedManifest() async {
+        await DynamicCatalogTestLock.shared.run {
+            await withSandboxAgent(autonomous: false) { agentId in
+                let fixture = capabilityManifestFixtureTool()
+                ToolRegistry.shared.registerPluginTool(fixture)
+                ToolRegistry.shared.setEnabled(true, for: fixture.name)
+                defer { ToolRegistry.shared.unregister(names: [fixture.name]) }
+
+                AgentManager.shared.updateEnabledToolNames([fixture.name], for: agentId)
+                let context = await SystemPromptComposer.composeChatContext(
+                    agentId: agentId,
+                    executionMode: .none,
+                    model: "gpt-5"
+                )
+                let schemaNames = Set(context.tools.map(\.function.name))
+                let manifest = context.enabledManifest ?? ""
+                let sectionIds = context.manifest.sections.map(\.id)
+
+                #expect(schemaNames.contains("capabilities"))
+                #expect(!schemaNames.contains("capabilities_load"))
+                #expect(!schemaNames.contains("capabilities_discover"))
+                #expect(manifest.contains("tool/\(fixture.name)"))
+                #expect(sectionIds.contains("enabledManifest"))
+                #expect(context.prompt.contains("`capabilities`"))
+                #expect(!context.prompt.contains("capabilities_load"))
+                #expect(!context.prompt.contains("capabilities_discover"))
+            }
+        }
+    }
+
+    @Test("custom sandbox keeps manifest static and uses gateway vocabulary in SOUL")
+    func customSandboxPublishesGatewayAlignedManifestBeforeDynamics() async {
+        await DynamicCatalogTestLock.shared.run {
+            await withSandboxAgent(autonomous: true) { agentId in
+                let fixture = capabilityManifestFixtureTool()
+                ToolRegistry.shared.registerPluginTool(fixture)
+                ToolRegistry.shared.setEnabled(true, for: fixture.name)
+                defer { ToolRegistry.shared.unregister(names: [fixture.name]) }
+
+                AgentManager.shared.updateEnabledToolNames([fixture.name], for: agentId)
+                BuiltinSandboxTools.register(
+                    agentId: agentId.uuidString,
+                    agentName: "capability-manifest-sandbox",
+                    config: AutonomousExecConfig(enabled: true)
+                )
+                defer { ToolRegistry.shared.unregisterAllSandboxTools() }
+
+                let context = await SystemPromptComposer.composeChatContext(
+                    agentId: agentId,
+                    executionMode: .sandbox(hostRead: nil),
+                    model: "gpt-5",
+                    frozenSoul: "- use the assigned plugin when it applies"
+                )
+                let manifest = context.enabledManifest ?? ""
+                let sections = context.manifest.sections
+                let manifestIndex = sections.firstIndex { $0.id == "enabledManifest" }
+                let firstDynamicIndex = sections.firstIndex { $0.cacheability == .dynamic }
+
+                #expect(manifest.contains("tool/\(fixture.name)"))
+                #expect(manifestIndex != nil)
+                if let manifestIndex, let firstDynamicIndex {
+                    #expect(manifestIndex < firstDynamicIndex)
+                }
+                #expect(context.prompt.contains("bring it into your schema with `capabilities`"))
+                #expect(!context.prompt.contains("capabilities_load"))
+                #expect(!context.prompt.contains("capabilities_discover"))
+            }
+        }
+    }
+
+    @Test("custom sandbox never exposes channel publish without matching binding context")
+    func customSandboxChannelPublishSchemaMatchesDestinationContext() async {
+        await withSandboxAgent(autonomous: true) { agentId in
+            let previousDirectory = AgentChannelConfigurationStore.overrideDirectory
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("channel-publish-context-\(UUID().uuidString)")
+            AgentChannelConfigurationStore.overrideDirectory = directory
+            defer {
+                AgentChannelConfigurationStore.overrideDirectory = previousDirectory
+                try? FileManager.default.removeItem(at: directory)
+                ToolRegistry.shared.unregisterAllSandboxTools()
+            }
+
+            BuiltinSandboxTools.register(
+                agentId: agentId.uuidString,
+                agentName: "channel-publish-context",
+                config: AutonomousExecConfig(enabled: true)
+            )
+
+            func binding(
+                id: String,
+                sources: [AgentChannelBindingRunSource]
+            ) -> AgentChannelBinding {
+                AgentChannelBinding(
+                    id: id,
+                    agentId: agentId,
+                    connectionId: "discord",
+                    roomId: "room-1",
+                    label: "Calendar summaries",
+                    guidance: "Publish only completed calendar summaries.",
+                    allowedSources: sources,
+                    outboundMode: .autonomous
+                )
+            }
+
+            do {
+                try AgentChannelConfigurationStore.save(
+                    AgentChannelConfiguration(
+                        bindings: [binding(id: "schedule-only", sources: [.schedule])]
+                    )
+                )
+            } catch {
+                Issue.record("failed to save schedule-only channel fixture: \(error)")
+                return
+            }
+
+            let unavailable = await ChatExecutionContext.$currentSessionSource.withValue(.chat) {
+                await SystemPromptComposer.composeChatContext(
+                    agentId: agentId,
+                    executionMode: .sandbox(hostRead: nil),
+                    model: "gpt-5"
+                )
+            }
+            #expect(
+                !unavailable.tools.map(\.function.name)
+                    .contains(AgentChannelPublishTool.toolName)
+            )
+            #expect(!unavailable.manifest.sections.map(\.id).contains("channelDestinations"))
+
+            do {
+                try AgentChannelConfigurationStore.save(
+                    AgentChannelConfiguration(
+                        bindings: [binding(id: "chat-calendar", sources: [.chat])]
+                    )
+                )
+            } catch {
+                Issue.record("failed to save chat channel fixture: \(error)")
+                return
+            }
+
+            let available = await ChatExecutionContext.$currentSessionSource.withValue(.chat) {
+                await SystemPromptComposer.composeChatContext(
+                    agentId: agentId,
+                    executionMode: .sandbox(hostRead: nil),
+                    model: "gpt-5"
+                )
+            }
+            #expect(
+                available.tools.map(\.function.name)
+                    .contains(AgentChannelPublishTool.toolName)
+            )
+            #expect(available.manifest.sections.map(\.id).contains("channelDestinations"))
+            #expect(available.prompt.contains("binding_id: `chat-calendar`"))
+            #expect(available.prompt.contains("never invent destinations"))
+        }
     }
 
     @Test

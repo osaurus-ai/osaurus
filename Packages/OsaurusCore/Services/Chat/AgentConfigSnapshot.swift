@@ -180,10 +180,10 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// is what tells the model WHAT the granted corpora contain.
     public let knowledgeCollections: [KnowledgeGrantDescriptor]
 
-    /// True when this agent owns at least one usable proactive channel
-    /// destination binding (enabled, outbound mode != off). Gates the
-    /// narrow `agent_channel_publish` tool into the schema; the broad
-    /// `agent_channel_*` catalog stays deferred behind `capabilities_load`.
+    /// True when this agent owns at least one proactive channel destination
+    /// that is usable from the current run source. Gates the narrow
+    /// `agent_channel_publish` tool into the schema; the broad
+    /// `agent_channel_*` catalog stays deferred behind capability loading.
     public let hasChannelPublishDestinations: Bool
 
     public init(
@@ -353,14 +353,17 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             // prompt section can't race a mid-compose grant edit.
             knowledgeCollections: mgr.effectiveKnowledgeCollections(for: agentId)
                 .map(\.grantDescriptor),
-            // Usable = enabled with outbound mode != off, including
-            // automatic destinations derived from the channel setup the
-            // user already completed. Captured per compose so a binding
-            // (or a newly writable room) surfaces the publish tool on the
-            // next turn.
+            // Source-usable = enabled, outbound mode != off, and explicitly
+            // allowed from this run provenance. Keep the tool out when no
+            // matching Channel Destinations section can be rendered; otherwise
+            // the model has no valid binding_id and may mistake a capability id
+            // (for example plugin/osaurus.calendar) for a channel binding.
             hasChannelPublishDestinations: !AgentChannelAutoDestinationResolver
                 .effectiveConfiguration()
-                .usableBindings(agentId: agentId)
+                .usableBindings(
+                    agentId: agentId,
+                    source: ChatExecutionContext.currentSessionSource
+                )
                 .isEmpty
         )
     }

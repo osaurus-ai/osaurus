@@ -103,7 +103,7 @@ public enum EvalHostBootstrap {
     }
 }
 
-private struct EvalDynamicLoadProbeTool: OsaurusTool {
+private struct EvalDynamicLoadProbeTool: IndividuallyManifestedCapabilityTool {
     let name = EvalHostBootstrap.dynamicLoadProbeToolName
     let description =
         "Return a deterministic acknowledgement that a deferred dynamic tool loaded and executed."

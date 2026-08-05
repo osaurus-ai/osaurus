@@ -9,6 +9,10 @@ import Combine
 import Foundation
 import OSLog
 
+/// Marker for dynamic tools that intentionally have no plugin/provider group
+/// but still need an exact `tool/<name>` entry in capability manifests.
+protocol IndividuallyManifestedCapabilityTool: OsaurusTool {}
+
 /// Refusals here are security-relevant: a tool the request never exposed tried to run.
 enum ToolRegistryLogger {
     static let registry = Logger(subsystem: "ai.osaurus", category: "tool.registry")
@@ -2152,6 +2156,10 @@ public final class ToolRegistry: ObservableObject {
         if let mcp = tool as? MCPProviderTool { return mcp.providerName }
         if let sandbox = tool as? SandboxPluginTool { return sandbox.plugin.id }
         return nil
+    }
+
+    func manifestsIndividually(_ toolName: String) -> Bool {
+        toolsByName[toolName] is any IndividuallyManifestedCapabilityTool
     }
 
     private func availabilityRuntimeLabel(for toolName: String, builtIn: Bool) -> String {

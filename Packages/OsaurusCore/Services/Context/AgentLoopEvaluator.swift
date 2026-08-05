@@ -766,9 +766,8 @@ public enum AgentLoopEvaluator {
             additionalToolNames: []
         )
         let systemPrompt = composed.prompt
-        // Frozen for the whole run (deferred-schema policy, production
-        // parity): `capabilities_load` never patches the request schema.
         let toolSpecs = composed.tools
+        let toolScope = ToolExecutionScope(exposed: toolSpecs)
 
         // Shared loop budget wiring (same as chat/HTTP/plugin) with a
         // run-scoped sticky watermark.
@@ -852,7 +851,7 @@ public enum AgentLoopEvaluator {
                 iterations: iterations,
                 exit: exit,
                 systemPrompt: systemPrompt,
-                toolSchemaNames: composed.tools.map { $0.function.name },
+                toolSchemaNames: toolScope.modelVisibleSpecs.map { $0.function.name },
                 loopDurationMs: loopMs,
                 notices: noticesSeen,
                 stepDiagnostics: stepDiagnostics,
@@ -887,6 +886,7 @@ public enum AgentLoopEvaluator {
             stream: Bool,
             includeTools: Bool = true
         ) -> ChatCompletionRequest {
+            let iterationToolSpecs = toolScope.modelVisibleSpecs
             var request = ChatCompletionRequest(
                 model: resolvedModel,
                 messages: messages,
@@ -903,13 +903,14 @@ public enum AgentLoopEvaluator {
                 presence_penalty: nil,
                 stop: nil,
                 n: nil,
-                tools: (includeTools && !toolSpecs.isEmpty) ? toolSpecs : nil,
-                tool_choice: (includeTools && !toolSpecs.isEmpty) ? .auto : nil,
+                tools: (includeTools && !iterationToolSpecs.isEmpty)
+                    ? iterationToolSpecs : nil,
+                tool_choice: (includeTools && !iterationToolSpecs.isEmpty) ? .auto : nil,
                 session_id: sessionId
             )
             request.samplingParametersAreImplicit = true
             request.enable_thinking = enableThinking
-            request.isAgentRequest = includeTools && !toolSpecs.isEmpty
+            request.isAgentRequest = includeTools && !iterationToolSpecs.isEmpty
             return request
         }
 
@@ -1011,17 +1012,19 @@ public enum AgentLoopEvaluator {
         /// a card nobody can click.
         @Sendable func dispatchOne(_ inv: ServiceToolInvocation) async -> String {
             do {
-                return try await ChatExecutionContext.$currentFolderRoot.withValue(evalFolderRoot) {
-                    try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-                        try await ChatExecutionContext.$autoApproveToolPrompts.withValue(true) {
-                            // Headless idle ceiling for `shell_run` when the model
-                            // passed no `timeout`: there is no [Terminate] button
-                            // here, so a hung command would wedge the eval run.
-                            try await ChatExecutionContext.$defaultShellIdleTimeout.withValue(300) {
-                                try await ToolRegistry.shared.execute(
-                                    name: inv.toolName,
-                                    argumentsJSON: inv.jsonArguments
-                                )
+                return try await ChatExecutionContext.$toolExecutionScope.withValue(toolScope) {
+                    try await ChatExecutionContext.$currentFolderRoot.withValue(evalFolderRoot) {
+                        try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
+                            try await ChatExecutionContext.$autoApproveToolPrompts.withValue(true) {
+                                // Headless idle ceiling for `shell_run` when the model
+                                // passed no `timeout`: there is no [Terminate] button
+                                // here, so a hung command would wedge the eval run.
+                                try await ChatExecutionContext.$defaultShellIdleTimeout.withValue(300) {
+                                    try await ToolRegistry.shared.execute(
+                                        name: inv.toolName,
+                                        argumentsJSON: inv.jsonArguments
+                                    )
+                                }
                             }
                         }
                     }
@@ -1039,14 +1042,9 @@ public enum AgentLoopEvaluator {
             result: String
         ) async -> AgentLoopToolExecution {
             let isError = ToolEnvelope.isError(result)
-            // Deferred-schema policy (production parity): drain the load buffer
-            // — tools loaded via `capabilities_load` are callable immediately
-            // through the registry, and their schemas already ride in the tool
-            // result (`CapabilitiesLoadTool.loadedSchemaBlock`) — but the request
-            // schema stays FROZEN for the whole run (no mid-run `<tools>`
-            // rewrite), so the paged-KV prefix stays byte-stable.
             if inv.toolName == "capabilities_load" || inv.toolName == "capabilities" {
-                _ = await CapabilityLoadBuffer.shared.drain()
+                let loaded = await CapabilityLoadBuffer.shared.drain()
+                toolScope.activate(loaded)
             }
             history.append(
                 ChatMessage(role: "tool", content: result, tool_calls: nil, tool_call_id: callId)
