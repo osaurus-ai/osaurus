@@ -229,14 +229,19 @@ enum TelegramCredentialStore {
 
     @discardableResult
     static func saveBotToken(_ token: String) -> Bool {
+        saveBotTokenOutcome(token).isSuccess
+    }
+
+    static func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome {
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        return ToolSecretsKeychain.saveSecret(
+        guard !trimmed.isEmpty else { return .emptyValue }
+        let outcome = ToolSecretsKeychain.saveSecretOutcome(
             trimmed,
             id: botTokenKey,
             for: pluginId,
             agentId: Agent.defaultId
         )
+        return outcome == .success ? .success : .keychainFailure(outcome)
     }
 
     static func botToken() -> String? {
@@ -270,11 +275,24 @@ protocol TelegramCredentialStorage: Sendable {
     func botToken() -> String?
     func hasBotToken() -> Bool
     func deleteBotToken() -> Bool
+    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome
+}
+
+extension TelegramCredentialStorage {
+    // Bool-only stores (test doubles) fall back to an undetailed outcome; the
+    // Keychain-backed store overrides this with the real failure reason.
+    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome {
+        saveBotToken(token) ? .success : .unknownFailure
+    }
 }
 
 struct KeychainTelegramCredentialStorage: TelegramCredentialStorage {
     func saveBotToken(_ token: String) -> Bool {
         TelegramCredentialStore.saveBotToken(token)
+    }
+
+    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome {
+        TelegramCredentialStore.saveBotTokenOutcome(token)
     }
 
     func botToken() -> String? {

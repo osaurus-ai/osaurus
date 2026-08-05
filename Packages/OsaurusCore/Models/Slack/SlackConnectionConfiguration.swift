@@ -336,14 +336,19 @@ enum SlackCredentialStore {
     }
 
     private static func saveSecret(_ value: String, id: String) -> Bool {
+        saveSecretOutcome(value, id: id).isSuccess
+    }
+
+    static func saveSecretOutcome(_ value: String, id: String) -> SecretSaveOutcome {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        return ToolSecretsKeychain.saveSecret(
+        guard !trimmed.isEmpty else { return .emptyValue }
+        let outcome = ToolSecretsKeychain.saveSecretOutcome(
             trimmed,
             id: id,
             for: pluginId,
             agentId: Agent.defaultId
         )
+        return outcome == .success ? .success : .keychainFailure(outcome)
     }
 
     private static func secret(id: String) -> String? {
@@ -392,9 +397,25 @@ protocol SlackCredentialStorage: Sendable {
     func saveAppToken(_ token: String, teamId: String) -> Bool
     func appToken(teamId: String) -> String?
     func deleteAppToken(teamId: String) -> Bool
+    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome
+    func saveSigningSecretOutcome(_ secret: String) -> SecretSaveOutcome
+    func saveAppTokenOutcome(_ token: String) -> SecretSaveOutcome
 }
 
 extension SlackCredentialStorage {
+    // Bool-only stores (test doubles) fall back to an undetailed outcome; the
+    // Keychain-backed store overrides these with the real failure reason.
+    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome {
+        saveBotToken(token) ? .success : .unknownFailure
+    }
+
+    func saveSigningSecretOutcome(_ secret: String) -> SecretSaveOutcome {
+        saveSigningSecret(secret) ? .success : .unknownFailure
+    }
+
+    func saveAppTokenOutcome(_ token: String) -> SecretSaveOutcome {
+        saveAppToken(token) ? .success : .unknownFailure
+    }
     func saveBotToken(_: String, teamId _: String) -> Bool { false }
     func botToken(teamId _: String) -> String? { nil }
     func hasBotToken(teamId _: String) -> Bool { false }
@@ -407,6 +428,18 @@ extension SlackCredentialStorage {
 struct KeychainSlackCredentialStorage: SlackCredentialStorage {
     func saveBotToken(_ token: String) -> Bool {
         SlackCredentialStore.saveBotToken(token)
+    }
+
+    func saveBotTokenOutcome(_ token: String) -> SecretSaveOutcome {
+        SlackCredentialStore.saveSecretOutcome(token, id: SlackCredentialStore.botTokenKey)
+    }
+
+    func saveSigningSecretOutcome(_ secret: String) -> SecretSaveOutcome {
+        SlackCredentialStore.saveSecretOutcome(secret, id: SlackCredentialStore.signingSecretKey)
+    }
+
+    func saveAppTokenOutcome(_ token: String) -> SecretSaveOutcome {
+        SlackCredentialStore.saveSecretOutcome(token, id: SlackCredentialStore.appTokenKey)
     }
 
     func botToken() -> String? {

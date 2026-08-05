@@ -442,14 +442,12 @@ final class TelegramConnectionService: @unchecked Sendable {
     @discardableResult
     func saveBotToken(_ token: String) throws -> Bool {
         clearCachedBotIdentity()
-        let saved = credentialStore.saveBotToken(token)
-        if !saved {
-            throw TelegramConnectionServiceError.configurationSaveFailed(
-                "The token was empty or Keychain storage was unavailable."
-            )
+        let outcome = credentialStore.saveBotTokenOutcome(token)
+        if let failure = outcome.failureDescription(label: "token") {
+            throw TelegramConnectionServiceError.configurationSaveFailed(failure)
         }
         AgentChannelCredentialAvailability.shared.invalidate(.telegram)
-        return saved
+        return true
     }
 
     @discardableResult
@@ -471,12 +469,10 @@ final class TelegramConnectionService: @unchecked Sendable {
     func saveBotTokenOffMain(_ token: String) async throws {
         clearCachedBotIdentity()
         let store = credentialStore
-        let saved = await Keychain.perform { store.saveBotToken(token) }
+        let outcome = await Keychain.perform { store.saveBotTokenOutcome(token) }
         AgentChannelCredentialAvailability.shared.invalidate(.telegram)
-        if !saved {
-            throw TelegramConnectionServiceError.configurationSaveFailed(
-                "The token was empty or Keychain storage was unavailable."
-            )
+        if let failure = outcome.failureDescription(label: "token") {
+            throw TelegramConnectionServiceError.configurationSaveFailed(failure)
         }
     }
 

@@ -19,14 +19,23 @@ public enum ToolSecretsKeychain {
 
     @discardableResult
     public static func saveSecret(_ value: String, id: String, for pluginId: String, agentId: UUID) -> Bool {
+        saveSecretOutcome(value, id: id, for: pluginId, agentId: agentId).isSuccess
+    }
+
+    /// Typed variant of `saveSecret` so callers can surface the exact
+    /// Keychain failure (locked vs. access denied vs. OSStatus) instead of a
+    /// generic "storage was unavailable".
+    static func saveSecretOutcome(
+        _ value: String, id: String, for pluginId: String, agentId: UUID
+    ) -> KeychainMutationOutcome {
         let account = agentAccount(agentId: agentId, pluginId: pluginId, key: id)
         if KeychainQueryHelpers.usesInMemoryKeychainStoreForTests {
             testStoreLock.withLock { testStore[account] = value }
-            return true
+            return .success
         }
-        guard let valueData = value.data(using: .utf8) else { return false }
-        if KeychainQueryHelpers.disablesKeychainForProcess { return false }
-        return Keychain.write(service: service, account: account, data: valueData)
+        guard let valueData = value.data(using: .utf8) else { return .failure(errSecParam) }
+        if KeychainQueryHelpers.disablesKeychainForProcess { return .disabled }
+        return Keychain.writeItem(service: service, account: account, data: valueData)
     }
 
     public static func getSecret(id: String, for pluginId: String, agentId: UUID) -> String? {

@@ -406,14 +406,12 @@ final class SlackConnectionService: @unchecked Sendable {
 
     @discardableResult
     func saveBotToken(_ token: String) throws -> Bool {
-        let saved = credentialStore.saveBotToken(token)
-        if !saved {
-            throw SlackConnectionServiceError.configurationSaveFailed(
-                "The bot token was empty or Keychain storage was unavailable."
-            )
+        let outcome = credentialStore.saveBotTokenOutcome(token)
+        if let failure = outcome.failureDescription(label: "bot token") {
+            throw SlackConnectionServiceError.configurationSaveFailed(failure)
         }
         AgentChannelCredentialAvailability.shared.invalidate(.slack)
-        return saved
+        return true
     }
 
     @discardableResult
@@ -428,13 +426,11 @@ final class SlackConnectionService: @unchecked Sendable {
 
     @discardableResult
     func saveSigningSecret(_ secret: String) throws -> Bool {
-        let saved = credentialStore.saveSigningSecret(secret)
-        if !saved {
-            throw SlackConnectionServiceError.configurationSaveFailed(
-                "The signing secret was empty or Keychain storage was unavailable."
-            )
+        let outcome = credentialStore.saveSigningSecretOutcome(secret)
+        if let failure = outcome.failureDescription(label: "signing secret") {
+            throw SlackConnectionServiceError.configurationSaveFailed(failure)
         }
-        return saved
+        return true
     }
 
     @discardableResult
@@ -448,13 +444,11 @@ final class SlackConnectionService: @unchecked Sendable {
 
     @discardableResult
     func saveAppToken(_ token: String) throws -> Bool {
-        let saved = credentialStore.saveAppToken(token)
-        if !saved {
-            throw SlackConnectionServiceError.configurationSaveFailed(
-                "The app-level token was empty or Keychain storage was unavailable."
-            )
+        let outcome = credentialStore.saveAppTokenOutcome(token)
+        if let failure = outcome.failureDescription(label: "app-level token") {
+            throw SlackConnectionServiceError.configurationSaveFailed(failure)
         }
-        return saved
+        return true
     }
 
     @discardableResult
@@ -500,14 +494,23 @@ final class SlackConnectionService: @unchecked Sendable {
     ) async throws {
         let store = credentialStore
         let failure: String? = await Keychain.perform {
-            if let botToken, !store.saveBotToken(botToken) {
-                return "The bot token was empty or Keychain storage was unavailable."
+            if let botToken,
+                let failure = store.saveBotTokenOutcome(botToken)
+                    .failureDescription(label: "bot token")
+            {
+                return failure
             }
-            if let signingSecret, !store.saveSigningSecret(signingSecret) {
-                return "The signing secret was empty or Keychain storage was unavailable."
+            if let signingSecret,
+                let failure = store.saveSigningSecretOutcome(signingSecret)
+                    .failureDescription(label: "signing secret")
+            {
+                return failure
             }
-            if let appToken, !store.saveAppToken(appToken) {
-                return "The app-level token was empty or Keychain storage was unavailable."
+            if let appToken,
+                let failure = store.saveAppTokenOutcome(appToken)
+                    .failureDescription(label: "app-level token")
+            {
+                return failure
             }
             return nil
         }
