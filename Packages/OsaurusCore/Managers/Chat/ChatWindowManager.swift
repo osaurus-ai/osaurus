@@ -274,6 +274,25 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
     }
 
+    /// Start a new chat in the frontmost chat window, mirroring the sidebar
+    /// "New Chat" button. Targets the last-focused window as long as it still
+    /// exists, even when hidden, and brings it to the front first. Returns
+    /// false when no chat window exists so the caller can fall back to
+    /// creating a new window.
+    @discardableResult
+    public func startNewChatInLastFocusedWindow() -> Bool {
+        let targetId: UUID? =
+            if let lastId = lastFocusedWindowId, windowStates[lastId] != nil {
+                lastId
+            } else {
+                windowStates.keys.first
+            }
+        guard let targetId, let state = windowStates[targetId] else { return false }
+        showWindow(id: targetId)
+        state.startNewChat()
+        return true
+    }
+
     /// Open (or focus) a chat window and select the paired remote agent that
     /// owns `providerId`, so the conversation routes to that agent instead of
     /// whatever the window was last pointed at. Mirrors the toolbar's
