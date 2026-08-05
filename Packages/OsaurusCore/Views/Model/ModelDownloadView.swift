@@ -2262,15 +2262,9 @@ struct HuggingFaceImportSheet: View {
                 errorMessage = L(
                     "That OsaurusAI model isn't in the registry. Pick one from the Recommended list."
                 )
-            } else if !repoId.lowercased().hasPrefix("mlx-community/")
-                && !ModelManager.nameLooksLikeMLX(repoId)
-            {
-                errorMessage = L(
-                    "Repos outside mlx-community must advertise an MLX-native artifact family in the repo name, such as MLX, MXFP, JANG, JANGTQ, or TurboQuant."
-                )
             } else {
                 errorMessage = L(
-                    "This repo did not pass the MLX-compatible metadata/file check. Use an MLX, MXFP, JANG, JANGTQ, or TurboQuant repo with config, tokenizer, and model weights."
+                    "This repo could not be verified as an MLX-compatible model. Private repos require a connected Hugging Face token with access; all repos need config, tokenizer, and model weights."
                 )
             }
         }

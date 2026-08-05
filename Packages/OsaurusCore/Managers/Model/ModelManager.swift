@@ -479,10 +479,11 @@ final class ModelManager: NSObject, ObservableObject {
     /// Resolve a model only if the Hugging Face repository is MLX-compatible.
     /// Policy:
     ///   - `mlx-community/*`: trust the org; HF compat check confirms.
-    ///   - `OsaurusAI/*`: must already exist in the registry (curated or org-fetched)
-    ///     unknown OsaurusAI ids are rejected.
-    ///   - Other orgs: require an MLX/vMLX artifact-family hint in the repo id
-    ///     AND HF metadata confirming MLX compatibility.
+    ///   - `OsaurusAI/*`: public repos must already exist in the registry;
+    ///     authenticated private repos may be imported directly.
+    ///   - Other orgs: authenticated HF metadata must confirm MLX compatibility.
+    ///     Private repos may use their actual file layout instead of a public
+    ///     naming/tag convention.
     func resolveModelIfMLXCompatible(byRepoId repoId: String) async -> MLXModel? {
         let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -490,17 +491,12 @@ final class ModelManager: NSObject, ObservableObject {
         if let existing = findExistingModel(id: trimmed).model { return existing }
 
         let lower = trimmed.lowercased()
-        if lower.hasPrefix("osaurusai/") {
-            // Not in registry (would have returned above) — reject.
+        let compatibility = await HuggingFaceService.shared.mlxCompatibility(repoId: trimmed)
+        guard compatibility.isCompatible else { return nil }
+        if lower.hasPrefix("osaurusai/"), !compatibility.isPrivate {
+            // Unknown public OsaurusAI repos remain registry-gated so other
+            // product bundles do not leak into the language-model catalog.
             return nil
-        }
-
-        if lower.hasPrefix("mlx-community/") {
-            guard await HuggingFaceService.shared.isMLXCompatible(repoId: trimmed) else { return nil }
-        } else {
-            guard Self.nameLooksLikeMLX(trimmed),
-                await HuggingFaceService.shared.isMLXCompatible(repoId: trimmed)
-            else { return nil }
         }
 
         let model = MLXModel(
@@ -1522,6 +1518,7 @@ extension ModelManager {
     fileprivate static func requestHFModels(at url: URL) async throws -> [HFModel] {
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        HuggingFaceAuth.authorize(&request)
         let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             return []

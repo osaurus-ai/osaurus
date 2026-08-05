@@ -11,16 +11,33 @@ import Foundation
 actor HuggingFaceService {
     static let shared = HuggingFaceService()
 
-    struct RepoFile: Decodable {
+    struct RepoFile: Decodable, Sendable {
         let rfilename: String
         let size: Int64?
     }
 
     // Minimal model metadata from HF
-    struct ModelMeta: Decodable {
+    struct ModelMeta: Decodable, Sendable {
         let id: String
         let tags: [String]?
         let siblings: [RepoFile]?
+        let isPrivate: Bool?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case tags
+            case siblings
+            case isPrivate = "private"
+        }
+    }
+
+    /// Result of the authenticated metadata check used by the import flow.
+    /// Visibility matters because unknown public OsaurusAI repos remain
+    /// registry-gated, while private repos owned by the token holder cannot
+    /// appear in the public registry and must be importable directly.
+    struct MLXCompatibility: Sendable {
+        let isCompatible: Bool
+        let isPrivate: Bool
     }
 
     // MARK: - Rich Model Details
@@ -453,21 +470,41 @@ actor HuggingFaceService {
     /// Falls back to MLX/vMLX artifact-family id hints and required file presence
     /// when tags are unavailable.
     func isMLXCompatible(repoId: String) async -> Bool {
+        await mlxCompatibility(repoId: repoId).isCompatible
+    }
+
+    /// Authenticated compatibility + visibility probe for direct imports.
+    /// Private repos may not advertise a public MLX tag or naming convention,
+    /// so a complete MLX bundle is accepted based on its actual files.
+    func mlxCompatibility(repoId: String) async -> MLXCompatibility {
         let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
+        guard !trimmed.isEmpty else {
+            return MLXCompatibility(isCompatible: false, isPrivate: false)
+        }
         let lower = trimmed.lowercased()
 
         // Fetch model metadata with tags and top-level file listing
         guard let meta = await fetchModelMeta(repoId: trimmed) else {
             // Network failure: conservative allowance for mlx-community repos
-            if lower.hasPrefix("mlx-community/") { return true }
-            return false
+            return MLXCompatibility(
+                isCompatible: lower.hasPrefix("mlx-community/"),
+                isPrivate: false
+            )
         }
+
+        return evaluateMLXCompatibility(repoId: trimmed, meta: meta)
+    }
+
+    /// Pure metadata evaluation kept separate from the network probe so the
+    /// private-repository contract can be covered deterministically.
+    func evaluateMLXCompatibility(repoId: String, meta: ModelMeta) -> MLXCompatibility {
+        let lower = repoId.lowercased()
+        let isPrivate = meta.isPrivate == true
 
         // Strong signal: tags explicitly indicate MLX
         if let tags = meta.tags?.map({ $0.lowercased() }) {
             if tags.contains("mlx") || tags.contains("apple-mlx") || tags.contains("library:mlx") {
-                return true
+                return MLXCompatibility(isCompatible: true, isPrivate: isPrivate)
             }
         }
 
@@ -475,15 +512,22 @@ actor HuggingFaceService {
         // artifacts and core files exist. This covers JANG/JANGTQ/MXFP repos
         // whose display names may not include the literal `MLX` token.
         if Self.repoIdHasMLXArtifactHint(lower) && hasRequiredFiles(meta: meta) {
-            return true
+            return MLXCompatibility(isCompatible: true, isPrivate: isPrivate)
         }
 
         // As a last resort, trust curated org with required files
         if lower.hasPrefix("mlx-community/") && hasRequiredFiles(meta: meta) {
-            return true
+            return MLXCompatibility(isCompatible: true, isPrivate: isPrivate)
         }
 
-        return false
+        // Private repos are intentionally absent from public discovery and
+        // often omit Hub card tags. The authenticated file listing is the
+        // authoritative signal for a directly imported private bundle.
+        if isPrivate && hasRequiredFiles(meta: meta) {
+            return MLXCompatibility(isCompatible: true, isPrivate: true)
+        }
+
+        return MLXCompatibility(isCompatible: false, isPrivate: isPrivate)
     }
 
     /// Fetch comprehensive model details from Hugging Face
