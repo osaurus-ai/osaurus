@@ -25,6 +25,14 @@ public struct ChatWindowInfo: Identifiable, Sendable {
     }
 }
 
+/// Behavior of the ⌘N shortcut in the File menu. Off (default) keeps ⌘N on
+/// "New Window". On, ⌘N starts a new chat in the frontmost chat window (the
+/// sidebar "New Chat" action) and "New Window" moves to ⇧⌘N. Toggled in
+/// Chat settings, read by the app's File menu commands.
+public enum NewChatShortcutSetting {
+    public static let defaultsKey = "chatCmdNStartsNewChatInCurrentWindow"
+}
+
 /// Manages multiple chat windows in the application
 @MainActor
 public final class ChatWindowManager: NSObject, ObservableObject {
