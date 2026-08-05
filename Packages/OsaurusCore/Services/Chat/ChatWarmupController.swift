@@ -15,6 +15,7 @@
 //
 
 import Foundation
+import os
 
 /// Payload assembled from the same composition path as a real send, minus
 /// the in-flight user turn.
@@ -1023,7 +1024,19 @@ final class ChatWarmupController: ObservableObject {
         // later speculative re-warm and regain permission to evict a model.
         let userIntent = consumeUserIntent(for: payload.model)
         if !userIntent {
-            let hasOtherResidentModel = await hasResidentModelOther(payload.model)
+            // The residency probe can suspend inside runtime code that never
+            // observes cooperative cancellation, and this whole function holds
+            // `warmupExecutionLock`. A `reset()` (chat cleared, agent switch)
+            // must still be able to unblock the NEXT warm-up, so race the
+            // probe against this task's cancellation and abandon the stale
+            // probe instead of waiting it out; its late result resumes nobody.
+            let check = hasResidentModelOther
+            let model = payload.model
+            guard
+                let hasOtherResidentModel = await Self.valueOrCancellation({
+                    await check(model)
+                })
+            else { return }
             guard !Task.isCancelled else { return }
             guard shouldAttemptWarmup(session: session) else { return }
 
@@ -1052,6 +1065,45 @@ final class ChatWarmupController: ObservableObject {
         if inFlightWarmupID == id {
             inFlightWarmup = nil
             inFlightWarmupID = nil
+        }
+    }
+
+    /// Await `operation`, but resume immediately with `nil` if the current
+    /// task is cancelled while it is suspended. The operation runs as an
+    /// unstructured task; on cancellation it is cancelled (best effort) and
+    /// abandoned — a late result finds the continuation already taken and
+    /// resumes nobody. Same one-shot race as `valueWithDeadline`
+    /// (AsyncDeadline.swift), minus the timer: the only unblocking event
+    /// needed here is the caller's own cancellation.
+    private nonisolated static func valueOrCancellation<T: Sendable>(
+        _ operation: @escaping @Sendable () async -> T
+    ) async -> T? {
+        let work = Task { await operation() }
+        let state = OSAllocatedUnfairLock<CheckedContinuation<T?, Never>?>(initialState: nil)
+
+        @Sendable func take() -> CheckedContinuation<T?, Never>? {
+            state.withLock { held in
+                defer { held = nil }
+                return held
+            }
+        }
+
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (cont: CheckedContinuation<T?, Never>) in
+                if Task.isCancelled {
+                    work.cancel()
+                    cont.resume(returning: nil)
+                    return
+                }
+                state.withLock { $0 = cont }
+                Task {
+                    let value = await work.value
+                    take()?.resume(returning: value)
+                }
+            }
+        } onCancel: {
+            work.cancel()
+            take()?.resume(returning: nil)
         }
     }
 
