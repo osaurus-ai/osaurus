@@ -155,7 +155,7 @@ public enum SettingsSearchIndex {
             id: "settings.chat.cmdNNewChat",
             tab: .chat,
             section: "Chat",
-            title: "⌘N Starts a New Chat in the Current Window",
+            title: "⌘+N Starts a New Chat in the Current Window",
             keywords: ["cmd n", "new chat", "shortcut", "keyboard", "new window", "hotkey"]
         ),
         .init(
