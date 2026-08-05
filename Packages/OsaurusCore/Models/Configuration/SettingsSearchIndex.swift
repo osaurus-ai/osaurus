@@ -152,6 +152,13 @@ public enum SettingsSearchIndex {
             keywords: ["title", "auto title", "rename", "chat name", "summary"]
         ),
         .init(
+            id: "settings.chat.cmdNNewChat",
+            tab: .chat,
+            section: "Chat",
+            title: "⌘N Starts a New Chat in the Current Window",
+            keywords: ["cmd n", "new chat", "shortcut", "keyboard", "new window", "hotkey"]
+        ),
+        .init(
             id: "settings.chat.compactionModel",
             tab: .chat,
             section: "Chat",

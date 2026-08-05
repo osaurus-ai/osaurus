@@ -75,6 +75,14 @@ struct ChatSettingsView: View {
     /// debounced save baseline.
     @AppStorage(ContentBlock.ActivityRollupSetting.defaultsKey)
     private var activityRollupEnabled: Bool = false
+    /// Make ⌘N start a new chat in the frontmost chat window (the sidebar
+    /// "New Chat" action) instead of opening a new window; "New Window" then
+    /// moves to ⇧⌘N. Default off to preserve the historical ⌘N behavior.
+    /// Bound to `UserDefaults` key `NewChatShortcutSetting.defaultsKey`,
+    /// read by the app's File menu commands. Applied immediately, so it's
+    /// excluded from the debounced save baseline.
+    @AppStorage(NewChatShortcutSetting.defaultsKey)
+    private var cmdNStartsNewChatInCurrentWindow: Bool = false
     /// Model that runs LLM context compaction (summarizing older messages
     /// when a chat outgrows its context window). Same provider/name split
     /// as the Core Model picker; empty = "ask on first use" (the first-run
@@ -346,6 +354,14 @@ struct ChatSettingsView: View {
                         "Run every tool call without asking for approval, including tools that would normally show a confirmation card. Convenient for multi-step agent workflows, but tools can execute code and modify files. Enable only if you trust the tools you have installed. Per-tool Deny policies still apply.",
                     isOn: autoAllowAllToolsBinding
                 )
+
+                SettingsToggle(
+                    title: L("⌘N Starts a New Chat in the Current Window"),
+                    description:
+                        "Make ⌘N start a new chat in the frontmost chat window, like the sidebar's New Chat button. New Window moves to ⇧⌘N, matching other chat apps. Turn off to keep ⌘N opening a new window.",
+                    isOn: $cmdNStartsNewChatInCurrentWindow
+                )
+                .settingsLandingAnchor("settings.chat.cmdNNewChat")
 
                 SettingsToggle(
                     title: L("Clipboard Monitoring"),
