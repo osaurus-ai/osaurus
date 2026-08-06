@@ -589,24 +589,27 @@ public enum SystemPromptTemplates {
             intro = """
                 ## Enabled capabilities
 
-                Enabled for this session. Load a plugin with `\(names.load)` \
-                using the exact `plugin/<id>` printed below; `tool/` and \
-                `skill/` ids load individually. Never copy an example or invent \
-                an id. List frozen at session start — search with \
-                `\(names.discover)` to find anything installed since.
+                Entries below are capability ids, not callable function names. \
+                Load a plugin by calling `\(names.load)` with its `ids` array \
+                containing the exact `plugin/<id>` printed below; `tool/` and \
+                `skill/` ids load individually the same way. Never call an id \
+                as a function, copy an example, or invent an id. List frozen at \
+                session start — search with `\(names.discover)` only when no \
+                exact listed id fits or to find anything installed since.
                 """
         } else {
             intro = """
                 ## Enabled capabilities
 
                 These capabilities are enabled for this session. Each line begins \
-                with its loadable id; some are already in your tool schema, others \
-                must be loaded first. To load one, call `\(names.load)` with its \
-                id exactly as shown \
+                with a capability id, not a callable function name; some are already \
+                in your tool schema, others must be loaded first. To load one, call \
+                `\(names.load)` with its id exactly as shown \
                 (e.g. `\(names.load)({"ids": ["tool/<name>"]})`). This list is \
                 frozen at session start; capabilities installed after that won't \
                 appear here but searching with `\(names.discover)` still finds \
-                them — check it before declaring something unavailable.
+                them — use search only when no exact listed id fits, and check it \
+                before declaring something unavailable.
 
                 Worked example — User: "You have a list_messages tool." If \
                 `tool/list_messages` is listed here, confirm it and load it with \

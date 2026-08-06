@@ -149,8 +149,10 @@ actor CapabilityLoadBuffer {
 final class CapabilitiesTool: OsaurusTool, @unchecked Sendable {
     let name = "capabilities"
     let description =
-        "Find or load an optional capability. Pass `query` to search the enabled "
-        + "capability index. Pass exact returned `ids` to load them into this session."
+        "Search for or load optional capabilities. Values beginning `plugin/`, `tool/`, "
+        + "`skill/`, or `method/` are capability IDs for the `ids` argument, never callable "
+        + "function names. When an exact ID is listed or returned, pass it in `ids`; use "
+        + "`query` only when no exact available ID fits."
 
     let agentId: UUID?
 
@@ -164,12 +166,16 @@ final class CapabilitiesTool: OsaurusTool, @unchecked Sendable {
         "properties": .object([
             "query": .object([
                 "type": .string("string"),
-                "description": .string("What optional capability is needed"),
+                "description": .string(
+                    "What optional capability is needed; use only when no exact capability ID is available"
+                ),
             ]),
             "ids": .object([
                 "type": .string("array"),
                 "items": .object(["type": .string("string")]),
-                "description": .string("Exact IDs returned by an earlier search"),
+                "description": .string(
+                    "Exact capability IDs from the enabled list or an earlier search; IDs are values, not function names"
+                ),
             ]),
         ]),
     ])

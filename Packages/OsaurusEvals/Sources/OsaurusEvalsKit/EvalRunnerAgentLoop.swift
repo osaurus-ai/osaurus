@@ -252,6 +252,9 @@ extension EvalRunner {
         let requestsDynamicLoadProbe = enabledToolFixtures.contains(
             EvalHostBootstrap.dynamicLoadProbeToolName
         )
+        let requestsGroupedLoadProbe = enabledToolFixtures.contains(
+            EvalHostBootstrap.groupedLoadProbeToolName
+        )
 
         var evalAgentId: UUID?
         if let sandboxFixture {
@@ -408,6 +411,9 @@ extension EvalRunner {
             if requestsDynamicLoadProbe {
                 EvalHostBootstrap.registerDynamicLoadProbe()
             }
+            if requestsGroupedLoadProbe {
+                EvalHostBootstrap.registerGroupedLoadProbe()
+            }
             prepareAgentLoopEnabledToolFixtures(
                 enabledToolFixtures,
                 agentId: evalAgentId
@@ -430,6 +436,7 @@ extension EvalRunner {
             enableThinking: exp.enableThinking,
             stopOnToolRejection: exp.stopOnToolRejection ?? false,
             sandbox: sandboxMode,
+            useHostFolder: testCase.fixtures.useHostFolder ?? true,
             cancelAfterToolCalls: exp.cancelAfterToolCalls
         )
         if let enabledCapabilityRestore, let evalAgentId {
@@ -437,6 +444,9 @@ extension EvalRunner {
         }
         if requestsDynamicLoadProbe {
             EvalHostBootstrap.unregisterDynamicLoadProbe()
+        }
+        if requestsGroupedLoadProbe {
+            EvalHostBootstrap.unregisterGroupedLoadProbe()
         }
 
         var verdicts: [CapabilityClaimsJudgement] = []

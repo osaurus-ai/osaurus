@@ -40,6 +40,7 @@
       "agent_loop.cancel-preserves-existing-file",
       "agent_loop.capabilities-load-midrun",
       "agent_loop.capabilities-natural-load",
+      "agent_loop.capabilities-plugin-group-load",
       "agent_loop.clarify-before-destructive",
       "agent_loop.clarify-on-ambiguity",
       "agent_loop.clear-task-no-clarify-stall",

@@ -132,6 +132,9 @@ struct CapabilitiesToolTests {
         #expect(properties["query"] != nil)
         #expect(properties["ids"] != nil)
         #expect(properties["list"] == nil)
+        #expect(tool.description.contains("capability IDs for the `ids` argument"))
+        #expect(tool.description.contains("never callable function names"))
+        #expect(tool.description.contains("use `query` only when no exact available ID fits"))
     }
 
     @Test func rejectsCallsWithoutQueryOrIds() async throws {

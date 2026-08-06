@@ -317,6 +317,60 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
+    @Test("compact Gemma prompt distinguishes plugin ids from callable tools")
+    func compactGemmaPromptTeachesGatewayLoadShape() async {
+        await DynamicCatalogTestLock.shared.run {
+            await withSandboxAgent(autonomous: false) { agentId in
+                let fixture = capabilityManifestFixtureTool()
+                ToolRegistry.shared.registerPluginTool(fixture)
+                ToolRegistry.shared.setEnabled(true, for: fixture.name)
+                defer { ToolRegistry.shared.unregister(names: [fixture.name]) }
+
+                AgentManager.shared.updateEnabledToolNames([fixture.name], for: agentId)
+                // `ContextSizeResolver` intentionally treats a cold model-cache
+                // miss as verbose. Seed a real temporary local model config so
+                // this exercises Gemma 12B's production compact branch without
+                // a process-wide experiment override that could race other
+                // suites.
+                let org = "CapabilityPromptTests-\(UUID().uuidString)"
+                let repo = "gemma-4-12B-it-MXFP8"
+                let modelId = "\(org)/\(repo)"
+                let orgDirectory = DirectoryPickerService.effectiveModelsDirectory()
+                    .appendingPathComponent(org, isDirectory: true)
+                let modelDirectory = orgDirectory.appendingPathComponent(repo, isDirectory: true)
+                try? FileManager.default.createDirectory(
+                    at: modelDirectory,
+                    withIntermediateDirectories: true
+                )
+                let config = #"{"model_type":"gemma4","max_position_embeddings":32768}"#
+                try? Data(config.utf8).write(
+                    to: modelDirectory.appendingPathComponent("config.json")
+                )
+                defer { try? FileManager.default.removeItem(at: orgDirectory) }
+                guard ModelInfo.load(modelId: modelId) != nil else {
+                    Issue.record("failed to seed compact Gemma model metadata")
+                    return
+                }
+                AgentManager.shared.updateDefaultModel(for: agentId, model: modelId)
+
+                let context = await SystemPromptComposer.composeChatContext(
+                    agentId: agentId,
+                    executionMode: .none,
+                    model: modelId
+                )
+                let schemaNames = Set(context.tools.map(\.function.name))
+                let manifest = context.enabledManifest ?? ""
+
+                #expect(schemaNames.contains("capabilities"))
+                #expect(!schemaNames.contains("plugin/\(fixture.plugin.id)"))
+                #expect(manifest.contains("plugin/\(fixture.plugin.id)"))
+                #expect(manifest.contains("capability ids, not callable function names"))
+                #expect(manifest.contains("with its `ids` array"))
+                #expect(manifest.contains("Never call an id as a function"))
+            }
+        }
+    }
+
     @Test("custom sandbox keeps manifest static and uses gateway vocabulary in SOUL")
     func customSandboxPublishesGatewayAlignedManifestBeforeDynamics() async {
         await DynamicCatalogTestLock.shared.run {
