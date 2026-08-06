@@ -299,6 +299,8 @@ struct RemoteProviderModelDiscoveryTests {
                 {"id": "both-keys", "max_model_len": 32768, "context_length": 131072},
                 {"id": "openrouter-style", "context_length": 131072},
                 {"id": "llamacpp-style", "max_context_length": 8192},
+                {"id": "gateway-style", "context_window": 200000},
+                {"id": "window-loses-to-len", "context_window": 200000, "max_model_len": 32768},
                 {"id": "zero-window", "context_length": 0}
               ]
             }
@@ -316,6 +318,8 @@ struct RemoteProviderModelDiscoveryTests {
                 "both-keys": 32768,
                 "openrouter-style": 131072,
                 "llamacpp-style": 8192,
+                "gateway-style": 200_000,
+                "window-loses-to-len": 32768,
             ]
         )
     }

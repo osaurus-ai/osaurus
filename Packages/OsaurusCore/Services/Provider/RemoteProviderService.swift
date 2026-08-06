@@ -5339,8 +5339,9 @@ extension RemoteProviderService {
     /// endpoint, alongside the discovered ids. Servers outside the strict
     /// OpenAI schema commonly report the window under a vendor key (vLLM's
     /// `max_model_len`, OpenRouter/LM Studio's `context_length`, llama.cpp's
-    /// `max_context_length`); honoring it keeps the chat budget from
-    /// collapsing to the 128k unknown-metadata fallback.
+    /// `max_context_length`, gateway-style `context_window`); honoring it
+    /// keeps the chat budget from collapsing to the 128k unknown-metadata
+    /// fallback.
     struct OpenAICompatibleModelDiscovery: Sendable {
         let models: [String]
         /// Model id -> advertised context window in tokens. Only ids whose
@@ -5467,12 +5468,14 @@ extension RemoteProviderService {
         let maxModelLen: Int?
         let contextLength: Int?
         let maxContextLength: Int?
+        let contextWindow: Int?
 
         private enum CodingKeys: String, CodingKey {
             case id
             case maxModelLen = "max_model_len"
             case contextLength = "context_length"
             case maxContextLength = "max_context_length"
+            case contextWindow = "context_window"
         }
 
         init(from decoder: Decoder) throws {
@@ -5484,6 +5487,7 @@ extension RemoteProviderService {
             maxModelLen = Self.lenientInt(container, .maxModelLen)
             contextLength = Self.lenientInt(container, .contextLength)
             maxContextLength = Self.lenientInt(container, .maxContextLength)
+            contextWindow = Self.lenientInt(container, .contextWindow)
         }
 
         private static func lenientInt(
@@ -5500,9 +5504,10 @@ extension RemoteProviderService {
         }
 
         /// First positive vendor-reported window, in the order the keys are
-        /// most specific: vLLM, then OpenRouter/LM Studio, then llama.cpp.
+        /// most specific: vLLM, then OpenRouter/LM Studio, then llama.cpp,
+        /// then gateway-style `context_window`.
         var advertisedContextLength: Int? {
-            [maxModelLen, contextLength, maxContextLength]
+            [maxModelLen, contextLength, maxContextLength, contextWindow]
                 .compactMap { $0 }
                 .first { $0 > 0 }
         }
