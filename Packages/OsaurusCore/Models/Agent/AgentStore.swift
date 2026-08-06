@@ -35,10 +35,29 @@ public enum AgentStore {
         }
     }
 
+    // MARK: - Write serialization
+
+    /// Serial queue for agent JSON writes. `save` runs on the main actor
+    /// (every settings edit and autosave lands here) and an atomic write to a
+    /// slow or pressured disk has shown up as a multi-second app hang, so the
+    /// disk write happens here instead of the calling thread. The queue is
+    /// serial so writes land in call order, and readers flush it first so a
+    /// save immediately followed by `refresh()`/`loadAll()` observes its own
+    /// write.
+    private nonisolated static let writeQueue = DispatchQueue(
+        label: "com.dinoki.osaurus.agent-store-writes", qos: .utility)
+
+    /// Barrier for read paths: waits for queued writes only, which are single
+    /// small JSON files — bounded, unlike the read scan they unblock.
+    private nonisolated static func flushPendingWrites() {
+        writeQueue.sync {}
+    }
+
     // MARK: - Public API
 
     /// Load all agents sorted by name, including built-ins
     public static func loadAll() -> [Agent] {
+        flushPendingWrites()
         // Consolidate any records stranded in the legacy `Personas/` directory
         // before resolving where to read from — enabling a per-agent Database
         // or writing a custom avatar creates `agents/`, which flips path
@@ -169,6 +188,7 @@ public enum AgentStore {
             return builtIn
         }
 
+        flushPendingWrites()
         let url = agentFileURL(for: id)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
 
@@ -191,14 +211,23 @@ public enum AgentStore {
         }
 
         let url = agentFileURL(for: agent.id)
-        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
 
         do {
+            // Encode on the caller (cheap, and `Agent` needn't be Sendable);
+            // only the disk write moves to the background queue.
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             encoder.dateEncodingStrategy = .iso8601
             let data = try encoder.encode(agent)
-            try data.write(to: url, options: [.atomic])
+            let agentId = agent.id
+            writeQueue.async {
+                OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
+                do {
+                    try data.write(to: url, options: [.atomic])
+                } catch {
+                    print("[Osaurus] Failed to save agent \(agentId): \(error)")
+                }
+            }
         } catch {
             print("[Osaurus] Failed to save agent \(agent.id): \(error)")
         }
@@ -211,6 +240,10 @@ public enum AgentStore {
             print("[Osaurus] Cannot delete built-in agent")
             return false
         }
+
+        // Serialize against queued saves so a pending write can't recreate
+        // the file after removal.
+        flushPendingWrites()
 
         // Best-effort cleanup of any custom avatar file before removing the JSON.
         if let agent = load(id: id), let url = agent.customAvatarURL {
@@ -286,8 +319,11 @@ public enum AgentStore {
     /// `fileExists` (that hop can deadlock when the main thread is itself
     /// waiting on the background queue, and stalls behind a busy run loop).
     public nonisolated static func exists(id: UUID) -> Bool {
-        Agent.builtInAgents.contains(where: { $0.id == id })
-            || FileManager.default.fileExists(atPath: agentFileURL(for: id).path)
+        if Agent.builtInAgents.contains(where: { $0.id == id }) { return true }
+        // A just-saved agent may still be in the write queue; wait for it so
+        // existence matches program order (`nonisolated`, so callable here).
+        flushPendingWrites()
+        return FileManager.default.fileExists(atPath: agentFileURL(for: id).path)
     }
 
     // MARK: - Private
