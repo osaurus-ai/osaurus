@@ -369,6 +369,8 @@ struct CapabilitiesDiscoverToolTests {
                 if !dbWasOpen {
                     try ToolDatabase.shared.openInMemory()
                 }
+                ConfigurationDomainBootstrap.registerBuiltIns()
+                await ToolIndexService.shared.syncFromRegistry(rebuildVectorIndex: false)
                 defer {
                     try? ToolDatabase.shared.deleteEntry(id: CapabilityPolicyFixtureTool.allowedName)
                     try? ToolDatabase.shared.deleteEntry(id: CapabilityPolicyFixtureTool.deniedName)
@@ -428,7 +430,6 @@ struct CapabilitiesDiscoverToolTests {
                 )
                 #expect(rawResults.contains { $0.entry.name == allowed.name })
                 #expect(!rawResults.contains { $0.entry.name == denied.name })
-                #expect(diagnostic.filteredByAllowlist.count == 1)
                 #expect(diagnostic.filteredByAllowlist.contains(denied.name))
 
                 let tool = CapabilitiesDiscoverTool(agentId: agent.id)
@@ -438,6 +439,41 @@ struct CapabilitiesDiscoverToolTests {
                 #expect(result.contains(allowed.name))
                 #expect(!result.contains(denied.name))
                 #expect(result.contains("availability: loadable_via_capabilities_load"))
+
+                let configureNames = ToolRegistry.configureToolNames
+                #expect(configureNames.contains("osaurus_provider"))
+                let configureQuery = #"{"query":"osaurus_provider"}"#
+
+                let seededConfigureResult = try await tool.execute(argumentsJSON: configureQuery)
+                for configureName in configureNames {
+                    #expect(
+                        !seededConfigureResult.contains("tool/\(configureName)"),
+                        "Default-agent configure tool \(configureName) leaked to a seeded custom agent"
+                    )
+                }
+
+                let unseededAgent = Agent(
+                    name: "CapabilitySearchLegacy-\(UUID().uuidString.prefix(6))",
+                    agentAddress: "capability-search-legacy-\(UUID().uuidString)",
+                    manualToolNames: nil
+                )
+                AgentManager.shared.add(unseededAgent)
+                #expect(AgentManager.shared.effectiveEnabledToolNames(for: unseededAgent.id) == nil)
+
+                let unseededResult = try await CapabilitiesDiscoverTool(agentId: unseededAgent.id)
+                    .execute(argumentsJSON: configureQuery)
+                let gatewayResult = try await CapabilitiesTool(agentId: unseededAgent.id)
+                    .execute(argumentsJSON: configureQuery)
+                for configureName in configureNames {
+                    #expect(
+                        !unseededResult.contains("tool/\(configureName)"),
+                        "Default-agent configure tool \(configureName) leaked to an unseeded custom agent"
+                    )
+                    #expect(
+                        !gatewayResult.contains("tool/\(configureName)"),
+                        "Default-agent configure tool \(configureName) leaked through the unified gateway"
+                    )
+                }
 
                 AgentManager.shared.setActiveAgent(agent.id)
                 defer { AgentManager.shared.setActiveAgent(Agent.defaultId) }
@@ -451,6 +487,21 @@ struct CapabilitiesDiscoverToolTests {
                     "Direct capabilities_discover calls without explicit/task-local agent context must keep global-enabled results"
                 )
 
+                let unscopedConfigureResult = try await unscopedTool.execute(
+                    argumentsJSON: configureQuery
+                )
+                for configureName in configureNames {
+                    #expect(
+                        !unscopedConfigureResult.contains("tool/\(configureName)"),
+                        "No-context discovery must fail closed for Default-agent configure tool \(configureName)"
+                    )
+                }
+
+                let defaultResult = try await CapabilitiesDiscoverTool(agentId: Agent.defaultId)
+                    .execute(argumentsJSON: configureQuery)
+                #expect(defaultResult.contains("tool/osaurus_provider"))
+
+                _ = await AgentManager.shared.delete(id: unseededAgent.id)
                 _ = await AgentManager.shared.delete(id: agent.id)
             }
         }

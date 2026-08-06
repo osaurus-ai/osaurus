@@ -164,8 +164,13 @@ struct RuntimePolicySourceTests {
         let registerBody = String(toolIndex[registerStart.lowerBound ..< registerEnd.lowerBound])
         #expect(registerBody.contains("ToolDatabase.shared.upsertEntry(entry)"))
         #expect(
-            !registerBody.contains("ToolSearchService.shared.indexEntry"),
-            "live tool registration must update the SQL/BM25 catalog without loading the embedding model on the launch path"
+            registerBody.contains("ToolSearchService.shared.indexEntry"),
+            "live dynamic-tool registration must incrementally update the vector catalog"
+        )
+        #expect(
+            !registerBody.contains("ToolSearchService.shared.initialize")
+                && !registerBody.contains("ToolSearchService.shared.rebuildIndex"),
+            "live registration may queue/index one entry but must not initialize or rebuild the embedding index"
         )
     }
 

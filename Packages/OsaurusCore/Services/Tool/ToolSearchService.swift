@@ -138,9 +138,20 @@ public actor ToolSearchService {
 
     private static let defaultSearchThreshold: Float = 0.10
 
+    private struct PendingIndexEntry {
+        let generation: UUID
+        let entry: ToolIndexEntry
+        let parameters: JSONValue?
+    }
+
     private var vectorDB: VecturaKit?
     private var isInitialized = false
     private var reverseIdMap: [String: String] = [:]
+    /// Dynamic tools can register while launch is still opening the persistent
+    /// vector store. Keep only their latest registration so initialization can
+    /// catch up without rebuilding/re-embedding the full tool catalog.
+    private var pendingIndexEntries: [String: PendingIndexEntry] = [:]
+    private var isProcessingPendingIndexEntries = false
 
     private init() {}
 
@@ -181,6 +192,7 @@ public actor ToolSearchService {
                 vectorDB = try await VecturaKit(config: config, embedder: EmbeddingService.sharedEmbedder)
                 isInitialized = true
                 rehydrateReverseIdMap()
+                await processPendingIndexEntries()
                 ToolIndexLogger.search.info("VecturaKit initialized successfully for tools")
                 break
             } catch {
@@ -219,17 +231,54 @@ public actor ToolSearchService {
     // MARK: - Indexing
 
     public func indexEntry(_ entry: ToolIndexEntry, parameters: JSONValue? = nil) async {
+        let pending = PendingIndexEntry(
+            generation: UUID(),
+            entry: entry,
+            parameters: parameters
+        )
+        pendingIndexEntries[entry.id] = pending
+        await processPendingIndexEntries()
+    }
+
+    private func processPendingIndexEntries() async {
         guard let db = vectorDB else { return }
-        do {
-            let id = deterministicUUID(for: entry.id)
-            let text = buildIndexText(name: entry.name, description: entry.description, parameters: parameters)
-            _ = try await db.addDocument(text: text, id: id)
-        } catch {
-            ToolIndexLogger.search.error("Failed to index tool \(entry.id): \(error)")
+        guard !isProcessingPendingIndexEntries else { return }
+        isProcessingPendingIndexEntries = true
+        defer { isProcessingPendingIndexEntries = false }
+
+        while let pending = pendingIndexEntries.values.first {
+            do {
+                let id = deterministicUUID(for: pending.entry.id)
+                let text = buildIndexText(
+                    name: pending.entry.name,
+                    description: pending.entry.description,
+                    parameters: pending.parameters
+                )
+                _ = try await db.addDocument(text: text, id: id)
+
+                if pendingIndexEntries[pending.entry.id]?.generation == pending.generation {
+                    pendingIndexEntries.removeValue(forKey: pending.entry.id)
+                } else if pendingIndexEntries[pending.entry.id] == nil {
+                    // Unregistration can interleave while VecturaKit is
+                    // embedding. Delete the just-finished stale document so it
+                    // cannot reappear after the unregister's first delete.
+                    try await db.deleteDocuments(ids: [id])
+                    reverseIdMap.removeValue(forKey: id.uuidString)
+                }
+                // A newer generation remains queued and is processed next.
+            } catch {
+                ToolIndexLogger.search.error(
+                    "Failed to index tool \(pending.entry.id): \(error)"
+                )
+                // Keep the failed entry queued for the next registration or
+                // initialization attempt, without spinning in a tight loop.
+                break
+            }
         }
     }
 
     public func removeEntry(id: String) async {
+        pendingIndexEntries.removeValue(forKey: id)
         guard let db = vectorDB else { return }
         do {
             let uuid = deterministicUUID(for: id)
@@ -238,6 +287,10 @@ public actor ToolSearchService {
         } catch {
             ToolIndexLogger.search.error("Failed to remove tool \(id) from index: \(error)")
         }
+    }
+
+    func hasPendingIndexEntry(id: String) -> Bool {
+        pendingIndexEntries[id] != nil
     }
 
     // MARK: - Search

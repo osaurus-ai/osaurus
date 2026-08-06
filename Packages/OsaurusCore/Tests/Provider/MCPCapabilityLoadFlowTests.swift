@@ -56,7 +56,21 @@ struct MCPCapabilityLoadFlowTests {
                 AgentManager.shared.add(agent)
                 _ = await CapabilityLoadBuffer.shared.drain()
 
-                // (2) Load by manifest id; schema must ride in the result.
+                // (2) Discovery crosses the real MCP registration + SQL index
+                // path without relying on the provider-prefixed tool name.
+                let discover = CapabilitiesDiscoverTool(agentId: agent.id)
+                let discovered = try await discover.execute(
+                    argumentsJSON: #"{"query":"remote fixture index"}"#
+                )
+                #expect(discovered.contains("tool/\(exposedName)"))
+                #expect(discovered.contains("runtime: mcp"))
+
+                // Registration also schedules the vector entry. In the unit
+                // harness VecturaKit is intentionally uninitialized; app launch
+                // drains this queue after initialization.
+                #expect(await ToolSearchService.shared.hasPendingIndexEntry(id: exposedName))
+
+                // (3) Load by manifest id; schema must ride in the result.
                 let load = CapabilitiesLoadTool()
                 let result = try await ChatExecutionContext.$currentAgentId.withValue(agent.id) {
                     try await load.execute(
@@ -68,7 +82,7 @@ struct MCPCapabilityLoadFlowTests {
                 // The MCP argument contract survives into the delivered schema.
                 #expect(result.contains("query"))
 
-                // (3) Drain + activate: the run's execution scope now permits
+                // (4) Drain + activate: the run's execution scope now permits
                 // exactly the loaded tool.
                 let buffered = await CapabilityLoadBuffer.shared.drain()
                 #expect(buffered.contains(where: { $0.function.name == exposedName }))
@@ -147,6 +161,11 @@ struct MCPCapabilityLoadFlowTests {
         let previousToolConfig = ToolConfigurationStore.overrideDirectory
         ToolConfigurationStore.overrideDirectory = toolConfigDir
 
+        let dbWasOpen = ToolDatabase.shared.isOpen
+        if !dbWasOpen {
+            try ToolDatabase.shared.openInMemory()
+        }
+
         let suffix = UUID().uuidString.prefix(8)
         let provider = MCPProvider(
             name: "flow_probe_\(suffix)",
@@ -174,9 +193,24 @@ struct MCPCapabilityLoadFlowTests {
             provider: provider
         )
         let names = registered.map(\.name)
+        for tool in registered {
+            await ToolIndexService.shared.onToolRegistered(
+                name: tool.name,
+                description: tool.description,
+                runtime: .mcp,
+                tokenCount: tool.description.count / 4,
+                parameters: tool.parameters
+            )
+        }
 
         defer {
             ToolRegistry.shared.unregister(names: names)
+            for name in names {
+                try? ToolDatabase.shared.deleteEntry(id: name)
+            }
+            if !dbWasOpen {
+                ToolDatabase.shared.close()
+            }
             ToolConfigurationStore.overrideDirectory = previousToolConfig
             try? FileManager.default.removeItem(at: toolConfigDir)
             OsaurusPaths.overrideRoot = previousRoot

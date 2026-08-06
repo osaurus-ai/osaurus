@@ -349,8 +349,12 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
         // `ToolRegistry.configure*ToolNames` read the `@MainActor`
         // `ConfigurationDomainRegistry`; snapshot once so the search
         // loop below stays off the main actor.
-        let (configureWrites, configureAll) = await MainActor.run {
-            (ToolRegistry.configureWriteToolNames, ToolRegistry.configureToolNames)
+        let (configureWrites, configureAll, globallyEnabled) = await MainActor.run {
+            (
+                ToolRegistry.configureWriteToolNames,
+                ToolRegistry.configureToolNames,
+                Set(ToolRegistry.shared.listTools().filter(\.enabled).map(\.name))
+            )
         }
         let effectiveAllowedToolNames: Set<String>?
         if isDefaultAgent {
@@ -358,7 +362,11 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
         } else if let base = baseAllowedToolNames {
             effectiveAllowedToolNames = base.subtracting(configureAll)
         } else {
-            effectiveAllowedToolNames = nil
+            // A nil grant means legacy global-enabled discovery, not permission
+            // to cross the Default-agent-only configuration boundary. Materialize
+            // that global set so configure tools remain masked for unseeded
+            // custom agents and direct calls without an agent context.
+            effectiveAllowedToolNames = globallyEnabled.subtracting(configureAll)
         }
 
         // Run each query independently and merge by best score per item.
@@ -428,7 +436,8 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
             }
             if let diagnostic = await Self.exposureDiagnosticForNamedTools(
                 queries: queries,
-                allowedToolNames: effectiveAllowedToolNames
+                allowedToolNames: effectiveAllowedToolNames,
+                hiddenToolNames: isDefaultAgent ? [] : configureAll
             ) {
                 text += "\n\n\(diagnostic.textBlock)"
             }
@@ -601,7 +610,8 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
     /// or `capabilities_discover` explain why they did not appear as hits.
     private static func exposureDiagnosticForNamedTools(
         queries: [String],
-        allowedToolNames: Set<String>?
+        allowedToolNames: Set<String>?,
+        hiddenToolNames: Set<String> = []
     ) async -> ToolExposureDiagnostic? {
         let registeredNames = await MainActor.run {
             Set(ToolRegistry.shared.listTools().map(\.name))
@@ -609,7 +619,7 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
         let candidates = namedToolCandidates(
             in: queries,
             registeredToolNames: registeredNames
-        )
+        ).filter { !hiddenToolNames.contains($0) }
         guard !candidates.isEmpty else { return nil }
         let diagnostic = await ToolIndexService.shared.exposureDiagnostic(
             forToolNames: candidates,
