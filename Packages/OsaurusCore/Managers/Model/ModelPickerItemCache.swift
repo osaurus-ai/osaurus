@@ -235,7 +235,10 @@ final class ModelPickerItemCache: ObservableObject {
             providers: manager.cachedAvailableModels(),
             codexMetadata: OpenAICodexOAuthService.lastModelDiscoverySummary?.modelMetadata ?? [:],
             osaurusRouterProviderId: RemoteProviderManager.osaurusRouterProviderId,
-            routerMetadata: { manager.osaurusRouterMetadata(for: $0) }
+            routerMetadata: { manager.osaurusRouterMetadata(for: $0) },
+            remoteContextLength: {
+                manager.customProviderContextLength(providerId: $0, unprefixedModelId: $1)
+            }
         )
         options.append(contentsOf: remote.items)
         for provider in manager.cachedMediaModels() {
@@ -276,7 +279,8 @@ final class ModelPickerItemCache: ObservableObject {
         providers: [RemoteProviderManager.CachedProviderModels],
         codexMetadata: [String: CodexModelMetadata],
         osaurusRouterProviderId: UUID,
-        routerMetadata: (String) -> OsaurusRouterModel?
+        routerMetadata: (String) -> OsaurusRouterModel?,
+        remoteContextLength: (UUID, String) -> Int? = { _, _ in nil }
     ) -> (items: [ModelPickerItem], reasoningCapabilities: [String: ModelReasoningCapabilities]) {
         var items: [ModelPickerItem] = []
         var capabilities: [String: ModelReasoningCapabilities] = [:]
@@ -318,7 +322,11 @@ final class ModelPickerItemCache: ObservableObject {
                     item = .fromRemoteModel(
                         modelId: modelId,
                         providerName: providerInfo.providerName,
-                        providerId: providerInfo.providerId
+                        providerId: providerInfo.providerId,
+                        contextLength: remoteContextLength(
+                            providerInfo.providerId,
+                            unprefixedRouterModelId(modelId)
+                        )
                     )
                 }
                 items.append(item)

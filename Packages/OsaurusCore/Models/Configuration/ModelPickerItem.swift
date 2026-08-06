@@ -239,16 +239,21 @@ extension ModelPickerItem {
         )
     }
 
-    /// Create a remote provider model picker item
+    /// Create a remote provider model picker item. `contextLength` is the
+    /// window the provider's `/models` endpoint advertised (e.g. vLLM's
+    /// `max_model_len`), when known; it feeds the same provider-metadata
+    /// resolution step router models use, ahead of the 128k fallback.
     static func fromRemoteModel(
         modelId: String,
         providerName: String,
-        providerId: UUID
+        providerId: UUID,
+        contextLength: Int? = nil
     ) -> ModelPickerItem {
         ModelPickerItem(
             id: modelId,
             displayName: displayName(fromModelId: modelId),
-            source: .remote(providerName: providerName, providerId: providerId)
+            source: .remote(providerName: providerName, providerId: providerId),
+            contextLength: contextLength
         )
     }
 
