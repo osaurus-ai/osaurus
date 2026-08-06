@@ -131,6 +131,10 @@ struct PromptTokenTableTests {
                 "pluginCreator",
                 full: PluginCreatorGate.section(
                     instructions: SystemPromptTemplates.pluginCreatorInstructions
+                ),
+                compact: PluginCreatorGate.section(
+                    instructions:
+                        SystemPromptTemplates.pluginCreatorInstructionsCompactBody()
                 )
             ),
             Row(

@@ -829,7 +829,13 @@ private struct CustomToolsTabContent: View {
             SandboxPluginEditorView(
                 plugin: .blank(),
                 isNew: true,
-                onSave: { plugin in pluginLibrary.save(plugin) },
+                onSave: { plugin in
+                    pluginLibrary.save(plugin)
+                    if let saved = pluginLibrary.plugin(id: plugin.id) {
+                        SandboxToolRegistrar.shared.activateLibraryPlugin(saved)
+                    }
+                    onChange()
+                },
                 onDismiss: {}
             )
         }
@@ -839,6 +845,13 @@ private struct CustomToolsTabContent: View {
                 isNew: false,
                 onSave: { updated in
                     pluginLibrary.update(oldId: plugin.id, plugin: updated)
+                    if let saved = pluginLibrary.plugin(id: updated.id) {
+                        SandboxToolRegistrar.shared.activateLibraryPlugin(
+                            saved,
+                            replacing: plugin.id
+                        )
+                    }
+                    onChange()
                     editingPlugin = nil
                 },
                 onDismiss: { editingPlugin = nil }
@@ -853,7 +866,7 @@ private struct CustomToolsTabContent: View {
             Button(role: .destructive) {
                 if let p = pluginToDelete {
                     pluginLibrary.delete(id: p.id)
-                    ToolRegistry.shared.unregisterSandboxPluginTools(pluginId: p.id)
+                    SandboxToolRegistrar.shared.deactivateLibraryPlugin(pluginId: p.id)
                     pluginToDelete = nil
                     onChange()
                 }
@@ -918,7 +931,7 @@ private struct CustomToolsTabContent: View {
             guard await panel.beginModal() == .OK, let url = panel.url else { return }
             do {
                 let plugin = try pluginLibrary.importFromFile(url)
-                ToolRegistry.shared.registerSandboxPluginTools(plugin: plugin)
+                SandboxToolRegistrar.shared.activateLibraryPlugin(plugin)
                 onChange()
             } catch {
                 actionError = error.localizedDescription
@@ -931,7 +944,9 @@ private struct CustomToolsTabContent: View {
         copy.name = plugin.name + " Copy"
         copy.version = nil
         pluginLibrary.save(copy)
-        ToolRegistry.shared.registerSandboxPluginTools(plugin: copy)
+        if let saved = pluginLibrary.plugin(id: copy.id) {
+            SandboxToolRegistrar.shared.activateLibraryPlugin(saved)
+        }
         onChange()
     }
 

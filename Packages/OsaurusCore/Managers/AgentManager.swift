@@ -773,15 +773,11 @@ extension AgentManager {
 
     /// Update sandbox execution config for an agent.
     ///
-    /// Provisioning is delegated to the notification-driven path:
-    /// `SandboxToolRegistrar.handleAgentUpdated` observes `.agentUpdated`
-    /// and calls `registerTools`, which calls
-    /// `SandboxAgentProvisioner.ensureProvisioned` (now coalesced per
-    /// agent). We deliberately do NOT also call `ensureProvisioned`
-    /// directly here — having two callers race through `ensureAgentUser`
-    /// caused the duplicate-attempt spam noted in the audit and
-    /// occasionally produced a `provisioningFailed` envelope even when
-    /// the second attempt would have succeeded.
+    /// Ordinary config edits use the notification-driven registration path.
+    /// An explicit OFF→ON transition additionally awaits the registrar's
+    /// coalesced first-use task, so UI success means real tools are ready.
+    /// Provisioning itself still has one owner (`SandboxToolRegistrar`);
+    /// this manager never races a direct `ensureProvisioned` call against it.
     public func updateAutonomousExec(_ config: AutonomousExecConfig?, for agentId: UUID) async throws {
         let wasEnabled = effectiveAutonomousExec(for: agentId)?.enabled ?? false
         let willBeEnabled = config?.enabled ?? false
@@ -805,7 +801,7 @@ extension AgentManager {
             // provisioning if needed), bypassing the `setupComplete` gate that
             // keeps the default-ON chip from auto-downloading at launch.
             // `provisionOnDemand` resets the startup-failure tracking for us.
-            SandboxToolRegistrar.shared.provisionOnDemand(for: agentId)
+            try await SandboxToolRegistrar.shared.provisionOnDemand(for: agentId)
         }
 
         // Mirror the per-agent egress choice onto the shared sandbox config

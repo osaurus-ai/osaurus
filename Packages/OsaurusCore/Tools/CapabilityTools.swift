@@ -34,11 +34,26 @@ struct CapabilitySchemaDiagnostic: Sendable {
     }
 }
 
-/// Shared buffer for communicating newly loaded tool specs from capabilities_load
-/// back to the execution loop. The loop drains pending tools after each
-/// capabilities_load call and appends them to the active tool set.
+/// Shared buffer for communicating newly loaded tool specs from capability
+/// loading, first-use sandbox provisioning, and plugin registration back to
+/// the execution loop. The loop drains after each growth-triggering call and
+/// appends the schemas to the active tool set.
 actor CapabilityLoadBuffer {
     static let shared = CapabilityLoadBuffer()
+
+    /// Tool calls that may publish schemas for the next model iteration.
+    /// Shared by chat and eval loops so first-use provisioning, plugin
+    /// registration, and capability loading have identical activation rules.
+    static let activationTriggerToolNames: Set<String> = [
+        "capabilities",
+        "capabilities_load",
+        BuiltinSandboxTools.initPendingToolName,
+        "sandbox_plugin_register",
+    ]
+
+    static func shouldActivate(after toolName: String) -> Bool {
+        activationTriggerToolNames.contains(toolName)
+    }
 
     private var pendingToolOrder: [String] = []
     private var pendingToolsByName: [String: Tool] = [:]

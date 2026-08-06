@@ -1,0 +1,28 @@
+{
+  "id": "sandbox.plugin-dependency-use",
+  "domain": "agent_loop",
+  "label": "sandbox • register plugin dependency and use it",
+  "query": "Create a sandbox plugin with plugin id 'jqdouble'. Declare the Alpine system dependency 'jq'. Expose one tool with tool id 'double' that takes a number parameter and uses jq (not shell arithmetic) to print twice the number. Write plugin.json under plugins/jqdouble/, register it with sandbox_plugin_register, call jqdouble_double with 21 in the same run, and write the real tool output to dependency_out.txt in your home directory.",
+  "notes": "Off-CI (sandbox network): proves plugin-declared apk dependencies are safely installed, registration activates the tool in the same run, and the dependency is usable by the tool. The output must come from the registered tool.",
+  "fixtures": {
+    "sandbox": {
+      "pluginCreate": true,
+      "networkEnabled": true
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 18,
+      "mustCallToolsInOrder": [
+        "sandbox_plugin_register",
+        "jqdouble_double"
+      ],
+      "sandboxFiles": [
+        {
+          "path": "dependency_out.txt",
+          "contains": "42"
+        }
+      ]
+    }
+  }
+}

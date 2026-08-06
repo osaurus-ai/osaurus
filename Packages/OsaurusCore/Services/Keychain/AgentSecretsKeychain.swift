@@ -85,7 +85,7 @@ public enum AgentSecretsKeychain {
     /// Async-body variant for tests that drive async tool surfaces (e.g.
     /// `SandboxSecretSetTool.execute`) against the in-memory store.
     static func _withInMemoryStoreForTesting<T>(
-        _ body: () async throws -> T
+        _ body: @Sendable () async throws -> T
     ) async rethrows -> T {
         try await $taskLocalStore.withValue(InMemorySecretStore()) {
             try await body()

@@ -1042,7 +1042,7 @@ public enum AgentLoopEvaluator {
             result: String
         ) async -> AgentLoopToolExecution {
             let isError = ToolEnvelope.isError(result)
-            if inv.toolName == "capabilities_load" || inv.toolName == "capabilities" {
+            if CapabilityLoadBuffer.shouldActivate(after: inv.toolName) {
                 let loaded = await CapabilityLoadBuffer.shared.drain()
                 toolScope.activate(loaded)
             }

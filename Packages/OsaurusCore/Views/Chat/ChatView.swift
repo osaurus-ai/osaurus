@@ -5840,16 +5840,14 @@ final class ChatSession: ObservableObject {
                             // etc.) so the model sees the rejection.
                         }
 
-                        // Tools loaded via capabilities / sandbox_plugin_register.
+                        // Tools loaded via capabilities, first-use sandbox
+                        // provisioning, or sandbox_plugin_register.
                         // Add their schemas to the next model iteration as well as
                         // the execution scope. Returning a schema only in tool
                         // result text is insufficient for constrained decoders:
                         // they substitute a hot schema tool when the intended
                         // loaded name is absent from the request's `tools` array.
-                        if inv.toolName == "capabilities_load"
-                            || inv.toolName == "capabilities"
-                            || inv.toolName == "sandbox_plugin_register"
-                        {
+                        if CapabilityLoadBuffer.shouldActivate(after: inv.toolName) {
                             // Always drain so a buffered spec can't leak into an
                             // unrelated run; persist only in auto mode (manual
                             // mode keeps the user's explicit tool set fixed).

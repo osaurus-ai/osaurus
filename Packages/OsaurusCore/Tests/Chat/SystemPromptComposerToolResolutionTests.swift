@@ -65,6 +65,7 @@ struct SystemPromptComposerToolResolutionTests {
 
     private func withRegisteredSandboxBuiltins(
         backgroundProcesses: Bool = false,
+        pluginCreate: Bool = true,
         _ body: @MainActor @Sendable () -> Void
     ) {
         BuiltinSandboxTools.register(
@@ -72,6 +73,7 @@ struct SystemPromptComposerToolResolutionTests {
             agentName: "tool-resolution-test",
             config: AutonomousExecConfig(
                 enabled: true,
+                pluginCreate: pluginCreate,
                 backgroundProcessEnabled: backgroundProcesses
             )
         )
@@ -116,6 +118,7 @@ struct SystemPromptComposerToolResolutionTests {
     private func makeSnapshot(
         toolMode: ToolSelectionMode = .auto,
         manualToolNames: [String]? = nil,
+        autonomousConfig: AutonomousExecConfig? = nil,
         renderChartEnabled: Bool = false,
         webSearchEnabled: Bool = false,
         computerUseEnabled: Bool = false,
@@ -129,7 +132,7 @@ struct SystemPromptComposerToolResolutionTests {
             agentId: UUID(),
             toolsDisabled: false,
             memoryDisabled: true,
-            autonomousConfig: nil,
+            autonomousConfig: autonomousConfig,
             toolMode: toolMode,
             model: nil,
             manualToolNames: manualToolNames,
@@ -501,6 +504,47 @@ struct SystemPromptComposerToolResolutionTests {
             #expect(names.contains("search_and_extract"))
             #expect(names.contains(BrowserUseTool.toolName))
         }
+    }
+
+    @Test
+    func settingsLibraryPluginIsDiscoverableAndManuallyCallable() {
+        let plugin = SandboxPlugin(
+            name: "Settings Schema \(UUID().uuidString)",
+            description: "Settings-created custom tool fixture",
+            tools: [
+                .init(
+                    id: "test_tool",
+                    description: "Run the test tool",
+                    run: "echo Hi"
+                )
+            ]
+        )
+        let toolName = "\(plugin.id)_test_tool"
+        defer {
+            ToolRegistry.shared.unregisterSandboxPluginTools(pluginId: plugin.id)
+        }
+
+        SandboxToolRegistrar.shared.activateLibraryPlugin(plugin)
+        let snapshot = makeSnapshot(
+            toolMode: .manual,
+            manualToolNames: [toolName],
+            autonomousConfig: AutonomousExecConfig(enabled: true)
+        )
+        let names = Set(
+            SystemPromptComposer.resolveTools(
+                snapshot: snapshot,
+                executionMode: .sandbox,
+                query: "Run the test tool and display its output"
+            ).map(\.function.name)
+        )
+        let manifestNames = Set(
+            SystemPromptComposer.deriveEnabledManifest(agentId: snapshot.agentId)
+                .flatMap(\.tools)
+                .map(\.name)
+        )
+
+        #expect(names.contains(toolName))
+        #expect(manifestNames.contains(toolName))
     }
 
     @Test
@@ -994,7 +1038,12 @@ struct SystemPromptComposerToolResolutionTests {
                     #expect(
                         hostPayloads == vmPayloads
                     )
-                    #expect(!vm.contains { $0.function.name.hasPrefix("sandbox_") })
+                    let vmNames = Set(vm.map(\.function.name))
+                    #expect(
+                        vmNames.isDisjoint(
+                            with: ToolRegistry.sandboxBackendAdapterToolNames
+                        )
+                    )
                     _ = folder
                 }
             }
@@ -1013,6 +1062,110 @@ struct SystemPromptComposerToolResolutionTests {
                 #expect(ToolRegistry.shared.specs(forTools: ["sandbox_read_file"]).count == 1)
             }
         }
+    }
+
+    @Test("sandbox control-plane schema follows agent feature gates")
+    func sandboxControlPlaneVisibilityMatrix() {
+        FolderToolManager.shared.ensureFolderToolsRegistered()
+        defer { FolderToolManager.shared._unregisterAllForTesting() }
+
+        for autonomousEnabled in [false, true] {
+            for pluginCreate in [false, true] {
+                for backgroundEnabled in [false, true] {
+                    let config = AutonomousExecConfig(
+                        enabled: autonomousEnabled,
+                        pluginCreate: pluginCreate,
+                        backgroundProcessEnabled: backgroundEnabled
+                    )
+                    BuiltinSandboxTools.register(
+                        agentId: "control-plane-matrix",
+                        agentName: "control-plane-matrix",
+                        config: config
+                    )
+
+                    let snapshot = makeSnapshot(autonomousConfig: config)
+                    let sandboxNames = Set(
+                        SystemPromptComposer.resolveTools(
+                            snapshot: snapshot,
+                            executionMode: .sandbox
+                        ).map(\.function.name)
+                    )
+
+                    #expect(
+                        sandboxNames.isDisjoint(
+                            with: ToolRegistry.sandboxBackendAdapterToolNames
+                        )
+                    )
+                    if autonomousEnabled {
+                        #expect(sandboxNames.contains("sandbox_install"))
+                        #expect(sandboxNames.contains("sandbox_secret_check"))
+                        #expect(sandboxNames.contains("sandbox_secret_set"))
+                        #expect(
+                            sandboxNames.contains("sandbox_plugin_register")
+                                == pluginCreate
+                        )
+                        #expect(
+                            sandboxNames.contains("sandbox_process")
+                                == backgroundEnabled
+                        )
+                    } else {
+                        #expect(
+                            sandboxNames.isDisjoint(
+                                with: ToolRegistry.sandboxControlPlaneToolNames
+                            )
+                        )
+                    }
+
+                    let nonSandboxNames = Set(
+                        SystemPromptComposer.resolveTools(
+                            snapshot: snapshot,
+                            executionMode: .none
+                        ).map(\.function.name)
+                    )
+                    #expect(
+                        nonSandboxNames.isDisjoint(
+                            with: ToolRegistry.sandboxControlPlaneToolNames
+                        )
+                    )
+
+                    ToolRegistry.shared.unregisterAllSandboxTools()
+                }
+            }
+        }
+    }
+
+    @Test("disabled sandbox controls cannot be restored by a loaded-tool name")
+    func sandboxControlPlaneLoadedNameBypassFailsClosed() {
+        let config = AutonomousExecConfig(
+            enabled: true,
+            pluginCreate: false,
+            backgroundProcessEnabled: false
+        )
+        BuiltinSandboxTools.register(
+            agentId: "control-plane-bypass",
+            agentName: "control-plane-bypass",
+            config: AutonomousExecConfig(
+                enabled: true,
+                pluginCreate: true,
+                backgroundProcessEnabled: true
+            )
+        )
+        defer { ToolRegistry.shared.unregisterAllSandboxTools() }
+
+        let names = Set(
+            SystemPromptComposer.resolveTools(
+                snapshot: makeSnapshot(autonomousConfig: config),
+                executionMode: .sandbox,
+                additionalToolNames: [
+                    "sandbox_exec",
+                    "sandbox_plugin_register",
+                    "sandbox_process",
+                ]
+            ).map(\.function.name)
+        )
+        #expect(!names.contains("sandbox_exec"))
+        #expect(!names.contains("sandbox_plugin_register"))
+        #expect(!names.contains("sandbox_process"))
     }
 
     @Test

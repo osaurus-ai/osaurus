@@ -1150,32 +1150,29 @@ public final class ToolRegistry: ObservableObject {
     /// active. The five public workspace tools use it as their backend router.
     private var combinedSandboxReadBridge: SandboxReadBridge? {
         guard toolsByName.keys.contains("sandbox_exec") else { return nil }
-        // Prefer the identity captured at sandbox-tool registration; it
-        // can't go stale mid-turn and doesn't require `currentAgentId` to
-        // be bound at the call site. Fall back to the execution context's
-        // agent id for any path that drives a tool call without going
-        // through `BuiltinSandboxTools.register` first.
-        if let captured = activeSandboxAgentContext {
-            return captured
+        // The process-wide tool objects can be refreshed by another agent
+        // between turns. A request TaskLocal is authoritative and keeps
+        // concurrent/non-active sessions routed to their own Linux user.
+        if let agentId = ChatExecutionContext.currentAgentId {
+            let agentName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
+            return SandboxReadBridge(
+                agentId: agentId.uuidString,
+                agentName: agentName,
+                home: OsaurusPaths.inContainerAgentHome(agentName),
+                maxCommandsPerTurn: resolvedAutonomousExecConfig?.maxCommandsPerTurn
+                    ?? AutonomousExecConfig.default.maxCommandsPerTurn,
+                backgroundEnabled: resolvedAutonomousExecConfig?.backgroundProcessEnabled == true
+            )
         }
-        guard let agentId = ChatExecutionContext.currentAgentId else { return nil }
-        let agentName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
-        return SandboxReadBridge(
-            agentId: agentId.uuidString,
-            agentName: agentName,
-            home: OsaurusPaths.inContainerAgentHome(agentName),
-            maxCommandsPerTurn: resolvedAutonomousExecConfig?.maxCommandsPerTurn
-                ?? AutonomousExecConfig.default.maxCommandsPerTurn,
-            backgroundEnabled: resolvedAutonomousExecConfig?.backgroundProcessEnabled == true
-        )
+        return activeSandboxAgentContext
     }
 
     /// Sandbox agent name bound for Agent DB file tools. Same resolution
     /// order as `combinedSandboxReadBridge`, but also set in plain sandbox
     /// mode when only sandbox built-ins are registered.
     private var activeSandboxAgentName: String? {
-        if let captured = activeSandboxAgentContext?.agentName { return captured }
         if let bridge = combinedSandboxReadBridge { return bridge.agentName }
+        if let captured = activeSandboxAgentContext?.agentName { return captured }
         guard toolsByName.keys.contains("sandbox_exec")
             || toolsByName.keys.contains("sandbox_read_file"),
             let agentId = ChatExecutionContext.currentAgentId
@@ -1968,12 +1965,19 @@ public final class ToolRegistry: ObservableObject {
                 excluded.formUnion(Self.gitToolNames)
             }
         }
-        // Backend-specific names stay private adapters used by the five public
-        // tools. `sandbox_process` is the one opt-in capability: it is needed
-        // to manage jobs launched by `shell_run(background:true)`.
-        var hiddenSandboxNames = builtInSandboxToolNames
-        if mode.usesSandboxTools, toolsByName["sandbox_process"] != nil {
-            hiddenSandboxNames.remove("sandbox_process")
+        // The running sandbox registers two distinct surfaces: private backend
+        // adapters used behind the five public workspace tools, and public
+        // control-plane tools (install, secrets, process, registration). Hide
+        // only adapters in sandbox mode. Outside sandbox mode hide the complete
+        // running surface, except the transient first-use handshake: its live
+        // registration is the signal that provisioning awaits an explicit call.
+        let hiddenSandboxNames: Set<String>
+        if mode.usesSandboxTools {
+            hiddenSandboxNames = builtInSandboxToolNames
+                .intersection(Self.sandboxBackendAdapterToolNames)
+        } else {
+            hiddenSandboxNames = builtInSandboxToolNames
+                .subtracting([BuiltinSandboxTools.initPendingToolName])
         }
         excluded.formUnion(hiddenSandboxNames)
         if mode.usesHostFolderTools || mode.usesSandboxTools {
@@ -2002,6 +2006,26 @@ public final class ToolRegistry: ObservableObject {
     /// (still registered, mirroring `sandboxReadToolNames`).
     static let sandboxWriteToolNames: Set<String> = [
         "sandbox_write_file"
+    ]
+
+    /// Private runtime adapters. Model-visible file/shell calls use the stable
+    /// core workspace names and route to these only after mode/scope checks.
+    static let sandboxBackendAdapterToolNames: Set<String> = [
+        "sandbox_read_file",
+        "sandbox_search_files",
+        "sandbox_write_file",
+        "sandbox_exec",
+    ]
+
+    /// Runtime-managed control plane. The composer narrows this set from the
+    /// captured agent configuration before publishing a request schema.
+    static let sandboxControlPlaneToolNames: Set<String> = [
+        BuiltinSandboxTools.initPendingToolName,
+        "sandbox_install",
+        "sandbox_secret_check",
+        "sandbox_secret_set",
+        "sandbox_process",
+        "sandbox_plugin_register",
     ]
 
     static let coreWorkspaceToolNames: Set<String> = [

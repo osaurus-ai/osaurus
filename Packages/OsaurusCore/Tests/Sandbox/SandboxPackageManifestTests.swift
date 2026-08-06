@@ -2,8 +2,8 @@
 //  SandboxPackageManifestTests.swift
 //
 //  Pin the host-side installed-package manifest (record / reconcile /
-//  clear) and the compact, capped prompt line it feeds into the static
-//  sandbox system-prompt prefix.
+//  clear) and the compact, capped prompt line it feeds into the dynamic
+//  sandbox system-prompt suffix.
 //
 
 import Foundation

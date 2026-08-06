@@ -14,8 +14,10 @@ import Foundation
 // MARK: - Registration
 
 enum BuiltinSandboxTools {
-    /// Register sandbox tools for the given agent into the ToolRegistry.
-    /// Respects autonomous_exec config to gate write/exec tools.
+    /// Register the canonical process-wide sandbox runtime tools.
+    /// Request-specific visibility and authorization are resolved from
+    /// `ChatExecutionContext.currentAgentId`; the captured values are only a
+    /// fallback for direct UI and test calls without a request context.
     ///
     /// The schema is deliberately lean so the model can keep the whole
     /// tool surface in working memory:
@@ -50,8 +52,8 @@ enum BuiltinSandboxTools {
         // even when no host folder has ever been selected.
         FolderToolManager.shared.ensureFolderToolsRegistered()
 
-        // Capture the active agent identity/config so the public `file_*` and
-        // `shell_run` tools can route to this VM without exposing backend names.
+        // Keep a fallback identity for direct UI/test calls that do not bind
+        // a request TaskLocal. Request-bound calls override this context.
         registry.setActiveSandboxAgentContext(
             agentId: agentId,
             agentName: agentName,
@@ -69,10 +71,8 @@ enum BuiltinSandboxTools {
             runtimeManaged: true
         )
 
-        // Gated by autonomous_exec.enabled
-        guard let config = config, config.enabled else { return }
-
-        let maxCmdsPerTurn = config.maxCommandsPerTurn
+        let maxCmdsPerTurn = config?.maxCommandsPerTurn
+            ?? AutonomousExecConfig.default.maxCommandsPerTurn
 
         registry.registerSandboxTool(
             SandboxWriteFileTool(agentName: agentName, home: home),
@@ -84,20 +84,14 @@ enum BuiltinSandboxTools {
                 agentName: agentName,
                 home: home,
                 maxCommandsPerTurn: maxCmdsPerTurn,
-                backgroundEnabled: config.backgroundProcessEnabled
+                backgroundEnabled: config?.backgroundProcessEnabled == true
             ),
             runtimeManaged: true
         )
-        // Background-job management is opt-in (`backgroundProcessEnabled`).
-        // When off, `sandbox_exec` hides its `background` flag and this
-        // poll/wait/kill tool is never registered — there are no detached
-        // jobs to manage, so it would only bloat the schema.
-        if config.backgroundProcessEnabled {
-            registry.registerSandboxTool(
-                SandboxProcessTool(agentId: agentId, agentName: agentName, home: home),
-                runtimeManaged: true
-            )
-        }
+        registry.registerSandboxTool(
+            SandboxProcessTool(agentId: agentId, agentName: agentName, home: home),
+            runtimeManaged: true
+        )
         registry.registerSandboxTool(
             SandboxInstallTool(agentId: agentId, agentName: agentName, home: home),
             runtimeManaged: true
@@ -113,13 +107,10 @@ enum BuiltinSandboxTools {
             runtimeManaged: true
         )
 
-        // Plugin self-creation (gated by pluginCreate)
-        if config.pluginCreate {
-            registry.registerSandboxTool(
-                SandboxPluginRegisterTool(agentId: agentId, agentName: agentName),
-                runtimeManaged: true
-            )
-        }
+        registry.registerSandboxTool(
+            SandboxPluginRegisterTool(agentId: agentId, agentName: agentName),
+            runtimeManaged: true
+        )
     }
 
     /// Register a single transient placeholder when sandbox is enabled but
@@ -148,49 +139,87 @@ enum BuiltinSandboxTools {
 
 extension BuiltinSandboxTools {
     /// Name of the placeholder tool registered while the sandbox container
-    /// provisions. Exposed so the prompt composer can suppress it from
-    /// snapshots / schemas without duplicating the literal.
+    /// awaits first-use provisioning. Exposed so the prompt composer can keep
+    /// it transient without duplicating the literal.
     public static let initPendingToolName = "sandbox_init_pending"
 }
 
 /// Placeholder tool registered when sandbox is enabled but the container
-/// isn't running yet. Calling it kicks the on-demand boot (the sandbox chip
+/// isn't running yet. Calling it awaits the on-demand boot (the sandbox chip
 /// defaults ON but a never-set-up sandbox stays un-provisioned until first
-/// use) and returns a "still initialising" envelope. Designed to keep the
-/// model's schema non-empty (so it has *something* to call) while the
-/// container provisions; the real sandbox tools register automatically once
-/// it's running.
+/// use), then activates the real sandbox schemas in the same agent run.
 private struct SandboxInitPendingTool: OsaurusTool, @unchecked Sendable {
     let agentId: UUID
     let name = BuiltinSandboxTools.initPendingToolName
     let description =
-        "Sandbox isn't running yet. Calling this tool starts it (first use can take a "
-        + "moment to provision) and confirms it isn't ready — then either reply without "
-        + "sandbox tools or tell the user to wait. The real sandbox tools (file ops, "
-        + "shell) appear in your schema once the container boots — do NOT invent or guess "
-        + "sandbox tool names in the meantime."
+        "Start and provision the sandbox on first use. This call waits for startup; on "
+        + "success the real file, shell, and enabled sandbox control tools become callable "
+        + "in the next step of this run. Do not invent or guess sandbox tool names."
 
     var parameters: JSONValue? {
         .object(["type": .string("object"), "properties": .object([:])])
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        // First reach for a sandbox tool is the explicit signal to boot the
-        // (default-ON, not-yet-provisioned) sandbox. Kick the on-demand
-        // provision; the status publisher re-registers the real tools once the
-        // container is running, so the model's next turn uses them.
-        await MainActor.run { [agentId] in
-            SandboxToolRegistrar.shared.provisionOnDemand(for: agentId)
+        let context = await SandboxToolRequestContext.resolve(
+            fallbackAgentId: agentId.uuidString,
+            fallbackAgentName: SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
+        )
+        if let rejection = context.rejection(for: .autonomous, tool: name) {
+            return rejection
         }
-        return ToolErrorEnvelope(
-            kind: .unavailable,
-            reason:
-                "Sandbox is starting up (first use) — this can take a moment while it "
-                + "provisions. Real sandbox tools register automatically once it's "
-                + "running. Reply without sandbox tools, or wait and try again.",
-            toolName: name,
-            retryable: true
-        ).toJSONString()
+        guard let requestAgentId = context.agentUUID else {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message: "Sandbox provisioning requires a valid current agent.",
+                tool: name,
+                retryable: false
+            )
+        }
+        do {
+            try await SandboxToolRegistrar.shared.provisionOnDemand(for: requestAgentId)
+            try Task.checkCancellation()
+
+            // Publish only the newly available, request-authorized public
+            // surface. Backend `sandbox_*` adapters remain private behind the
+            // stable workspace names. The execution loop drains this buffer
+            // immediately after the placeholder returns.
+            let specs = await MainActor.run {
+                let mode = ExecutionMode.sandbox(hostRead: nil)
+                let snapshot = AgentConfigSnapshot.capture(agentId: requestAgentId)
+                let visibleControl = SystemPromptComposer.visibleSandboxControlPlaneToolNames(
+                    snapshot: snapshot,
+                    executionMode: mode
+                )
+                let visibleNames = ToolRegistry.coreWorkspaceToolNames
+                    .union(visibleControl)
+                    .subtracting([BuiltinSandboxTools.initPendingToolName])
+                return ToolRegistry.shared.alwaysLoadedSpecs(mode: mode)
+                    .filter { visibleNames.contains($0.function.name) }
+            }
+            for spec in specs {
+                await CapabilityLoadBuffer.shared.add(spec)
+            }
+
+            return ToolEnvelope.success(
+                tool: name,
+                result: [
+                    "status": "ready",
+                    "tools": specs.map(\.function.name),
+                ]
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return ToolEnvelope.failure(
+                kind: .unavailable,
+                message:
+                    "Sandbox could not be provisioned: \(error.localizedDescription). "
+                    + "Open Sandbox settings to retry or inspect the startup failure.",
+                tool: name,
+                retryable: true
+            )
+        }
     }
 }
 
@@ -914,6 +943,10 @@ private func agentShellEnvironment(agentId: String, home: String, cwd: String? =
     pathEntries.append(sandboxDefaultPATH)
     env["VIRTUAL_ENV"] = venvPath
     env["PATH"] = pathEntries.joined(separator: ":")
+    // npm libraries live in the per-agent workspace rather than each
+    // caller's cwd. NODE_PATH makes `require("pkg")` / dynamic imports from
+    // agent-authored files resolve the same packages whose CLIs are on PATH.
+    env["NODE_PATH"] = "\(nodeWorkdir)/node_modules"
     return env
 }
 
@@ -2598,6 +2631,17 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
+        let context = await SandboxToolRequestContext.resolve(
+            fallbackAgentId: agentId,
+            fallbackAgentName: agentName
+        )
+        if let rejection = context.rejection(for: .backgroundProcess, tool: name) {
+            return rejection
+        }
+        let agentName = context.agentName
+        let home = context.home
+        let agentId = context.agentId
+
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
@@ -2862,13 +2906,13 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
                 + "`~/.venv/`), or `npm` for Node packages (into a per-agent workspace). "
                 + "**Use this instead of `sandbox_exec(\"apk add …\" / \"pip install …\" / \"npm install …\")`** "
                 + "so the index refresh, venv/workspace bootstrap, retry harness, and per-agent "
-                + "serialization apply. Installed `python3`/CLI binaries land on your PATH — call them "
+                + "serialization apply. Installed Python/Node libraries and CLI binaries are usable "
                 + "from any `sandbox_exec` cwd. Example: `{\"manager\": \"pip\", \"packages\": [\"numpy\", \"flask\"]}`."
             : "Install packages into the sandbox. Pass `manager`: `pip` for Python packages "
                 + "(into the agent venv at `~/.venv/`) or `npm` for Node packages (into a per-agent "
                 + "workspace). **Use this instead of `sandbox_exec(\"pip install …\" / \"npm install …\")`** "
                 + "so the venv/workspace bootstrap, retry harness, and per-agent serialization apply. "
-                + "Installed `python3`/CLI binaries land on your PATH — call them from any "
+                + "Installed Python/Node libraries and CLI binaries are usable from any "
                 + "`sandbox_exec` cwd. Example: `{\"manager\": \"pip\", \"packages\": [\"numpy\", \"flask\"]}`."
     }
     let agentId: String
@@ -2912,6 +2956,14 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
+        let context = await SandboxToolRequestContext.resolve(
+            fallbackAgentId: agentId,
+            fallbackAgentName: agentName
+        )
+        if let rejection = context.rejection(for: .autonomous, tool: name) {
+            return rejection
+        }
+
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
@@ -2931,24 +2983,8 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
         )
         guard case .value(let packages) = pkgsReq else { return pkgsReq.failureEnvelope ?? "" }
 
-        switch managerRaw.lowercased() {
-        case "apk":
-            guard SandboxBackend.current == .virtualMachine else {
-                return ToolEnvelope.failure(
-                    kind: .invalidArgs,
-                    message:
-                        "`apk` is only available in the Linux VM sandbox (macOS 26+). "
-                        + "This sandbox runs directly on macOS — use `pip` or `npm` instead.",
-                    tool: name,
-                    retryable: false
-                )
-            }
-            return try await installApk(packages: packages)
-        case "pip":
-            return try await installPip(packages: packages)
-        case "npm":
-            return try await installNpm(packages: packages)
-        default:
+        let manager = managerRaw.lowercased()
+        guard ["apk", "pip", "npm"].contains(manager) else {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message:
@@ -2958,12 +2994,81 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
                 retryable: false
             )
         }
+        if manager == "apk", !Self.hasApk {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "`apk` is only available in the Linux VM sandbox (macOS 26+). "
+                    + "This sandbox runs directly on macOS — use `pip` or `npm` instead.",
+                tool: name,
+                retryable: false
+            )
+        }
+
+        let packageRequest: SandboxPackageRequest
+        do {
+            packageRequest = try SandboxPackageRequest.normalize(packages)
+        } catch {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: error.localizedDescription,
+                field: "packages",
+                expected:
+                    "1-\(SandboxPackageRequest.maximumPackageCount) package specifiers, each "
+                    + "at most \(SandboxPackageRequest.maximumSpecifierLength) characters and "
+                    + "not beginning with a package-manager option",
+                tool: name,
+                retryable: false
+            )
+        }
+
+        guard context.config?.sandboxNetworkEnabled != false else {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message:
+                    "Package installation requires sandbox network access, but network access "
+                    + "is disabled for the current agent. Enable Sandbox Network and restart "
+                    + "the sandbox before retrying.",
+                tool: name,
+                retryable: false
+            )
+        }
+        if context.config != nil,
+            SandboxBackend.current == .virtualMachine,
+            !(await SandboxManager.shared.awaitNetworkReady())
+        {
+            return ToolEnvelope.failure(
+                kind: .unavailable,
+                message:
+                    "Sandbox network egress is configured but unavailable. Check the sandbox "
+                    + "network/allowlist settings and restart the sandbox before retrying.",
+                tool: name,
+                retryable: true
+            )
+        }
+
+        let requestTool = SandboxInstallTool(
+            agentId: context.agentId,
+            agentName: context.agentName,
+            home: context.home
+        )
+        switch manager {
+        case "apk":
+            return try await requestTool.installApk(request: packageRequest)
+        case "pip":
+            return try await requestTool.installPip(request: packageRequest)
+        case "npm":
+            return try await requestTool.installNpm(request: packageRequest)
+        default:
+            preconditionFailure("validated sandbox package manager")
+        }
     }
 
     // MARK: apk (system, root-wide)
 
-    private func installApk(packages: [String]) async throws -> String {
-        let pkgList = packages.joined(separator: " ")
+    private func installApk(request: SandboxPackageRequest) async throws -> String {
+        let packages = request.packages
+        let pkgList = request.shellArguments
         // `apk update` first refreshes the package index — cheap when the
         // cache is fresh, and eliminates "no such package" errors caused
         // by a stale index. `|| true` so a transient network blip on the
@@ -3016,7 +3121,8 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 
     // MARK: pip (Python venv)
 
-    private func installPip(packages: [String]) async throws -> String {
+    private func installPip(request: SandboxPackageRequest) async throws -> String {
+        let packages = request.packages
         let venvPath = agentVenvPath(home: home)
         let checkResult = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
             command: "test -x /usr/bin/python3",
@@ -3031,7 +3137,7 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
             )
         }
 
-        let pkgList = packages.joined(separator: " ")
+        let pkgList = request.shellArguments
         // `--disable-pip-version-check` cuts a stdout warning that
         // confuses small models; `--no-input` prevents pip from blocking
         // on a credential prompt for private indexes.
@@ -3091,7 +3197,8 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 
     // MARK: npm (Node workspace)
 
-    private func installNpm(packages: [String]) async throws -> String {
+    private func installNpm(request: SandboxPackageRequest) async throws -> String {
+        let packages = request.packages
         let checkResult = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
             command: "test -x /usr/bin/node && test -x /usr/bin/npm",
             timeout: 10
@@ -3106,7 +3213,7 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
         }
 
         let nodeWorkdir = agentNodeWorkdir(home: home)
-        let pkgList = packages.joined(separator: " ")
+        let pkgList = request.shellArguments
         // Bootstrap an isolated npm workspace under our namespace and
         // ensure a `package.json` exists before running install. The
         // `[ -f package.json ] || npm init -y` step is idempotent — once
@@ -3119,7 +3226,9 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
         let installCmd =
             "mkdir -p '\(nodeWorkdir)'"
             + " && cd '\(nodeWorkdir)'"
-            + " && [ -f package.json ] || npm init -y --silent"
+            + " && { [ -f package.json ] || npm init -y --silent; }"
+            + " && { [ -e '\(home)/node_modules' ] || [ -L '\(home)/node_modules' ]"
+            + " || ln -s '\(nodeWorkdir)/node_modules' '\(home)/node_modules'; }"
             + " && npm install --no-audit --no-fund --no-update-notifier \(pkgList)"
 
         // Local snapshots so the @Sendable closures don't capture `self`.

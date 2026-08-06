@@ -418,7 +418,7 @@ public enum SystemPromptTemplates {
         let writeStep =
             hostWritableCombined
             ? "2. **Write files** under `plugins/{service}/` in your sandbox home with `file_write` (absolute `/workspace/...` paths) — scripts first, then `plugin.json`. `sandbox_plugin_register` packages the whole directory automatically: do NOT inline script contents or add a `files` field. Binary files are rejected — regenerate them in `setup` instead."
-            : "2. **Write files** under `plugins/{service}/` with `sandbox_write_file` — scripts first, then `plugin.json`. `sandbox_plugin_register` packages the whole directory automatically: do NOT inline script contents or add a `files` field. Binary files are rejected — regenerate them in `setup` instead."
+            : "2. **Write files** under `plugins/{service}/` with `file_write` — scripts first, then `plugin.json`. `sandbox_plugin_register` packages the whole directory automatically: do NOT inline script contents or add a `files` field. Binary files are rejected — regenerate them in `setup` instead."
         return """
         A sandbox plugin is a JSON recipe (`plugin.json`) plus helper scripts
         that run in your sandbox. Use one when you need to connect to a service
@@ -462,6 +462,26 @@ public enum SystemPromptTemplates {
         - One focused action per tool, not a mega-tool. Default to read operations; add writes only if asked.
         - Use well-maintained libraries, validate required parameters, return structured JSON, and paginate list operations.
         - Tool names are auto-prefixed with the plugin id (e.g. `notion_list_databases`).
+        """
+    }
+
+    /// Reduced authoring contract for compact local models. Keeps every field
+    /// needed to produce a decodable SandboxPlugin and the exact write →
+    /// register → call transition, while omitting examples and policy prose
+    /// already covered by adjacent prompt sections.
+    public static func pluginCreatorInstructionsCompactBody(
+        hostWritableCombined: Bool = false
+    ) -> String {
+        let writePath =
+            hostWritableCombined
+            ? "absolute `/workspace/.../plugins/{service}/...` paths"
+            : "`plugins/{service}/...` paths"
+        return """
+        Create `plugins/{service}/` with helper scripts plus `plugin.json`; write each file with `file_write` using \(writePath) (scripts first, manifest last).
+
+        `plugin.json` requires top-level `name` and `description`; add `tools`, where each tool has `id`, `description`, optional simplified `parameters` (`{"arg":{"type":"string","description":"..."}}`, not JSON Schema), and `run`. Optional fields include `setup`, `dependencies`, `secrets`, and `permissions.network`. Do not add `files`: registration packages the directory. Tool parameters arrive as `$PARAM_{NAME}` and secrets as `$NAME`; scripts print JSON to stdout.
+
+        Call `sandbox_plugin_register({"plugin_id":"{service}"})`, then immediately call the returned prefixed tool to verify it. On failure, fix the files and re-register.
         """
     }
 

@@ -121,9 +121,8 @@ struct PromptSectionOrderingTests {
 
     // MARK: - Sandbox mode
 
-    /// Sandbox mode: file-mutation tools fire, so codeStyle + riskAware
-    /// land between modelFamilyGuidance and sandbox. Agent-loop guidance
-    /// is still absent on first turn; sandbox sits before capability nudge.
+    /// Sandbox mode keeps the lean workspace framing and appends the
+    /// plugin-authoring contract when creation is enabled.
     @Test("ordering: auto + gpt + sandbox mode")
     func ordering_autoGptSandbox() async {
         await SandboxTestLock.runWithStoragePaths {
@@ -145,7 +144,7 @@ struct PromptSectionOrderingTests {
                 executionMode: .sandbox(hostRead: nil),
                 model: "gpt-5"
             )
-            #expect(sectionIds(ctx) == ["platform", "persona", "sandbox"])
+            #expect(sectionIds(ctx) == ["platform", "persona", "sandbox", "pluginCreator"])
 
             ToolRegistry.shared.unregisterAllSandboxTools()
             _ = await AgentManager.shared.delete(id: agent.id)
@@ -155,10 +154,8 @@ struct PromptSectionOrderingTests {
     // MARK: - Sandbox-only block gating (Secret handling / Self-improvement /
     //         capability build ladder)
 
-    /// In sandbox mode with plugin creation enabled, the three sandbox-gated
-    /// blocks appear and carry their plugin-build lines: Self-improvement
-    /// names sandbox plugins, and the capability nudge ends in a build step
-    /// (not denial). Secret handling is present regardless of plugin creation.
+    /// In sandbox mode with plugin creation enabled, the actionable authoring
+    /// contract is present and ordered after the workspace framing.
     @Test("sandbox blocks: present with plugin lines when canCreatePlugins")
     func sandboxBlocks_presentWithPluginLinesWhenCanCreate() async {
         await SandboxTestLock.runWithStoragePaths {
@@ -181,9 +178,10 @@ struct PromptSectionOrderingTests {
                 model: "gpt-5"
             )
             let ids = sectionIds(ctx)
-            #expect(ids == ["platform", "persona", "sandbox"])
+            #expect(ids == ["platform", "persona", "sandbox", "pluginCreator"])
             #expect(!ctx.prompt.contains("Build or update a sandbox plugin"))
-            #expect(!ctx.prompt.contains("## Building new tools"))
+            #expect(ctx.prompt.contains("## Building new tools"))
+            #expect(ctx.prompt.contains("sandbox_plugin_register"))
 
             ToolRegistry.shared.unregisterAllSandboxTools()
             _ = await AgentManager.shared.delete(id: agent.id)

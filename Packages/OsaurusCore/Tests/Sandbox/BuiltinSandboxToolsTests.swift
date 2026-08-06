@@ -60,7 +60,111 @@ struct BuiltinSandboxToolsTests {
         // block on a credential prompt for private indexes.
         #expect(command.contains("--disable-pip-version-check"))
         #expect(command.contains("--no-input"))
-        #expect(command.contains("flask pytest"))
+        #expect(command.contains("'flask' 'pytest'"))
+    }
+
+    @Test @MainActor
+    func sandboxInstall_rejectsOptionInjectionBeforeExec() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_install",
+                argumentsJSON:
+                    #"{"manager":"pip","packages":["--index-url=https://evil.example","flask"]}"#
+            )
+        }
+
+        let payload = try failurePayload(output)
+        #expect(payload["kind"] as? String == "invalid_args")
+        #expect(payload["field"] as? String == "packages")
+        #expect((payload["message"] as? String ?? "").contains("starts with `-`"))
+        #expect(await runner.calls.isEmpty)
+    }
+
+    @Test @MainActor
+    func sandboxInstall_networkDisabledFailsBeforeExec() async throws {
+        let agent = Agent(
+            name: "Network Disabled \(UUID().uuidString.prefix(6))",
+            autonomousExec: AutonomousExecConfig(
+                enabled: true,
+                pluginCreate: true,
+                sandboxNetworkEnabled: false
+            )
+        )
+        AgentStore.save(agent)
+        AgentManager.shared.refresh()
+        defer {
+            _ = AgentStore.delete(id: agent.id)
+            AgentManager.shared.refresh()
+        }
+
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ChatExecutionContext.$currentAgentId.withValue(agent.id) {
+                try await ToolRegistry.shared.execute(
+                    name: "sandbox_install",
+                    argumentsJSON: #"{"manager":"pip","packages":["flask"]}"#
+                )
+            }
+        }
+
+        let payload = try failurePayload(output)
+        #expect(payload["kind"] as? String == "rejected")
+        #expect((payload["message"] as? String ?? "").contains("network access is disabled"))
+        #expect(await runner.calls.isEmpty)
+    }
+
+    @Test @MainActor
+    func successfulInstallFlowsFromImmediateResultIntoNextTurnDynamicState() async throws {
+        let id = UUID()
+        let agentName = SandboxAgentProvisioner.linuxName(for: id.uuidString)
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [.init(stdout: "", stderr: "", exitCode: 0)],
+            agentResults: [.init(stdout: "installed", stderr: "", exitCode: 0)]
+        )
+        defer {
+            SandboxPackageManifest.shared.clear(agentId: id.uuidString)
+            _ = AgentStore.delete(id: id)
+            AgentManager.shared.refresh()
+        }
+
+        let (output, nextTurn) = try await withRegisteredSandboxTools(
+            runner: runner,
+            agentId: id.uuidString,
+            agentName: agentName
+        ) {
+            let output = try await ToolRegistry.shared.execute(
+                name: "sandbox_install",
+                argumentsJSON: #"{"manager":"pip","packages":["flask"]}"#
+            )
+            AgentStore.save(
+                Agent(
+                    id: id,
+                    name: "Install Context",
+                    autonomousExec: AutonomousExecConfig(enabled: true)
+                )
+            )
+            AgentManager.shared.refresh()
+            let nextTurn = await SystemPromptComposer.composeChatContext(
+                agentId: id,
+                executionMode: .sandbox(hostRead: nil),
+                model: "gpt-5",
+                query: "use the dependency"
+            )
+            return (output, nextTurn)
+        }
+
+        let immediate = try successPayload(output)
+        #expect(immediate["installed"] as? [String] == ["flask"])
+        #expect(immediate["exit_code"] as? Int == 0)
+        #expect((immediate["summary"] as? String ?? "").contains("flask"))
+        #expect(nextTurn.prompt.contains("Python (pip): flask"))
+        #expect(!nextTurn.staticPrefix.contains("Python (pip): flask"))
+        #expect(
+            nextTurn.manifest.sections.contains {
+                $0.id == "sandboxState" && $0.cacheability == .dynamic
+            }
+        )
     }
 
     @Test @MainActor
@@ -235,7 +339,7 @@ struct BuiltinSandboxToolsTests {
         let calls = await runner.calls
         // root probe + one install attempt.
         #expect(calls.count == 2)
-        guard case .exec(let user, let command, _) = calls[1] else {
+        guard case .exec(let user, let command, let env) = calls[1] else {
             Issue.record("expected install call to use exec (not execAsAgent)")
             return
         }
@@ -244,11 +348,14 @@ struct BuiltinSandboxToolsTests {
         #expect(command.contains(".osaurus/node_workspace"))
         #expect(command.contains("mkdir -p"))
         #expect(command.contains("[ -f package.json ] || npm init -y"))
+        #expect(command.contains("ln -s"))
+        #expect(command.contains("/node_modules"))
         #expect(command.contains("npm install"))
         #expect(command.contains("--no-audit"))
         #expect(command.contains("--no-fund"))
         #expect(command.contains("--no-update-notifier"))
         #expect(command.contains("express"))
+        #expect(env["NODE_PATH"]?.hasSuffix("/.osaurus/node_workspace/node_modules") == true)
         // Regression guard: the install command must NOT start with an
         // outer `cd '<workdir>' && …` prepend. `SandboxManager.exec`
         // adds that prefix when its `cwd:` arg is non-nil, and on a
@@ -552,16 +659,13 @@ struct BuiltinSandboxToolsTests {
 
     @Test @MainActor
     func backgroundDisabled_stripsProcessToolAndRejectsBackgroundExec() async throws {
-        // With `backgroundProcessEnabled` off (the default), `sandbox_process`
-        // is never registered and `sandbox_exec` no longer advertises the
-        // `background` flag — so a `background:true` call is refused (schema
-        // validation rejects the unknown property; the tool's own runtime
-        // guard is the defense-in-depth backstop) and nothing is spawned.
+        // Canonical control-plane tools remain registered process-wide, but
+        // the prompt composer omits sandbox_process and sandbox_exec no longer
+        // advertises the background flag. A stale direct call still fails.
         let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [], execResults: [])
 
         let output = try await withRegisteredSandboxTools(runner: runner) {
-            // sandbox_process must not be registered when background is off.
-            #expect(ToolRegistry.shared.specs(forTools: ["sandbox_process"]).isEmpty)
+            #expect(!ToolRegistry.shared.specs(forTools: ["sandbox_process"]).isEmpty)
             return try await ToolRegistry.shared.execute(
                 name: "sandbox_exec",
                 argumentsJSON: #"{"command":"python3 server.py","background":true}"#
@@ -692,6 +796,62 @@ struct BuiltinSandboxToolsTests {
         )
         #expect(env["VIRTUAL_ENV"]?.contains(".venv") == true)
         #expect(env["PATH"]?.contains(".venv/bin") == true)
+        #expect(env["NODE_PATH"]?.contains(".osaurus/node_workspace/node_modules") == true)
+    }
+
+    @Test @MainActor
+    func concurrentProcessCallsRouteToEachRequestAgent() async throws {
+        let config = AutonomousExecConfig(
+            enabled: true,
+            pluginCreate: true,
+            backgroundProcessEnabled: true
+        )
+        let first = Agent(name: "Route A", autonomousExec: config)
+        let second = Agent(name: "Route B", autonomousExec: config)
+        AgentStore.save(first)
+        AgentStore.save(second)
+        AgentManager.shared.refresh()
+        defer {
+            _ = AgentStore.delete(id: first.id)
+            _ = AgentStore.delete(id: second.id)
+            AgentManager.shared.refresh()
+        }
+
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [
+                .init(stdout: "alive\n", stderr: "", exitCode: 0),
+                .init(stdout: "alive\n", stderr: "", exitCode: 0),
+            ]
+        )
+        try await withRegisteredSandboxTools(runner: runner, backgroundEnabled: true) {
+            async let firstResult = ChatExecutionContext.$currentAgentId.withValue(first.id) {
+                try await ToolRegistry.shared.execute(
+                    name: "sandbox_process",
+                    argumentsJSON: #"{"action":"poll","pid":"41","tail_lines":0}"#
+                )
+            }
+            async let secondResult = ChatExecutionContext.$currentAgentId.withValue(second.id) {
+                try await ToolRegistry.shared.execute(
+                    name: "sandbox_process",
+                    argumentsJSON: #"{"action":"poll","pid":"42","tail_lines":0}"#
+                )
+            }
+            let outputs = try await [firstResult, secondResult]
+            #expect(outputs.allSatisfy { !ToolEnvelope.isError($0) })
+        }
+
+        let expectedNames = Set([
+            SandboxAgentProvisioner.linuxName(for: first.id.uuidString),
+            SandboxAgentProvisioner.linuxName(for: second.id.uuidString),
+        ])
+        let routedNames = Set(
+            await runner.calls.compactMap { call -> String? in
+                guard case .agent(let name, _) = call else { return nil }
+                return name
+            }
+        )
+        #expect(routedNames == expectedNames)
     }
 
     @Test @MainActor
@@ -1514,10 +1674,12 @@ private enum MockSandboxRunnerError: Error, LocalizedError {
 private func withRegisteredSandboxTools<T: Sendable>(
     runner: some SandboxToolCommandRunning,
     backgroundEnabled: Bool = false,
+    agentId: String = "test-agent",
+    agentName: String? = nil,
     _ body: () async throws -> T
 ) async throws -> T {
     try await SandboxTestLock.shared.run {
-        let agentId = "test-agent"
+        let resolvedAgentName = agentName ?? agentId
         let config = AutonomousExecConfig(
             enabled: true,
             maxCommandsPerTurn: 10,
@@ -1526,7 +1688,11 @@ private func withRegisteredSandboxTools<T: Sendable>(
         )
         await SandboxToolCommandRunnerRegistry.shared.setRunner(runner)
         ToolRegistry.shared.unregisterAllSandboxTools()
-        BuiltinSandboxTools.register(agentId: agentId, agentName: agentId, config: config)
+        BuiltinSandboxTools.register(
+            agentId: agentId,
+            agentName: resolvedAgentName,
+            config: config
+        )
 
         do {
             let result = try await body()

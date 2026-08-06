@@ -12,7 +12,8 @@ autonomous-execution surface.
   pass and Sandbox setup must be complete (`setupComplete: true`). Cases are
   **SKIPPED (not failed)** otherwise — same semantics as `requirePlugins`.
 - Off-CI: token cost, VM boot (~minutes on first case), real network for
-  `sandbox.install-and-use` and `sandbox.live-fetch`.
+  `sandbox.install-and-use`, `sandbox.plugin-dependency-use`, and
+  `sandbox.live-fetch`.
 - The container is **kept alive across cases** (boot is the expensive part);
   only per-agent state is provisioned/torn down per case.
 
@@ -117,6 +118,29 @@ zero content blocks) before the model sees them. The remote-provider stream
 surfaces this as an explicit `Anthropic refused this request` error, so
 affected cases show up as `errored` rows with the provider's explanation —
 attribute these to the provider, not the harness.
+
+## Dependency and concurrent-routing proof
+
+Run the focused network rows after signing:
+
+```bash
+Packages/OsaurusEvals/.build/debug/osaurus-evals run \
+  --suite Packages/OsaurusEvals/Suites/SandboxFrontier \
+  --model <provider/model> \
+  --filter 'sandbox.install-and-use|sandbox.plugin-dependency-use' \
+  --out build/evals/sandbox-dependencies.json \
+  --transcripts
+```
+
+The current SandboxFrontier runner owns one sandbox agent per case, so
+cross-agent routing is pinned by the model-free `SandboxRequestRoutingTests`
+and `BuiltinSandboxToolsTests.concurrentProcessCallsRouteToEachRequestAgent`
+instead of a misleading single-agent fixture. For live app proof, open two
+custom-agent chats with distinct sandbox homes, interleave file/shell,
+pip/npm install, secret check/set, background process, and plugin-register
+calls, then verify each result, manifest, process, secret, and registered tool
+stays scoped to the chat that issued it. Include one disabled-network agent
+and one plugin-creation-disabled agent to prove stale schemas fail closed.
 
 Harness defects this lane has already caught (fixed, lane re-run before
 publishing): `background-process` once looped models forever because the

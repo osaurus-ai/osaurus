@@ -95,6 +95,34 @@ struct PluginCreatorGateTests {
         #expect(rendered.contains("## Building new tools"))
         #expect(rendered.contains("Plugin creation is enabled"))
     }
+
+    @Test
+    func compactInstructions_keepActionableRegistrationContract() {
+        let compact = SystemPromptTemplates.pluginCreatorInstructionsCompactBody()
+        let full = SystemPromptTemplates.pluginCreatorInstructions
+
+        #expect(compact.contains("plugins/{service}/"))
+        #expect(compact.contains("`name` and `description`"))
+        #expect(compact.contains("`id`"))
+        #expect(compact.contains("simplified `parameters`"))
+        #expect(compact.contains("`run`"))
+        #expect(compact.contains("file_write"))
+        #expect(compact.contains("sandbox_plugin_register"))
+        #expect(compact.contains("immediately call the returned prefixed tool"))
+        #expect(TokenEstimator.estimate(compact) < TokenEstimator.estimate(full))
+        #expect(
+            SystemPromptComposer.pluginCreatorInstructions(
+                prefersCompactPrompt: true,
+                hostWritableCombined: false
+            ) == compact
+        )
+        #expect(
+            SystemPromptComposer.pluginCreatorInstructions(
+                prefersCompactPrompt: false,
+                hostWritableCombined: false
+            ) == full
+        )
+    }
 }
 
 // MARK: - Composer wiring (negative path only)
@@ -129,6 +157,67 @@ struct PluginCreatorComposerWiringTests {
             #expect(labels.contains("Plugin Creator") == false)
 
             _ = await AgentManager.shared.delete(id: agent.id)
+        }
+    }
+
+    @Test("enabling plugin creation updates a frozen running-sandbox session")
+    func enablingPluginCreationUpdatesFrozenSession() async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            let manager = AgentManager.shared
+            let registrar = SandboxToolRegistrar.shared
+            let registry = ToolRegistry.shared
+            let originalStatus = SandboxManager.State.shared.status
+            let originalProvisionOverride = registrar.provisionAgentOverride
+
+            let initialConfig = AutonomousExecConfig(
+                enabled: true,
+                pluginCreate: false
+            )
+            let agent = Agent(
+                name: "Plugin Creator Toggle \(UUID().uuidString)",
+                agentAddress: "test-plugin-creator-toggle-\(UUID().uuidString)",
+                autonomousExec: initialConfig
+            )
+            manager.add(agent)
+            SandboxManager.State.shared.status = .running
+            registrar.provisionAgentOverride = { _ in }
+            registry.unregisterAllBuiltinSandboxTools()
+            await registrar.registerTools(for: agent.id)
+
+            let before = await SystemPromptComposer.composeChatContext(
+                agentId: agent.id,
+                executionMode: .sandbox,
+                model: "gpt-5"
+            )
+            #expect(
+                !before.tools.contains { $0.function.name == "sandbox_plugin_register" }
+            )
+            #expect(!before.manifest.sections.map(\.id).contains("pluginCreator"))
+
+            var enabledConfig = initialConfig
+            enabledConfig.pluginCreate = true
+            try await manager.updateAutonomousExec(enabledConfig, for: agent.id)
+            await registrar.registerTools(for: agent.id)
+
+            let after = await SystemPromptComposer.composeChatContext(
+                agentId: agent.id,
+                executionMode: .sandbox,
+                model: "gpt-5",
+                frozenAlwaysLoadedNames: before.alwaysLoadedNames,
+                frozenToolSpecs: before.initialToolSpecs,
+                frozenManifest: before.enabledManifest,
+                frozenSoul: before.soul
+            )
+            #expect(
+                after.tools.contains { $0.function.name == "sandbox_plugin_register" }
+            )
+            #expect(after.manifest.sections.map(\.id).contains("pluginCreator"))
+            #expect(after.prompt.contains("sandbox_plugin_register"))
+
+            registry.unregisterAllSandboxTools()
+            registrar.provisionAgentOverride = originalProvisionOverride
+            SandboxManager.State.shared.status = originalStatus
+            _ = await manager.delete(id: agent.id)
         }
     }
 }
