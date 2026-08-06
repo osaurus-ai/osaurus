@@ -1997,10 +1997,12 @@ extension ModelManager {
 
     private nonisolated static func mergeExternalModels(into scanned: [MLXModel]) -> [MLXModel] {
         // Append externally-discovered bundles (HF cache, LM Studio, custom folders). Read
-        // fresh from the locator's in-memory registry each call (cheap) so a
-        // background rescan is reflected without invalidating the disk-scan
-        // cache above. Locally-present models win on id collision.
-        let external = ExternalModelLocator.models()
+        // from the locator's non-blocking snapshot: this runs on view-body
+        // call paths, and the locator's cold build reads every bundle's
+        // config.json plus weight sizes. A background rescan is reflected
+        // without invalidating the disk-scan cache above. Locally-present
+        // models win on id collision.
+        let external = ExternalModelLocator.modelsSnapshotNonBlocking()
         guard !external.isEmpty else { return scanned }
         let scannedIds = Set(scanned.map { $0.id.lowercased() })
         return scanned + external.filter { !scannedIds.contains($0.id.lowercased()) }
