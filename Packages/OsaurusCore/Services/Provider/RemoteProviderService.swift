@@ -5332,6 +5332,45 @@ extension RemoteProviderService {
 
     /// Fetch models from an OpenAI-compatible `/models` endpoint.
     static func fetchOpenAICompatibleModels(from provider: RemoteProvider) async throws -> [String] {
+        try await fetchOpenAICompatibleModelsDiscovery(from: provider).models
+    }
+
+    /// Per-model context windows advertised by an OpenAI-compatible `/models`
+    /// endpoint, alongside the discovered ids. Servers outside the strict
+    /// OpenAI schema commonly report the window under a vendor key (vLLM's
+    /// `max_model_len`, OpenRouter/LM Studio's `context_length`, llama.cpp's
+    /// `max_context_length`); honoring it keeps the chat budget from
+    /// collapsing to the 128k unknown-metadata fallback.
+    struct OpenAICompatibleModelDiscovery: Sendable {
+        let models: [String]
+        /// Model id -> advertised context window in tokens. Only ids whose
+        /// entry carried a positive window appear here.
+        let contextLengths: [String: Int]
+    }
+
+    /// Like `fetchModels(from:)` but also surfaces per-model context windows
+    /// when the provider's `/models` route is the OpenAI-compatible one.
+    /// Every other provider family keeps its existing discovery path and
+    /// returns an empty context map.
+    public static func fetchModelsDiscovery(
+        from provider: RemoteProvider
+    ) async throws -> (models: [String], contextLengths: [String: Int]) {
+        // Mirror `fetchModels`' routing: only requests that would fall through
+        // to the OpenAI-compatible endpoint take the discovery variant.
+        if isOpenAICompatibleModelDiscoveryProvider(provider.providerType),
+            provider.authType != .xaiOAuth,
+            !isFireworksProvider(provider),
+            !isVeniceProvider(provider)
+        {
+            let discovery = try await fetchOpenAICompatibleModelsDiscovery(from: provider)
+            return (discovery.models, discovery.contextLengths)
+        }
+        return (try await fetchModels(from: provider), [:])
+    }
+
+    static func fetchOpenAICompatibleModelsDiscovery(
+        from provider: RemoteProvider
+    ) async throws -> OpenAICompatibleModelDiscovery {
         // OpenAI-compatible providers use /models endpoint
         guard let url = provider.url(for: "/models") else {
             throw RemoteProviderServiceError.invalidURL
@@ -5388,7 +5427,7 @@ extension RemoteProviderService {
             throw RemoteProviderServiceError.rateLimited(retryAfter: nil, statusCode: 503)
         }
         do {
-            return try decodeOpenAICompatibleModelsResponse(
+            return try decodeOpenAICompatibleModelsDiscovery(
                 data: data,
                 statusCode: httpResponse.statusCode,
                 provider: provider
@@ -5413,22 +5452,72 @@ extension RemoteProviderService {
         statusCode: Int,
         provider: RemoteProvider
     ) throws -> [String] {
+        try decodeOpenAICompatibleModelsDiscovery(
+            data: data,
+            statusCode: statusCode,
+            provider: provider
+        ).models
+    }
+
+    /// One entry of an OpenAI-compatible `/models` list, keeping the vendor
+    /// context-window keys the shared serving struct (`OpenAIModel`) has no
+    /// business encoding back out.
+    private struct OpenAICompatibleModelEntry: Decodable {
+        let id: String
+        let maxModelLen: Int?
+        let contextLength: Int?
+        let maxContextLength: Int?
+
+        private enum CodingKeys: String, CodingKey {
+            case id
+            case maxModelLen = "max_model_len"
+            case contextLength = "context_length"
+            case maxContextLength = "max_context_length"
+        }
+
+        /// First positive vendor-reported window, in the order the keys are
+        /// most specific: vLLM, then OpenRouter/LM Studio, then llama.cpp.
+        var advertisedContextLength: Int? {
+            [maxModelLen, contextLength, maxContextLength]
+                .compactMap { $0 }
+                .first { $0 > 0 }
+        }
+    }
+
+    private struct OpenAICompatibleModelList: Decodable {
+        let data: [OpenAICompatibleModelEntry]
+    }
+
+    static func decodeOpenAICompatibleModelsDiscovery(
+        data: Data,
+        statusCode: Int,
+        provider: RemoteProvider
+    ) throws -> OpenAICompatibleModelDiscovery {
         if statusCode >= 400 {
             let errorMessage = extractErrorMessage(from: data, statusCode: statusCode)
             if canUseManualModelDiscoveryFallback(for: provider, statusCode: statusCode),
                 let fallbackModels = manualModelDiscoveryFallback(for: provider)
             {
-                return fallbackModels
+                return OpenAICompatibleModelDiscovery(models: fallbackModels, contextLengths: [:])
             }
             throw RemoteProviderServiceError.requestFailed(errorMessage)
         }
 
         do {
-            let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
-            return modelsResponse.data.map { $0.id }
+            let modelsResponse = try JSONDecoder().decode(OpenAICompatibleModelList.self, from: data)
+            var contextLengths: [String: Int] = [:]
+            for entry in modelsResponse.data {
+                if let contextLength = entry.advertisedContextLength {
+                    contextLengths[entry.id] = contextLength
+                }
+            }
+            return OpenAICompatibleModelDiscovery(
+                models: modelsResponse.data.map { $0.id },
+                contextLengths: contextLengths
+            )
         } catch {
             if let fallbackModels = manualModelDiscoveryFallback(for: provider) {
-                return fallbackModels
+                return OpenAICompatibleModelDiscovery(models: fallbackModels, contextLengths: [:])
             }
             throw error
         }
