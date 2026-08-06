@@ -693,14 +693,14 @@ private struct KnowledgeCollectionCard: View {
                 // the index reflects the folder on disk.
                 if !indexing { Task { await refreshOKFStatus() } }
             }
-            if !collection.folderExists {
+            if !collection.folderExistsCached {
                 Text("Folder not found. Search serves the last indexed state.", bundle: .module)
                     .font(.system(size: 10))
                     .foregroundColor(.orange)
             }
 
             HStack(spacing: 10) {
-                if collection.isGitRepository {
+                if collection.isGitRepositoryCached {
                     cardButton("Sync", icon: "arrow.triangle.2.circlepath.circle", action: onSync)
                 }
                 if isIndexing {
@@ -1479,16 +1479,16 @@ private struct KnowledgeCollectionDetailSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             sectionHeader("Location")
             HStack(spacing: 6) {
-                Image(systemName: live.folderExists ? "folder.fill" : "folder.badge.questionmark")
+                Image(systemName: live.folderExistsCached ? "folder.fill" : "folder.badge.questionmark")
                     .font(.system(size: 11))
-                    .foregroundColor(live.folderExists ? theme.tertiaryText : .orange)
+                    .foregroundColor(live.folderExistsCached ? theme.tertiaryText : .orange)
                 Text(live.folderPath)
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundColor(theme.secondaryText)
                     .textSelection(.enabled)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                if live.isGitRepository {
+                if live.isGitRepositoryCached {
                     Text("git", bundle: .module)
                         .font(.system(size: 9, weight: .bold))
                         .padding(.horizontal, 6)
@@ -1497,7 +1497,7 @@ private struct KnowledgeCollectionDetailSheet: View {
                         .foregroundColor(theme.accentColor)
                 }
             }
-            if live.isGitRepository, let remote = live.gitRemoteURL {
+            if live.isGitRepositoryCached, let remote = live.gitRemoteURL {
                 Text(remote)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(theme.tertiaryText)
@@ -1505,7 +1505,7 @@ private struct KnowledgeCollectionDetailSheet: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            if !live.folderExists {
+            if !live.folderExistsCached {
                 Text("Folder not found. Search serves the last indexed state.", bundle: .module)
                     .font(.system(size: 11))
                     .foregroundColor(.orange)

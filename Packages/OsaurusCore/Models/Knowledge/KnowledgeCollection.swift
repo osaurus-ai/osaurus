@@ -83,6 +83,68 @@ public struct KnowledgeCollection: Identifiable, Codable, Equatable, Sendable {
             && isDirectory.boolValue
     }
 
+    // `fileExists` against an unmounted network volume or slow external disk
+    // can block for seconds, and the knowledge list evaluates `folderExists`
+    // per row per SwiftUI body pass — an observed main-thread hang. The memo
+    // pays that probe once per path, then serves the cached verdict and
+    // refreshes it off the calling thread when stale.
+    private static let folderExistsCacheLock = NSLock()
+    private nonisolated(unsafe) static var folderExistsCache: [String: (value: Bool, at: Date)] =
+        [:]
+    private nonisolated(unsafe) static var folderExistsRefreshInFlight: Set<String> = []
+    private static let folderExistsRefreshInterval: TimeInterval = 10.0
+
+    /// Eventually-consistent variant of `folderExists` for view bodies and
+    /// other latency-sensitive callers. Correctness-critical paths (indexing,
+    /// curation, watchers — all off-main) should keep using `folderExists`.
+    public var folderExistsCached: Bool {
+        let path = folderURL.path
+        return Self.cachedProbe(key: path) {
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+                && isDirectory.boolValue
+        }
+    }
+
+    /// Eventually-consistent variant of `isGitRepository` (same body-eval
+    /// call sites as `folderExistsCached`, same slow-volume hazard).
+    public var isGitRepositoryCached: Bool {
+        let path = folderURL.appendingPathComponent(".git").path
+        return Self.cachedProbe(key: path) {
+            FileManager.default.fileExists(atPath: path)
+        }
+    }
+
+    private static func cachedProbe(key: String, probe: @escaping @Sendable () -> Bool) -> Bool {
+        folderExistsCacheLock.lock()
+        let known = folderExistsCache[key]
+        folderExistsCacheLock.unlock()
+
+        if let known {
+            if Date().timeIntervalSince(known.at) >= folderExistsRefreshInterval {
+                folderExistsCacheLock.lock()
+                let alreadyRefreshing = !folderExistsRefreshInFlight.insert(key).inserted
+                folderExistsCacheLock.unlock()
+                if !alreadyRefreshing {
+                    DispatchQueue.global(qos: .utility).async {
+                        let value = probe()
+                        folderExistsCacheLock.lock()
+                        folderExistsCache[key] = (value, Date())
+                        folderExistsRefreshInFlight.remove(key)
+                        folderExistsCacheLock.unlock()
+                    }
+                }
+            }
+            return known.value
+        }
+
+        let probed = probe()
+        folderExistsCacheLock.lock()
+        folderExistsCache[key] = (probed, Date())
+        folderExistsCacheLock.unlock()
+        return probed
+    }
+
     /// Whether the collection folder is a git repository (a `.git` entry
     /// at its root — a plain directory for normal repos, a file for
     /// worktrees/submodules).
