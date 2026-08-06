@@ -140,7 +140,7 @@ struct OnboardingRowBadge {
     enum Style {
         case neutral
         case success
-        /// Yellow chip — used for the "Tight fit" capability hint.
+        /// Yellow chip — used for the "Memory may be tight" capability hint.
         case warning
         /// Red chip — used for high-risk compatibility warnings.
         case error
@@ -200,9 +200,8 @@ struct OnboardingRowCard: View {
     let accessory: OnboardingRowAccessory
     let isSelected: Bool
     /// When `true` the row is dimmed, the accessory is hidden, and the
-    /// underlying button is disabled — used by the onboarding picker to
-    /// keep too-large curated models visible (so the badge can explain
-    /// why) without letting the user select one that won't run.
+    /// underlying button is disabled. Model fit verdicts stay advisory and do
+    /// not set this flag; callers reserve it for genuinely unavailable rows.
     let isDisabled: Bool
     let action: () -> Void
 

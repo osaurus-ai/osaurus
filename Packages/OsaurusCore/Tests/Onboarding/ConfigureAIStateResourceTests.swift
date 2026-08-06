@@ -131,8 +131,9 @@ struct ConfigureAIStateResourceTests {
         let line = ConfigureAIState.chooserStatsLine(
             for: makeModel(tag: "sized", sizeBytes: 8 * gb)
         )
-        #expect(line?.contains("download") == true)
-        #expect(line?.contains("memory") == true)
+        #expect(line?.contains("Download:") == true)
+        #expect(line?.contains("Est. memory while running:") == true)
+        #expect(line?.contains("10.0 GB") == true)
     }
 
     @Test func chooserStatsLineNilWhenNothingKnown() {

@@ -101,6 +101,79 @@ struct GPUMemoryBudgetTests {
         #expect(abs(pickerGB - 15.6) < 0.001)
     }
 
+    @Test("Reported Gemma uses measured files and runs comfortably on 96 GB")
+    func reportedGemmaUsesResolvedSize() throws {
+        // Hugging Face reports a 16.87 GB decimal download for this repo.
+        // That is ~15.71 GiB of files and ~19.64 GiB after the shared 1.25×
+        // running-memory allowance — nowhere near the stale 63.9 GB shown in
+        // the original detail sheet.
+        let gemma = MLXModel(
+            id: "mlx-community/gemma-3-27b-it-qat-4bit",
+            name: "Gemma 3 27B QAT 4-bit",
+            description: "",
+            downloadURL: "https://huggingface.co/mlx-community/gemma-3-27b-it-qat-4bit",
+            downloadSizeBytes: 16_870_000_000
+        )
+
+        let assessment = gemma.memoryAssessment(totalMemoryGB: 96)
+        let runningGB = try #require(assessment.estimatedRunningMemoryGB)
+
+        #expect(assessment.sizeSource == .measured)
+        #expect(abs(runningGB - 19.64) < 0.02)
+        #expect(abs(assessment.gpuWorkingSetBudgetGB - 72) < 0.001)
+        #expect(abs(assessment.comfortableModelBudgetGB - 61.2) < 0.001)
+        #expect(assessment.compatibility == .compatible)
+    }
+
+    @Test("Measured size replaces metadata fallback throughout the assessment")
+    func measuredSizeReplacesFallback() throws {
+        let fallback = MLXModel(
+            id: "mlx-community/gemma-3-27b-it-qat-4bit",
+            name: "Gemma 3 27B QAT 4-bit",
+            description: "",
+            downloadURL: "https://huggingface.co/mlx-community/gemma-3-27b-it-qat-4bit"
+        )
+        let resolved = fallback.withDownloadSize(16_870_000_000)
+
+        #expect(fallback.sizeEstimateSource == .metadataFallback)
+        #expect(resolved.sizeEstimateSource == .measured)
+        #expect(fallback.totalSizeEstimateBytes == Int64(13.5 * Self.bytesPerGB))
+        #expect(resolved.totalSizeEstimateBytes == 16_870_000_000)
+        let resolvedMemory = try #require(resolved.estimatedMemoryGB)
+        let fallbackMemory = try #require(fallback.estimatedMemoryGB)
+        #expect(resolvedMemory > fallbackMemory)
+        let formatted = try #require(resolved.formattedEstimatedMemory)
+        #expect(!formatted.hasPrefix("~"))
+    }
+
+    @Test("Assessment boundaries use the same comfortable and advisory limits")
+    func assessmentBoundaries() {
+        // 16 GB yields a 10.67 GiB Metal budget. Convert desired running
+        // memory back to model bytes by dividing by the shared 1.25× factor.
+        let budget = GPUMemoryBudget.defaultBudgetGB(physicalMemoryGB: 16)
+        func assessment(ratio: Double) -> ModelMemoryAssessment {
+            let runningGB = budget * ratio
+            let modelBytes = Int64(runningGB / 1.25 * Self.bytesPerGB)
+            return GPUMemoryBudget.assessment(
+                modelSizeBytes: modelBytes,
+                sizeSource: .measured,
+                physicalMemoryGB: 16
+            )
+        }
+
+        #expect(assessment(ratio: 0.84).compatibility == .compatible)
+        #expect(assessment(ratio: 0.90).compatibility == .tight)
+        #expect(assessment(ratio: 1.11).compatibility == .tooLarge)
+    }
+
+    @Test("Selection surfaces share one plain-language verdict vocabulary")
+    func sharedVerdictVocabulary() {
+        #expect(ModelCompatibility.compatible.displayName == "Runs well")
+        #expect(ModelCompatibility.tight.displayName == "Memory may be tight")
+        #expect(ModelCompatibility.tooLarge.displayName == "Not recommended")
+        #expect(ModelCompatibility.unknown.displayName == "Not enough information")
+    }
+
     @Test("Small bundles stay comfortable on base-RAM Macs")
     func smallModelsRemainCompatible() {
         // A ~2 GB 4-bit bundle: 2.5 GB resident against a 5.33 GB budget.

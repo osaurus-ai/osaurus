@@ -4,6 +4,75 @@
     "" : {
       "shouldTranslate" : false
     },
+    "Recommended model-memory budget" : {
+
+    },
+    "Hide not recommended" : {
+
+    },
+    "est. %@ running" : {
+
+    },
+    "Download: %@" : {
+
+    },
+    "Est. Memory" : {
+
+    },
+    "Est. memory while running: %@" : {
+
+    },
+    "Est. running memory: %@" : {
+
+    },
+    "Estimate basis" : {
+
+    },
+    "Estimated memory while running" : {
+
+    },
+    "It may load, but macOS is likely to page memory and generation can be very slow. Choose a smaller version." : {
+
+    },
+    "Measured model files" : {
+
+    },
+    "Memory may be tight" : {
+
+    },
+    "Model name and quantization" : {
+
+    },
+    "Not enough information" : {
+
+    },
+    "Not recommended" : {
+
+    },
+    "On disk: %@" : {
+
+    },
+    "Runs well" : {
+
+    },
+    "This estimate leaves room for macOS, other apps, and longer chats." : {
+
+    },
+    "This model is close to the comfortable limit. Longer chats or other memory-heavy apps may slow it down." : {
+
+    },
+    "We could not estimate running memory yet. Check the download size or try another version." : {
+
+    },
+    "Your Mac" : {
+
+    },
+    "Your Mac has %lld GB unified memory; for smooth performance, choose models estimated below %@ while running." : {
+
+    },
+    "Your Mac has %lld GB unified memory; for smooth performance, choose models estimated below %@ while running. %@ storage is free." : {
+
+    },
     " — %@" : {
       "localizations" : {
         "de" : {

@@ -108,7 +108,7 @@ final class ModelManager: NSObject, ObservableObject {
 
         /// Filters the list by `MLXModel.compatibility(totalMemoryGB:)` —
         /// the same hardware-fit assessment used for the per-row
-        /// "Runs Well / Tight Fit / Too Large" badges. Exposes the
+        /// "Runs Well / Memory May Be Tight / Not Recommended" badges. Exposes the
         /// already-computed attribute rather than introducing a new one.
         /// When `totalMemoryGB == 0` (monitor hasn't reported yet) this
         /// filter is treated as a no-op so the list isn't emptied during
@@ -117,24 +117,24 @@ final class ModelManager: NSObject, ObservableObject {
         enum PerformanceFilter: String, CaseIterable, Identifiable {
             /// Only include models whose `compatibility` is `.compatible`
             /// (working set at or below 85 % of the GPU memory budget).
-            case runsWell = "Runs Well"
+            case runsWell = "Runs well"
             /// Only include models whose `compatibility` is `.tight`
             /// (working set between 85 % and 110 % of the GPU memory budget).
-            case tightFit = "Tight Fit"
+            case tightFit = "Memory may be tight"
             /// Exclude models whose advisory `compatibility` is `.tooLarge`
             /// (working set above 110 % of the GPU memory budget — macOS would
             /// page the weights). This filter is user-selected catalog triage
             /// only; runtime load/download does not block RAM pressure from
             /// this estimate.
-            case hideTooLarge = "Hide Too Large"
+            case hideTooLarge = "Hide not recommended"
 
             var id: String { rawValue }
 
             var displayName: String {
                 switch self {
-                case .runsWell: return L("Runs Well")
-                case .tightFit: return L("Tight Fit")
-                case .hideTooLarge: return L("Hide Too Large")
+                case .runsWell: return ModelCompatibility.compatible.displayName
+                case .tightFit: return ModelCompatibility.tight.displayName
+                case .hideTooLarge: return L("Hide not recommended")
                 }
             }
 
@@ -551,6 +551,32 @@ final class ModelManager: NSObject, ObservableObject {
 
     func estimateDownloadSize(for model: MLXModel) async -> Int64? {
         await downloadService.estimateSize(for: model)
+    }
+
+    /// Publish a size resolved on demand by the detail sheet back into the
+    /// in-memory catalog. `ModelSizeCache` already persists the measurement;
+    /// this keeps cards, filters, onboarding, and a reopened sheet from
+    /// continuing to render the name-derived fallback until the next launch.
+    func applyResolvedDownloadSize(_ bytes: Int64, for modelId: String) {
+        guard bytes > 0 else { return }
+
+        func updating(_ models: [MLXModel]) -> ([MLXModel], Bool) {
+            var changed = false
+            let updated = models.map { model in
+                guard model.id.caseInsensitiveCompare(modelId) == .orderedSame,
+                    model.downloadSizeBytes != bytes
+                else { return model }
+                changed = true
+                return model.withDownloadSize(bytes)
+            }
+            return (updated, changed)
+        }
+
+        let available = updating(availableModels)
+        if available.1 { availableModels = available.0 }
+
+        let suggested = updating(suggestedModels)
+        if suggested.1 { suggestedModels = suggested.0 }
     }
 
     func effectiveDownloadState(for model: MLXModel) -> DownloadState {

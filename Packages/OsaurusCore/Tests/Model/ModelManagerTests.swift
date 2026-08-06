@@ -37,6 +37,29 @@ struct ModelManagerTests {
         ModelManager.skipBackgroundOrgFetchForTests = true
     }
 
+    @Test("on-demand size resolution refreshes every in-memory catalog surface")
+    @MainActor
+    func resolvedDownloadSizeRefreshesCatalog() {
+        let model = MLXModel(
+            id: "mlx-community/gemma-3-27b-it-qat-4bit",
+            name: "Gemma 3 27B QAT 4-bit",
+            description: "",
+            downloadURL: "https://example.com/gemma"
+        )
+        let manager = ModelManager()
+        manager.availableModels = [model]
+        manager.suggestedModels = [model]
+
+        manager.applyResolvedDownloadSize(16_870_000_000, for: model.id.uppercased())
+
+        #expect(manager.availableModels.first?.downloadSizeBytes == 16_870_000_000)
+        #expect(manager.suggestedModels.first?.downloadSizeBytes == 16_870_000_000)
+        #expect(
+            manager.availableModels.first?.memoryAssessment(totalMemoryGB: 96).compatibility
+                == .compatible
+        )
+    }
+
     @Test("installed matcher prefers full ids and rejects ambiguous short aliases")
     func installedMatcherUsesStableIdentity() {
         let models = [
