@@ -85,7 +85,10 @@ final class ChatSessionsManager: ObservableObject {
             turns: [],
             agentId: agentId
         )
-        ChatSessionStore.save(session)
+        // Async write is safe for a brand-new session: `turns` is genuinely
+        // empty (nothing to delete) and the in-memory upsert keeps the
+        // sidebar correct immediately.
+        ChatSessionStore.saveAsync(session)
         upsertInMemory(session)
         return session.id
     }
@@ -144,7 +147,11 @@ final class ChatSessionsManager: ObservableObject {
         else { return }
         session.title = title
         session.updatedAt = Date()
-        ChatSessionStore.save(session)
+        // Targeted title update, not a full save: the in-memory copy is
+        // metadata-only (from `loadAllMetadata`), and a full `saveSession`
+        // would treat its empty `turns` as truth and delete every turn row.
+        // Also keeps the DB write off the main thread.
+        ChatSessionStore.renameTitleAsync(id: id, title: title, updatedAt: session.updatedAt)
         upsertInMemory(session)
     }
 
@@ -179,7 +186,9 @@ final class ChatSessionsManager: ObservableObject {
         else { return }
         guard session.archived != archived else { return }
         session.archived = archived
-        ChatSessionStore.save(session)
+        // Flag-only update for the same reason as `rename`: the in-memory
+        // copy is metadata-only and a full save would delete turn rows.
+        ChatSessionStore.setArchivedAsync(id: id, archived: archived)
         upsertInMemory(session)
     }
 
@@ -193,7 +202,8 @@ final class ChatSessionsManager: ObservableObject {
         else { return }
         guard session.pinned != pinned else { return }
         session.pinned = pinned
-        ChatSessionStore.save(session)
+        // Flag-only update; see `setArchived`.
+        ChatSessionStore.setPinnedAsync(id: id, pinned: pinned)
         upsertInMemory(session)
     }
 

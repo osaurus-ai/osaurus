@@ -537,21 +537,70 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// the empty array as truth and delete every turn row. A targeted UPDATE
     /// cannot touch turns, and deliberately leaves `updated_at` alone so the
     /// rename never reorders the recency list.
-    public func updateSessionTitleAsync(id: UUID, title: String) {
+    /// When `updatedAt` is non-nil the row's recency is bumped too (the
+    /// explicit user rename path); leaving it nil preserves ordering (the
+    /// auto-title path).
+    public func updateSessionTitleAsync(id: UUID, title: String, updatedAt: Date? = nil) {
         queue.async { [weak self] in
             guard let self, self.db != nil else { return }
             do {
                 try self.executeRaw("BEGIN TRANSACTION")
-                try self.transactionalStep(
-                    "UPDATE sessions SET title = ?1 WHERE id = ?2"
-                ) { stmt in
-                    Self.bindText(stmt, index: 1, value: title)
-                    Self.bindText(stmt, index: 2, value: id.uuidString)
+                if let updatedAt {
+                    try self.transactionalStep(
+                        "UPDATE sessions SET title = ?1, updated_at = ?2 WHERE id = ?3"
+                    ) { stmt in
+                        Self.bindText(stmt, index: 1, value: title)
+                        sqlite3_bind_double(stmt, 2, updatedAt.timeIntervalSince1970)
+                        Self.bindText(stmt, index: 3, value: id.uuidString)
+                    }
+                } else {
+                    try self.transactionalStep(
+                        "UPDATE sessions SET title = ?1 WHERE id = ?2"
+                    ) { stmt in
+                        Self.bindText(stmt, index: 1, value: title)
+                        Self.bindText(stmt, index: 2, value: id.uuidString)
+                    }
                 }
                 try self.executeRaw("COMMIT")
             } catch {
                 try? self.executeRaw("ROLLBACK")
                 print("[ChatHistoryDatabase] async title update failed for \(id): \(error)")
+            }
+        }
+    }
+
+    /// Targeted async UPDATE of a session's `archived` flag. Same rationale
+    /// as `updateSessionTitleAsync`: the sidebar's in-memory session copy is
+    /// metadata-only, so a full `saveSession` would delete every turn row,
+    /// and the synchronous write path can stall the main thread. Leaves
+    /// `updated_at` alone so archiving never reorders the recency list.
+    public func updateSessionArchivedAsync(id: UUID, archived: Bool) {
+        updateSessionFlagAsync(id: id, column: "archived", value: archived)
+    }
+
+    /// Targeted async UPDATE of a session's `pinned` flag (see
+    /// `updateSessionArchivedAsync`).
+    public func updateSessionPinnedAsync(id: UUID, pinned: Bool) {
+        updateSessionFlagAsync(id: id, column: "pinned", value: pinned)
+    }
+
+    /// `column` must be a compile-time constant from the two callers above —
+    /// never interpolate caller-provided strings into SQL.
+    private func updateSessionFlagAsync(id: UUID, column: String, value: Bool) {
+        queue.async { [weak self] in
+            guard let self, self.db != nil else { return }
+            do {
+                try self.executeRaw("BEGIN TRANSACTION")
+                try self.transactionalStep(
+                    "UPDATE sessions SET \(column) = ?1 WHERE id = ?2"
+                ) { stmt in
+                    sqlite3_bind_int(stmt, 1, value ? 1 : 0)
+                    Self.bindText(stmt, index: 2, value: id.uuidString)
+                }
+                try self.executeRaw("COMMIT")
+            } catch {
+                try? self.executeRaw("ROLLBACK")
+                print("[ChatHistoryDatabase] async \(column) update failed for \(id): \(error)")
             }
         }
     }

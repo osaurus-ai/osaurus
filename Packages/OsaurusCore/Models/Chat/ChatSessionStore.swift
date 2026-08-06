@@ -126,14 +126,39 @@ enum ChatSessionStore {
     /// While the DB is deferred, retitles the pending snapshot if one is
     /// queued; otherwise the rename is dropped, matching `saveAsync`'s
     /// best-effort contract (the preview title simply stands).
-    static func renameTitleAsync(id: UUID, title: String) {
+    static func renameTitleAsync(id: UUID, title: String, updatedAt: Date? = nil) {
         guard !pendingDeletes.contains(id) else { return }
         ensureOpen()
         guard didOpen else {
             pendingSaves[id]?.title = title
+            if let updatedAt { pendingSaves[id]?.updatedAt = updatedAt }
             return
         }
-        ChatHistoryDatabase.shared.updateSessionTitleAsync(id: id, title: title)
+        ChatHistoryDatabase.shared.updateSessionTitleAsync(
+            id: id, title: title, updatedAt: updatedAt)
+    }
+
+    /// Flag-only async updates for the sidebar's archive/pin toggles. Same
+    /// contract as `renameTitleAsync`: a targeted UPDATE that can never touch
+    /// turn rows, handed to the database's serial queue.
+    static func setArchivedAsync(id: UUID, archived: Bool) {
+        guard !pendingDeletes.contains(id) else { return }
+        ensureOpen()
+        guard didOpen else {
+            pendingSaves[id]?.archived = archived
+            return
+        }
+        ChatHistoryDatabase.shared.updateSessionArchivedAsync(id: id, archived: archived)
+    }
+
+    static func setPinnedAsync(id: UUID, pinned: Bool) {
+        guard !pendingDeletes.contains(id) else { return }
+        ensureOpen()
+        guard didOpen else {
+            pendingSaves[id]?.pinned = pinned
+            return
+        }
+        ChatHistoryDatabase.shared.updateSessionPinnedAsync(id: id, pinned: pinned)
     }
 
     /// Sessions whose writes were deferred because the chat-history DB wasn't

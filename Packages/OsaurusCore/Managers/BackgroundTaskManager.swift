@@ -1457,7 +1457,10 @@ public final class BackgroundTaskManager: ObservableObject {
         // sidebar title.
         if sessionData.title != state.taskTitle {
             sessionData.title = state.taskTitle
-            ChatSessionStore.save(sessionData)
+            // Title-only reconciliation: a targeted async update instead of a
+            // full synchronous saveSession (encode + transaction of the whole
+            // transcript on the calling thread).
+            ChatSessionStore.renameTitleAsync(id: state.id, title: state.taskTitle)
         }
         let context = ExecutionContext(reattaching: sessionData)
         state.restoreReferences(context: context)
