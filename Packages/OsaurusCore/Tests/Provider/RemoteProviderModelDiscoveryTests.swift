@@ -320,6 +320,40 @@ struct RemoteProviderModelDiscoveryTests {
         )
     }
 
+    @Test func offSpecContextValues_degradeToNilWithoutFailingDiscovery() throws {
+        let provider = makeProvider()
+        let body = Data(
+            """
+            {
+              "data": [
+                {"id": "float-window", "max_model_len": 131072.0},
+                {"id": "string-window", "context_length": "32768"},
+                {"id": "garbage-window", "max_model_len": "unlimited"},
+                {"id": "null-window", "context_length": null}
+              ]
+            }
+            """.utf8
+        )
+
+        let discovery = try RemoteProviderService.decodeOpenAICompatibleModelsDiscovery(
+            data: body,
+            statusCode: 200,
+            provider: provider
+        )
+
+        #expect(
+            discovery.models == [
+                "float-window", "string-window", "garbage-window", "null-window",
+            ]
+        )
+        #expect(
+            discovery.contextLengths == [
+                "float-window": 131072,
+                "string-window": 32768,
+            ]
+        )
+    }
+
     @Test func manualModelFallback_reportsNoContextLengths() throws {
         let provider = makeProvider(manualModelIds: ["manual-model"])
         let body = Data(#"{"error":{"message":"not found"}}"#.utf8)

@@ -5475,6 +5475,30 @@ extension RemoteProviderService {
             case maxContextLength = "max_context_length"
         }
 
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(String.self, forKey: .id)
+            // These keys were ignored entirely before context discovery; an
+            // off-spec value (float, numeric string) must degrade to nil, not
+            // fail the whole `/models` decode for the provider.
+            maxModelLen = Self.lenientInt(container, .maxModelLen)
+            contextLength = Self.lenientInt(container, .contextLength)
+            maxContextLength = Self.lenientInt(container, .maxContextLength)
+        }
+
+        private static func lenientInt(
+            _ container: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys
+        ) -> Int? {
+            if let int = try? container.decode(Int.self, forKey: key) { return int }
+            if let double = try? container.decode(Double.self, forKey: key), double.isFinite {
+                return Int(exactly: double.rounded())
+            }
+            if let string = try? container.decode(String.self, forKey: key) {
+                return Int(string.trimmingCharacters(in: .whitespaces))
+            }
+            return nil
+        }
+
         /// First positive vendor-reported window, in the order the keys are
         /// most specific: vLLM, then OpenRouter/LM Studio, then llama.cpp.
         var advertisedContextLength: Int? {
