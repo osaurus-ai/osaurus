@@ -38,9 +38,32 @@ enum LocalReasoningCapability {
         ///     (`... and enable_thinking`) → absent kwarg ⇒ thinking OFF.
         /// Only meaningful when `isToggleableThinking` is true.
         let defaultThinkingOn: Bool
+        /// The serving default the PUBLISHER explicitly stamped into
+        /// `generation_config.json > default_chat_template_kwargs >
+        /// enable_thinking` — the same key HF transformers honors when the
+        /// caller omits the kwarg. `nil` when the bundle carries no such
+        /// declaration (template-inferred and jang_config defaults do NOT
+        /// populate this). Distinct from `defaultThinkingOn` so policy code
+        /// can tell a deliberate bundle contract (Laguna/Raptor) apart from
+        /// a heuristic template read.
+        let declaredDefaultThinkingOn: Bool?
         /// True when the template both exposes a toggle kwarg and uses
         /// reasoning markers the runtime recognizes.
         var isToggleableThinking: Bool { supportsThinking && hasEnableThinkingKwarg }
+
+        init(
+            supportsThinking: Bool,
+            hasEnableThinkingKwarg: Bool,
+            templateInjectsThinkTag: Bool,
+            defaultThinkingOn: Bool,
+            declaredDefaultThinkingOn: Bool? = nil
+        ) {
+            self.supportsThinking = supportsThinking
+            self.hasEnableThinkingKwarg = hasEnableThinkingKwarg
+            self.templateInjectsThinkTag = templateInjectsThinkTag
+            self.defaultThinkingOn = defaultThinkingOn
+            self.declaredDefaultThinkingOn = declaredDefaultThinkingOn
+        }
 
         static let none = Capability(
             supportsThinking: false,
@@ -93,12 +116,14 @@ enum LocalReasoningCapability {
         }
         if let template = readChatTemplate(at: dir) {
             let analyzed = analyze(template: template)
-            if let metadataDefault = readTemplateDefaultThinkingOn(at: dir) {
+            let declared = generationConfigDeclaredThinkingOn(at: dir)
+            if let metadataDefault = declared ?? readTemplateDefaultThinkingOn(at: dir) {
                 return Capability(
                     supportsThinking: analyzed.supportsThinking,
                     hasEnableThinkingKwarg: analyzed.hasEnableThinkingKwarg,
                     templateInjectsThinkTag: analyzed.templateInjectsThinkTag,
-                    defaultThinkingOn: metadataDefault
+                    defaultThinkingOn: metadataDefault,
+                    declaredDefaultThinkingOn: declared
                 )
             }
             return analyzed
@@ -274,6 +299,22 @@ enum LocalReasoningCapability {
         )
     }
 
+    /// The publisher's explicit serving-default declaration. Kept separate
+    /// from the jang_config fallback below because this one is a deliberate
+    /// wire contract (HF transformers applies the same key when the caller
+    /// omits `enable_thinking`) and `AgentReasoningPolicy` honors it even on
+    /// agent/tool surfaces, while jang_config defaults remain
+    /// presentation-level metadata.
+    private static func generationConfigDeclaredThinkingOn(at dir: URL) -> Bool? {
+        guard
+            let data = readSmallConfigFile(dir.appendingPathComponent("generation_config.json")),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let defaults = root["default_chat_template_kwargs"] as? [String: Any],
+            let enableThinking = defaults["enable_thinking"] as? Bool
+        else { return nil }
+        return enableThinking
+    }
+
     /// Bundle metadata can override the Jinja fallback for omitted kwargs. Laguna
     /// S 2.1 is the concrete case: its sidecar template says
     /// `enable_thinking | default(false)`, but generation_config and
@@ -281,14 +322,6 @@ enum LocalReasoningCapability {
     /// present that effective default, and request construction should still
     /// send nothing until the user/API makes an explicit choice.
     private static func readTemplateDefaultThinkingOn(at dir: URL) -> Bool? {
-        if let data = readSmallConfigFile(dir.appendingPathComponent("generation_config.json")),
-            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let defaults = root["default_chat_template_kwargs"] as? [String: Any],
-            let enableThinking = defaults["enable_thinking"] as? Bool
-        {
-            return enableThinking
-        }
-
         let jangURL = dir.appendingPathComponent("jang_config.json")
         guard let data = readSmallConfigFile(jangURL),
             let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
