@@ -440,7 +440,7 @@ Sandbox plugins are JSON recipes that extend agent capabilities inside the conta
 | `version` | string | No | Semantic version |
 | `author` | string | No | Author name |
 | `source` | string | No | Source URL (e.g., GitHub repo) |
-| `dependencies` | string[] | No | System packages installed via `apk add` (runs as root) |
+| `dependencies` | string[] | No | Plain Alpine package names installed via `apk add` (runs as root), optionally followed by `@repository` and/or an `=`, `>`, `>=`, `<`, `<=`, or `~` version constraint. Options, virtual/provider selectors, whitespace, quotes, and shell syntax are rejected during import, registration, and installation. Legacy recipes are revalidated before repair. |
 | `setup` | string | No | Setup command run as the agent's Linux user |
 | `files` | object | No | Files seeded into the plugin folder (key = relative path, value = contents) |
 | `tools` | SandboxToolSpec[] | No | Custom tool definitions |

@@ -2963,7 +2963,40 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
     // MARK: apk (system, root-wide)
 
     private func installApk(packages: [String]) async throws -> String {
-        let pkgList = packages.joined(separator: " ")
+        // Root exec is `sh -c` — validate Alpine package atoms before any
+        // privileged call so agent-controlled injection never reaches root.
+        let safePackages: [String]
+        switch SandboxAlpinePackageTokens.validateUniquePreservingOrder(packages) {
+        case .success(let validated):
+            safePackages = validated
+        case .failure(let rejection):
+            let bad = SandboxAlpinePackageTokens.firstRejection(in: packages)
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: SandboxAlpinePackageTokens.invalidArgsMessage(
+                    token: bad?.token ?? packages.first ?? "",
+                    rejection: bad?.rejection ?? rejection
+                ),
+                field: "packages",
+                expected: "Alpine package names (optional @repository / version constraint)",
+                tool: name,
+                retryable: false
+            )
+        }
+        guard !safePackages.isEmpty else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "packages must contain at least one Alpine package name",
+                field: "packages",
+                expected: "non-empty array of package names",
+                tool: name,
+                retryable: false
+            )
+        }
+
+        // Single-quoted tokens: grammar rejects quotes/metacharacters, so
+        // the renderer cannot be broken by a validated atom.
+        let pkgList = SandboxAlpinePackageTokens.renderShellArguments(safePackages)
         // `apk update` first refreshes the package index — cheap when the
         // cache is fresh, and eliminates "no such package" errors caused
         // by a stale index. `|| true` so a transient network blip on the
@@ -2993,7 +3026,7 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 
             return try await runInstallWithRecovery(
                 tool: toolName,
-                packages: packages,
+                packages: safePackages,
                 attempt: { try await runAsRoot(installCmd, timeout: 120) },
                 isRecoverable: { result in
                     InstallRecoverableErrors.contains(result, anyOf: InstallRecoverableErrors.apk)

