@@ -204,6 +204,34 @@ struct ModelPickerItemCacheTests {
         )
     }
 
+    /// Custom OpenAI-compatible providers surface the context window their
+    /// `/models` endpoint advertised (vLLM `max_model_len` etc.); models the
+    /// server reported no window for keep a nil contextLength so resolution
+    /// falls through to the configured fallback.
+    @Test func remoteModelItems_attachesAdvertisedContextLengths() throws {
+        let provider = Self.providerEntry(
+            name: "vLLM",
+            type: .openaiLegacy,
+            host: "vllm.internal",
+            models: ["vllm/DeepSeek4-Flash", "vllm/no-window-model"]
+        )
+
+        let result = ModelPickerItemCache.remoteModelItems(
+            providers: [provider],
+            codexMetadata: [:],
+            osaurusRouterProviderId: RemoteProviderManager.osaurusRouterProviderId,
+            routerMetadata: { _ in nil },
+            remoteContextLength: { providerId, unprefixedId in
+                #expect(providerId == provider.providerId)
+                return unprefixedId == "DeepSeek4-Flash" ? 524288 : nil
+            }
+        )
+        let byId = Dictionary(uniqueKeysWithValues: result.items.map { ($0.id, $0) })
+
+        #expect(byId["vllm/DeepSeek4-Flash"]?.contextLength == 524288)
+        #expect(byId["vllm/no-window-model"]?.contextLength == nil)
+    }
+
     /// Codex items take the live catalog's display name + capability set;
     /// official `api.openai.com` API-key GPT-5.6 models take the documented
     /// public profile; custom OpenAI-compatible providers get neither, even
