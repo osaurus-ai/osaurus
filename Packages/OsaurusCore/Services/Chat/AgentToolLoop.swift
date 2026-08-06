@@ -1050,10 +1050,16 @@ enum AgentToolLoop {
     /// to guess what happened or launch another blind automation attempt.
     ///
     /// `invalid_args` and `not_found` deliberately remain recoverable: the
-    /// parent can correct the call shape or choose a different target. Other
-    /// tools retain their existing envelope/pivot behavior; this safety stop
-    /// is scoped to the three desktop subagent entry points implicated by the
-    /// shared execution/finalization contract.
+    /// parent can correct the call shape or choose a different target.
+    /// `unavailable` is also recoverable: every desktop-subagent emission of
+    /// it happens during reject-before-evict model/config/residency
+    /// resolution, strictly before any desktop action runs, so no partial
+    /// external state can exist — and stopping there leaves the user with no
+    /// answer at all when a model calls e.g. `mac_query` on a machine with no
+    /// Computer Use model installed. Other tools retain their existing
+    /// envelope/pivot behavior; this safety stop is scoped to the three
+    /// desktop subagent entry points implicated by the shared
+    /// execution/finalization contract.
     static func isTerminalDesktopSubagentFailure(toolName: String, result: String) -> Bool {
         guard ["computer_use", "applescript", "mac_query"].contains(toolName) else {
             return false
@@ -1067,9 +1073,9 @@ enum AgentToolLoop {
         else { return false }
 
         switch kind {
-        case .invalidArgs, .notFound:
+        case .invalidArgs, .notFound, .unavailable:
             return false
-        case .rejected, .timeout, .executionError, .toolNotFound, .unavailable, .userDenied:
+        case .rejected, .timeout, .executionError, .toolNotFound, .userDenied:
             return true
         }
     }

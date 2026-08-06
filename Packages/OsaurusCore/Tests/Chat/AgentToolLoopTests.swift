@@ -1370,6 +1370,35 @@ struct AgentToolLoopTests {
         #expect(surface.builtNotices.count == 1, "No second model iteration may fabricate a value")
     }
 
+    @Test func unavailableMacQueryFailureReturnsToParentForDirectAnswer() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("mac_query")]),
+            .finalResponse,
+        ])
+        surface.toolResults["mac_query"] = AgentLoopToolExecution(
+            result: ToolEnvelope.failure(
+                kind: .unavailable,
+                message:
+                    "No AppleScript model is installed. Download one in Settings → Computer Use → Models.",
+                tool: "mac_query",
+                retryable: false
+            ),
+            isError: false
+        )
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        // `unavailable` is emitted before any desktop action runs, so the
+        // parent must get the failure back and answer the user directly
+        // instead of the run dying with no reply.
+        #expect(result.exit == .finalResponse)
+        #expect(surface.executedCalls.map(\.name) == ["mac_query"])
+    }
+
     @Test func batchExecutorMarksReturnedTerminalDesktopFailureAsRejection() async throws {
         let surface = ScriptedLoopSurface(steps: [
             .toolCalls([inv("mac_query")]),
