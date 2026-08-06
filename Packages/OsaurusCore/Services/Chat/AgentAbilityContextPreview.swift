@@ -23,11 +23,10 @@ import Foundation
 /// it as an animation/`task(id:)` anchor.
 struct AgentAbilityContextPreview: Equatable {
 
-    /// The editor's local toggle values — the fields a user can flip on the
-    /// Abilities overview. Everything else (tool mode, manual picks, spawn
-    /// pools, subagent flags, system prompt) is inherited from the persisted
-    /// agent at compute time.
-    struct Draft: Equatable, Hashable {
+    /// The editor's local values across every Abilities tab. Optional
+    /// specialist-tab fields inherit the persisted snapshot when a caller
+    /// does not own a live draft for them (for example, older tests).
+    struct Draft: Equatable {
         var toolsEnabled: Bool
         var memoryEnabled: Bool
         var dbEnabled: Bool
@@ -45,6 +44,30 @@ struct AgentAbilityContextPreview: Equatable {
         var codeExecutionEnabled: Bool
         /// The editor's local model selection (nil = inherit global default).
         var model: String?
+        /// Live Tools-tab state. The assigned-name set remains part of the
+        /// snapshot in both modes; manual mode exposes it eagerly, while auto
+        /// mode uses it as the on-demand capability pool.
+        var toolMode: ToolSelectionMode? = nil
+        var manualToolNames: [String]? = nil
+        /// Live Subagents-tab gates and spawn configuration.
+        var computerUseEnabled: Bool? = nil
+        var browserUseEnabled: Bool? = nil
+        var spawnDelegationEnabled: Bool? = nil
+        var imageEnabled: Bool? = nil
+        var videoEnabled: Bool? = nil
+        var appleScriptEnabled: Bool? = nil
+        var spawnableAgentIDs: [UUID]? = nil
+        var spawnableModelNames: [String]? = nil
+        var spawnableModelNotes: [String: String]? = nil
+        var spawnConfiguration: AgentSpawnConfigSnapshot? = nil
+        /// Full live Sandbox-tab configuration. `codeExecutionEnabled`
+        /// remains the compatibility fallback for Overview-only callers.
+        var autonomousConfig: AutonomousExecConfig? = nil
+        /// Live collection grants, already resolved to prompt descriptors.
+        var knowledgeCollections: [KnowledgeGrantDescriptor]? = nil
+        /// Invalidates a SwiftUI `.task(id:)` when tool/plugin registries
+        /// change without altering the agent's stored settings.
+        var registryRevision: Int = 0
     }
 
     /// Full per-section breakdown (same shape the chat popover renders).
@@ -59,6 +82,14 @@ struct AgentAbilityContextPreview: Equatable {
     let contextWindow: Int?
     /// Size-class auto-disable info (tiny/small windows), when it fired.
     let disable: ContextDisableInfo?
+    /// Effective selection mode used to compose the tool surface.
+    let toolMode: ToolSelectionMode
+
+    enum Severity: Equatable {
+        case normal
+        case warning
+        case critical
+    }
 
     /// Best-case startup tokens (no memory injected this turn).
     var lowTokens: Int { staticTokens }
@@ -72,6 +103,49 @@ struct AgentAbilityContextPreview: Equatable {
     var windowFraction: Double? {
         guard let contextWindow, contextWindow > 0 else { return nil }
         return min(1.0, Double(highTokens) / Double(contextWindow))
+    }
+
+    /// Runtime-safe portion of the nominal model window. The remaining 15%
+    /// absorbs tokenizer-estimation error, matching `ContextBudgetManager`.
+    var usableContextWindow: Int? {
+        guard let contextWindow, contextWindow > 0 else { return nil }
+        return Int(Double(contextWindow) * ContextBudgetManager.safetyMargin)
+    }
+
+    /// Startup share of the usable window, which is the actionable number:
+    /// this is how much room is consumed before conversation and output.
+    var usableWindowFraction: Double? {
+        guard let usableContextWindow, usableContextWindow > 0 else { return nil }
+        return min(1.0, Double(highTokens) / Double(usableContextWindow))
+    }
+
+    /// Keep the warning deliberately restrained: yellow means the fixed
+    /// startup payload already consumes a quarter of usable context; red is
+    /// reserved for a real safety-limit collision or composer auto-disable.
+    var severity: Severity {
+        if disable?.disabledTools == true || disable?.disabledMemory == true {
+            return .critical
+        }
+        guard let fraction = usableWindowFraction else { return .normal }
+        if fraction >= 1 { return .critical }
+        if fraction >= 0.25 { return .warning }
+        return .normal
+    }
+
+    init(
+        breakdown: ContextBreakdown,
+        staticTokens: Int,
+        memoryUpperTokens: Int,
+        contextWindow: Int?,
+        disable: ContextDisableInfo?,
+        toolMode: ToolSelectionMode = .auto
+    ) {
+        self.breakdown = breakdown
+        self.staticTokens = staticTokens
+        self.memoryUpperTokens = memoryUpperTokens
+        self.contextWindow = contextWindow
+        self.disable = disable
+        self.toolMode = toolMode
     }
 
     /// Compact "2.1K"-style token formatting shared by the hero and the
@@ -102,8 +176,12 @@ struct AgentAbilityContextPreview: Equatable {
         // toggle can't claim injection the global switch forbids.
         let globalMemoryOn = MemoryConfigurationStore.load().enabled
 
-        var autonomous = base.autonomousConfig ?? .default
-        autonomous.enabled = draft.codeExecutionEnabled
+        var autonomous = draft.autonomousConfig ?? base.autonomousConfig ?? .default
+        if draft.autonomousConfig == nil {
+            autonomous.enabled = draft.codeExecutionEnabled
+        }
+        let effectiveToolMode = draft.toolMode ?? base.toolMode
+        let effectiveCollections = draft.knowledgeCollections ?? base.knowledgeCollections
 
         let snapshot = AgentConfigSnapshot(
             agentId: agentId,
@@ -111,9 +189,10 @@ struct AgentAbilityContextPreview: Equatable {
             globalToolsDisabled: base.globalToolsDisabled,
             memoryDisabled: !(draft.memoryEnabled && globalMemoryOn),
             autonomousConfig: autonomous,
-            toolMode: base.toolMode,
+            toolMode: effectiveToolMode,
             model: base.model,
-            manualToolNames: base.manualToolNames,
+            modelType: base.modelType,
+            manualToolNames: draft.manualToolNames ?? base.manualToolNames,
             systemPrompt: base.systemPrompt,
             dbEnabled: draft.dbEnabled,
             renderChartEnabled: draft.renderChartEnabled,
@@ -121,25 +200,26 @@ struct AgentAbilityContextPreview: Equatable {
             searchMemoryEnabled: draft.searchMemoryEnabled,
             webSearchEnabled: draft.webSearchEnabled,
             selfSchedulingEnabled: draft.selfSchedulingEnabled,
-            computerUseEnabled: base.computerUseEnabled,
-            browserUseEnabled: base.browserUseEnabled,
-            spawnDelegationEnabled: base.spawnDelegationEnabled,
-            imageEnabled: base.imageEnabled,
-            videoEnabled: base.videoEnabled,
-            appleScriptEnabled: base.appleScriptEnabled,
-            spawnableAgentIDs: base.spawnableAgentIDs,
+            computerUseEnabled: draft.computerUseEnabled ?? base.computerUseEnabled,
+            browserUseEnabled: draft.browserUseEnabled ?? base.browserUseEnabled,
+            spawnDelegationEnabled: draft.spawnDelegationEnabled ?? base.spawnDelegationEnabled,
+            imageEnabled: draft.imageEnabled ?? base.imageEnabled,
+            videoEnabled: draft.videoEnabled ?? base.videoEnabled,
+            appleScriptEnabled: draft.appleScriptEnabled ?? base.appleScriptEnabled,
+            spawnableAgentIDs: draft.spawnableAgentIDs ?? base.spawnableAgentIDs,
             spawnableAgentNames: base.legacySpawnableAgentNames,
-            spawnableModelNames: base.spawnableModelNames,
-            spawnableModelNotes: base.spawnableModelNotes,
-            spawnConfiguration: base.spawnConfiguration,
+            spawnableModelNames: draft.spawnableModelNames ?? base.spawnableModelNames,
+            spawnableModelNotes: draft.spawnableModelNotes ?? base.spawnableModelNotes,
+            spawnConfiguration: draft.spawnConfiguration ?? base.spawnConfiguration,
             // Fold the draft flags with the persisted grant list the way
             // `capture` pre-folds them: no grants means no knowledge tools
             // or manifest regardless of the toggle.
-            knowledgeEnabled: draft.knowledgeEnabled && !base.knowledgeCollections.isEmpty,
+            knowledgeEnabled: draft.knowledgeEnabled && !effectiveCollections.isEmpty,
             knowledgeCuratorEnabled: draft.knowledgeEnabled
                 && draft.knowledgeCuratorEnabled
-                && !base.knowledgeCollections.isEmpty,
-            knowledgeCollections: draft.knowledgeEnabled ? base.knowledgeCollections : []
+                && !effectiveCollections.isEmpty,
+            knowledgeCollections: draft.knowledgeEnabled ? effectiveCollections : [],
+            hasChannelPublishDestinations: base.hasChannelPublishDestinations
         )
 
         // Mirror ChatView's optimistic execution-mode estimate: autonomous-on
@@ -176,7 +256,8 @@ struct AgentAbilityContextPreview: Equatable {
             staticTokens: breakdown.total,
             memoryUpperTokens: memoryUpper,
             contextWindow: window,
-            disable: context.contextDisable
+            disable: context.contextDisable,
+            toolMode: effectiveToolMode
         )
     }
 }

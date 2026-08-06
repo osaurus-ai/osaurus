@@ -967,7 +967,7 @@ private enum DetailTab: String, CaseIterable {
         case .configure: return L("Identity, model, and behavior overrides.")
         case .abilities:
             return L(
-                "Everything this agent can do — flip an ability and watch the startup context respond."
+                "Everything this agent can do. Context impact updates as you turn abilities on or off."
             )
         case .capabilities:
             return L("Pick which tools this agent can use. Skills come from the shared library and are always available.")
@@ -1059,6 +1059,7 @@ private enum AgentTab: Hashable {
 // MARK: - Agent Detail View
 
 struct AgentDetailView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
     private let scheduleManager = ScheduleManager.shared
@@ -1268,6 +1269,15 @@ struct AgentDetailView: View {
     /// it (the persisted bookmark on `Agent.hostWorkspaceBookmark` is the real
     /// grant). `nil` means no host folder is granted.
     @State private var hostWorkspacePath: String? = nil
+    /// One live startup-context estimate shared by every Abilities sub-tab.
+    /// Specialist editors report local values here before persistence lands.
+    @State private var abilityContextPreview: AgentAbilityContextPreview?
+    @State private var abilityContextDelta: Int?
+    @State private var abilityContextDeltaDismissTask: Task<Void, Never>?
+    @State private var abilityPreviewToolMode: ToolSelectionMode?
+    @State private var abilityPreviewToolNames: Set<String>?
+    @State private var abilityPreviewAutonomousConfig: AutonomousExecConfig?
+    @State private var abilityPreviewRegistryRevision = 0
     /// Editable mirror of `AutonomousExecConfig.sandboxAllowedDomains`
     /// (comma-joined). Committed (normalized + persisted) on submit.
     @State private var sandboxAllowedDomainsText: String = ""
@@ -1446,7 +1456,14 @@ struct AgentDetailView: View {
     private var tabContent: some View {
         switch selectedTab {
         case .builtIn(.capabilities):
-            AgentCapabilityManagerView(agentId: agent.id, onDismiss: nil)
+            AgentCapabilityManagerView(
+                agentId: agent.id,
+                onDismiss: nil,
+                onSelectionChanged: { mode, names in
+                    abilityPreviewToolMode = mode
+                    abilityPreviewToolNames = names
+                }
+            )
                 .environment(\.theme, themeManager.currentTheme)
                 .id(selectedTab)
         case .builtIn(.database):
@@ -1484,6 +1501,18 @@ struct AgentDetailView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// Context is an Abilities-group status, not destination content. Keep the
+    /// same compact control visible for built-in and plugin tabs in the group.
+    private var isAbilitiesGroupSelected: Bool {
+        switch selectedTab {
+        case .builtIn(.abilities), .builtIn(.capabilities), .builtIn(.subagents),
+            .builtIn(.sandbox), .plugin, .failedPlugin:
+            return true
+        default:
+            return false
         }
     }
 
@@ -1536,6 +1565,12 @@ struct AgentDetailView: View {
             DispatchQueue.main.async {
                 isInitialLoadComplete = true
             }
+        }
+        .task(id: abilityDraft) {
+            await refreshAbilityContextPreview()
+        }
+        .onDisappear {
+            abilityContextDeltaDismissTask?.cancel()
         }
         .onChange(of: agent.id) { _, _ in
             refreshDetailCaches()
@@ -1622,6 +1657,7 @@ struct AgentDetailView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
             loadedPluginsRefreshNonce &+= 1
+            abilityPreviewRegistryRevision &+= 1
             switch selectedTab {
             case .plugin(let pid):
                 let stillVisible = PluginManager.shared.plugins.contains {
@@ -1951,7 +1987,21 @@ struct AgentDetailView: View {
     /// group's tabs as pills below. `AgentDetailGroupedTabStrip` owns the
     /// chrome; this view only maps the agent's tab sources into groups.
     private var tabBar: some View {
-        AgentDetailGroupedTabStrip(groups: tabGroups, selection: $selectedTab)
+        AgentDetailGroupedTabStrip(
+            groups: tabGroups,
+            selection: $selectedTab,
+            trailingAccessory:
+                isAbilitiesGroupSelected
+                ? AnyView(
+                    AgentAbilityContextPreviewBar(
+                        preview: abilityContextPreview,
+                        delta: abilityContextDelta,
+                        enabledCount: abilityFlagValues.filter { $0 }.count,
+                        totalCount: abilityFlagValues.count
+                    )
+                )
+                : nil
+        )
     }
 
     private func tabItem(for tab: DetailTab) -> AgentDetailTabItem<AgentTab> {
@@ -2804,29 +2854,50 @@ struct AgentDetailView: View {
 
     // MARK: - Abilities Overview
 
-    /// Abilities → Overview tab: hero context estimate plus every
-    /// capability card. The primary on/off state lives here; the cards
+    /// Abilities → Overview tab: every capability card. The primary on/off state
+    /// lives here; the shared context card stays in the fixed tab chrome above.
     /// deep-link into the specialist tabs (Tools, Memory, Automation,
     /// Database, Sandbox) for detailed configuration.
     @ViewBuilder
     private var abilitiesTabContent: some View {
         tabHelperText(DetailTab.abilities.helperText)
-        AgentAbilitiesOverviewView(
-            agentId: agent.id,
-            draft: abilityDraft,
-            enabledCount: abilityFlagValues.filter { $0 }.count,
-            totalCount: abilityFlagValues.count
-        ) {
+        AgentAbilitiesOverviewView {
             abilityCards
         }
     }
 
-    /// The editor's LOCAL toggle state, priced live by the overview hero
-    /// before the debounced save lands. Code Execution isn't debounced —
-    /// it writes through `updateAutonomousExec` immediately — so its
-    /// current effective value is read from the manager.
+    /// The editor's complete LOCAL Abilities state, priced before any of the
+    /// three persistence lanes (debounced agent, immediate tools, async
+    /// sandbox) finish.
     private var abilityDraft: AgentAbilityContextPreview.Draft {
-        AgentAbilityContextPreview.Draft(
+        let toolMode =
+            abilityPreviewToolMode
+            ?? agentManager.effectiveToolSelectionMode(for: agent.id)
+        let toolNames =
+            abilityPreviewToolNames
+            ?? Set(agentManager.effectiveEnabledToolNames(for: agent.id) ?? [])
+        let autonomous =
+            abilityPreviewAutonomousConfig
+            ?? agentManager.effectiveAutonomousExec(for: agent.id)
+            ?? .default
+        let collectionIds = Set(knowledgeCollectionIds)
+        let collections = knowledgeManager.collections
+            .filter { collectionIds.contains($0.id) }
+            .map(\.grantDescriptor)
+        let spawnConfiguration = AgentSpawnConfigSnapshot(
+            agentIDs: spawnableAgentIDs.filter { $0 != agent.id },
+            modelNames: spawnableModelNames,
+            modelNotes: spawnableModelNotes,
+            budgets: SpawnBatchConcurrencyContract.applyingSharedLimit(
+                from: globalSubagentConfig,
+                to: subagentBudgets
+            ),
+            toolAccess: spawnToolAccess,
+            launcherModelOverride:
+                subagentModelOverrides[SubagentCapabilityRegistry.spawn.id]
+        )
+
+        return AgentAbilityContextPreview.Draft(
             toolsEnabled: toolsEnabled,
             memoryEnabled: memoryEnabled,
             dbEnabled: dbEnabled,
@@ -2837,10 +2908,54 @@ struct AgentDetailView: View {
             selfSchedulingEnabled: selfSchedulingEnabled,
             knowledgeEnabled: knowledgeEnabled,
             knowledgeCuratorEnabled: knowledgeCuratorEnabled,
-            codeExecutionEnabled:
-                agentManager.effectiveAutonomousExec(for: agent.id)?.enabled == true,
-            model: selectedModel
+            codeExecutionEnabled: autonomous.enabled,
+            model: selectedModel,
+            toolMode: toolMode,
+            manualToolNames: toolNames.sorted(),
+            computerUseEnabled: computerUseEnabled,
+            browserUseEnabled: browserUseEnabled,
+            spawnDelegationEnabled: spawnDelegationEnabled,
+            imageEnabled: imageEnabled,
+            videoEnabled: videoEnabled,
+            appleScriptEnabled: appleScriptEnabled,
+            spawnableAgentIDs: spawnableAgentIDs,
+            spawnableModelNames: spawnableModelNames,
+            spawnableModelNotes: spawnableModelNotes,
+            spawnConfiguration: spawnConfiguration,
+            autonomousConfig: autonomous,
+            knowledgeCollections: collections,
+            registryRevision: abilityPreviewRegistryRevision
         )
+    }
+
+    /// Recompose only when a budget input changes. The short debounce keeps
+    /// bulk tool/group flips and slider edits from opening the agent store on
+    /// every intermediate state.
+    @MainActor
+    private func refreshAbilityContextPreview() async {
+        try? await Task.sleep(nanoseconds: 140_000_000)
+        guard !Task.isCancelled else { return }
+        guard !StorageMutationGate.isRotationInFlight else { return }
+
+        let next = AgentAbilityContextPreview.compute(agentId: agent.id, draft: abilityDraft)
+        if let previous = abilityContextPreview {
+            let delta = next.highTokens - previous.highTokens
+            if delta != 0 {
+                abilityContextDelta = delta
+                abilityContextDeltaDismissTask?.cancel()
+                abilityContextDeltaDismissTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 2_600_000_000)
+                    guard !Task.isCancelled else { return }
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
+                        abilityContextDelta = nil
+                    }
+                }
+            }
+        }
+
+        withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.9)) {
+            abilityContextPreview = next
+        }
     }
 
     /// On/off values behind the hero's "N of M abilities on" counter, in
@@ -2857,7 +2972,9 @@ struct AgentDetailView: View {
                 webSearchEnabled,
                 selfSchedulingEnabled,
                 dbEnabled,
-                agentManager.effectiveAutonomousExec(for: agent.id)?.enabled == true,
+                abilityPreviewAutonomousConfig?.enabled
+                    ?? agentManager.effectiveAutonomousExec(for: agent.id)?.enabled
+                    ?? false,
                 hostWorkspacePath != nil,
             ]
         }
@@ -3216,7 +3333,9 @@ struct AgentDetailView: View {
     private var codeExecutionAbilityCard: some View {
         let sandboxAvailable = SandboxManager.State.shared.availability.isAvailable
         let sandboxRunning = SandboxManager.State.shared.status == .running
-        let execConfig = agentManager.effectiveAutonomousExec(for: agent.id)
+        let execConfig =
+            abilityPreviewAutonomousConfig
+            ?? agentManager.effectiveAutonomousExec(for: agent.id)
 
         AgentAbilityCard(
             title: "Autonomous Execution",
@@ -5229,7 +5348,9 @@ struct AgentDetailView: View {
     private var sandboxExecSubsection: some View {
         let sandboxAvailable = SandboxManager.State.shared.availability.isAvailable
         let sandboxRunning = SandboxManager.State.shared.status == .running
-        let execConfig = agentManager.effectiveAutonomousExec(for: agent.id)
+        let execConfig =
+            abilityPreviewAutonomousConfig
+            ?? agentManager.effectiveAutonomousExec(for: agent.id)
 
         sandboxExecToggles(execConfig: execConfig, interactive: sandboxRunning)
         if !sandboxAvailable {
@@ -5312,12 +5433,15 @@ struct AgentDetailView: View {
         from current: AutonomousExecConfig?,
         _ mutate: (inout AutonomousExecConfig) -> Void
     ) {
+        let previous = current
         var config = current ?? .default
         mutate(&config)
+        abilityPreviewAutonomousConfig = config
         Task { @MainActor in
             do {
                 try await agentManager.updateAutonomousExec(config, for: agent.id)
             } catch {
+                abilityPreviewAutonomousConfig = previous
                 ToastManager.shared.error(
                     L("Failed to update sandbox access"),
                     message: error.localizedDescription
@@ -6200,6 +6324,9 @@ struct AgentDetailView: View {
         // Snapshot the global subagent config for the spawn-handoff warning.
         globalSubagentConfig = globalSpawnConfiguration
         hostWorkspacePath = agent.hostWorkspacePath
+        abilityPreviewToolMode = agentManager.effectiveToolSelectionMode(for: agent.id)
+        abilityPreviewToolNames = Set(agentManager.effectiveEnabledToolNames(for: agent.id) ?? [])
+        abilityPreviewAutonomousConfig = agentManager.effectiveAutonomousExec(for: agent.id)
         autoSpeak = agent.autoSpeak ?? false
         ttsVoice = agent.ttsVoice ?? ""
         avatar = agent.avatar

@@ -350,12 +350,21 @@ struct AgentCapabilityManagerView: View {
     /// and bottom rule so the two headers don't stack, and relocates the
     /// Done affordance into the search row.
     let compact: Bool
+    /// Reports the table's local state before live persistence round-trips,
+    /// allowing the shared Abilities context preview to update immediately.
+    let onSelectionChanged: ((ToolSelectionMode, Set<String>) -> Void)?
 
     /// Live-mode init used by the Tools tab.
-    init(agentId: UUID, onDismiss: (() -> Void)?, compact: Bool = false) {
+    init(
+        agentId: UUID,
+        onDismiss: (() -> Void)?,
+        compact: Bool = false,
+        onSelectionChanged: ((ToolSelectionMode, Set<String>) -> Void)? = nil
+    ) {
         self.source = .live(agentId: agentId)
         self.onDismiss = onDismiss
         self.compact = compact
+        self.onSelectionChanged = onSelectionChanged
     }
 
     /// Draft-mode init used by the Create Agent sheet.
@@ -368,6 +377,7 @@ struct AgentCapabilityManagerView: View {
         self.source = .draft(mode: draftMode, tools: draftTools)
         self.onDismiss = onDismiss
         self.compact = compact
+        self.onSelectionChanged = nil
     }
 
     // MARK: Local UI state
@@ -801,6 +811,7 @@ struct AgentCapabilityManagerView: View {
         case .draft(let mode, let tools):
             toolMode = mode.wrappedValue
             enabledToolNames = tools.wrappedValue
+            notifySelectionChanged()
         }
     }
 
@@ -808,6 +819,7 @@ struct AgentCapabilityManagerView: View {
         guard case .live(let agentId) = source else { return }
         toolMode = agentManager.effectiveToolSelectionMode(for: agentId)
         enabledToolNames = Set(agentManager.effectiveEnabledToolNames(for: agentId) ?? [])
+        notifySelectionChanged()
     }
 
     // MARK: - Toggle Handlers
@@ -873,6 +885,7 @@ struct AgentCapabilityManagerView: View {
     private func commit(nextTools: Set<String>) {
         guard nextTools != enabledToolNames else { return }
         enabledToolNames = nextTools
+        notifySelectionChanged()
         switch source {
         case .live(let agentId):
             agentManager.updateEnabledToolNames(Array(nextTools), for: agentId)
@@ -884,11 +897,16 @@ struct AgentCapabilityManagerView: View {
     private func commit(mode: ToolSelectionMode) {
         guard mode != toolMode else { return }
         toolMode = mode
+        notifySelectionChanged()
         switch source {
         case .live(let agentId):
             agentManager.updateToolSelectionMode(mode, for: agentId)
         case .draft(let modeBinding, _):
             modeBinding.wrappedValue = mode
         }
+    }
+
+    private func notifySelectionChanged() {
+        onSelectionChanged?(toolMode, enabledToolNames)
     }
 }

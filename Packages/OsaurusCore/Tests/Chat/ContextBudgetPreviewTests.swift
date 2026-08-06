@@ -781,6 +781,63 @@ struct ContextBudgetPreviewTests {
         }
     }
 
+    @Test("ability draft: manual tool picks reprice before persistence")
+    func abilityDraft_manualTools_repriceImmediately() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            var automatic = persistedMatchingDraft(memoryEnabled: false)
+            automatic.renderChartEnabled = true
+            automatic.toolMode = .auto
+            automatic.manualToolNames = ["render_chart"]
+
+            var manual = automatic
+            manual.toolMode = .manual
+
+            let automaticPreview = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: automatic
+            )
+            let manualPreview = AgentAbilityContextPreview.compute(
+                agentId: agentId,
+                draft: manual
+            )
+
+            #expect(automaticPreview.toolMode == .auto)
+            #expect(manualPreview.toolMode == .manual)
+            #expect(manualPreview.staticTokens != automaticPreview.staticTokens)
+        }
+    }
+
+    @Test("ability draft: subagent gate reprices before persistence")
+    func abilityDraft_subagentGate_repricesImmediately() async {
+        await withAgent(toolSelectionMode: .auto, computerUseEnabled: false) { agentId in
+            var disabled = persistedMatchingDraft(memoryEnabled: false)
+            disabled.computerUseEnabled = false
+            var enabled = disabled
+            enabled.computerUseEnabled = true
+
+            let offPreview = AgentAbilityContextPreview.compute(agentId: agentId, draft: disabled)
+            let onPreview = AgentAbilityContextPreview.compute(agentId: agentId, draft: enabled)
+
+            #expect(onPreview.staticTokens > offPreview.staticTokens)
+        }
+    }
+
+    @Test("ability draft: sandbox configuration reprices before persistence")
+    func abilityDraft_sandboxConfig_repricesImmediately() async {
+        await withAgent(toolSelectionMode: .auto, autonomous: false) { agentId in
+            var disabled = persistedMatchingDraft(memoryEnabled: false)
+            disabled.autonomousConfig = AutonomousExecConfig(enabled: false)
+            var enabled = disabled
+            enabled.autonomousConfig = AutonomousExecConfig(enabled: true)
+
+            let offPreview = AgentAbilityContextPreview.compute(agentId: agentId, draft: disabled)
+            let onPreview = AgentAbilityContextPreview.compute(agentId: agentId, draft: enabled)
+
+            #expect(onPreview.staticTokens > offPreview.staticTokens)
+            #expect(onPreview.breakdown.context.contains { $0.id == "sandbox" })
+        }
+    }
+
     /// Tools-off in the draft collapses the estimate to the base prompt:
     /// no tool schema tokens, platform + persona only — matching the
     /// tools-off behavior of the real compose path.
@@ -897,6 +954,19 @@ struct AgentAbilityContextPreviewMathTests {
         // the hero's usage bar.
         let over = preview(staticTokens: 5000, memoryUpper: 1000, window: 4000)
         #expect(over.windowFraction == 1.0)
+    }
+
+    @Test func usableWindowUsesRuntimeSafetyMargin() {
+        let result = preview(staticTokens: 500, memoryUpper: 500, window: 4000)
+        #expect(result.usableContextWindow == 3400)
+        #expect(result.usableWindowFraction == Double(1000) / Double(3400))
+    }
+
+    @Test func severityIsRestrainedAndWindowRelative() {
+        #expect(preview(staticTokens: 1000, window: nil).severity == .normal)
+        #expect(preview(staticTokens: 849, window: 4000).severity == .normal)
+        #expect(preview(staticTokens: 850, window: 4000).severity == .warning)
+        #expect(preview(staticTokens: 3400, window: 4000).severity == .critical)
     }
 
     @Test func tokenFormattingIsCompact() {
