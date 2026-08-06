@@ -18,6 +18,20 @@ import Testing
 @Suite(.serialized)
 struct MLXBatchAdapterTests {
 
+    @Test func inferenceActivityDefaultsOnAndSupportsExactDisableFallback() {
+        #expect(MLXBatchAdapter.inferenceActivityIsEnabled(environment: [:]))
+        #expect(
+            MLXBatchAdapter.inferenceActivityIsEnabled(
+                environment: ["OSAURUS_INFERENCE_ACTIVITY": "1"]
+            )
+        )
+        #expect(
+            !MLXBatchAdapter.inferenceActivityIsEnabled(
+                environment: ["OSAURUS_INFERENCE_ACTIVITY": "0"]
+            )
+        )
+    }
+
     @Test func processLifetimeDiagnosticsKeepOccupancyLiveAndCountersMonotonic() {
         var retired = ProcessLifetimeBatchCounters(
             activeHighWatermark: 3,

@@ -1253,6 +1253,29 @@ struct MLXBatchAdapter {
         }
     }
 
+    /// Keeps Foundation's non-Sendable activity token inside one immutable
+    /// object while the generation producer crosses Swift concurrency tasks.
+    private final class InferenceActivityTokenBox: @unchecked Sendable {
+        let token: NSObjectProtocol
+        init(_ token: NSObjectProtocol) { self.token = token }
+    }
+
+    static func inferenceActivityIsEnabled(environment: [String: String]) -> Bool {
+        environment["OSAURUS_INFERENCE_ACTIVITY"] != "0"
+    }
+
+    private static func beginInferenceActivityIfEnabled() -> InferenceActivityTokenBox? {
+        guard inferenceActivityIsEnabled(environment: ProcessInfo.processInfo.environment) else {
+            return nil
+        }
+        return InferenceActivityTokenBox(
+            ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiated],
+                reason: "Local model inference"
+            )
+        )
+    }
+
     /// Tokenize the chat + tools, fetch (or create) the per-model
     /// `BatchEngine`, and submit one request via `engine.generate`. Returns
     /// the resulting `Generation` stream wrapped with cancellation plumbing.
@@ -1537,6 +1560,7 @@ struct MLXBatchAdapter {
             if let soloLease { await soloLease.release() }
             throw error
         }
+        let inferenceActivity = Self.beginInferenceActivityIfEnabled()
         let upstream = await engine.generate(
             input: prepared.input,
             parameters: mlxParams
@@ -1549,6 +1573,11 @@ struct MLXBatchAdapter {
         // lease (which the next step waits on) releases right after.
         let producerSubmitAt = CFAbsoluteTimeGetCurrent()
         let producerTask = Task<Void, Never> {
+            defer {
+                if let inferenceActivity {
+                    ProcessInfo.processInfo.endActivity(inferenceActivity.token)
+                }
+            }
             await withTaskCancellationHandler {
                 for await event in upstream {
                     if case .info = event {

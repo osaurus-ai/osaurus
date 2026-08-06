@@ -159,7 +159,7 @@ let package = Package(
         // atomic .qkv record refusal).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "5052be1ad6fdecdbc0da111abf8db5744894d17a"
+            revision: "4b4eafc5eb1309944034e927d6ae581b7bfebbbf"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

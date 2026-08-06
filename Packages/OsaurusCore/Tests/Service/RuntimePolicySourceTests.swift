@@ -786,7 +786,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "5052be1ad6fdecdbc0da111abf8db5744894d17a"
+        let expectedRuntimeHardenedRevision = "4b4eafc5eb1309944034e927d6ae581b7bfebbbf"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -1428,6 +1428,30 @@ struct RuntimePolicySourceTests {
         #expect(
             adapter.contains("await engine.cancelActiveSoloGenerationAndWait()"),
             "adapter cancellation must explicitly cancel and await the underlying vmlx solo producer before releasing its gate"
+        )
+
+        let activityBegin = try #require(
+            adapter.range(of: "let inferenceActivity = Self.beginInferenceActivityIfEnabled()")
+        )
+        let engineSubmit = try #require(adapter.range(of: "let upstream = await engine.generate("))
+        let producer = try #require(adapter.range(of: "let producerTask = Task<Void, Never> {"))
+        let activityEnd = try #require(
+            adapter.range(
+                of: "ProcessInfo.processInfo.endActivity(inferenceActivity.token)",
+                range: producer.lowerBound ..< adapter.endIndex
+            )
+        )
+        #expect(
+            activityBegin.lowerBound < engineSubmit.lowerBound
+                && engineSubmit.lowerBound < producer.lowerBound
+                && producer.lowerBound < activityEnd.lowerBound,
+            "the process activity must start before engine submission and end from the producer's full-drain lifetime"
+        )
+        #expect(
+            adapter.contains(
+                "environment[\"OSAURUS_INFERENCE_ACTIVITY\"] != \"0\""
+            ),
+            "the inference activity must default on and retain an exact disable fallback"
         )
     }
 
