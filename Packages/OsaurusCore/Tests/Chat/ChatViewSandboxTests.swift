@@ -22,7 +22,12 @@ struct ChatViewSandboxTests {
             let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .sandbox(hostRead: nil))
             let names = Set(specs.map(\.function.name))
             #expect(ToolRegistry.coreWorkspaceToolNames.isSubset(of: names))
-            #expect(names.contains(where: { $0.hasPrefix("sandbox_") }) == false)
+            #expect(
+                names.isDisjoint(
+                    with: ToolRegistry.sandboxBackendAdapterToolNames
+                )
+            )
+            #expect(names.contains("sandbox_install"))
         }
     }
 

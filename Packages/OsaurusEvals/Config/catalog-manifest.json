@@ -444,6 +444,7 @@
       "sandbox.line-count",
       "sandbox.live-fetch",
       "sandbox.plugin-create-and-call",
+      "sandbox.plugin-dependency-use",
       "sandbox.reverse-string",
       "sandbox.secrets-roundtrip",
       "sandbox.sum-range-stdout",
