@@ -215,7 +215,6 @@
       "capability_search.method-schedule-recall",
       "capability_search.method-summarize-recall",
       "capability_search.method-translate-recall",
-      "capability_search.shell-execution",
       "capability_search.skill-abstain",
       "capability_search.skill-direct-name",
       "capability_search.skill-keyword-only",

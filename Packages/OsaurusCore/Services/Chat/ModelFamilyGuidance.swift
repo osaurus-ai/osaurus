@@ -377,9 +377,9 @@ enum ModelFamilyGuidance {
         - You have tools. When a listed tool can satisfy the request, call it — \
         do not decline, and do not just describe what you would do.
         - When NO listed tool directly fits a live-data request (weather, prices, \
-        web pages, current state), don't decline — fetch it yourself with \
-        sandbox_exec (e.g. curl) or run capabilities_discover first. Treating a \
-        missing purpose-built tool as a dead end is an error.
+        web pages, current state), don't decline — use a listed shell/network \
+        tool to fetch it, or use the listed capability gateway to search first. \
+        Treating a missing purpose-built tool as a dead end is an error.
         - For local, reversible work (reading, editing a file, running a test), \
         just proceed. Ask a clarifying question only when guessing wrong would \
         change the result.

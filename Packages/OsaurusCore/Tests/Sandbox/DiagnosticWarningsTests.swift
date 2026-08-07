@@ -26,7 +26,7 @@ struct DiagnosticWarningsTests {
         #expect(warnings.contains { $0.contains("already starts in the working directory") })
     }
 
-    @Test func absoluteCdOutsideWorkspaceSurfacesWrongDirectoryHint() {
+    @Test func standardTemporaryDirectoryCdDoesNotWarn() {
         let warnings = diagnosticWarnings(
             command: "cd /tmp && python3 -m unittest discover -q",
             exitCode: 5,
@@ -34,7 +34,7 @@ struct DiagnosticWarningsTests {
             stderr: "NO TESTS RAN",
             workingDirectory: "/tmp/workspace"
         )
-        #expect(warnings.contains { $0.contains("leaves the selected workspace") })
+        #expect(!warnings.contains { $0.contains("leaves the selected workspace") })
     }
 
     @Test func workspaceSubdirectoryCdDoesNotWarn() {
@@ -244,7 +244,8 @@ struct DiagnosticWarningsTests {
             command: "apk add curl ffmpeg",
             exitCode: 1,
             stdout: "",
-            stderr: "ERROR: Unable to lock database: Permission denied"
+            stderr: "ERROR: Unable to lock database: Permission denied",
+            sandboxInstallAvailable: true
         )
         #expect(warnings.contains { $0.contains("sandbox_install") })
         #expect(warnings.contains { $0.contains("\"apk\"") })
@@ -255,7 +256,8 @@ struct DiagnosticWarningsTests {
             command: "pip install numpy flask",
             exitCode: 1,
             stdout: "",
-            stderr: "ERROR: Could not install packages due to an OSError: [Errno 13] Permission denied"
+            stderr: "ERROR: Could not install packages due to an OSError: [Errno 13] Permission denied",
+            sandboxInstallAvailable: true
         )
         #expect(warnings.contains { $0.contains("sandbox_install") })
         #expect(warnings.contains { $0.contains("\"pip\"") })
@@ -266,10 +268,35 @@ struct DiagnosticWarningsTests {
             command: "cd /tmp && npm install express",
             exitCode: 1,
             stdout: "",
-            stderr: "npm error code EACCES"
+            stderr: "npm error code EACCES",
+            sandboxInstallAvailable: true
         )
         #expect(warnings.contains { $0.contains("sandbox_install") })
         #expect(warnings.contains { $0.contains("\"npm\"") })
+    }
+
+    @Test func hostInstallDoesNotNameUnavailableSandboxInstaller() {
+        let warnings = diagnosticWarnings(
+            command: "python3 -m pip install --user cairosvg",
+            exitCode: 1,
+            stdout: "",
+            stderr: "ModuleNotFoundError: No module named 'pip'",
+            sandboxInstallAvailable: false
+        )
+        #expect(warnings.allSatisfy { !$0.contains("sandbox_install") })
+    }
+
+    @Test func hostInstallWithTailRequestsCompleteDiagnostics() {
+        let warnings = diagnosticWarnings(
+            command: "python3 -m pip install --user cairosvg 2>&1 | tail -3",
+            exitCode: 1,
+            stdout: "ModuleNotFoundError: No module named 'pip'",
+            stderr: "",
+            sandboxInstallAvailable: false
+        )
+        #expect(warnings.contains { $0.contains("truncated its own output") })
+        #expect(warnings.contains { $0.contains("complete stdout/stderr") })
+        #expect(warnings.contains { $0.contains("not callable in this request") })
     }
 
     @Test func successfulInstallIsNotNagged() {

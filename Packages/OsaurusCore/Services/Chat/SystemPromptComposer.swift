@@ -1062,7 +1062,9 @@ public struct SystemPromptComposer: Sendable {
                 )
             )
             let snapshotText = Self.renderSchemaSnapshot(
-                agentId: agentId, allowOpen: allowBlockingDBOpen)
+                agentId: agentId,
+                allowOpen: allowBlockingDBOpen
+            )
             if !snapshotText.isEmpty {
                 agentDBSchemaSection = snapshotText
             }
@@ -1299,7 +1301,8 @@ public struct SystemPromptComposer: Sendable {
                         // Curator line only when the proposal tool actually
                         // resolved — mirrors the section's own schema gate.
                         curator: !resolvedNames.isDisjoint(
-                            with: Self.knowledgeCuratorToolNames)
+                            with: Self.knowledgeCuratorToolNames
+                        )
                     )
                 )
             )
@@ -2932,7 +2935,8 @@ public struct SystemPromptComposer: Sendable {
         let hasExecutionWorkspace =
             executionMode.usesHostFolderTools || executionMode.usesSandboxTools
         if snapshot.agentId != Agent.defaultId || hasExecutionWorkspace {
-            var allowed = additionalToolNames
+            var allowed =
+                additionalToolNames
                 .union(visibleSandboxControlPlane)
             if hasExecutionWorkspace {
                 add(
@@ -2984,15 +2988,6 @@ public struct SystemPromptComposer: Sendable {
             allowed.insert("get_current_time")
             byName = byName.filter { allowed.contains($0.key) }
 
-            // The implementation keeps its full argument compatibility, while
-            // ordinary chat publishes only the common five-tool contract.
-            // Explicit manual/session loads retain the full schema.
-            let explicitlyFull = additionalToolNames.union(snapshot.manualToolNames ?? [])
-            for name in ToolRegistry.coreWorkspaceToolNames
-            where !explicitlyFull.contains(name) {
-                guard let full = byName[name] else { continue }
-                byName[name] = compactWorkspaceSpec(full)
-            }
         }
 
         // Request-scoped sandbox authorization is fail-closed. Direct manual
@@ -3020,6 +3015,15 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
+        // Workspace tools always use the stable public compact contract.
+        // Apply this after every request gate and ablation so a legacy/manual
+        // selection or a schema-less backend alias cannot erase supported
+        // public arguments from the final model request.
+        for name in ToolRegistry.coreWorkspaceToolNames {
+            guard let full = byName[name] else { continue }
+            byName[name] = compactWorkspaceSpec(full, executionMode: executionMode)
+        }
+
         let resolved = canonicalToolOrder(Array(byName.values))
 
         // Debug aid for the delegation tool surfacing: confirms whether the
@@ -3035,30 +3039,71 @@ public struct SystemPromptComposer: Sendable {
         return resolved
     }
 
-    private static func compactWorkspaceSpec(_ tool: Tool) -> Tool {
+    private static func compactWorkspaceSpec(
+        _ tool: Tool,
+        executionMode: ExecutionMode
+    ) -> Tool {
         let description: String
-        let properties: [String: JSONValue]
+        var properties: [String: JSONValue]
         let required: [String]
         switch tool.function.name {
         case "file_read":
-            description = "Read a file or list a directory in the working folder. Text lines use `N|` display prefixes."
+            if executionMode.usesSandboxTools, executionMode.hostReadContext == nil {
+                description =
+                    "Read UTF-8 text or list a directory in the VM working folder. "
+                    + "For binary PDF/Word/PowerPoint/XLSX files, use sandbox shell/code extraction."
+            } else if executionMode.usesSandboxTools {
+                description =
+                    "Read/list by path: trusted-folder documents extract PDF/Word/PowerPoint text "
+                    + "and preview XLSX; `/workspace/...` VM paths are raw text only."
+            } else {
+                description =
+                    "Read a file or list a directory. Directly extracts text from PDF, Word, and "
+                    + "PowerPoint and previews XLSX—call this on the document; do not unzip it manually."
+            }
             properties = [
                 "path": .object([
                     "type": .string("string"),
                     "description": .string("Relative file or directory path"),
                 ]),
+                "max_depth": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional directory listing depth (default 3)"),
+                ]),
+                "sheet_name": .object([
+                    "type": .string("string"),
+                    "description": .string("Optional XLSX worksheet name"),
+                ]),
                 "start_line": .object([
                     "type": .string("integer"),
-                    "description": .string("Optional first line, 1-indexed"),
+                    "description": .string("Optional first line or XLSX row, 1-indexed"),
                 ]),
                 "end_line": .object([
                     "type": .string("integer"),
-                    "description": .string("Optional last line, inclusive"),
+                    "description": .string("Optional last line or XLSX row, inclusive"),
+                ]),
+                "tail_lines": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional last N lines instead of a range"),
+                ]),
+                "max_chars": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional returned-character cap"),
+                ]),
+                "max_rows": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional XLSX rows per sheet (max 50)"),
+                ]),
+                "max_columns": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional XLSX columns per row (max 30)"),
                 ]),
             ]
             required = ["path"]
         case "file_write":
-            description = "Create, replace, or append a UTF-8 file. To preserve existing bytes, choose append and send only new content."
+            description =
+                "Create, replace, append, or dry-run a UTF-8 file. To preserve existing bytes, "
+                + "choose append and send only new content."
             properties = [
                 "path": .object([
                     "type": .string("string"),
@@ -3076,10 +3121,16 @@ public struct SystemPromptComposer: Sendable {
                     "enum": .array([.string("overwrite"), .string("append")]),
                     "description": .string("Default overwrite; append adds content without replacing the file"),
                 ]),
+                "dry_run": .object([
+                    "type": .string("boolean"),
+                    "description": .string("Preview without writing (host paths only)"),
+                ]),
             ]
             required = ["path", "content"]
         case "file_edit":
-            description = "Replace one exact, unique text occurrence. For additive changes, use file_write append."
+            description =
+                "Replace one exact, unique text occurrence, optionally as a dry run. "
+                + "For additive changes, use file_write append."
             properties = [
                 "path": .object([
                     "type": .string("string"),
@@ -3093,10 +3144,14 @@ public struct SystemPromptComposer: Sendable {
                     "type": .string("string"),
                     "description": .string("Replacement text"),
                 ]),
+                "dry_run": .object([
+                    "type": .string("boolean"),
+                    "description": .string("Preview without editing (host paths only)"),
+                ]),
             ]
             required = ["path", "old_string", "new_string"]
         case "file_search":
-            description = "Search file contents or names in the working folder."
+            description = "Search file contents or names with optional path, file filter, and result limit."
             properties = [
                 "pattern": .object([
                     "type": .string("string"),
@@ -3111,16 +3166,38 @@ public struct SystemPromptComposer: Sendable {
                     "enum": .array([.string("content"), .string("files")]),
                     "description": .string("Default content; files searches names"),
                 ]),
+                "file_pattern": .object([
+                    "type": .string("string"),
+                    "description": .string("Optional filename glob for content search"),
+                ]),
+                "max_results": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional result cap (default 50)"),
+                ]),
             ]
             required = ["pattern"]
         case "shell_run":
-            description = "Run a build, test, git, process, network, or filesystem-mutation command in the working folder. Requires approval."
+            description =
+                "Run a build, test, git, process, network, package-manager, or filesystem command "
+                + "in the working folder. Requires approval; omit timeout to run until completion."
             properties = [
                 "command": .object([
                     "type": .string("string"),
                     "description": .string("Shell command; do not `cd` to the working folder first"),
-                ])
+                ]),
+                "timeout": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional idle-output timeout in seconds (1-3600)"),
+                ]),
             ]
+            if toolHasParameter("background", tool: tool) {
+                properties["background"] = .object([
+                    "type": .string("boolean"),
+                    "description": .string(
+                        "VM only: run a server/watcher as a tracked background job"
+                    ),
+                ])
+            }
             required = ["command"]
         default:
             return tool
@@ -3138,6 +3215,13 @@ public struct SystemPromptComposer: Sendable {
                 ])
             )
         )
+    }
+
+    private static func toolHasParameter(_ name: String, tool: Tool) -> Bool {
+        guard case .object(let schema)? = tool.function.parameters,
+            case .object(let properties)? = schema["properties"]
+        else { return false }
+        return properties[name] != nil
     }
 
     private static func removingProperty(_ property: String, from tool: Tool) -> Tool {
@@ -3314,7 +3398,8 @@ public struct SystemPromptComposer: Sendable {
     /// when `applescript` is actually exposed in the frozen tool schema.
     static func appleScriptWorkingAppContext(appName: String?) -> String? {
         guard let appName else { return nil }
-        let app = appName
+        let app =
+            appName
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !app.isEmpty else { return nil }

@@ -71,7 +71,8 @@ enum BuiltinSandboxTools {
             runtimeManaged: true
         )
 
-        let maxCmdsPerTurn = config?.maxCommandsPerTurn
+        let maxCmdsPerTurn =
+            config?.maxCommandsPerTurn
             ?? AutonomousExecConfig.default.maxCommandsPerTurn
 
         registry.registerSandboxTool(
@@ -641,7 +642,8 @@ internal func diagnosticWarnings(
     exitCode: Int32,
     stdout: String,
     stderr: String,
-    workingDirectory: String? = nil
+    workingDirectory: String? = nil,
+    sandboxInstallAvailable: Bool? = nil
 ) -> [String] {
     var warnings: [String] = []
     let suspiciousEmpty =
@@ -665,7 +667,16 @@ internal func diagnosticWarnings(
                 + "captured stdout is still trustworthy."
         )
     }
-    if let hint = shellCommandFailureHint(command: command, exitCode: exitCode, stderr: stderr) {
+    let canInstall =
+        sandboxInstallAvailable
+        ?? ChatExecutionContext.toolExecutionScope?.authorizedNames.contains("sandbox_install")
+        ?? false
+    if let hint = shellCommandFailureHint(
+        command: command,
+        exitCode: exitCode,
+        stderr: stderr,
+        sandboxInstallAvailable: canInstall
+    ) {
         warnings.append(hint)
     }
     if let hint = sandboxExecHostPathHint(command: command, exitCode: exitCode, stderr: stderr) {
@@ -697,7 +708,7 @@ internal func shellWorkingDirectoryHint(
         )
     else { return nil }
 
-    let target = (1...3).compactMap { index -> String? in
+    let target = (1 ... 3).compactMap { index -> String? in
         let range = match.range(at: index)
         guard range.location != NSNotFound, let swiftRange = Range(range, in: command) else {
             return nil
@@ -714,6 +725,12 @@ internal func shellWorkingDirectoryHint(
             + "Omit the leading `cd` and run the command directly."
     }
     guard !destination.hasPrefix(cwd + "/") else { return nil }
+    let temporaryRoots = ["/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp"]
+    if temporaryRoots.contains(where: {
+        destination == $0 || destination.hasPrefix($0 + "/")
+    }) {
+        return nil
+    }
     return
         "`shell_run` started in `\(cwd)`, but the command changed to `\(destination)`. "
         + "That leaves the selected workspace and can make builds or tests inspect the wrong files. "
@@ -774,15 +791,20 @@ private let interpreterInlineCodePattern = #"\b(python3?|node|bash|sh|perl|ruby)
 public func shellCommandFailureHint(
     command: String,
     exitCode: Int32,
-    stderr: String
+    stderr: String,
+    sandboxInstallAvailable: Bool = false
 ) -> String? {
     guard exitCode != 0 else { return nil }
     let loweredStderr = stderr.lowercased()
 
-    // Checked first: a failed bare package-manager install is a strong,
-    // unambiguous signal regardless of the stderr shape, and the redirect
-    // (use `sandbox_install`) is more valuable than any generic parse hint.
-    if let hint = installRedirectHint(command: command) {
+    // Checked first: failed package-manager commands have a mode-aware
+    // recovery path. In VM mode the dedicated installer is safer; in trusted
+    // folder mode that tool is not callable, so only correct self-truncated
+    // diagnostics instead of naming an unavailable function.
+    if let hint = installFailureHint(
+        command: command,
+        sandboxInstallAvailable: sandboxInstallAvailable
+    ) {
         return hint
     }
     if let hint = inlineCodeHint(command: command, stderr: loweredStderr) {
@@ -864,7 +886,10 @@ private func unbalancedQuoteHint(stderr loweredStderr: String) -> String? {
 /// so an install string buried in an argument doesn't false-fire, and only
 /// on failure (`shellCommandFailureHint` already gates on a non-zero exit)
 /// so a working install is never nagged.
-private func installRedirectHint(command: String) -> String? {
+private func installFailureHint(
+    command: String,
+    sandboxInstallAvailable: Bool
+) -> String? {
     func matches(_ pattern: String) -> Bool {
         guard
             let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
@@ -883,12 +908,24 @@ private func installRedirectHint(command: String) -> String? {
         return nil
     }
 
+    if sandboxInstallAvailable {
+        return
+            "This is a bare `\(manager)` install run through `shell_run`, which skips the "
+            + "index refresh / venv / workspace bootstrap, retry harness, and per-agent "
+            + "serialization (and `apk` needs root). Use `sandbox_install` with "
+            + "`manager: \"\(manager)\"` and a `packages` array instead — e.g. "
+            + "`{\"manager\": \"\(manager)\", \"packages\": [\"…\"]}`."
+    }
+
+    let truncated =
+        matches(#"\|\s*(?:head|tail)\b"#)
+        || matches(#"\|\s*sed\s+-n\b"#)
+    guard truncated else { return nil }
     return
-        "This is a bare `\(manager)` install run through `shell_run`, which skips the "
-        + "index refresh / venv / workspace bootstrap, retry harness, and per-agent "
-        + "serialization (and `apk` needs root). Use `sandbox_install` with "
-        + "`manager: \"\(manager)\"` and a `packages` array instead — e.g. "
-        + "`{\"manager\": \"\(manager)\", \"packages\": [\"…\"]}`."
+        "This failed `\(manager)` install truncated its own output with `head`, `tail`, or "
+        + "`sed -n`, hiding the root error. Re-run the same host/project install without "
+        + "that truncation and inspect the complete stdout/stderr. `sandbox_install` is not "
+        + "callable in this request."
 }
 
 /// Statement-boundary prefix shared by the install detectors: start of
@@ -2602,7 +2639,9 @@ private func registerBackgroundLiveExec(
                 // Fold the finished job's workspace mutations into the
                 // owning chat's tracked change set.
                 await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
-                    agentName: agentName, pid: pid)
+                    agentName: agentName,
+                    pid: pid
+                )
                 // Pid is gone — release the registry entry (after its grace
                 // tail) so it doesn't leak for the lifetime of the process.
                 // The grace window keeps the terminal status observable for a
@@ -2824,7 +2863,9 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             if !alive {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
                 await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
-                    agentName: agentName, pid: pid)
+                    agentName: agentName,
+                    pid: pid
+                )
             }
             return sandboxSuccess(
                 tool: name,
@@ -2857,7 +2898,9 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             if exited {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
                 await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
-                    agentName: agentName, pid: pid)
+                    agentName: agentName,
+                    pid: pid
+                )
             }
             return sandboxSuccess(
                 tool: name,
@@ -2882,7 +2925,9 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             if dead {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
                 await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
-                    agentName: agentName, pid: pid)
+                    agentName: agentName,
+                    pid: pid
+                )
             }
             return sandboxSuccess(
                 tool: name,

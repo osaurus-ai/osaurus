@@ -2,13 +2,13 @@
   "id": "sandbox.sum-range-stdout",
   "domain": "agent_loop",
   "label": "sandbox • compute a sum in a script, pin the stdout",
-  "query": "In your sandbox home, write a Python script sum.py that prints the sum of the integers 1 through 10 (the single number, nothing else). Run it with sandbox_exec, then write the exact stdout to sum_out.txt in your home directory. Read it back to verify before finishing.",
-  "notes": "Coding-ability floor for the sandbox lane: author with sandbox_write_file, execute with sandbox_exec, act on real stdout. The output (55) is pinned via the VirtioFS host mount so a hallucinated 'I ran it' cannot pass. SKIPS automatically without a working sandbox VM.",
+  "query": "In your sandbox home, write a Python script sum.py that prints the sum of the integers 1 through 10 (the single number, nothing else). Run it with shell_run, then write the exact stdout to sum_out.txt in your home directory. Read it back with file_read to verify before finishing.",
+  "notes": "Coding-ability floor for the sandbox lane: author with file_write, execute with shell_run, and act on real stdout through the public workspace contract. The output (55) is pinned via the VirtioFS host mount so a hallucinated 'I ran it' cannot pass. SKIPS automatically without a working sandbox VM.",
   "fixtures": { "sandbox": {} },
   "expect": {
     "agentLoop": {
       "maxIterations": 12,
-      "mustCallTools": ["sandbox_write_file", "sandbox_exec"],
+      "mustCallTools": ["file_write", "shell_run", "file_read"],
       "sandboxFiles": [
         { "path": "sum_out.txt", "contains": "55" }
       ]

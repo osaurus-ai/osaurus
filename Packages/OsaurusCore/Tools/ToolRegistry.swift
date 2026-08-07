@@ -562,7 +562,7 @@ public final class ToolRegistry: ObservableObject {
     /// stalls forever on an approval card nobody is present to click. The
     /// interactive chat surface is unaffected — it still shows the card.
     nonisolated static let unattendedAutoApprovableToolNames: Set<String> = [
-        "propose_knowledge_update",
+        "propose_knowledge_update"
     ]
 
     /// Whether `name` is blocked for the current execution because an
@@ -753,7 +753,7 @@ public final class ToolRegistry: ObservableObject {
                 if !approved {
                     let message =
                         ChatExecutionContext.isExternalSurface
-                        || ChatExecutionContext.denyUnapprovedToolPrompts
+                            || ChatExecutionContext.denyUnapprovedToolPrompts
                         ? "Tool '\(name)' requires interactive approval in the Osaurus app. Enable auto-approve or change the tool policy to auto before calling it from an external MCP client."
                         : "User denied execution for tool: \(name)"
                     throw NSError(
@@ -856,7 +856,8 @@ public final class ToolRegistry: ObservableObject {
         // behaves exactly as before. See `ChatExecutionContext.toolExecutionScope`.
         if let scope = ChatExecutionContext.toolExecutionScope, !scope.permits(name) {
             ToolRegistryLogger.registry.error(
-                "refusing '\(name, privacy: .public)': not exposed to this request")
+                "refusing '\(name, privacy: .public)': not exposed to this request"
+            )
             // Distinguish "real tool, just never loaded into this
             // conversation" from "withheld". A skill's instructions or the
             // user can name a dynamic tool that was never exposed to the
@@ -1188,8 +1189,9 @@ public final class ToolRegistry: ObservableObject {
     private var activeSandboxAgentName: String? {
         if let bridge = combinedSandboxReadBridge { return bridge.agentName }
         if let captured = activeSandboxAgentContext?.agentName { return captured }
-        guard toolsByName.keys.contains("sandbox_exec")
-            || toolsByName.keys.contains("sandbox_read_file"),
+        guard
+            toolsByName.keys.contains("sandbox_exec")
+                || toolsByName.keys.contains("sandbox_read_file"),
             let agentId = ChatExecutionContext.currentAgentId
         else { return nil }
         return SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
@@ -1988,10 +1990,12 @@ public final class ToolRegistry: ObservableObject {
         // registration is the signal that provisioning awaits an explicit call.
         let hiddenSandboxNames: Set<String>
         if mode.usesSandboxTools {
-            hiddenSandboxNames = builtInSandboxToolNames
+            hiddenSandboxNames =
+                builtInSandboxToolNames
                 .intersection(Self.sandboxBackendAdapterToolNames)
         } else {
-            hiddenSandboxNames = builtInSandboxToolNames
+            hiddenSandboxNames =
+                builtInSandboxToolNames
                 .subtracting([BuiltinSandboxTools.initPendingToolName])
         }
         excluded.formUnion(hiddenSandboxNames)
@@ -2163,9 +2167,12 @@ public final class ToolRegistry: ObservableObject {
             }
         }
 
-        if dynamic, let selectedPreflightNames, !selectedPreflightNames.contains(toolName) {
+        if !runtimeManaged,
+            let selectedPreflightNames,
+            !selectedPreflightNames.contains(toolName)
+        {
             appendReason(.notSelectedByPreflight)
-            details.append(L("not selected by preflight for this turn"))
+            details.append(L("not exposed in the current request schema"))
         }
 
         if reasons.isEmpty {

@@ -2,8 +2,8 @@
   "id": "sandbox.code-exec-basics",
   "domain": "agent_loop",
   "label": "sandbox • write a script, run it, pin the output",
-  "query": "In your sandbox home, write a Python script fib.py that prints the first 12 Fibonacci numbers (starting 0,1) on one line, separated by single commas with no spaces. Run it with sandbox_exec, then write the script's exact stdout line to fib_out.txt in your home directory. Verify the file contents by reading it back before you finish.",
-  "notes": "Coding-ability floor for the sandbox lane: author code with sandbox_write_file, execute with sandbox_exec, act on real stdout. The output is pinned via the VirtioFS host mount so a hallucinated 'I ran it' cannot pass.",
+  "query": "In your sandbox home, write a Python script fib.py that prints the first 12 Fibonacci numbers (starting 0,1) on one line, separated by single commas with no spaces. Run it with shell_run, then write the script's exact stdout line to fib_out.txt in your home directory. Verify the file contents with file_read before you finish.",
+  "notes": "Coding-ability floor for the sandbox lane: author code with file_write, execute with shell_run, and act on real stdout through the public workspace contract. The output is pinned via the VirtioFS host mount so a hallucinated 'I ran it' cannot pass.",
   "fixtures": {
     "sandbox": {}
   },
@@ -11,8 +11,9 @@
     "agentLoop": {
       "maxIterations": 12,
       "mustCallTools": [
-        "sandbox_write_file",
-        "sandbox_exec"
+        "file_write",
+        "shell_run",
+        "file_read"
       ],
       "sandboxFiles": [
         {
