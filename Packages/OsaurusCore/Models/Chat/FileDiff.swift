@@ -138,11 +138,10 @@ struct FileDiff: Equatable {
     /// the content the user watched stream doesn't vanish with the error.
     /// `fallbackPath` labels the card while the args hold no path yet: some
     /// models stream `file_edit` arguments as (new_string, old_string, path),
-    /// leaving the header nameless ("Untitled") for the whole stream. Edits
-    /// target an existing file, so the caller passes the last file path seen
-    /// in the conversation's tool calls — almost always the file just read —
-    /// and the real path takes over the moment it streams. Write tools ignore
-    /// it: a brand-new file genuinely has no better name than the placeholder.
+    /// leaving the header nameless ("Untitled") for the whole stream. The
+    /// caller derives it deterministically (see `inferredEditPath`); the real
+    /// path takes over the moment it streams. Write tools ignore it: a
+    /// brand-new file genuinely has no better name than the placeholder.
     static func streamingPreview(
         toolName: String,
         partialArgs: String,
@@ -183,6 +182,35 @@ struct FileDiff: Equatable {
             isStreamingPreview: isStreaming
         )
     }
+
+    /// Identifies which known file a still-streaming `file_edit` targets when
+    /// its `path` argument hasn't streamed yet, by matching the streamed
+    /// `old_string` prefix against the contents of files already seen in the
+    /// conversation (file_read results, file_write contents). `old_string`
+    /// must be an exact unique excerpt of the target file, so a match is
+    /// evidence, not a guess — and the name is only returned when EXACTLY one
+    /// file matches. Ambiguous, too-short, or absent excerpts return nil and
+    /// the header keeps its placeholder, so a multi-file session can never be
+    /// labeled with the wrong file.
+    static func inferredEditPath(
+        partialArgs: String,
+        knownFiles: [(path: String, content: String)]
+    ) -> String? {
+        guard let excerpt = partialStringField("old_string", in: partialArgs),
+            excerpt.count >= inferenceMinExcerptLength
+        else { return nil }
+        var match: String?
+        for (path, content) in knownFiles where content.contains(excerpt) {
+            if match != nil { return nil }  // ambiguous — never label on a coin flip
+            match = path
+        }
+        return match
+    }
+
+    /// Below this many characters an `old_string` prefix is too generic to
+    /// identify a file (e.g. `"    }"` appears everywhere). The card just
+    /// keeps its placeholder until more of the excerpt streams.
+    private static let inferenceMinExcerptLength = 24
 
     /// Best-effort tool name from a partial (still-streaming) tool-call
     /// envelope. Local models stream the raw envelope before any parsed

@@ -114,6 +114,35 @@ struct FileDiffStreamingPreviewTests {
         #expect(resolved.fileName == "other.swift")
     }
 
+    @Test("old_string excerpt identifies the edited file among known files")
+    func inferredEditPath() throws {
+        let files = [
+            (path: "merge_sort.cpp", content: "int mid = std::min(i + size - 1, right - 1);\nmore"),
+            (path: "main.swift", content: "let greeting = \"hello world from swift\"\n"),
+        ]
+        // Prefix of an excerpt unique to merge_sort.cpp (path not streamed yet).
+        let args = #"{"new_string": "x", "old_string": "int mid = std::min(i + s"#
+        #expect(FileDiff.inferredEditPath(partialArgs: args, knownFiles: files) == "merge_sort.cpp")
+    }
+
+    @Test("ambiguous or too-short excerpts never name a file")
+    func inferredEditPathSafety() {
+        let shared = "the same header comment line here"
+        let files = [
+            (path: "a.txt", content: shared + " a"),
+            (path: "b.txt", content: shared + " b"),
+        ]
+        // Excerpt present in both files: ambiguous, stays unnamed.
+        let ambiguous = #"{"old_string": "the same header comment line"#
+        #expect(FileDiff.inferredEditPath(partialArgs: ambiguous, knownFiles: files) == nil)
+        // Short generic excerpt: below the confidence threshold.
+        let short = #"{"old_string": "    }"#
+        #expect(FileDiff.inferredEditPath(partialArgs: short, knownFiles: files) == nil)
+        // Excerpt matching nothing known.
+        let unknown = #"{"old_string": "text that exists in no known file at all"#
+        #expect(FileDiff.inferredEditPath(partialArgs: unknown, knownFiles: files) == nil)
+    }
+
     @Test("write tools never take the fallback path")
     func noFallbackForWrites() throws {
         let args = #"{"content": "hello""#
