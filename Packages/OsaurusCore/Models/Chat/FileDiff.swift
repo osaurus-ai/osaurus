@@ -151,8 +151,12 @@ struct FileDiff: Equatable {
         // Models sometimes emit an alias key for the path (`filename`,
         // `file_path`, …); the executed call is rescued by
         // `SchemaValidator.normalizeKeySpelling`, so the live preview must
-        // accept the same spellings or the header shows no name.
-        let pathKeys = ["path", "filename", "file_name", "filepath", "file_path"]
+        // accept the same spellings or the header shows no name. The synonym
+        // list is shared with the validator so the two can't drift; the
+        // camelCase forms cover the validator's fold rescue, which accepts
+        // any case/separator variant the raw-text scan here can't.
+        let pathKeys =
+            ["path"] + (SchemaValidator.keySynonyms["path"] ?? []) + ["filePath", "fileName"]
         let path = pathKeys.lazy.compactMap { partialStringField($0, in: partialArgs) }
             .first(where: { !$0.isEmpty }) ?? ""
         let lines = body.components(separatedBy: "\n").map { Line(kind: .added, text: $0) }

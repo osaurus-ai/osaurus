@@ -77,6 +77,20 @@ struct FileDiffStreamingPreviewTests {
         #expect(diff.lines.map(\.text) == ["let x = 2", "let y"])
     }
 
+    @Test("path aliases rescued by the validator also name the preview")
+    func pathAliases() throws {
+        // `file` and camelCase spellings execute fine via
+        // SchemaValidator.normalizeKeySpelling — the live card must find the
+        // name under the same keys instead of falling back to "Untitled".
+        for key in ["file", "filePath", "fileName", "file_path", "filename"] {
+            let args = "{\"\(key)\": \"index.html\", \"old_string\": \"a\", \"new_string\": \"b\""
+            let diff = try #require(
+                FileDiff.streamingPreview(toolName: "file_edit", partialArgs: args)
+            )
+            #expect(diff.fileName == "index.html", "alias \(key)")
+        }
+    }
+
     @Test("gemma function envelope streams name and content")
     func gemmaEnvelope() throws {
         let args = "call:sandbox_write_file{path:<|\"|>gen.py<|\"|>, content:<|\"|>import numpy as np\nprint(1)"
