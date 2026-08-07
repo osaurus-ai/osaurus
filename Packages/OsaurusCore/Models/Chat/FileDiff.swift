@@ -136,10 +136,18 @@ struct FileDiff: Equatable {
     /// `isStreaming: false` builds the same card as a settled, never-applied
     /// preview (badge "preview" instead of "…") — used when a write FAILS so
     /// the content the user watched stream doesn't vanish with the error.
+    /// `fallbackPath` labels the card while the args hold no path yet: some
+    /// models stream `file_edit` arguments as (new_string, old_string, path),
+    /// leaving the header nameless ("Untitled") for the whole stream. Edits
+    /// target an existing file, so the caller passes the last file path seen
+    /// in the conversation's tool calls — almost always the file just read —
+    /// and the real path takes over the moment it streams. Write tools ignore
+    /// it: a brand-new file genuinely has no better name than the placeholder.
     static func streamingPreview(
         toolName: String,
         partialArgs: String,
-        isStreaming: Bool = true
+        isStreaming: Bool = true,
+        fallbackPath: String? = nil
     ) -> FileDiff? {
         guard diffProducingToolNames.contains(toolName) else { return nil }
         guard
@@ -157,8 +165,11 @@ struct FileDiff: Equatable {
         // any case/separator variant the raw-text scan here can't.
         let pathKeys =
             ["path"] + (SchemaValidator.keySynonyms["path"] ?? []) + ["filePath", "fileName"]
-        let path = pathKeys.lazy.compactMap { partialStringField($0, in: partialArgs) }
+        var path = pathKeys.lazy.compactMap { partialStringField($0, in: partialArgs) }
             .first(where: { !$0.isEmpty }) ?? ""
+        if path.isEmpty, toolName == "file_edit", let fallback = fallbackPath, !fallback.isEmpty {
+            path = fallback
+        }
         let lines = body.components(separatedBy: "\n").map { Line(kind: .added, text: $0) }
         return FileDiff(
             path: path,

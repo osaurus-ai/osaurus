@@ -91,6 +91,40 @@ struct FileDiffStreamingPreviewTests {
         }
     }
 
+    @Test("edit with path streamed last uses the fallback path until it arrives")
+    func fallbackPathForEdits() throws {
+        // Ornith-style arg order: new_string first, path last — no path in the
+        // buffer for most of the stream.
+        let args = #"{"new_string": "let x = 2", "old_string": "let x = 1""#
+        let diff = try #require(
+            FileDiff.streamingPreview(
+                toolName: "file_edit", partialArgs: args, fallbackPath: "merge_sort.cpp"
+            )
+        )
+        #expect(diff.fileName == "merge_sort.cpp")
+        #expect(diff.language == "cpp")
+
+        // Once the real path streams, it wins over the fallback.
+        let withPath = args + #", "path": "other.swift""#
+        let resolved = try #require(
+            FileDiff.streamingPreview(
+                toolName: "file_edit", partialArgs: withPath, fallbackPath: "merge_sort.cpp"
+            )
+        )
+        #expect(resolved.fileName == "other.swift")
+    }
+
+    @Test("write tools never take the fallback path")
+    func noFallbackForWrites() throws {
+        let args = #"{"content": "hello""#
+        let diff = try #require(
+            FileDiff.streamingPreview(
+                toolName: "file_write", partialArgs: args, fallbackPath: "old.txt"
+            )
+        )
+        #expect(diff.fileName.isEmpty)
+    }
+
     @Test("gemma function envelope streams name and content")
     func gemmaEnvelope() throws {
         let args = "call:sandbox_write_file{path:<|\"|>gen.py<|\"|>, content:<|\"|>import numpy as np\nprint(1)"
