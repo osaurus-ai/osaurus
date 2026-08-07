@@ -46,6 +46,10 @@
     "Not enough information" : {
 
     },
+    "not exposed in the current request schema" : {
+      "comment" : "Reason for a tool not being available in the current request schema."
+
+    },
     "Not recommended" : {
 
     },
