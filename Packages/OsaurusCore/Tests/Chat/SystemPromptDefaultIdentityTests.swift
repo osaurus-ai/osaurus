@@ -170,6 +170,9 @@ struct SoulSectionTests {
         let rendered = SystemPromptTemplates.soulSection("- prefer Postgres")
         #expect(rendered.contains("## SOUL"))
         #expect(rendered.contains("the user's instructions in earlier sections take precedence"))
+        #expect(rendered.contains("call a function only when it appears in the current tool schema"))
+        #expect(rendered.contains("only with an exact capability id"))
+        #expect(rendered.contains("libraries are not capabilities"))
         #expect(rendered.contains("- prefer Postgres"))
     }
 

@@ -130,7 +130,8 @@ struct DiagnosticWarningsTests {
             stdout: "",
             stderr: "bash: -c: line 3: syntax error near unexpected token `('"
         )
-        #expect(warnings.contains { $0.contains("sandbox_write_file") })
+        #expect(warnings.contains { $0.contains("file_write") })
+        #expect(warnings.contains { $0.contains("shell_run") })
         #expect(warnings.contains { $0.contains("shell `-c` / `-e`") })
     }
 
@@ -141,7 +142,7 @@ struct DiagnosticWarningsTests {
             stdout: "",
             stderr: "SyntaxError: Unexpected end of file"
         )
-        #expect(warnings.contains { $0.contains("sandbox_write_file") })
+        #expect(warnings.contains { $0.contains("file_write") })
     }
 
     @Test func cleanInlinePythonOneLinerDoesNotTriggerEscapeHint() {
@@ -153,7 +154,7 @@ struct DiagnosticWarningsTests {
             stdout: "1\n",
             stderr: ""
         )
-        #expect(warnings.allSatisfy { !$0.contains("sandbox_write_file") })
+        #expect(warnings.allSatisfy { !$0.contains("file_write") })
     }
 
     @Test func pythonRuntimeErrorDoesNotTriggerEscapeHint() {
@@ -166,7 +167,7 @@ struct DiagnosticWarningsTests {
             stderr:
                 "Traceback (most recent call last):\n  File \"<string>\", line 1\nModuleNotFoundError: No module named 'nope'"
         )
-        #expect(warnings.allSatisfy { !$0.contains("sandbox_write_file") })
+        #expect(warnings.allSatisfy { !$0.contains("file_write") })
     }
 
     @Test func shellSyntaxErrorWithoutInlineCodeFlagDoesNotTriggerEscapeHint() {
@@ -179,7 +180,7 @@ struct DiagnosticWarningsTests {
             stdout: "",
             stderr: "bash: command substitution: line 1: syntax error: unexpected end of file"
         )
-        #expect(warnings.allSatisfy { !$0.contains("sandbox_write_file") })
+        #expect(warnings.allSatisfy { !$0.contains("file_write") })
     }
 
     // MARK: - Unbalanced-quote hint
@@ -219,7 +220,7 @@ struct DiagnosticWarningsTests {
                 "bash: -c: line 2: warning: here-document at line 1 delimited by end-of-file (wanted `EOF')"
         )
         #expect(warnings.contains { $0.contains("heredoc") })
-        #expect(warnings.contains { $0.contains("sandbox_write_file") })
+        #expect(warnings.contains { $0.contains("file_write") })
     }
 
     @Test func inlineCodeTakesPrecedenceOverQuoteWhenBothSignaturesPresent() {
@@ -232,7 +233,7 @@ struct DiagnosticWarningsTests {
             stdout: "",
             stderr: "bash: -c: line 2: unexpected EOF while looking for matching `\"'"
         )
-        #expect(warnings.contains { $0.contains("sandbox_write_file") })
+        #expect(warnings.contains { $0.contains("file_write") })
         #expect(warnings.allSatisfy { !$0.contains("unbalanced") })
     }
 

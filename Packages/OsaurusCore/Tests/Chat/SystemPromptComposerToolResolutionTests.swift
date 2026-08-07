@@ -407,7 +407,9 @@ struct SystemPromptComposerToolResolutionTests {
                 if let manifestIndex, let firstDynamicIndex {
                     #expect(manifestIndex < firstDynamicIndex)
                 }
-                #expect(context.prompt.contains("bring it into your schema with `capabilities`"))
+                #expect(context.prompt.contains("only with an exact capability id"))
+                #expect(context.prompt.contains("libraries are not capabilities"))
+                #expect(context.prompt.contains("install exact missing package names with sandbox_install"))
                 #expect(!context.prompt.contains("capabilities_load"))
                 #expect(!context.prompt.contains("capabilities_discover"))
             }
@@ -1150,6 +1152,9 @@ struct SystemPromptComposerToolResolutionTests {
                             with: ToolRegistry.sandboxBackendAdapterToolNames
                         )
                     )
+                    #expect(sandboxNames.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+                    #expect(sandboxNames.contains("capabilities"))
+                    #expect(sandboxNames.contains("share_artifact"))
                     if autonomousEnabled {
                         #expect(sandboxNames.contains("sandbox_install"))
                         #expect(sandboxNames.contains("sandbox_secret_check"))

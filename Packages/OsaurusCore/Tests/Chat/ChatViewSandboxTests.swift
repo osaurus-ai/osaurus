@@ -49,7 +49,11 @@ struct ChatViewSandboxTests {
         #expect(sandboxPrompt.contains("Host folders are unavailable"))
         #expect(sandboxPrompt.contains("## Host workspace (read-only)") == false)
         #expect(sandboxPrompt.contains("## Files") == false)
-        #expect(sandboxPrompt.contains("sandbox_") == false)
+        #expect(sandboxPrompt.contains("capability ids are separate from sandbox programs"))
+        #expect(sandboxPrompt.contains("sandbox_install"))
+        for privateName in ToolRegistry.sandboxBackendAdapterToolNames {
+            #expect(!sandboxPrompt.contains(privateName))
+        }
     }
 
     /// The sandbox section must state the agent's ABSOLUTE home (so the
@@ -95,7 +99,9 @@ struct ChatViewSandboxTests {
         #expect(prompt.contains("Host folders are unavailable"))
         #expect(prompt.contains(folder.rootPath.path) == false)
         #expect(prompt.contains("## Host workspace") == false)
-        #expect(prompt.contains("sandbox_") == false)
+        for privateName in ToolRegistry.sandboxBackendAdapterToolNames {
+            #expect(!prompt.contains(privateName))
+        }
     }
 
     @Test
@@ -118,7 +124,9 @@ struct ChatViewSandboxTests {
         #expect(prompt.contains("Host folders are unavailable"))
         #expect(prompt.contains(folder.rootPath.path) == false)
         #expect(prompt.contains("## Host workspace") == false)
-        #expect(prompt.contains("sandbox_") == false)
+        for privateName in ToolRegistry.sandboxBackendAdapterToolNames {
+            #expect(!prompt.contains(privateName))
+        }
     }
 
     @Test
