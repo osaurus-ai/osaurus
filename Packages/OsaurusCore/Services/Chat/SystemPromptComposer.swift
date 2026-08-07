@@ -3021,7 +3021,13 @@ public struct SystemPromptComposer: Sendable {
         // public arguments from the final model request.
         for name in ToolRegistry.coreWorkspaceToolNames {
             guard let full = byName[name] else { continue }
-            byName[name] = compactWorkspaceSpec(full, executionMode: executionMode)
+            byName[name] = compactWorkspaceSpec(
+                full,
+                executionMode: executionMode,
+                backgroundProcessesEnabled:
+                    executionMode.usesSandboxTools
+                    && snapshot.autonomousConfig?.backgroundProcessEnabled == true
+            )
         }
 
         let resolved = canonicalToolOrder(Array(byName.values))
@@ -3041,7 +3047,8 @@ public struct SystemPromptComposer: Sendable {
 
     private static func compactWorkspaceSpec(
         _ tool: Tool,
-        executionMode: ExecutionMode
+        executionMode: ExecutionMode,
+        backgroundProcessesEnabled: Bool
     ) -> Tool {
         let description: String
         var properties: [String: JSONValue]
@@ -3190,7 +3197,7 @@ public struct SystemPromptComposer: Sendable {
                     "description": .string("Optional idle-output timeout in seconds (1-3600)"),
                 ]),
             ]
-            if toolHasParameter("background", tool: tool) {
+            if backgroundProcessesEnabled {
                 properties["background"] = .object([
                     "type": .string("boolean"),
                     "description": .string(
@@ -3215,13 +3222,6 @@ public struct SystemPromptComposer: Sendable {
                 ])
             )
         )
-    }
-
-    private static func toolHasParameter(_ name: String, tool: Tool) -> Bool {
-        guard case .object(let schema)? = tool.function.parameters,
-            case .object(let properties)? = schema["properties"]
-        else { return false }
-        return properties[name] != nil
     }
 
     private static func removingProperty(_ property: String, from tool: Tool) -> Tool {
