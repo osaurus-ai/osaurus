@@ -732,6 +732,12 @@ enum TTSDebugLog {
 /// often enough to stay ahead of the drift without chopping prosody every few
 /// words. FluidAudio still splits each chunk to its own token budget
 /// internally; this only controls where the decoder state resets.
+///
+/// Newlines are handled deliberately: hard-wrapped prose (a paste whose lines
+/// break every ~80 chars) must NOT split at each wrap, or the voice resets
+/// mid-sentence. Only a blank line — a real paragraph break — is treated as a
+/// boundary; single newlines inside a paragraph are folded to spaces so
+/// sentence detection sees the reflowed text.
 enum TTSTextChunker {
     /// Roughly a few seconds of speech per chunk — comfortably under the
     /// window where PocketTTS starts to drift, while long enough that sentence
@@ -739,9 +745,6 @@ enum TTSTextChunker {
     static let maxChars = 240
 
     static func split(_ text: String, maxChars: Int = TTSTextChunker.maxChars) -> [String] {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [] }
-
         var chunks: [String] = []
         var current = ""
 
@@ -751,33 +754,58 @@ enum TTSTextChunker {
             current = ""
         }
 
-        for sentence in sentences(in: trimmed) {
-            if current.isEmpty {
-                current = sentence
-            } else if current.count + 1 + sentence.count <= maxChars {
-                current += " " + sentence
-            } else {
-                flush()
-                current = sentence
+        for paragraph in paragraphs(in: text) {
+            for sentence in sentences(in: paragraph) {
+                if current.isEmpty {
+                    current = sentence
+                } else if current.count + 1 + sentence.count <= maxChars {
+                    current += " " + sentence
+                } else {
+                    flush()
+                    current = sentence
+                }
+                // A single sentence longer than the budget becomes its own
+                // chunk; FluidAudio's internal chunker still splits it to fit.
+                if current.count >= maxChars { flush() }
             }
-            // A single sentence longer than the budget becomes its own chunk;
-            // FluidAudio's internal chunker still splits it to fit the model.
-            if current.count >= maxChars { flush() }
+            // A paragraph break is a natural reset point; never pack sentences
+            // from two paragraphs into one chunk.
+            flush()
         }
-        flush()
         return chunks
     }
 
-    /// Break text into sentence-ish spans on `.`, `!`, `?`, and newlines,
+    /// Split text into paragraphs on blank lines, folding the soft newlines
+    /// inside each paragraph into spaces so wrapped prose reads as one flow.
+    private static func paragraphs(in text: String) -> [String] {
+        var result: [String] = []
+        var lines: [String] = []
+        func closeParagraph() {
+            if !lines.isEmpty {
+                result.append(lines.joined(separator: " "))
+                lines = []
+            }
+        }
+        for rawLine in text.components(separatedBy: "\n") {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty {
+                closeParagraph()  // blank line = paragraph boundary
+            } else {
+                lines.append(line)
+            }
+        }
+        closeParagraph()
+        return result
+    }
+
+    /// Break a single paragraph into sentence-ish spans on `.`, `!`, and `?`,
     /// keeping the terminating punctuation with its sentence.
-    private static func sentences(in text: String) -> [String] {
+    private static func sentences(in paragraph: String) -> [String] {
         var result: [String] = []
         var current = ""
-        for character in text {
+        for character in paragraph {
             current.append(character)
-            if character == "." || character == "!" || character == "?"
-                || character == "\n"
-            {
+            if character == "." || character == "!" || character == "?" {
                 let piece = current.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !piece.isEmpty { result.append(piece) }
                 current = ""

@@ -54,4 +54,30 @@ struct TTSTextChunkerTests {
         let chunks = TTSTextChunker.split(long)
         #expect(chunks == [long])
     }
+
+    // Hard-wrapped prose (newlines mid-sentence) must reflow, not split at
+    // every line break — otherwise the voice resets mid-sentence.
+    @Test("soft newlines inside a paragraph do not create chunk boundaries")
+    func wrappedProseReflows() {
+        let wrapped = """
+            There is a particular kind of quiet that settles over a city
+            just before dawn, when the streetlights still glow but the sky
+            has begun to soften.
+            """
+        let chunks = TTSTextChunker.split(wrapped)
+        // One reflowed sentence, well under the budget → a single chunk that
+        // starts at the real sentence start, not mid-line.
+        #expect(chunks.count == 1)
+        #expect(chunks.first?.hasPrefix("There is a particular kind of quiet") == true)
+        #expect(chunks.first?.contains("\n") == false)
+    }
+
+    // A blank line is a real paragraph break and should start a new chunk even
+    // when the two paragraphs would fit within the budget together.
+    @Test("blank lines split paragraphs into separate chunks")
+    func blankLinesSplitParagraphs() {
+        let text = "First short paragraph.\n\nSecond short paragraph."
+        let chunks = TTSTextChunker.split(text)
+        #expect(chunks == ["First short paragraph.", "Second short paragraph."])
+    }
 }
