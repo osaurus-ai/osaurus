@@ -464,14 +464,26 @@ public final class TTSService: ObservableObject {
             }
             guard !Task.isCancelled else { return }
             do {
-                let stream = try await manager.synthesizeStreaming(
-                    text: text,
-                    voice: voice,
-                    temperature: temperature
-                )
-                for try await frame in stream {
+                // Synthesize one utterance at a time instead of handing the
+                // whole paste to a single streaming call. PocketTTS keeps a
+                // continuous Mimi decoder state for the length of a call, and
+                // that state drifts on long runs — the voice slurs, slows, and
+                // drops pitch after ~30 s ("quaaludes"). A fresh call per chunk
+                // resets the decoder, so each sentence group starts clean. The
+                // player node still plays the chunks back-to-back, so prosody
+                // stays continuous as long as synthesis keeps up.
+                let chunks = TTSTextChunker.split(text)
+                for chunk in chunks {
                     if Task.isCancelled { break }
-                    self?.schedule(samples: frame.samples)
+                    let stream = try await manager.synthesizeStreaming(
+                        text: chunk,
+                        voice: voice,
+                        temperature: temperature
+                    )
+                    for try await frame in stream {
+                        if Task.isCancelled { break }
+                        self?.schedule(samples: frame.samples)
+                    }
                 }
                 self?.markStreamFinished(for: messageId)
             } catch is CancellationError {
@@ -599,6 +611,73 @@ public enum PocketTTSVoiceCatalog {
         voice.split(separator: "_")
             .map { $0.prefix(1).uppercased() + $0.dropFirst() }
             .joined(separator: " ")
+    }
+}
+
+/// Splits text into utterance-sized chunks for PocketTTS.
+///
+/// PocketTTS carries a continuous decoder state for the length of a single
+/// `synthesizeStreaming` call, and that state drifts audibly on long runs.
+/// Synthesizing one chunk per call resets the decoder between chunks, which
+/// keeps a long paste from degrading into slurred, slowed speech. Chunks are
+/// built from sentence boundaries and packed up to `maxChars` so we reset
+/// often enough to stay ahead of the drift without chopping prosody every few
+/// words. FluidAudio still splits each chunk to its own token budget
+/// internally; this only controls where the decoder state resets.
+enum TTSTextChunker {
+    /// Roughly a few seconds of speech per chunk — comfortably under the
+    /// window where PocketTTS starts to drift, while long enough that sentence
+    /// prosody is preserved.
+    static let maxChars = 240
+
+    static func split(_ text: String, maxChars: Int = TTSTextChunker.maxChars) -> [String] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        var chunks: [String] = []
+        var current = ""
+
+        func flush() {
+            let piece = current.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !piece.isEmpty { chunks.append(piece) }
+            current = ""
+        }
+
+        for sentence in sentences(in: trimmed) {
+            if current.isEmpty {
+                current = sentence
+            } else if current.count + 1 + sentence.count <= maxChars {
+                current += " " + sentence
+            } else {
+                flush()
+                current = sentence
+            }
+            // A single sentence longer than the budget becomes its own chunk;
+            // FluidAudio's internal chunker still splits it to fit the model.
+            if current.count >= maxChars { flush() }
+        }
+        flush()
+        return chunks
+    }
+
+    /// Break text into sentence-ish spans on `.`, `!`, `?`, and newlines,
+    /// keeping the terminating punctuation with its sentence.
+    private static func sentences(in text: String) -> [String] {
+        var result: [String] = []
+        var current = ""
+        for character in text {
+            current.append(character)
+            if character == "." || character == "!" || character == "?"
+                || character == "\n"
+            {
+                let piece = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !piece.isEmpty { result.append(piece) }
+                current = ""
+            }
+        }
+        let tail = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !tail.isEmpty { result.append(tail) }
+        return result
     }
 }
 
