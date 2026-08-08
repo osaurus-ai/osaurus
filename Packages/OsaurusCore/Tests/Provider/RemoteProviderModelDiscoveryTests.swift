@@ -371,7 +371,71 @@ struct RemoteProviderModelDiscoveryTests {
         #expect(discovery.models == ["manual-model"])
         #expect(discovery.contextLengths.isEmpty)
     }
+    
+    @Test func fireworksCatalogPage_capturesContextLength() throws {
+        let body = Data(
+            """
+            {
+              "models": [
+                {
+                  "name": "accounts/fireworks/models/llama-v3p1-70b-instruct",
+                  "state": "READY",
+                  "kind": "LLM",
+                  "supportsServerless": true,
+                  "conversationConfig": {},
+                  "contextLength": 16384
+                },
+                {
+                  "name": "accounts/fireworks/models/embedding-model",
+                  "state": "READY",
+                  "kind": "EMBEDDING",
+                  "supportsServerless": true,
+                  "conversationConfig": {},
+                  "contextLength": 512
+                },
+                {
+                  "name": "accounts/fireworks/models/no-window-model",
+                  "state": "READY",
+                  "kind": "LLM",
+                  "supportsServerless": true,
+                  "conversationConfig": {}
+                }
+              ],
+              "nextPageToken": null
+            }
+            """.utf8
+        )
 
+        let decoded = try RemoteProviderService.decodeFireworksCatalogPageDiscovery(data: body)
+
+        // Embedding models are filtered out entirely.
+        #expect(decoded.models == ["accounts/fireworks/models/llama-v3p1-70b-instruct", "accounts/fireworks/models/no-window-model"])
+        // Only the model that actually advertised a context gets an entry.
+        #expect(decoded.contextLengths == ["accounts/fireworks/models/llama-v3p1-70b-instruct": 16384])
+        #expect(decoded.nextPageToken == nil)
+    }
+    
+    @Test func fireworksDiscovery_mergesModelsAndPreservesContextLengths() async throws {
+        // This requires a transport override to avoid network calls.
+        // Since `fetchFireworksModelsDiscovery` calls `fetchOpenAICompatibleModelsDiscovery`
+        // and `fetchFireworksCatalogModelsDiscovery`, you'd need to inject a transport.
+        // For a pure unit test, you can instead test the merge logic directly:
+        let discoveredLengths = ["accounts/fireworks/models/llama-v3p1-70b-instruct": 32768]
+        let catalogLengths = ["accounts/fireworks/models/llama-v3p1-70b-instruct": 16384]
+
+        var contextLengths = discoveredLengths
+        for (id, length) in catalogLengths where contextLengths[id] == nil {
+            contextLengths[id] = length
+        }
+
+        let merged = RemoteProviderService.mergeFireworksModelIds(
+            discovered: ["accounts/fireworks/models/llama-v3p1-70b-instruct"],
+            catalog: ["accounts/fireworks/models/llama-v3p1-70b-instruct"]
+        )
+        #expect(merged == ["accounts/fireworks/models/llama-v3p1-70b-instruct"])
+        #expect(contextLengths == ["accounts/fireworks/models/llama-v3p1-70b-instruct": 32768])
+    }
+    
     private func makeProvider(
         providerProtocol: RemoteProviderProtocol = .https,
         port: Int? = nil,

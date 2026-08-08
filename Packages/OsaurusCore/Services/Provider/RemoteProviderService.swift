@@ -5366,6 +5366,9 @@ extension RemoteProviderService {
             let discovery = try await fetchOpenAICompatibleModelsDiscovery(from: provider)
             return (discovery.models, discovery.contextLengths)
         }
+        if isFireworksProvider(provider), provider.authType != .xaiOAuth {
+            return try await fetchFireworksModelsDiscovery(from: provider)
+        }
         return (try await fetchModels(from: provider), [:])
     }
 
@@ -6172,7 +6175,113 @@ extension RemoteProviderService {
             .map { $0.name }
         return (models, page.nextPageToken)
     }
+    /// Decode one Fireworks gateway catalog page into model names plus the
+    /// per-model context window (`contextLength`). Returns empty `contextLengths`
+    /// for entries that don't advertise a positive window.
+    static func decodeFireworksCatalogPageDiscovery(
+        data: Data
+    ) throws -> (models: [String], contextLengths: [String: Int], nextPageToken: String?) {
+        let page = try JSONDecoder().decode(FireworksModelsPage.self, from: data)
+        var models: [String] = []
+        var lengths: [String: Int] = [:]
+        for model in page.models ?? [] where model.isServerlessChatModel {
+            models.append(model.name)
+            if let contextLength = model.contextLength, contextLength > 0 {
+                lengths[model.name] = contextLength
+            }
+        }
+        return (models, lengths, page.nextPageToken)
+    }
 
+    /// Page through the Fireworks gateway catalog, returning both the merged
+    /// serverless chat-model ids and a per-model context-window map. Mirrors
+    /// `fetchFireworksCatalogModels` but also carries `contextLength`.
+    static func fetchFireworksCatalogModelsDiscovery(
+        headers: [String: String],
+        timeout: TimeInterval,
+        transport: (@MainActor (URLRequest) async throws -> (Data, URLResponse))? = nil
+    ) async throws -> (models: [String], contextLengths: [String: Int]) {
+        var allModels: [String] = []
+        var contextLengths: [String: Int] = [:]
+        var pageToken: String?
+
+        for _ in 0..<fireworksCatalogMaxPages {
+            guard var components = URLComponents(string: fireworksCatalogURL) else {
+                throw RemoteProviderServiceError.invalidURL
+            }
+            var queryItems = [URLQueryItem(name: "pageSize", value: "200")]
+            if let pageToken {
+                queryItems.append(URLQueryItem(name: "pageToken", value: pageToken))
+            }
+            components.queryItems = queryItems
+
+            guard let url = components.url else {
+                throw RemoteProviderServiceError.invalidURL
+            }
+
+            let request = modelDiscoveryRequest(url: url, headers: headers, timeout: timeout)
+            let data: Data
+            let response: URLResponse
+            if let transport {
+                (data, response) = try await transport(request)
+            } else {
+                (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw RemoteProviderServiceError.invalidResponse
+            }
+            if httpResponse.statusCode >= 400 {
+                let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
+                throw RemoteProviderServiceError.requestFailed(errorMessage)
+            }
+
+            let decoded = try decodeFireworksCatalogPageDiscovery(data: data)
+            allModels.append(contentsOf: decoded.models)
+            for (id, length) in decoded.contextLengths {
+                contextLengths[id] = length
+            }
+
+            guard let next = decoded.nextPageToken, !next.isEmpty else { break }
+            pageToken = next
+        }
+
+        return (allModels, contextLengths)
+    }
+
+    /// Fireworks discovery: combine the standard OpenAI-compatible `/models`
+    /// result (which already carries vendor context keys) with the serverless
+    /// catalog (which carries Fireworks' own `contextLength`). The `/models`
+    /// result wins when both advertise a window for the same model id.
+    static func fetchFireworksModelsDiscovery(
+        from provider: RemoteProvider
+    ) async throws -> (models: [String], contextLengths: [String: Int]) {
+        let discovered = try await fetchOpenAICompatibleModelsDiscovery(from: provider)
+        var contextLengths = discovered.contextLengths
+        var catalogModels: [String] = []
+
+        do {
+            let catalog = try await fetchFireworksCatalogModelsDiscovery(
+                headers: await provider.resolvedHeadersOffMainActor(),
+                timeout: provider.timeout
+            )
+            catalogModels = catalog.models
+            for (id, length) in catalog.contextLengths where contextLengths[id] == nil {
+                contextLengths[id] = length
+            }
+        } catch {
+            print(
+                "[Osaurus] Fireworks catalog discovery failed, using /models result only: \(ProviderDiagnosticRedactor.safe(error.localizedDescription, maxLength: 240))"
+            )
+        }
+
+        let merged = mergeFireworksModelIds(discovered: discovered.models, catalog: catalogModels)
+        // Keep only context lengths for models that actually surfaced in the merge.
+        let mergedLengths = merged.reduce(into: [String: Int]()) { result, id in
+            if let length = contextLengths[id] { result[id] = length }
+        }
+        return (merged, mergedLengths)
+    }
     /// Extract a human-readable error message from API error response data
     static func extractErrorMessage(from data: Data, statusCode: Int) -> String {
         // Try to parse as JSON error response (OpenAI/xAI format)
