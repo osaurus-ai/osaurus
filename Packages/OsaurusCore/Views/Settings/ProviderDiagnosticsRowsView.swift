@@ -68,7 +68,11 @@ struct ProviderDiagnosticsRowsView: View {
                             showingAll = false
                         }
                     } label: {
-                        Label("Show fewer details", systemImage: "chevron.up")
+                        Label {
+                            Text("Show fewer details", bundle: .module)
+                        } icon: {
+                            Image(systemName: "chevron.up")
+                        }
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(theme.accentColor)
                     }

@@ -498,19 +498,31 @@ private struct MCPServerHubPanel: View {
 
             Menu {
                 Button(action: onReconnectAll) {
-                    Label("Reconnect All", systemImage: "arrow.clockwise")
+                    Label {
+                        Text("Reconnect All", bundle: .module)
+                    } icon: {
+                        Image(systemName: "arrow.clockwise")
+                    }
                 }
                 .disabled(isReconnecting || snapshot.enabledCount == 0)
 
                 Button(action: onProbeAll) {
-                    Label("Test Connections", systemImage: "antenna.radiowaves.left.and.right")
+                    Label {
+                        Text("Test Connections", bundle: .module)
+                    } icon: {
+                        Image(systemName: "antenna.radiowaves.left.and.right")
+                    }
                 }
                 .disabled(isProbing || snapshot.enabledCount == 0)
 
                 Divider()
 
                 Button(action: onCopyReport) {
-                    Label("Copy Diagnostics", systemImage: "doc.on.doc")
+                    Label {
+                        Text("Copy Diagnostics", bundle: .module)
+                    } icon: {
+                        Image(systemName: "doc.on.doc")
+                    }
                 }
                 .disabled(snapshot.totalCount == 0)
             } label: {
@@ -796,22 +808,38 @@ private struct ProviderCard: View {
 
             Menu {
                 Button(action: onTest) {
-                    Label("Test Connection", systemImage: "antenna.radiowaves.left.and.right")
+                    Label {
+                        Text("Test Connection", bundle: .module)
+                    } icon: {
+                        Image(systemName: "antenna.radiowaves.left.and.right")
+                    }
                 }
                 .disabled(isTesting)
 
                 Button(action: onCopyDiagnostics) {
-                    Label("Copy Diagnostics", systemImage: "doc.on.doc")
+                    Label {
+                        Text("Copy Diagnostics", bundle: .module)
+                    } icon: {
+                        Image(systemName: "doc.on.doc")
+                    }
                 }
 
                 Button(action: onEdit) {
-                    Label("Edit", systemImage: "pencil")
+                    Label {
+                        Text("Edit", bundle: .module)
+                    } icon: {
+                        Image(systemName: "pencil")
+                    }
                 }
 
                 Divider()
 
                 Button(role: .destructive, action: { showDeleteConfirm = true }) {
-                    Label("Delete", systemImage: "trash")
+                    Label {
+                        Text("Delete", bundle: .module)
+                    } icon: {
+                        Image(systemName: "trash")
+                    }
                 }
             } label: {
                 Group {

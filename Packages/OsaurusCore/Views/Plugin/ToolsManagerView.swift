@@ -906,7 +906,11 @@ private struct CustomToolsTabContent: View {
     private var customActions: some View {
         HStack(spacing: 8) {
             Button(action: importPluginFile) {
-                Label("Import", systemImage: "square.and.arrow.down")
+                Label {
+                    Text("Import", bundle: .module)
+                } icon: {
+                    Image(systemName: "square.and.arrow.down")
+                }
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.primaryText)
                     .padding(.horizontal, 12)
@@ -924,7 +928,11 @@ private struct CustomToolsTabContent: View {
             .help(Text("Import a custom tool from a JSON file", bundle: .module))
 
             Button(action: { showCreatePlugin = true }) {
-                Label("New Custom Tool", systemImage: "plus")
+                Label {
+                    Text("New Custom Tool", bundle: .module)
+                } icon: {
+                    Image(systemName: "plus")
+                }
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.white)
                     .padding(.horizontal, 12)
