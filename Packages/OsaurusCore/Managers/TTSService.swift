@@ -622,8 +622,8 @@ public final class TTSService: ObservableObject {
         // happened, in the one place they are already looking at TTS.
         TTSLogger.service.error(
             "TTS synthesis failed: \(error.localizedDescription, privacy: .public)")
-        TTSDebugLog.log("playback error id=\(messageId) error=\(error.localizedDescription)")
         modelState = .failed(error.localizedDescription)
+        TTSDebugLog.log("playback error id=\(messageId) error=\(error.localizedDescription)")
         if playingMessageId == messageId {
             stop()
         }
