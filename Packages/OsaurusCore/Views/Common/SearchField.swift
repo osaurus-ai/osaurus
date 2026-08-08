@@ -12,6 +12,9 @@ struct SearchField: View {
     @Binding var text: String
     var placeholder: LocalizedStringKey
     var width: CGFloat = 240
+    /// Lets responsive toolbars use the remaining width while preserving the
+    /// fixed-width default used by existing management screens.
+    var fillsAvailableWidth: Bool = false
     /// When `true`, matches the metrics of adjacent 13pt control buttons
     /// (Sort/Filter pills) so the field lines up visually next to them.
     var compact: Bool = false
@@ -50,7 +53,8 @@ struct SearchField: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, verticalPadding)
-        .frame(width: width)
+        .frame(width: fillsAvailableWidth ? nil : width)
+        .frame(maxWidth: fillsAvailableWidth ? .infinity : nil)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(theme.tertiaryBackground)

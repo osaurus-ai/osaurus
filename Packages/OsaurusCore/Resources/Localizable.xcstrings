@@ -4,79 +4,6 @@
     "" : {
       "shouldTranslate" : false
     },
-    "Recommended model-memory budget" : {
-
-    },
-    "Hide not recommended" : {
-
-    },
-    "est. %@ running" : {
-
-    },
-    "Download: %@" : {
-
-    },
-    "Est. Memory" : {
-
-    },
-    "Est. memory while running: %@" : {
-
-    },
-    "Est. running memory: %@" : {
-
-    },
-    "Estimate basis" : {
-
-    },
-    "Estimated memory while running" : {
-
-    },
-    "It may load, but macOS is likely to page memory and generation can be very slow. Choose a smaller version." : {
-
-    },
-    "Measured model files" : {
-
-    },
-    "Memory may be tight" : {
-
-    },
-    "Model name and quantization" : {
-
-    },
-    "Not enough information" : {
-
-    },
-    "not exposed in the current request schema" : {
-      "comment" : "Reason for a tool not being available in the current request schema."
-
-    },
-    "Not recommended" : {
-
-    },
-    "On disk: %@" : {
-
-    },
-    "Runs well" : {
-
-    },
-    "This estimate leaves room for macOS, other apps, and longer chats." : {
-
-    },
-    "This model is close to the comfortable limit. Longer chats or other memory-heavy apps may slow it down." : {
-
-    },
-    "We could not estimate running memory yet. Check the download size or try another version." : {
-
-    },
-    "Your Mac" : {
-
-    },
-    "Your Mac has %lld GB unified memory; for smooth performance, choose models estimated below %@ while running." : {
-
-    },
-    "Your Mac has %lld GB unified memory; for smooth performance, choose models estimated below %@ while running. %@ storage is free." : {
-
-    },
     " — %@" : {
       "localizations" : {
         "de" : {
@@ -267,314 +194,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "-1001234567890 或 @channelname — 每行一個"
-          }
-        }
-      }
-    },
-    "Browser command copied. Run it in a web.whatsapp.com console tab." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Browser-Befehl kopiert. Führe ihn in einem web.whatsapp.com-Konsolen-Tab aus."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "브라우저 명령이 복사되었습니다. web.whatsapp.com 콘솔 탭에서 실행하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Команда для браузера скопирована. Выполните её в консоли вкладки web.whatsapp.com."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "浏览器命令已复制。请在 web.whatsapp.com 的控制台标签页中运行。"
-          }
-        }
-      }
-    },
-    "Check your phone" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Prüfe dein Telefon"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "휴대폰을 확인하세요"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Проверьте телефон"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请查看你的手机"
-          }
-        }
-      }
-    },
-    "Confirm this code matches the one WhatsApp shows on your phone, then continue." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bestätige, dass dieser Code mit dem übereinstimmt, den WhatsApp auf deinem Telefon anzeigt, und fahre dann fort."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이 코드가 휴대폰의 WhatsApp에 표시된 코드와 일치하는지 확인한 후 계속하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Убедитесь, что этот код совпадает с кодом в WhatsApp на вашем телефоне, затем продолжите."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "确认此代码与手机上 WhatsApp 显示的代码一致，然后继续。"
-          }
-        }
-      }
-    },
-    "Confirming..." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wird bestätigt..."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "확인 중..."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Подтверждение..."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在确认..."
-          }
-        }
-      }
-    },
-    "Copy Browser Command" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Browser-Befehl kopieren"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "브라우저 명령 복사"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Скопировать команду для браузера"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "复制浏览器命令"
-          }
-        }
-      }
-    },
-    "Passkey response accepted — finishing the link..." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Passkey-Antwort akzeptiert — Verknüpfung wird abgeschlossen..."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "패스키 응답이 수락되었습니다 — 연결을 마무리하는 중..."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ответ ключа доступа принят — завершаем привязку..."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "通行密钥响应已接受 — 正在完成关联..."
-          }
-        }
-      }
-    },
-    "Submit Passkey Response" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Passkey-Antwort senden"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "패스키 응답 제출"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Отправить ответ ключа доступа"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "提交通行密钥响应"
-          }
-        }
-      }
-    },
-    "Submitting..." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wird gesendet..."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "제출 중..."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Отправка..."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在提交..."
-          }
-        }
-      }
-    },
-    "The Codes Match — Continue" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Codes stimmen überein — Weiter"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "코드 일치 — 계속"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Коды совпадают — продолжить"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "代码一致 — 继续"
-          }
-        }
-      }
-    },
-    "This account is protected by a passkey" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dieses Konto ist durch einen Passkey geschützt"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이 계정은 패스키로 보호되어 있습니다"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Этот аккаунт защищён ключом доступа"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "此账号受通行密钥保护"
-          }
-        }
-      }
-    },
-    "WhatsApp requires a passkey check to link a new device. In a browser, open web.whatsapp.com, open the developer console (Cmd-Opt-J or F12), run the copied command, approve the passkey prompt, then paste the JSON line it prints below." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "WhatsApp verlangt eine Passkey-Prüfung, um ein neues Gerät zu verknüpfen. Öffne im Browser web.whatsapp.com, öffne die Entwicklerkonsole (Cmd-Opt-J oder F12), führe den kopierten Befehl aus, bestätige die Passkey-Abfrage und füge dann die ausgegebene JSON-Zeile unten ein."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "WhatsApp는 새 기기를 연결할 때 패스키 확인을 요구합니다. 브라우저에서 web.whatsapp.com을 열고 개발자 콘솔(Cmd-Opt-J 또는 F12)을 연 뒤, 복사한 명령을 실행하고 패스키 프롬프트를 승인한 다음, 출력된 JSON 한 줄을 아래에 붙여넣으세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "WhatsApp требует проверку ключа доступа для привязки нового устройства. Откройте в браузере web.whatsapp.com, откройте консоль разработчика (Cmd-Opt-J или F12), выполните скопированную команду, подтвердите запрос ключа доступа, затем вставьте выведенную строку JSON ниже."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "WhatsApp 要求通过通行密钥验证才能关联新设备。请在浏览器中打开 web.whatsapp.com，打开开发者控制台（Cmd-Opt-J 或 F12），运行复制的命令，通过通行密钥验证，然后将输出的 JSON 行粘贴到下方。"
           }
         }
       }
@@ -2369,6 +1988,7 @@
     },
     "%@ auto-disabled for %@ — its context window is too small to carry them." : {
       "comment" : "A notice that a chat popover's small-context size class has been turned off, and why. The first argument is a noun describing what was disabled (e.g. \"Tools\" or \"Memory\"). The second argument is a noun describing what the disabled thing is for (e.g. \"this model\").",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -2445,6 +2065,7 @@
     },
     "%@ download" : {
       "comment" : "Text describing the download size of a model, with an implied \"download\" action. The argument is the formatted download size.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -2921,6 +2542,7 @@
     },
     "%@ on disk" : {
       "comment" : "A string describing the size of a downloaded MLX model. The argument is the size of the model, formatted as a file size.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -3531,6 +3153,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@，%lld 個會話"
+          }
+        }
+      }
+    },
+    "%@, %lld tools" : {
+      "comment" : "A button that expands or collapses a list of tools. The first argument is the name of the tool category. The second argument is the count of tools in that category.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, %2$lld tools"
           }
         }
       }
@@ -4534,6 +4168,18 @@
         }
       }
     },
+    "%lld connection%@" : {
+      "comment" : "A label that describes the number of connections. The number is pluralized based on the count.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld connection%2$@"
+          }
+        }
+      }
+    },
     "%lld conversations couldn't be read" : {
       "localizations" : {
         "de" : {
@@ -4755,6 +4401,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%1$lld 個自定義標頭%2$@"
+          }
+        }
+      }
+    },
+    "%lld custom tool%@" : {
+      "comment" : "A label that shows the number of custom tools the user has.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld custom tool%2$@"
           }
         }
       }
@@ -9601,6 +9259,7 @@
     },
     "+%lld more in copied report" : {
       "comment" : "A note at the bottom of the diagnostics view indicating that there are more details available in a separate report. The number following \"+\" is the count of additional rows that can be found in the separate report.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -9789,6 +9448,7 @@
     },
     "~%@ of %.0f GB" : {
       "comment" : "Formatted string showing how much",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -9828,6 +9488,10 @@
           }
         }
       }
+    },
+    "~%@ tokens" : {
+      "comment" : "A number of tokens, rounded to the nearest whole number.",
+      "isCommentAutoGenerated" : true
     },
     "~%d items would be masked before cloud send." : {
       "comment" : "Privacy note: plural count of spans the Privacy Filter would mask before a cloud send.",
@@ -10068,6 +9732,40 @@
         }
       },
       "shouldTranslate" : false
+    },
+    "⌘+N Starts a New Chat in the Current Window" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⌘+N startet einen neuen Chat im aktuellen Fenster"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⌘+N으로 현재 창에서 새 채팅 시작"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⌘+N начинает новый чат в текущем окне"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⌘+N 在当前窗口开始新聊天"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⌘+N 在目前視窗開始新聊天"
+          }
+        }
+      }
     },
     "⏎" : {
       "localizations" : {
@@ -12553,6 +12251,7 @@
       }
     },
     "A bigger starting context means longer model warm-up and a slower first token." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -17474,6 +17173,10 @@
         }
       }
     },
+    "Add your first connection" : {
+      "comment" : "A label displayed above the list of MCP providers.",
+      "isCommentAutoGenerated" : true
+    },
     "Add Your First Knowledge Collection" : {
       "localizations" : {
         "de" : {
@@ -18727,6 +18430,10 @@
           }
         }
       }
+    },
+    "Agent instructions" : {
+      "comment" : "Label for the number of tokens used by agent instructions.",
+      "isCommentAutoGenerated" : true
     },
     "Agent Loop" : {
       "localizations" : {
@@ -20643,6 +20350,7 @@
       }
     },
     "All Tools" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -27756,6 +27464,10 @@
         }
       }
     },
+    "Auto-discover keeps this smaller by loading other assigned tools only when they are needed." : {
+      "comment" : "A description of the \"Auto-discover\" mode of tool usage.",
+      "isCommentAutoGenerated" : true
+    },
     "Auto-discover relevant capabilities" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -31580,6 +31292,7 @@
     },
     "Bigger models are smarter but need more memory — your Mac has %lld GB memory and %@ free storage." : {
       "comment" : "A hint in the Configure Model Chooser Modal, explaining that larger models use more memory, and that the user's Mac has a certain amount of free storage. The first argument is the total amount of memory on the user's Mac, rounded to the nearest GB. The second argument is the amount of free storage on the user's Mac, formatted as a file count (e.g. \"1",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -31622,6 +31335,7 @@
     },
     "Bigger models are smarter but need more memory — your Mac has %lld GB memory." : {
       "comment" : "A hint in the Configure Model Chooser Modal, explaining that bigger models are smarter but need more memory. The argument is the rounded total memory of the user's Mac in GB.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -34393,6 +34107,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "僅限瀏覽器應用。迴環地址始終允許。使用 * 可允許任何來源；否則請用逗號分隔。"
+          }
+        }
+      }
+    },
+    "Browser command copied. Run it in a web.whatsapp.com console tab." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Browser-Befehl kopiert. Führe ihn in einem web.whatsapp.com-Konsolen-Tab aus."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브라우저 명령이 복사되었습니다. web.whatsapp.com 콘솔 탭에서 실행하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Команда для браузера скопирована. Выполните её в консоли вкладки web.whatsapp.com."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "浏览器命令已复制。请在 web.whatsapp.com 的控制台标签页中运行。"
           }
         }
       }
@@ -40626,6 +40368,34 @@
         }
       }
     },
+    "Check your phone" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prüfe dein Telefon"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "휴대폰을 확인하세요"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверьте телефон"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请查看你的手机"
+          }
+        }
+      }
+    },
     "Checked a secret in sandbox" : {
       "localizations" : {
         "de" : {
@@ -45539,6 +45309,10 @@
         }
       }
     },
+    "Collapsed" : {
+      "comment" : "A label for a button that collapses a list.",
+      "isCommentAutoGenerated" : true
+    },
     "Color" : {
       "localizations" : {
         "de" : {
@@ -46165,6 +45939,7 @@
       }
     },
     "Compatibility unknown" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -48534,6 +48309,34 @@
         }
       }
     },
+    "Confirm this code matches the one WhatsApp shows on your phone, then continue." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bestätige, dass dieser Code mit dem übereinstimmt, den WhatsApp auf deinem Telefon anzeigt, und fahre dann fort."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 코드가 휴대폰의 WhatsApp에 표시된 코드와 일치하는지 확인한 후 계속하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Убедитесь, что этот код совпадает с кодом в WhatsApp на вашем телефоне, затем продолжите."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "确认此代码与手机上 WhatsApp 显示的代码一致，然后继续。"
+          }
+        }
+      }
+    },
     "Confirmation Delay" : {
       "localizations" : {
         "de" : {
@@ -48564,6 +48367,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "確認延遲"
+          }
+        }
+      }
+    },
+    "Confirming..." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wird bestätigt..."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "확인 중..."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подтверждение..."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在确认..."
           }
         }
       }
@@ -49233,7 +49064,12 @@
         }
       }
     },
+    "Connect services and troubleshoot the tools they provide" : {
+      "comment" : "Subtitle for the \"Connections\" tab in the Tools Manager.",
+      "isCommentAutoGenerated" : true
+    },
     "Connect services that give your agents more tools, using MCP (Model Context Protocol)" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -50025,6 +49861,7 @@
       }
     },
     "Connected %@" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -50476,6 +50313,10 @@
         }
       }
     },
+    "Connection actions" : {
+      "comment" : "A label for the actions menu.",
+      "isCommentAutoGenerated" : true
+    },
     "Connection could not be resolved." : {
       "comment" : "Error message when the connection ID cannot be resolved.",
       "isCommentAutoGenerated" : true,
@@ -50547,6 +50388,7 @@
       }
     },
     "Connection Health" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -51322,6 +51164,10 @@
         }
       }
     },
+    "Context" : {
+      "comment" : "A label for the context usage of an agent.",
+      "isCommentAutoGenerated" : true
+    },
     "Context & KV Policy" : {
       "localizations" : {
         "de" : {
@@ -51426,6 +51272,9 @@
         }
       }
     },
+    "Context impact" : {
+
+    },
     "Context is full: the system prompt, tools, and input alone exceed this model's window. Shorten the input, disable tools, or pick a larger-context model." : {
       "comment" : "Tooltip text for the context indicator chip when the context is full.",
       "isCommentAutoGenerated" : true,
@@ -51495,6 +51344,10 @@
           }
         }
       }
+    },
+    "Context is the model's working space. Agent instructions and tool descriptions use some of it before your first message; memory can add more on each turn. A larger setup can slow the first reply and leave less room for a very long conversation." : {
+      "comment" : "A description of how context is used in the",
+      "isCommentAutoGenerated" : true
     },
     "Context Length" : {
       "extractionState" : "stale",
@@ -52617,6 +52470,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "複製並粘貼到此處"
+          }
+        }
+      }
+    },
+    "Copy Browser Command" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Browser-Befehl kopieren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브라우저 명령 복사"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопировать команду для браузера"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制浏览器命令"
           }
         }
       }
@@ -56253,6 +56134,10 @@
         }
       }
     },
+    "Create or import tools that run safely inside Osaurus" : {
+      "comment" : "Subtitle for the Custom tab in the Tools Manager.",
+      "isCommentAutoGenerated" : true
+    },
     "Create or repair %@." : {
       "localizations" : {
         "de" : {
@@ -58913,6 +58798,7 @@
       }
     },
     "Custom Tools" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -67508,6 +67394,9 @@
         }
       }
     },
+    "Download: %@" : {
+
+    },
     "Downloaded" : {
       "localizations" : {
         "de" : {
@@ -72759,6 +72648,10 @@
         }
       }
     },
+    "Enable this connection" : {
+      "comment" : "A label for a toggle that enables a connection.",
+      "isCommentAutoGenerated" : true
+    },
     "Enable to read assistant replies aloud" : {
       "comment" : "A description of the functionality of enabling text-to-speech.",
       "isCommentAutoGenerated" : true,
@@ -73132,6 +73025,10 @@
           }
         }
       }
+    },
+    "Enabled abilities" : {
+      "comment" : "Label for the number of enabled abilities.",
+      "isCommentAutoGenerated" : true
     },
     "Enabled Capabilities" : {
       "localizations" : {
@@ -75518,6 +75415,18 @@
         }
       }
     },
+    "est. %@ running" : {
+
+    },
+    "Est. Memory" : {
+
+    },
+    "Est. memory while running: %@" : {
+
+    },
+    "Est. running memory: %@" : {
+
+    },
     "Establishing the Osaurus Secure Channel — forward-secret, mutually authenticated end-to-end encryption. Not encrypted until connected." : {
       "comment" : "Help text for the empty-state security badge while a remote agent connection is still being established.",
       "localizations" : {
@@ -75556,6 +75465,9 @@
     "Estimate" : {
       "comment" : "Label for the estimated amount of context tokens the agent is using.",
       "isCommentAutoGenerated" : true
+    },
+    "Estimate basis" : {
+
     },
     "Estimated" : {
       "comment" : "Label for the estimated usage section of the context breakdown popover.",
@@ -75716,8 +75628,12 @@
         }
       }
     },
+    "Estimated memory while running" : {
+
+    },
     "Estimated startup context" : {
       "comment" : "A label describing the estimated startup context.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -75754,6 +75670,7 @@
     },
     "Estimated startup context: %@" : {
       "comment" : "A label describing the estimated startup context. The argument is the string “—”, the string “~%1$arg–%2$arg tok”, or the string “~%arg tok”.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -75872,6 +75789,7 @@
       }
     },
     "Every ability this agent carries adds instructions or tool schemas to each new chat." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -76314,6 +76232,7 @@
       }
     },
     "Everything agents can use, grouped by where each tool comes from" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -76490,6 +76409,7 @@
     },
     "Everything this agent can do — flip an ability and watch the startup context respond." : {
       "comment" : "Helper text for the \"Abilities\" tab in the Detail view.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -76523,6 +76443,10 @@
           }
         }
       }
+    },
+    "Everything this agent can do. Context impact updates as you turn abilities on or off." : {
+      "comment" : "Text describing the abilities of an agent.",
+      "isCommentAutoGenerated" : true
     },
     "Everything this agent stores — browse tables, saved views, and history." : {
       "comment" : "Help text for the \"Database\" tab in the Detail view.",
@@ -76986,6 +76910,10 @@
           }
         }
       }
+    },
+    "Expanded" : {
+      "comment" : "A label for the accessibility value of a section",
+      "isCommentAutoGenerated" : true
     },
     "Expected a directory but found a file or other non-directory item." : {
       "localizations" : {
@@ -89491,6 +89419,9 @@
         }
       }
     },
+    "Hide not recommended" : {
+
+    },
     "Hide other options" : {
       "comment" : "Collapses the extra local models in the \"Configure AI\" onboarding step.",
       "extractionState" : "stale",
@@ -89608,6 +89539,7 @@
       }
     },
     "Hide Too Large" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -99213,6 +99145,9 @@
         }
       }
     },
+    "It may load, but macOS is likely to page memory and generation can be very slow. Choose a smaller version." : {
+
+    },
     "Item did not send; check its destination settings." : {
       "comment" : "Text displayed in a status message when an outbound intent is not sent because of a destination configuration issue.",
       "isCommentAutoGenerated" : true,
@@ -108265,6 +108200,40 @@
         }
       }
     },
+    "Make ⌘+N start a new chat in the frontmost chat window, like the sidebar's New Chat button. New Window moves to ⇧+⌘+N, matching other chat apps. Turn off to keep ⌘+N opening a new window." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⌘+N startet einen neuen Chat im vordersten Chat-Fenster, wie die Schaltfläche „Neuer Chat“ in der Seitenleiste. „Neues Fenster“ wechselt zu ⇧+⌘+N, wie in anderen Chat-Apps. Deaktivieren, damit ⌘+N weiterhin ein neues Fenster öffnet."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사이드바의 새 채팅 버튼처럼 ⌘+N이 가장 앞에 있는 채팅 창에서 새 채팅을 시작하도록 합니다. 새 창은 다른 채팅 앱과 같이 ⇧+⌘+N으로 이동합니다. 끄면 ⌘+N이 계속 새 창을 엽니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⌘+N начинает новый чат в переднем окне чата, как кнопка «Новый чат» на боковой панели. «Новое окно» переходит на ⇧+⌘+N, как в других чат-приложениях. Выключите, чтобы ⌘+N по-прежнему открывал новое окно."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "让 ⌘+N 在最前面的聊天窗口开始新聊天，与侧边栏的新聊天按钮相同。新窗口改为 ⇧+⌘+N，与其他聊天应用一致。关闭后 ⌘+N 仍打开新窗口。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "讓 ⌘+N 在最前面的聊天視窗開始新聊天，與側邊欄的新聊天按鈕相同。新視窗改為 ⇧+⌘+N，與其他聊天應用程式一致。關閉後 ⌘+N 仍會開啟新視窗。"
+          }
+        }
+      }
+    },
     "Make and check off your Reminders." : {
       "comment" : "Onboarding plugin picker blurb for Reminders.",
       "localizations" : {
@@ -108372,40 +108341,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "打造你的專屬"
-          }
-        }
-      }
-    },
-    "Make ⌘+N start a new chat in the frontmost chat window, like the sidebar's New Chat button. New Window moves to ⇧+⌘+N, matching other chat apps. Turn off to keep ⌘+N opening a new window." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "⌘+N startet einen neuen Chat im vordersten Chat-Fenster, wie die Schaltfläche „Neuer Chat“ in der Seitenleiste. „Neues Fenster“ wechselt zu ⇧+⌘+N, wie in anderen Chat-Apps. Deaktivieren, damit ⌘+N weiterhin ein neues Fenster öffnet."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "사이드바의 새 채팅 버튼처럼 ⌘+N이 가장 앞에 있는 채팅 창에서 새 채팅을 시작하도록 합니다. 새 창은 다른 채팅 앱과 같이 ⇧+⌘+N으로 이동합니다. 끄면 ⌘+N이 계속 새 창을 엽니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "⌘+N начинает новый чат в переднем окне чата, как кнопка «Новый чат» на боковой панели. «Новое окно» переходит на ⇧+⌘+N, как в других чат-приложениях. Выключите, чтобы ⌘+N по-прежнему открывал новое окно."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "让 ⌘+N 在最前面的聊天窗口开始新聊天，与侧边栏的新聊天按钮相同。新窗口改为 ⇧+⌘+N，与其他聊天应用一致。关闭后 ⌘+N 仍打开新窗口。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "讓 ⌘+N 在最前面的聊天視窗開始新聊天，與側邊欄的新聊天按鈕相同。新視窗改為 ⇧+⌘+N，與其他聊天應用程式一致。關閉後 ⌘+N 仍會開啟新視窗。"
           }
         }
       }
@@ -109734,6 +109669,10 @@
           }
         }
       }
+    },
+    "Manual mode includes every assigned tool, so assigning more tools increases context use." : {
+      "comment" : "A description of the \"Manual mode\" option for",
+      "isCommentAutoGenerated" : true
     },
     "Manual mode never auto-distills. Use 'Distill pending' or set to sessionEnd." : {
       "localizations" : {
@@ -111906,6 +111845,9 @@
         }
       }
     },
+    "Measured model files" : {
+
+    },
     "Media" : {
       "comment" : "Title of the Image Generation tab.",
       "isCommentAutoGenerated" : true
@@ -112187,6 +112129,10 @@
           }
         }
       }
+    },
+    "Memory added per message (up to)" : {
+      "comment" : "Label for the memory cost in the ability context details view.",
+      "isCommentAutoGenerated" : true
     },
     "Memory Budget" : {
       "localizations" : {
@@ -112516,6 +112462,7 @@
     },
     "Memory is" : {
       "comment" : "Part of the auto-disable notice in the Abilities → Overview tab, describing which capability is disabled.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -112583,6 +112530,9 @@
           }
         }
       }
+    },
+    "Memory may be tight" : {
+
     },
     "Memory Recall" : {
       "comment" : "A feature toggle that lets the agent search its memory mid-conversation.",
@@ -115280,6 +115230,9 @@
         }
       }
     },
+    "Model name and quantization" : {
+
+    },
     "Model not loaded" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -117489,6 +117442,7 @@
     },
     "needs %@" : {
       "comment" : "A plain-language string that combines a",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -117525,6 +117479,7 @@
     },
     "needs %@ memory" : {
       "comment" : "Text that appears in a row below a model size in the Configure AI step, indicating the amount of memory it requires. The argument is the amount of memory, presented in GB.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -127382,6 +127337,12 @@
         }
       }
     },
+    "Not enough information" : {
+
+    },
+    "not exposed in the current request schema" : {
+      "comment" : "Reason for a tool not being available in the current request schema."
+    },
     "Not Found" : {
       "localizations" : {
         "de" : {
@@ -127802,6 +127763,9 @@
         }
       }
     },
+    "Not recommended" : {
+
+    },
     "Not registered" : {
       "localizations" : {
         "de" : {
@@ -128007,6 +127971,7 @@
       }
     },
     "not selected by preflight for this turn" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -129132,6 +129097,7 @@
     },
     "of the model's ~%@ token window (%@)" : {
       "comment" : "A description of the proportion of the model's token window that is currently available, based on a preview of the agent's ability context. The first argument is the fractional proportion of the window that is available. The second argument is the string “<1%” or the string “%arg%%”.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -129949,6 +129915,9 @@
           }
         }
       }
+    },
+    "On disk: %@" : {
+
     },
     "On hold" : {
       "comment" : "Status pill shown when the billing account is frozen / on hold.",
@@ -137390,6 +137359,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "傳入 onGenerateTitle 處理器以啓用 /title"
+          }
+        }
+      }
+    },
+    "Passkey response accepted — finishing the link..." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passkey-Antwort akzeptiert — Verknüpfung wird abgeschlossen..."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "패스키 응답이 수락되었습니다 — 연결을 마무리하는 중..."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ответ ключа доступа принят — завершаем привязку..."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通行密钥响应已接受 — 正在完成关联..."
           }
         }
       }
@@ -150301,6 +150298,7 @@
       }
     },
     "Probe" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -151957,6 +151955,7 @@
     },
     "Quant" : {
       "comment" : "Short label for the quantization column in the model card spec strip.",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -156932,6 +156931,9 @@
           }
         }
       }
+    },
+    "Recommended model-memory budget" : {
+
     },
     "Recommended Slack manifest copied" : {
       "comment" : "Status message displayed when the recommended Slack manifest is copied to the clipboard.",
@@ -162854,6 +162856,7 @@
     },
     "Repos outside mlx-community must advertise an MLX-native artifact family in the repo name, such as MLX, MXFP, JANG, JANGTQ, or TurboQuant." : {
       "comment" : "Error message when a Hugging Face repo is found but is not MLX-compatible.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -171437,7 +171440,11 @@
         }
       }
     },
+    "Runs well" : {
+
+    },
     "Runs Well" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -171473,6 +171480,7 @@
     },
     "Runs Well · needs %@" : {
       "comment" : "Text that describes how well a model variant fits on a device based on its memory requirements. The argument is a string describing the memory requirement, or nil if the requirement is unknown.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -183990,6 +183998,7 @@
       }
     },
     "Should run smoothly on this Mac" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -184098,6 +184107,14 @@
           }
         }
       }
+    },
+    "Show %lld more details" : {
+      "comment" : "A button that shows more details in the diagnostics view.",
+      "isCommentAutoGenerated" : true
+    },
+    "Show 1 more detail" : {
+      "comment" : "A button that shows more details.",
+      "isCommentAutoGenerated" : true
     },
     "Show a typing indicator in a chat." : {
       "localizations" : {
@@ -184409,6 +184426,10 @@
           }
         }
       }
+    },
+    "Show fewer details" : {
+      "comment" : "A button that hides more details.",
+      "isCommentAutoGenerated" : true
     },
     "Show full text" : {
       "localizations" : {
@@ -192086,6 +192107,10 @@
         }
       }
     },
+    "stdio" : {
+      "comment" : "A label for a provider transport method.",
+      "isCommentAutoGenerated" : true
+    },
     "Stdio" : {
       "localizations" : {
         "de" : {
@@ -194091,6 +194116,34 @@
         }
       }
     },
+    "Submit Passkey Response" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passkey-Antwort senden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "패스키 응답 제출"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправить ответ ключа доступа"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提交通行密钥响应"
+          }
+        }
+      }
+    },
     "Submit selected options" : {
       "localizations" : {
         "de" : {
@@ -194121,6 +194174,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "提交所選選項"
+          }
+        }
+      }
+    },
+    "Submitting..." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wird gesendet..."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "제출 중..."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправка..."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在提交..."
           }
         }
       }
@@ -199540,6 +199621,34 @@
         }
       }
     },
+    "The Codes Match — Continue" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codes stimmen überein — Weiter"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "코드 일치 — 계속"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Коды совпадают — продолжить"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代码一致 — 继续"
+          }
+        }
+      }
+    },
     "The config file is invalid JSON or has an incompatible shape." : {
       "localizations" : {
         "de" : {
@@ -203526,6 +203635,34 @@
         }
       }
     },
+    "This account is protected by a passkey" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Konto ist durch einen Passkey geschützt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 계정은 패스키로 보호되어 있습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот аккаунт защищён ключом доступа"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此账号受通行密钥保护"
+          }
+        }
+      }
+    },
     "This agent advertised that it supports encryption but didn't include a verifiable identity, so it can't be paired securely. It may be impersonating another device, or the other device may need to update Osaurus." : {
       "comment" : "A description of why an agent that claims Secure Channel support (`osc=1`) but doesn't include a verifiable identity (a crypto address) is not trustworthy.",
       "isCommentAutoGenerated" : true,
@@ -203779,6 +203916,10 @@
           }
         }
       }
+    },
+    "This agent uses %@ of the model's working space before you start chatting." : {
+      "comment" : "A sentence that describes how much of the model's working space an agent uses. The argument is a percentage.",
+      "isCommentAutoGenerated" : true
     },
     "This agent's database is approaching its storage limit." : {
       "comment" : "Localized help text for the \"Approaching storage limit\" badge.",
@@ -204425,6 +204566,9 @@
         }
       }
     },
+    "This estimate leaves room for macOS, other apps, and longer chats." : {
+
+    },
     "This event was already processed; the provider redelivered it." : {
       "comment" : "Description of a stage/reason pair when a duplicate event is received.",
       "isCommentAutoGenerated" : true,
@@ -204879,6 +205023,9 @@
           }
         }
       }
+    },
+    "This model is close to the comfortable limit. Longer chats or other memory-heavy apps may slow it down." : {
+
     },
     "This model is outdated. Click to switch to a newer version." : {
       "localizations" : {
@@ -205725,8 +205872,13 @@
         }
       }
     },
+    "This repo could not be verified as an MLX-compatible model. Private repos require a connected Hugging Face token with access; all repos need config, tokenizer, and model weights." : {
+      "comment" : "Error message displayed when a Hugging Face repo is not MLX-compatible.",
+      "isCommentAutoGenerated" : true
+    },
     "This repo did not pass the MLX-compatible metadata/file check. Use an MLX, MXFP, JANG, JANGTQ, or TurboQuant repo with config, tokenizer, and model weights." : {
       "comment" : "Error message displayed in the Hugging Face import sheet when a repo is found that is not MLX-compatible.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -206889,6 +207041,7 @@
       }
     },
     "Tight fit" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -206929,6 +207082,7 @@
       }
     },
     "Tight Fit" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -206964,6 +207118,7 @@
     },
     "Tight Fit · needs %@" : {
       "comment" : "A description of a model's compatibility with the user's device, including the amount of memory it requires. The argument is the formatted memory requirement.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -208192,6 +208347,7 @@
       }
     },
     "Too Large" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -208227,6 +208383,7 @@
     },
     "Too Large · needs %@" : {
       "comment" : "A description of a model variant that is too large to run on the device. The argument is the formatted estimated memory of the variant.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -208262,6 +208419,7 @@
       }
     },
     "Too large for this Mac" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -208510,6 +208668,10 @@
           }
         }
       }
+    },
+    "Tool descriptions" : {
+      "comment" : "Label for the number of tool descriptions in the context.",
+      "isCommentAutoGenerated" : true
     },
     "Tool discovery is running with a %llds timeout." : {
       "localizations" : {
@@ -208994,6 +209156,7 @@
     },
     "Tools and Memory are" : {
       "comment" : "Part of the auto-disable notice for the small-context size class.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -209034,6 +209197,7 @@
     },
     "Tools are" : {
       "comment" : "Part of the auto-disable notice for AgentAbilitiesHeroCard.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "de" : {
@@ -209177,6 +209341,7 @@
       "isCommentAutoGenerated" : true
     },
     "Tools you create or import as JSON recipes. They run inside Osaurus's sandbox, isolated from the rest of your Mac." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -220811,6 +220976,9 @@
         }
       }
     },
+    "We could not estimate running memory yet. Check the download size or try another version." : {
+
+    },
     "We couldn't estimate memory needs for this model." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -222475,6 +222643,34 @@
         }
       }
     },
+    "WhatsApp requires a passkey check to link a new device. In a browser, open web.whatsapp.com, open the developer console (Cmd-Opt-J or F12), run the copied command, approve the passkey prompt, then paste the JSON line it prints below." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "WhatsApp verlangt eine Passkey-Prüfung, um ein neues Gerät zu verknüpfen. Öffne im Browser web.whatsapp.com, öffne die Entwicklerkonsole (Cmd-Opt-J oder F12), führe den kopierten Befehl aus, bestätige die Passkey-Abfrage und füge dann die ausgegebene JSON-Zeile unten ein."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "WhatsApp는 새 기기를 연결할 때 패스키 확인을 요구합니다. 브라우저에서 web.whatsapp.com을 열고 개발자 콘솔(Cmd-Opt-J 또는 F12)을 연 뒤, 복사한 명령을 실행하고 패스키 프롬프트를 승인한 다음, 출력된 JSON 한 줄을 아래에 붙여넣으세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "WhatsApp требует проверку ключа доступа для привязки нового устройства. Откройте в браузере web.whatsapp.com, откройте консоль разработчика (Cmd-Opt-J или F12), выполните скопированную команду, подтвердите запрос ключа доступа, затем вставьте выведенную строку JSON ниже."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "WhatsApp 要求通过通行密钥验证才能关联新设备。请在浏览器中打开 web.whatsapp.com，打开开发者控制台（Cmd-Opt-J 或 F12），运行复制的命令，通过通行密钥验证，然后将输出的 JSON 行粘贴到下方。"
+          }
+        }
+      }
+    },
     "WhatsApp runs through a local bridge helper speaking the WhatsApp Web protocol, linked to your own account like a browser session — no bot account, token, or Meta Business setup. This uses an unofficial protocol: WhatsApp may log the session out, and a dedicated number is recommended." : {
       "comment" : "A description of WhatsApp's connection setup.",
       "isCommentAutoGenerated" : true,
@@ -223766,6 +223962,7 @@
       }
     },
     "Will be a tight fit" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -226998,6 +227195,7 @@
       }
     },
     "Your Custom Tools" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -227340,6 +227538,15 @@
           }
         }
       }
+    },
+    "Your Mac" : {
+
+    },
+    "Your Mac has %lld GB unified memory; for smooth performance, choose models estimated below %@ while running." : {
+
+    },
+    "Your Mac has %lld GB unified memory; for smooth performance, choose models estimated below %@ while running. %@ storage is free." : {
+
     },
     "Your name (optional)" : {
       "localizations" : {
@@ -227946,40 +228153,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Zip 捆綁包"
-          }
-        }
-      }
-    },
-    "⌘+N Starts a New Chat in the Current Window" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "⌘+N startet einen neuen Chat im aktuellen Fenster"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "⌘+N으로 현재 창에서 새 채팅 시작"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "⌘+N начинает новый чат в текущем окне"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "⌘+N 在当前窗口开始新聊天"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "⌘+N 在目前視窗開始新聊天"
           }
         }
       }

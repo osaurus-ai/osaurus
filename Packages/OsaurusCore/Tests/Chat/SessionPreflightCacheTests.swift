@@ -120,6 +120,46 @@ struct SessionPreflightCacheTests {
     }
 
     @Test
+    func toolCatalogInvalidation_refreshesSchemasWithoutDroppingUnrelatedState() async {
+        let sessionId = "tool-catalog-refresh-\(UUID().uuidString)"
+        let store = SessionToolStateStore()
+        await store.appendLoadedTools(
+            sessionId,
+            names: ["saved_mcp_tool"],
+            fallbackAlwaysLoadedNames: ["capabilities_load"]
+        )
+        await store.setInitial(
+            sessionId,
+            alwaysLoadedNames: ["capabilities_load", "saved_mcp_tool"],
+            toolSpecs: ToolRegistry.shared.specs(forTools: ["capabilities_load"]),
+            fingerprint: "none/auto",
+            manifest: "stale tool manifest",
+            soul: "stable soul"
+        )
+        await store.recordUserPrefix(
+            sessionId,
+            key: "message-key",
+            prefix: "stable memory prefix"
+        )
+        _ = await store.recordSend(
+            sessionId: sessionId,
+            cacheHint: "old-tool-catalog",
+            trace: nil
+        )
+
+        await store.invalidateToolCatalog()
+
+        let state = await store.get(sessionId)
+        #expect(state?.loadedToolNames == ["saved_mcp_tool"])
+        #expect(state?.sessionFingerprint == "none/auto")
+        #expect(state?.initialAlwaysLoadedNames == nil)
+        #expect(state?.initialToolSpecs == nil)
+        #expect(state?.frozenManifest == nil)
+        #expect(state?.frozenSoul == "stable soul")
+        #expect(state?.frozenUserPrefixes["message-key"] == "stable memory prefix")
+    }
+
+    @Test
     func resolveTools_includesAdditionalToolNames() async {
         await withSessionPreflightAgent { agentId in
 
