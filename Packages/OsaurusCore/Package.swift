@@ -175,7 +175,7 @@ let package = Package(
         // fused qmm path remains the unflagged default.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "2d54f918ff1edd52b2516c79b3eb695afa37eca8"
+            revision: "2ecdd5f8780537980e473805b9a347fc429f7133"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
