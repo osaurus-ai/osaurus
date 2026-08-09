@@ -58,6 +58,8 @@ extension ChatSession: ChatWarmupSessionContext {
             return ChatMessage(role: "user", content: t.content)
         }
 
+        let committedTurns = warmupCommittedTurns
+
         let context = await SystemPromptComposer.composeChatContext(
             agentId: effectiveAgentId,
             executionMode: executionMode,
@@ -86,9 +88,15 @@ extension ChatSession: ChatWarmupSessionContext {
         }
 
         let toolSpecs = context.tools
-        let messages = buildWarmupMessages(systemPrompt: sys)
+        let messages = buildWarmupMessages(systemPrompt: sys, turnsToWarm: committedTurns)
 
-        let historyFingerprint = turns.map { turn in
+        // Fingerprint over the COMMITTED turns only (same set the messages
+        // above serialize). During the DSV4 pre-send handshake the pending
+        // user turn is already in `turns`; hashing it here made the handshake
+        // fingerprint differ from the idle warm-up that just completed, so
+        // `performWarmup` could never short-circuit and one Send ran a third
+        // full prefill of bytes the real request then diverged from anyway.
+        let historyFingerprint = committedTurns.map { turn in
             "\(turn.role.rawValue):\(turn.id.uuidString):\(turn.content.count)"
         }.joined(separator: "|")
 
@@ -145,7 +153,29 @@ extension ChatSession: ChatWarmupSessionContext {
         return summary
     }
 
-    func buildWarmupMessages(systemPrompt: String) -> [ChatMessage] {
+    /// The transcript a warm-up may safely prefill: every turn EXCEPT
+    /// trailing user turns that have not been dispatched yet. A pending turn
+    /// (pre-appended by `send()` so the message is visible during the DSV4
+    /// pre-send handshake) gets its injected context prefix — the
+    /// `[Current Time]` block, memory, screen context — frozen only at
+    /// dispatch, so its final wire bytes do not exist yet. Warming it
+    /// prefills bytes the real request never composes: observed live as a
+    /// third prefill per Send whose tokens past the static prefix could
+    /// never be reused. Dropping it keeps the warm transcript a strict
+    /// byte-prefix of the real request.
+    var warmupCommittedTurns: [ChatTurn] {
+        var eligible = turns
+        while let last = eligible.last, last.role == .user, last.injectedContextPrefix == nil {
+            eligible.removeLast()
+        }
+        return eligible
+    }
+
+    func buildWarmupMessages(
+        systemPrompt: String,
+        turnsToWarm: [ChatTurn]? = nil
+    ) -> [ChatMessage] {
+        let warmable = turnsToWarm ?? warmupCommittedTurns
         var msgs: [ChatMessage] = []
         if !systemPrompt.isEmpty {
             msgs.append(ChatMessage(role: "system", content: systemPrompt))
@@ -160,7 +190,7 @@ extension ChatSession: ChatWarmupSessionContext {
         let coveredIds = summary.map { Set($0.coveredTurnIds) } ?? []
         var summaryInjected = false
 
-        for (index, turn) in turns.enumerated() {
+        for turn in warmable {
             if let summary, coveredIds.contains(turn.id) {
                 if !summaryInjected {
                     msgs.append(ChatMessage(role: "user", content: summary.contextMessageText))
@@ -168,7 +198,11 @@ extension ChatSession: ChatWarmupSessionContext {
                 }
                 continue
             }
-            let isLastTurn = index == turns.count - 1
+            // Last-turn position is judged against the FULL transcript, not
+            // the warmable slice: when a pending user turn was dropped above,
+            // the real request renders the final assistant turn as a
+            // non-last message, and the warm bytes must match that.
+            let isLastTurn = turn.id == turns.last?.id
             if let msg = warmupTurnToMessage(turn, isLastTurn: isLastTurn) {
                 msgs.append(msg)
             }
