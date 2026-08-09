@@ -1663,6 +1663,7 @@ struct MLXBatchAdapter {
         guard !hasMedia else { return nil }
 
         var probeStableBoundaries: [[Int]] = []
+        var probeScopeSalt: String?
         let prefix = await warmupSendInvariantPrefixTokens(chat: chat) { probeText in
             var probeChat = chat
             probeChat.append(.user(probeText))
@@ -1677,6 +1678,7 @@ struct MLXBatchAdapter {
                 !prepared.hasMediaContent
             else { return nil }
             probeStableBoundaries.append(prepared.cacheStablePrefixTokenCounts)
+            probeScopeSalt = prepared.cacheScopeSalt
             return prepared.text.tokenIds
                 ?? MLXCacheIOLock.withSerializedMLXCacheIO {
                     prepared.text.tokens.asArray(Int.self)
@@ -1690,9 +1692,17 @@ struct MLXBatchAdapter {
             return nil
         }
 
-        // The scope salt is derived from additionalContext alone, so the
-        // probe render's salt matches the real send's.
-        let scopeSalt = MLXLMCommon.cacheScopeSalt(from: additionalContext)
+        // The scope salt must come from the PREPARED probe render, not from
+        // the raw request context: `prepare()` merges the bundle-declared
+        // reasoning defaults (generation_config / chat-config, e.g. DSV4-0731's
+        // enable_thinking=true + effort=low) into additionalContext BEFORE
+        // salting. Recomputing from the raw context here salted the warm-up
+        // as scope=nil while every real send salted as its merged scope —
+        // a different disk content hash over identical token bytes, so the
+        // send could never restore what the warm-up stored and re-prefilled
+        // the same prefix again (the "first turn prefills 2-3x" symptom,
+        // every model family with a declared reasoning default).
+        let scopeSalt = probeScopeSalt ?? MLXLMCommon.cacheScopeSalt(from: additionalContext)
         let stableBoundaries =
             probeStableBoundaries.count == 2
             ? agreedWarmupStableBoundaries(

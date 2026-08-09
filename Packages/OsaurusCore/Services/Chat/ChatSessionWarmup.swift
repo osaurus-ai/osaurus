@@ -285,7 +285,23 @@ extension ChatSession: ChatWarmupSessionContext {
     }
 
     func handleWarmupAfterRunCompleted(wasCancelled: Bool, hadError: Bool) {
-        let hadToolActivity = turns.contains { turn in
+        // Scope tool-activity detection to the CURRENT run (from the last
+        // user turn onward), not the whole session. Scanning every historical
+        // turn permanently disabled post-response warmup for any chat that
+        // ever used a tool — so a session that ran one tool call at turn 5
+        // paid a cold multi-turn prefill tax on every send from turn 6
+        // through turn 500. The re-render bytes stored by a warmup for a
+        // clean assistant turn remain a valid prefix of the next send's
+        // prompt regardless of what happened many turns ago, because the
+        // committed history is what the next send re-renders and warms
+        // against on both sides of the fingerprint gate.
+        let currentRunTurns: ArraySlice<ChatTurn> = {
+            guard
+                let lastUserIndex = turns.lastIndex(where: { $0.role == .user })
+            else { return turns[...] }
+            return turns[lastUserIndex...]
+        }()
+        let hadToolActivity = currentRunTurns.contains { turn in
             turn.role == .tool
                 || !(turn.toolCalls?.isEmpty ?? true)
                 || !turn.toolResults.isEmpty
