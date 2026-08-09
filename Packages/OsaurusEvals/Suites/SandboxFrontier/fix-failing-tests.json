@@ -22,8 +22,8 @@
     "agentLoop": {
       "maxIterations": 18,
       "mustCallTools": [
-        "sandbox_exec",
-        "sandbox_write_file"
+        "shell_run",
+        "file_edit"
       ],
       "todoUpdatedBeforeComplete": true,
       "sandboxFiles": [

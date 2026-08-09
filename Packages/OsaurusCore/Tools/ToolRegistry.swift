@@ -13,6 +13,15 @@ import OSLog
 /// but still need an exact `tool/<name>` entry in capability manifests.
 protocol IndividuallyManifestedCapabilityTool: OsaurusTool {}
 
+/// A dynamically registered tool that declares plugin-group membership
+/// directly. Real plugins and providers expose this through their concrete
+/// wrapper types; deterministic eval fixtures use this protocol to exercise
+/// the same `plugin/<id>` manifest and group-load contract without installing
+/// an external plugin.
+protocol CapabilityToolGroupDeclaring: OsaurusTool {
+    var capabilityGroupId: String { get }
+}
+
 /// Refusals here are security-relevant: a tool the request never exposed tried to run.
 enum ToolRegistryLogger {
     static let registry = Logger(subsystem: "ai.osaurus", category: "tool.registry")
@@ -553,7 +562,7 @@ public final class ToolRegistry: ObservableObject {
     /// stalls forever on an approval card nobody is present to click. The
     /// interactive chat surface is unaffected — it still shows the card.
     nonisolated static let unattendedAutoApprovableToolNames: Set<String> = [
-        "propose_knowledge_update",
+        "propose_knowledge_update"
     ]
 
     /// Whether `name` is blocked for the current execution because an
@@ -744,7 +753,7 @@ public final class ToolRegistry: ObservableObject {
                 if !approved {
                     let message =
                         ChatExecutionContext.isExternalSurface
-                        || ChatExecutionContext.denyUnapprovedToolPrompts
+                            || ChatExecutionContext.denyUnapprovedToolPrompts
                         ? "Tool '\(name)' requires interactive approval in the Osaurus app. Enable auto-approve or change the tool policy to auto before calling it from an external MCP client."
                         : "User denied execution for tool: \(name)"
                     throw NSError(
@@ -847,7 +856,8 @@ public final class ToolRegistry: ObservableObject {
         // behaves exactly as before. See `ChatExecutionContext.toolExecutionScope`.
         if let scope = ChatExecutionContext.toolExecutionScope, !scope.permits(name) {
             ToolRegistryLogger.registry.error(
-                "refusing '\(name, privacy: .public)': not exposed to this request")
+                "refusing '\(name, privacy: .public)': not exposed to this request"
+            )
             // Distinguish "real tool, just never loaded into this
             // conversation" from "withheld". A skill's instructions or the
             // user can name a dynamic tool that was never exposed to the
@@ -901,6 +911,9 @@ public final class ToolRegistry: ObservableObject {
                     retryable: true
                 ).toJSONString()
             }
+            if let groupRescue = groupIdCallRescueEnvelope(for: name) {
+                return groupRescue
+            }
             return ToolErrorEnvelope(
                 kind: .toolNotFound,
                 reason: "\(name) is not available in this conversation.",
@@ -925,6 +938,9 @@ public final class ToolRegistry: ObservableObject {
                     toolName: name,
                     retryable: true
                 ).toJSONString()
+            }
+            if let groupRescue = groupIdCallRescueEnvelope(for: name) {
+                return groupRescue
             }
             // No "did you mean" list on purpose (names trigger invention of
             // siblings) — but a bare dead-end leaves small models apologizing
@@ -1150,34 +1166,32 @@ public final class ToolRegistry: ObservableObject {
     /// active. The five public workspace tools use it as their backend router.
     private var combinedSandboxReadBridge: SandboxReadBridge? {
         guard toolsByName.keys.contains("sandbox_exec") else { return nil }
-        // Prefer the identity captured at sandbox-tool registration; it
-        // can't go stale mid-turn and doesn't require `currentAgentId` to
-        // be bound at the call site. Fall back to the execution context's
-        // agent id for any path that drives a tool call without going
-        // through `BuiltinSandboxTools.register` first.
-        if let captured = activeSandboxAgentContext {
-            return captured
+        // The process-wide tool objects can be refreshed by another agent
+        // between turns. A request TaskLocal is authoritative and keeps
+        // concurrent/non-active sessions routed to their own Linux user.
+        if let agentId = ChatExecutionContext.currentAgentId {
+            let agentName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
+            return SandboxReadBridge(
+                agentId: agentId.uuidString,
+                agentName: agentName,
+                home: OsaurusPaths.inContainerAgentHome(agentName),
+                maxCommandsPerTurn: resolvedAutonomousExecConfig?.maxCommandsPerTurn
+                    ?? AutonomousExecConfig.default.maxCommandsPerTurn,
+                backgroundEnabled: resolvedAutonomousExecConfig?.backgroundProcessEnabled == true
+            )
         }
-        guard let agentId = ChatExecutionContext.currentAgentId else { return nil }
-        let agentName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
-        return SandboxReadBridge(
-            agentId: agentId.uuidString,
-            agentName: agentName,
-            home: OsaurusPaths.inContainerAgentHome(agentName),
-            maxCommandsPerTurn: resolvedAutonomousExecConfig?.maxCommandsPerTurn
-                ?? AutonomousExecConfig.default.maxCommandsPerTurn,
-            backgroundEnabled: resolvedAutonomousExecConfig?.backgroundProcessEnabled == true
-        )
+        return activeSandboxAgentContext
     }
 
     /// Sandbox agent name bound for Agent DB file tools. Same resolution
     /// order as `combinedSandboxReadBridge`, but also set in plain sandbox
     /// mode when only sandbox built-ins are registered.
     private var activeSandboxAgentName: String? {
-        if let captured = activeSandboxAgentContext?.agentName { return captured }
         if let bridge = combinedSandboxReadBridge { return bridge.agentName }
-        guard toolsByName.keys.contains("sandbox_exec")
-            || toolsByName.keys.contains("sandbox_read_file"),
+        if let captured = activeSandboxAgentContext?.agentName { return captured }
+        guard
+            toolsByName.keys.contains("sandbox_exec")
+                || toolsByName.keys.contains("sandbox_read_file"),
             let agentId = ChatExecutionContext.currentAgentId
         else { return nil }
         return SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
@@ -1968,12 +1982,21 @@ public final class ToolRegistry: ObservableObject {
                 excluded.formUnion(Self.gitToolNames)
             }
         }
-        // Backend-specific names stay private adapters used by the five public
-        // tools. `sandbox_process` is the one opt-in capability: it is needed
-        // to manage jobs launched by `shell_run(background:true)`.
-        var hiddenSandboxNames = builtInSandboxToolNames
-        if mode.usesSandboxTools, toolsByName["sandbox_process"] != nil {
-            hiddenSandboxNames.remove("sandbox_process")
+        // The running sandbox registers two distinct surfaces: private backend
+        // adapters used behind the five public workspace tools, and public
+        // control-plane tools (install, secrets, process, registration). Hide
+        // only adapters in sandbox mode. Outside sandbox mode hide the complete
+        // running surface, except the transient first-use handshake: its live
+        // registration is the signal that provisioning awaits an explicit call.
+        let hiddenSandboxNames: Set<String>
+        if mode.usesSandboxTools {
+            hiddenSandboxNames =
+                builtInSandboxToolNames
+                .intersection(Self.sandboxBackendAdapterToolNames)
+        } else {
+            hiddenSandboxNames =
+                builtInSandboxToolNames
+                .subtracting([BuiltinSandboxTools.initPendingToolName])
         }
         excluded.formUnion(hiddenSandboxNames)
         if mode.usesHostFolderTools || mode.usesSandboxTools {
@@ -2002,6 +2025,26 @@ public final class ToolRegistry: ObservableObject {
     /// (still registered, mirroring `sandboxReadToolNames`).
     static let sandboxWriteToolNames: Set<String> = [
         "sandbox_write_file"
+    ]
+
+    /// Private runtime adapters. Model-visible file/shell calls use the stable
+    /// core workspace names and route to these only after mode/scope checks.
+    static let sandboxBackendAdapterToolNames: Set<String> = [
+        "sandbox_read_file",
+        "sandbox_search_files",
+        "sandbox_write_file",
+        "sandbox_exec",
+    ]
+
+    /// Runtime-managed control plane. The composer narrows this set from the
+    /// captured agent configuration before publishing a request schema.
+    static let sandboxControlPlaneToolNames: Set<String> = [
+        BuiltinSandboxTools.initPendingToolName,
+        "sandbox_install",
+        "sandbox_secret_check",
+        "sandbox_secret_set",
+        "sandbox_process",
+        "sandbox_plugin_register",
     ]
 
     static let coreWorkspaceToolNames: Set<String> = [
@@ -2124,9 +2167,12 @@ public final class ToolRegistry: ObservableObject {
             }
         }
 
-        if dynamic, let selectedPreflightNames, !selectedPreflightNames.contains(toolName) {
+        if !runtimeManaged,
+            let selectedPreflightNames,
+            !selectedPreflightNames.contains(toolName)
+        {
             appendReason(.notSelectedByPreflight)
-            details.append(L("not selected by preflight for this turn"))
+            details.append(L("not exposed in the current request schema"))
         }
 
         if reasons.isEmpty {
@@ -2148,6 +2194,61 @@ public final class ToolRegistry: ObservableObject {
         )
     }
 
+    /// Recover when a model calls a manifest plugin-group id as though it were
+    /// a function name. Compact enabled-capability manifests intentionally
+    /// publish one `plugin/<id>` value per group, while the callable schema
+    /// contains only the `capabilities` gateway. Small models can copy that
+    /// value into `function.name`; an opaque non-retryable miss then leaves
+    /// them one load call away from the real tools.
+    ///
+    /// This is a redirect only: it never loads or executes the group. The
+    /// guessed id must exactly match a registered, globally enabled group with
+    /// at least one member allowed for the current agent, and the current
+    /// request must expose a capability loader. Unknown and withheld names
+    /// therefore retain the opaque refusal above.
+    private func groupIdCallRescueEnvelope(for guessedName: String) -> String? {
+        let bare: String
+        if guessedName.hasPrefix("plugin/") {
+            bare = String(guessedName.dropFirst("plugin/".count))
+        } else {
+            guard !guessedName.contains("/") else { return nil }
+            bare = guessedName
+        }
+        guard !bare.isEmpty else { return nil }
+
+        let memberNames = toolsByName.keys.filter {
+            groupName(for: $0) == bare && isGlobalEnabled($0)
+        }
+        guard !memberNames.isEmpty else { return nil }
+
+        let agentAllowed: Set<String>? = ChatExecutionContext.currentAgentId.flatMap {
+            AgentManager.shared.effectiveEnabledToolNames(for: $0).map(Set.init)
+        }
+        guard memberNames.contains(where: { agentAllowed?.contains($0) ?? true }) else {
+            return nil
+        }
+
+        guard let scope = ChatExecutionContext.toolExecutionScope else { return nil }
+        let loaderName: String
+        if scope.permits("capabilities") {
+            loaderName = "capabilities"
+        } else if scope.permits("capabilities_load") {
+            loaderName = "capabilities_load"
+        } else {
+            return nil
+        }
+
+        return ToolErrorEnvelope(
+            kind: .toolNotFound,
+            reason:
+                "'\(guessedName)' is a capability id for a plugin group, not a callable "
+                + "function. Call \(loaderName) with {\"ids\":[\"plugin/\(bare)\"]} to "
+                + "load it, then call one of the loaded tool names to continue.",
+            toolName: guessedName,
+            retryable: true
+        ).toJSONString()
+    }
+
     /// Returns the plugin or provider name that a tool belongs to, if any.
     func groupName(for toolName: String) -> String? {
         guard let tool = toolsByName[toolName] else { return nil }
@@ -2155,6 +2256,9 @@ public final class ToolRegistry: ObservableObject {
         if let ext = tool as? ExternalTool { return ext.pluginId }
         if let mcp = tool as? MCPProviderTool { return mcp.providerName }
         if let sandbox = tool as? SandboxPluginTool { return sandbox.plugin.id }
+        if let declared = tool as? any CapabilityToolGroupDeclaring {
+            return declared.capabilityGroupId
+        }
         return nil
     }
 

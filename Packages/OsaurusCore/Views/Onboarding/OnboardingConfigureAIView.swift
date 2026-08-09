@@ -416,16 +416,16 @@ final class ConfigureAIState: ObservableObject {
 
     // MARK: Resource stat formatting
 
-    /// Chooser-row stat line ("7.5 GB download · needs ~9.4 GB memory") —
-    /// the size moved out of the badge cluster into a labeled, scannable
-    /// line. `nil` when neither stat is known so the row omits it entirely.
+    /// Chooser-row stat line ("Download: 7.5 GB · Est. memory while running:
+    /// 9.4 GB"). Explicit labels keep disk space and RAM from reading as one
+    /// interchangeable size. `nil` when neither stat is known.
     static func chooserStatsLine(for model: MLXModel) -> String? {
         var parts: [String] = []
         if let size = model.formattedDownloadSize {
-            parts.append(model.isDownloaded ? L("\(size) on disk") : L("\(size) download"))
+            parts.append(model.isDownloaded ? L("On disk: \(size)") : L("Download: \(size)"))
         }
         if let memory = model.formattedEstimatedMemory {
-            parts.append(L("needs \(memory) memory"))
+            parts.append(L("Est. memory while running: \(memory)"))
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
@@ -1493,10 +1493,10 @@ private struct LocalModelFeatureCard: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 18) {
                 if let size = model.formattedDownloadSize {
-                    modelFact(icon: "arrow.down.circle", text: L("\(size) download"))
+                    modelFact(icon: "arrow.down.circle", text: L("Download: \(size)"))
                 }
                 if let memory = model.formattedEstimatedMemory {
-                    modelFact(icon: "memorychip", text: L("needs \(memory) memory"))
+                    modelFact(icon: "memorychip", text: L("Est. running memory: \(memory)"))
                 }
             }
             modelFact(icon: "lock.fill", text: L("Private and offline"))
@@ -1709,8 +1709,7 @@ struct ConfigureModelChooserModal: View {
                         badges: badges(for: pair.model, compatibility: pair.compatibility),
                         badgesBelowTitle: true,
                         accessory: .radio(isSelected: isDraftSelected(pair.model)),
-                        isSelected: isDraftSelected(pair.model),
-                        isDisabled: pair.compatibility == .tooLarge
+                        isSelected: isDraftSelected(pair.model)
                     ) {
                         state.selectDraftModel(pair.model)
                     }
@@ -1763,13 +1762,21 @@ struct ConfigureModelChooserModal: View {
             return L("Bigger models are smarter but use more memory.")
         }
         let memoryGB = Int(totalMemoryGB.rounded())
+        let comfortableGB = GPUMemoryBudget.assessment(
+            modelSizeBytes: nil,
+            sizeSource: nil,
+            physicalMemoryGB: totalMemoryGB
+        ).comfortableModelBudgetGB
+        let comfortableText = String(format: "%.0f GB", comfortableGB)
         if let free = state.freeDiskBytes {
             let freeText = free.formatted(.byteCount(style: .file, allowedUnits: [.gb, .mb]))
             return L(
-                "Bigger models are smarter but need more memory — your Mac has \(memoryGB) GB memory and \(freeText) free storage."
+                "Your Mac has \(memoryGB) GB unified memory; for smooth performance, choose models estimated below \(comfortableText) while running. \(freeText) storage is free."
             )
         }
-        return L("Bigger models are smarter but need more memory — your Mac has \(memoryGB) GB memory.")
+        return L(
+            "Your Mac has \(memoryGB) GB unified memory; for smooth performance, choose models estimated below \(comfortableText) while running."
+        )
     }
 
     // MARK: Catalog (modal-local)
@@ -1830,7 +1837,7 @@ struct ConfigureModelChooserModal: View {
 
     /// Friendlier than the inline card badges: leads with a hardware-aware
     /// "Picked for your Mac" pill for first-timers, keeps the use-case
-    /// category and a Downloaded chip, and surfaces the capability warnings —
+    /// category and a Downloaded chip, and surfaces the shared fit verdict —
     /// but drops the `LLM`/`VLM` jargon (the eye/cpu icon already signals
     /// modality). Sizes moved out of the badges into each row's labeled stat
     /// line (`ConfigureAIState.chooserStatsLine`), and precision chips went
@@ -1852,11 +1859,13 @@ struct ConfigureModelChooserModal: View {
         }
         switch compatibility {
         case .tight:
-            result.append(OnboardingRowBadge(L("Tight fit"), style: .warning))
+            result.append(OnboardingRowBadge(compatibility.displayName, style: .warning))
         case .tooLarge:
-            result.append(OnboardingRowBadge(L("Too large for this Mac"), style: .error))
-        case .compatible, .unknown:
-            break
+            result.append(OnboardingRowBadge(compatibility.displayName, style: .error))
+        case .unknown:
+            result.append(OnboardingRowBadge(compatibility.displayName, style: .neutral))
+        case .compatible:
+            result.append(OnboardingRowBadge(compatibility.displayName, style: .success))
         }
         return result
     }

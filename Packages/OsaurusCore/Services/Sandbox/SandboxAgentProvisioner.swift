@@ -206,7 +206,7 @@ public final class SandboxAgentProvisioner {
 
         This file is your space to record stable preferences and patterns you
         learn about working with the user. It persists across sessions, and you
-        can edit it freely with sandbox_write_file. Edits apply on the
+        can edit it freely with file_write or file_edit. Edits apply on the
         next session.
         """
 
@@ -241,7 +241,7 @@ public final class SandboxAgentProvisioner {
         // provision path pays one exec round-trip of latency, not two.
         async let pipFuture = try? await SandboxManager.shared.execAsAgent(
             agentName,
-            command: "'\(venv)/bin/pip' list --format=freeze"
+            command: "'\(venv)/bin/pip' list --not-required --format=freeze"
         )
         async let npmFuture = try? await SandboxManager.shared.execAsAgent(
             agentName,

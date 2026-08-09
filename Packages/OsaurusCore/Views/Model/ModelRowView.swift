@@ -361,22 +361,20 @@ struct ModelRowView: View {
         .frame(height: 20)
     }
 
-    /// Fixed three-column spec strip. Columns stay in the same order with
-    /// a "—" placeholder for missing values so cards line up for
-    /// side-by-side comparison. Family cards replace the quant column (the
-    /// representative build's quant would be misleading for a multi-build
-    /// card) with the number of available versions; single-build cards keep
-    /// the quant label since it's what distinguishes them.
+    /// Fixed three-column decision strip. Download and estimated running
+    /// memory lead because they answer two different user questions; keeping
+    /// them side by side prevents the smaller disk number from being read as
+    /// the RAM requirement. The last column keeps a compact model spec.
     private var statStrip: some View {
         HStack(spacing: 0) {
-            StatSegment(label: L("Size"), value: content.size)
+            StatSegment(label: L("Download"), value: content.size)
             statDivider
-            StatSegment(label: L("Params"), value: content.params)
+            StatSegment(label: L("Est. Memory"), value: content.memoryNeeded)
             statDivider
             if content.variantCount > 1 {
                 StatSegment(label: L("Versions"), value: "\(content.variantCount)")
             } else {
-                StatSegment(label: L("Quant"), value: content.quant)
+                StatSegment(label: L("Params"), value: content.params)
             }
         }
         .padding(.vertical, 8)
@@ -427,38 +425,36 @@ struct ModelRowView: View {
         .frame(height: 14)
     }
 
-    /// Plain-language fit verdict. When the RAM estimate is known it reads
-    /// as "Runs Well · needs ~10 GB" so new users get the "will this work on
-    /// my Mac" answer without decoding quant/param jargon.
+    /// Plain-language fit verdict. The estimate is explicitly labeled as
+    /// running memory so it cannot be mistaken for the download-size stat.
     @ViewBuilder
     private var compatibilityBadge: some View {
         switch content.compatibility {
         case .compatible:
             TintedPill(
                 icon: "checkmark.shield",
-                label: Text(fitText(verdict: L("Runs Well"))),
+                label: Text(content.compatibility.displayName),
                 color: theme.successColor
             )
         case .tight:
             TintedPill(
                 icon: "exclamationmark.triangle",
-                label: Text(fitText(verdict: L("Tight Fit"))),
+                label: Text(content.compatibility.displayName),
                 color: theme.warningColor
             )
         case .tooLarge:
             TintedPill(
                 icon: "xmark.circle",
-                label: Text(fitText(verdict: L("Too Large"))),
+                label: Text(content.compatibility.displayName),
                 color: theme.errorColor
             )
         case .unknown:
-            EmptyView()
+            TintedPill(
+                icon: "questionmark.circle",
+                label: Text(content.compatibility.displayName),
+                color: theme.tertiaryText
+            )
         }
-    }
-
-    private func fitText(verdict: String) -> String {
-        guard let memory = content.memoryNeeded else { return verdict }
-        return "\(verdict) · \(L("needs \(memory)"))"
     }
 
     /// Badge showing whether the model is an LLM, VLM, or image generator.
@@ -493,15 +489,13 @@ struct ModelCardContent {
     var isUnsupportedFormat: Bool = false
     let useCase: ModelUseCase?
     let compatibility: ModelCompatibility
-    /// Formatted RAM the model needs at runtime (e.g. "~10.2 GB"), rendered
-    /// inside the compatibility pill so the fit verdict reads in plain
-    /// language instead of leaning on quant jargon.
+    /// Formatted estimated baseline running memory (e.g. "10.2 GB"), rendered
+    /// beside download size in the decision strip.
     var memoryNeeded: String? = nil
     /// LLM / VLM / Image pill; `nil` to omit.
     let type: ModelCardType?
     let size: String?
     let params: String?
-    let quant: String?
     /// Number of precision/quant builds this card represents. Catalog cards
     /// grouped by family carry the family's build count; ungrouped contexts
     /// (On Device, image models) leave it at 1, which hides the indicator.
@@ -541,7 +535,6 @@ extension ModelCardContent {
             type: model.useCase == .vision ? nil : (model.isVLM ? .vlm : .llm),
             size: model.formattedDownloadSize,
             params: model.parameterCount,
-            quant: model.quantization,
             variantCount: variantCount,
             downloadsText: model.formattedDownloads,
             releaseText: model.formattedReleaseMonth

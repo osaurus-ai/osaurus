@@ -113,6 +113,41 @@ struct ToolCatalogPresentationTests {
         #expect(ToolCatalogPresentation.section(for: .sandboxPlugin) == .custom)
     }
 
+    @Test
+    func operationalSectionsPrecedeInstalledInventories() {
+        #expect(
+            ToolCatalogPresentation.orderedSections
+                == [.connections, .custom, .plugins, .builtIn]
+        )
+    }
+
+    @Test
+    func searchRevealsCollapsedSectionsWithoutChangingDisclosureState() {
+        let expanded: Set<ToolCatalogSection> = [.connections, .custom]
+
+        #expect(
+            ToolCatalogPresentation.isSectionExpanded(
+                .connections,
+                explicitlyExpanded: expanded,
+                searchText: ""
+            )
+        )
+        #expect(
+            !ToolCatalogPresentation.isSectionExpanded(
+                .builtIn,
+                explicitlyExpanded: expanded,
+                searchText: ""
+            )
+        )
+        #expect(
+            ToolCatalogPresentation.isSectionExpanded(
+                .builtIn,
+                explicitlyExpanded: expanded,
+                searchText: "calendar"
+            )
+        )
+    }
+
     // MARK: - Filters
 
     @Test

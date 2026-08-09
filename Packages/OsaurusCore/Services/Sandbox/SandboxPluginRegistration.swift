@@ -115,11 +115,26 @@ public enum SandboxPluginRegistration {
         staged.metadata?["created_by"] = .string(source.metadataValue)
         staged.metadata?["created_via"] = .string(source.rawValue)
 
+        let previousLibraryPlugin = SandboxPluginLibrary.shared.plugin(id: staged.id)
         SandboxPluginLibrary.shared.save(staged)
 
         do {
             try await SandboxPluginManager.shared.install(plugin: staged, for: agentId)
         } catch {
+            // Do not advertise a failed registration as an installed library
+            // plugin. Restore an overwritten library entry when possible and
+            // remove the per-agent failed record/files. System apk packages
+            // already installed in the shared container cannot be rolled back
+            // safely and remain recorded as an explicit side effect.
+            try? await SandboxPluginManager.shared.uninstall(
+                pluginId: staged.id,
+                from: agentId
+            )
+            if let previousLibraryPlugin {
+                SandboxPluginLibrary.shared.save(previousLibraryPlugin)
+            } else {
+                SandboxPluginLibrary.shared.delete(id: staged.id)
+            }
             throw SandboxPluginRegistrationError.executionError(
                 "Plugin installation failed: \(error.localizedDescription)",
                 retryable: true
@@ -149,6 +164,15 @@ public enum SandboxPluginRegistration {
             throw SandboxPluginRegistrationError.invalidArgs(
                 "Invalid file paths: \(pathErrors.joined(separator: "; "))"
             )
+        }
+        if let dependencies = plugin.dependencies, !dependencies.isEmpty {
+            do {
+                _ = try SandboxPackageRequest.normalize(dependencies)
+            } catch {
+                throw SandboxPluginRegistrationError.invalidArgs(
+                    "Invalid system dependencies: \(error.localizedDescription)"
+                )
+            }
         }
 
         // Setup, per-tool `run`, and daemon commands all ride the same
@@ -204,15 +228,6 @@ public enum SandboxPluginRegistration {
                 name: "\(plugin.id)_\($0.id)",
                 description: $0.description
             )
-        }
-
-        // CapabilityLoadBuffer is an actor; fire-and-forget so this stays
-        // synchronous-on-MainActor for the simpler call sites.
-        let specs = ToolRegistry.shared.specs(forTools: registered.map(\.name))
-        Task {
-            for spec in specs {
-                await CapabilityLoadBuffer.shared.add(spec)
-            }
         }
 
         return registered

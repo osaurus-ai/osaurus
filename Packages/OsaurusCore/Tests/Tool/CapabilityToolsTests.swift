@@ -132,6 +132,9 @@ struct CapabilitiesToolTests {
         #expect(properties["query"] != nil)
         #expect(properties["ids"] != nil)
         #expect(properties["list"] == nil)
+        #expect(tool.description.contains("capability IDs for the `ids` argument"))
+        #expect(tool.description.contains("never callable function names"))
+        #expect(tool.description.contains("use `query` only when no exact available ID fits"))
     }
 
     @Test func rejectsCallsWithoutQueryOrIds() async throws {
@@ -210,7 +213,10 @@ struct CapabilitiesDiscoverToolTests {
             argumentsJSON: "{\"query\": \"zzz_capability_alias_probe_\(UUID().uuidString)\"}"
         )
         #expect(!ToolEnvelope.isError(result))
-        #expect(result.contains("No capabilities found") || result.contains("Found"))
+        #expect(
+            result.contains("No additional enabled capabilities found")
+                || result.contains("Found")
+        )
     }
 
     @Test func capabilitiesSearchSchemaIsGemmaRenderable() throws {
@@ -237,7 +243,10 @@ struct CapabilitiesDiscoverToolTests {
                 "{\"queries\": \"[<|\\\"|>zzz_capability_string_probe_\(UUID().uuidString)<|\\\"|>]\"}"
         )
         #expect(!ToolEnvelope.isError(result))
-        #expect(result.contains("No capabilities found") || result.contains("Found"))
+        #expect(
+            result.contains("No additional enabled capabilities found")
+                || result.contains("Found")
+        )
     }
 
     @Test func returnsNoMatchMessage() async throws {
@@ -245,7 +254,52 @@ struct CapabilitiesDiscoverToolTests {
         let result = try await tool.execute(
             argumentsJSON: "{\"queries\": [\"zzz_completely_nonexistent_capability_xyz\"]}"
         )
-        #expect(result.contains("No capabilities found") || result.contains("capability"))
+        #expect(result.contains("No additional enabled capabilities found"))
+    }
+
+    @Test func noMatchRecoveryNamesOnlyToolsCallableInThisRequest() async throws {
+        func spec(_ name: String) -> Tool {
+            Tool(
+                type: "function",
+                function: ToolFunction(
+                    name: name,
+                    description: "test",
+                    parameters: .object([
+                        "type": .string("object"),
+                        "properties": .object([:]),
+                    ])
+                )
+            )
+        }
+        let scope = ToolExecutionScope(
+            exposed: ["file_read", "file_search", "shell_run", "sandbox_install"].map(spec)
+        )
+        let probe = "zzz_request_recovery_\(UUID().uuidString)"
+        let result = try await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+            try await CapabilitiesDiscoverTool().execute(
+                argumentsJSON: #"{"query":"\#(probe)"}"#
+            )
+        }
+
+        #expect(result.contains("No additional enabled capabilities found"))
+        #expect(result.contains("`file_read`/`file_search`"))
+        #expect(result.contains("`shell_run`"))
+        #expect(result.contains("`sandbox_install`"))
+        #expect(!result.contains("sandbox_plugin_register"))
+        #expect(!result.contains("see Discovering more tools"))
+        #expect(!result.contains("see Building new tools"))
+    }
+
+    @Test @MainActor
+    func gatedBuiltinAbsentFromRequestIsNotReportedAsBaselineLoaded() {
+        let availability = ToolRegistry.shared.availability(
+            forTool: "image",
+            selectedPreflightNames: ["capabilities"]
+        )
+
+        #expect(availability.reasonCodes.contains(.notSelectedByPreflight))
+        #expect(!availability.reasonCodes.contains(.alreadyLoaded))
+        #expect(availability.detail.contains("not exposed in the current request schema"))
     }
 
     @Test func listModeRejectsUnknownListValue() async throws {

@@ -115,8 +115,8 @@ public struct ContextWindowInfo: Sendable, Equatable {
     public let contextLength: Int?
 
     /// Whether the prompt should render in its compact form (ids-only
-    /// manifest, small SOUL budget, compact family guidance, no plugin-creator
-    /// recipe). True for small/tiny windows (existing behaviour) AND for local
+    /// manifest, small SOUL budget, compact family guidance, reduced
+    /// plugin-creator recipe). True for small/tiny windows AND for local
     /// models small enough that the per-step tokenization cost of a verbose
     /// prompt outweighs the prose — even when their window is large. Kept on
     /// the SAME resolver as `sizeClass` (not a parallel classifier) but

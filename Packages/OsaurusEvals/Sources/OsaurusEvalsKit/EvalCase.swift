@@ -115,6 +115,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `expect.agentLoop` assertions against the resulting tree, and
         /// deletes the directory afterwards. Other domains ignore this.
         public let workspaceFiles: [WorkspaceFile]?
+        /// Agent-loop execution-surface override. false composes a plain Chat
+        /// turn with `executionMode: .none`, which is useful for deferred
+        /// capability-manifest cases where folder tools would intentionally
+        /// suppress that manifest. nil/true preserves host-folder mode.
+        /// Ignored when `sandbox` is present.
+        public let useHostFolder: Bool?
         /// Per-case agent capability flags for `agent_loop` cases. When
         /// present, the runner registers a TEMPORARY agent carrying these
         /// flags (and a `reactive` schedule preset so self-scheduling
@@ -210,6 +216,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             enableTools: [String]? = nil,
             ensureToolsDisabled: [String]? = nil,
             workspaceFiles: [WorkspaceFile]? = nil,
+            useHostFolder: Bool? = nil,
             agentCapabilities: AgentCapabilitiesFixture? = nil,
             runtimeConcurrency: RuntimeConcurrencyFixture? = nil,
             sandbox: SandboxFixture? = nil,
@@ -223,6 +230,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.enableTools = enableTools
             self.ensureToolsDisabled = ensureToolsDisabled
             self.workspaceFiles = workspaceFiles
+            self.useHostFolder = useHostFolder
             self.agentCapabilities = agentCapabilities
             self.runtimeConcurrency = runtimeConcurrency
             self.sandbox = sandbox

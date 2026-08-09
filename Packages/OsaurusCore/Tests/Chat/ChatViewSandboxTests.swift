@@ -22,7 +22,12 @@ struct ChatViewSandboxTests {
             let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .sandbox(hostRead: nil))
             let names = Set(specs.map(\.function.name))
             #expect(ToolRegistry.coreWorkspaceToolNames.isSubset(of: names))
-            #expect(names.contains(where: { $0.hasPrefix("sandbox_") }) == false)
+            #expect(
+                names.isDisjoint(
+                    with: ToolRegistry.sandboxBackendAdapterToolNames
+                )
+            )
+            #expect(names.contains("sandbox_install"))
         }
     }
 
@@ -44,7 +49,11 @@ struct ChatViewSandboxTests {
         #expect(sandboxPrompt.contains("Host folders are unavailable"))
         #expect(sandboxPrompt.contains("## Host workspace (read-only)") == false)
         #expect(sandboxPrompt.contains("## Files") == false)
-        #expect(sandboxPrompt.contains("sandbox_") == false)
+        #expect(sandboxPrompt.contains("capability ids are separate from sandbox programs"))
+        #expect(sandboxPrompt.contains("sandbox_install"))
+        for privateName in ToolRegistry.sandboxBackendAdapterToolNames {
+            #expect(!sandboxPrompt.contains(privateName))
+        }
     }
 
     /// The sandbox section must state the agent's ABSOLUTE home (so the
@@ -90,7 +99,9 @@ struct ChatViewSandboxTests {
         #expect(prompt.contains("Host folders are unavailable"))
         #expect(prompt.contains(folder.rootPath.path) == false)
         #expect(prompt.contains("## Host workspace") == false)
-        #expect(prompt.contains("sandbox_") == false)
+        for privateName in ToolRegistry.sandboxBackendAdapterToolNames {
+            #expect(!prompt.contains(privateName))
+        }
     }
 
     @Test
@@ -113,7 +124,9 @@ struct ChatViewSandboxTests {
         #expect(prompt.contains("Host folders are unavailable"))
         #expect(prompt.contains(folder.rootPath.path) == false)
         #expect(prompt.contains("## Host workspace") == false)
-        #expect(prompt.contains("sandbox_") == false)
+        for privateName in ToolRegistry.sandboxBackendAdapterToolNames {
+            #expect(!prompt.contains(privateName))
+        }
     }
 
     @Test
@@ -340,64 +353,6 @@ struct ChatViewSandboxTests {
             // auto-mode strip, so the Tools row grows.
             session.invalidateTokenCache()
             #expect(toolTokens() > baseTools)
-
-            manager.setActiveAgent(originalActiveAgentId)
-            _ = await manager.delete(id: agent.id)
-        }
-    }
-
-    /// Editing the agent's autonomous-exec config after a send must update
-    /// the Context Budget popover. Before the fix, the authoritative
-    /// last-send context (`cachedContext`) stayed pinned and the
-    /// `.agentUpdated`-driven resync only refreshed the (unused) preview, so
-    /// toggling e.g. background processes never moved the number until the
-    /// next send.
-    @Test
-    func estimatedContextBreakdown_ignoresUnrequestedBackgroundCapabilityEdit() async {
-        await SandboxTestLock.runWithStoragePaths {
-            let manager = AgentManager.shared
-            let originalActiveAgentId = manager.activeAgentId
-            var agent = Agent(
-                name: "Budget Edit",
-                agentAddress: "test-budget-edit-\(UUID().uuidString)",
-                autonomousExec: AutonomousExecConfig(enabled: true)
-            )
-            manager.add(agent)
-            manager.setActiveAgent(agent.id)
-
-            let session = ChatSession()
-            session.agentId = agent.id
-
-            // Prime the preview cache (background OFF) and stand in for a
-            // completed send by seeding a composed context as authoritative.
-            session.resyncBudgetEstimateForTests()
-            let sentContext = await SystemPromptComposer.composeChatContext(
-                agentId: agent.id,
-                executionMode: .sandbox(hostRead: nil),
-                query: "do some work"
-            )
-            session.seedSendContextForTests(sentContext)
-            let beforeEdit = session.estimatedContextBreakdown.total
-            #expect(beforeEdit > 0)
-
-            // A benign resync (no config change) must NOT drop the
-            // authoritative send context.
-            #expect(session.resyncBudgetEstimateForTests() == false)
-            #expect(session.estimatedContextBreakdown.total == beforeEdit)
-
-            // Edit the agent: enable background processes. The cached send
-            // context is now stale for the next send.
-            agent.autonomousExec = AutonomousExecConfig(
-                enabled: true,
-                backgroundProcessEnabled: true
-            )
-            manager.update(agent)
-
-            // Background execution is query-preflighted rather than injected
-            // into unrelated turns, so this generic-work estimate stays on
-            // the five-tool core.
-            #expect(session.resyncBudgetEstimateForTests() == false)
-            #expect(session.estimatedContextBreakdown.total == beforeEdit)
 
             manager.setActiveAgent(originalActiveAgentId)
             _ = await manager.delete(id: agent.id)

@@ -157,9 +157,25 @@ let package = Package(
         // stop token the async pipeline already forwarded, and hardens SSD
         // q8 pool blocks (empty-pool round-trip, non-q8 poison-to-miss,
         // atomic .qkv record refusal).
+        // The DSV4 decode-fastpath revision defaults the quantized lm_head to
+        // fused 8-bit quantizedMatmul instead of dequantizing the whole head
+        // to FP32 every forward (greedy-identical, turn-1 wall 37.4s -> 8.9s;
+        // VMLX_DSV4_LM_HEAD_MODE=exact restores the old path), shares exact
+        // RoPE cos/sin tables across equal-frequency instances, and projects
+        // the Metal live-buffer ceiling (iogpu.rsrc_limit) into a generated-
+        // token cap for cache topologies that retain per-token buffers —
+        // DSV4's cumulative pools retained ~1 buffer/layer/token and long
+        // generations died mid-stream at the 499000 allocator wall.
+        // Conventional KV topologies report zero retention and are never
+        // capped (VMLX_METAL_BUFFER_COUNT_GUARD=0 disables).
+        // This candidate also adds an opt-in exact FP32 head cache for users
+        // who need the materialized output path without rebuilding its 1.97 GB
+        // matrix on every token. It releases that derived matrix during model
+        // teardown and adds opt-in token-ID traces for causal validation. The
+        // fused qmm path remains the unflagged default.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "a0ec30463809ab47f781a3ec089022eba76b1ce7"
+            revision: "2d54f918ff1edd52b2516c79b3eb695afa37eca8"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

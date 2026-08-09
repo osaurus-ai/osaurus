@@ -651,6 +651,10 @@ public enum AgentLoopEvaluator {
     ///     `autonomousExec.enabled == true` (the runner's eval agent) —
     ///     tool registration reads the agent record. Builtin sandbox
     ///     tools are unregistered on exit; the container is NOT stopped.
+    ///   - useHostFolder: false composes a plain chat turn with
+    ///     `executionMode: .none`. This lets capability-manifest evals prove
+    ///     the same deferred plugin surface as Chat without adding unrelated
+    ///     folder tools. Ignored when `sandbox` is non-nil.
     ///   - cancelAfterToolCalls: interruption lever for cancellation evals.
     ///     When set, the loop's `isCancelled` hook flips true once this many
     ///     tool calls have been processed, so the run ends with the
@@ -669,6 +673,7 @@ public enum AgentLoopEvaluator {
         enableThinking: Bool? = nil,
         stopOnToolRejection: Bool = false,
         sandbox: AgentLoopSandboxMode? = nil,
+        useHostFolder: Bool = true,
         cancelAfterToolCalls: Int? = nil
     ) async -> AgentLoopTranscript {
         // The Default agent's schema is hard-restricted to the 8-tool
@@ -699,7 +704,7 @@ public enum AgentLoopEvaluator {
         // the eval workspace from the TaskLocal folder root bound around
         // every dispatch below, so a concurrent user folder chat is never
         // redirected at the eval temp directory (and vice versa).
-        let wantsHostFolder = sandbox == nil
+        let wantsHostFolder = sandbox == nil && useHostFolder
         var folderContext: FolderContext?
         if wantsHostFolder {
             folderContext = await FolderContextService.shared.buildContext(from: workspace)
@@ -744,9 +749,10 @@ public enum AgentLoopEvaluator {
         // exactly the three production shapes ChatView can produce.
         let executionMode: ExecutionMode
         switch sandbox {
-        case nil:
-            // `wantsHostFolder` guarantees folderContext is non-nil here.
+        case nil where wantsHostFolder:
             executionMode = .hostFolder(folderContext!)
+        case nil:
+            executionMode = .none
         case .pure:
             executionMode = .sandbox(hostRead: nil)
         }
@@ -1042,7 +1048,7 @@ public enum AgentLoopEvaluator {
             result: String
         ) async -> AgentLoopToolExecution {
             let isError = ToolEnvelope.isError(result)
-            if inv.toolName == "capabilities_load" || inv.toolName == "capabilities" {
+            if CapabilityLoadBuffer.shouldActivate(after: inv.toolName) {
                 let loaded = await CapabilityLoadBuffer.shared.drain()
                 toolScope.activate(loaded)
             }

@@ -701,6 +701,54 @@ public struct SystemPromptComposer: Sendable {
         return nil
     }
 
+    /// Append the plugin-authoring contract on both prompt architectures: the
+    /// lean custom-agent path and the full compatibility path. Keeping the gate
+    /// here prevents an early return in either architecture from hiding the
+    /// recipe while `sandbox_plugin_register` is callable (or first-use
+    /// provisioning is pending).
+    @MainActor
+    private static func appendPluginCreatorSection(
+        composer: inout SystemPromptComposer,
+        snapshot: AgentConfigSnapshot,
+        effectiveToolsOff: Bool,
+        executionMode: ExecutionMode,
+        prefersCompactPrompt: Bool,
+        trace: TTFTTrace?
+    ) {
+        let gateInputs = PluginCreatorGate.Inputs(
+            effectiveToolsOff: effectiveToolsOff,
+            sandboxAvailable: executionMode.usesSandboxTools || snapshot.autonomousEnabled,
+            canCreatePlugins: snapshot.canCreatePlugins
+        )
+        guard PluginCreatorGate.shouldInject(gateInputs) else { return }
+
+        let instructions = pluginCreatorInstructions(
+            prefersCompactPrompt: prefersCompactPrompt,
+            hostWritableCombined: executionMode.allowsHostWriteTools
+        )
+        composer.append(
+            .static(
+                id: "pluginCreator",
+                label: L("Plugin Creator"),
+                content: PluginCreatorGate.section(instructions: instructions)
+            )
+        )
+        trace?.set("pluginCreatorInjected", "1")
+    }
+
+    static func pluginCreatorInstructions(
+        prefersCompactPrompt: Bool,
+        hostWritableCombined: Bool
+    ) -> String {
+        prefersCompactPrompt
+            ? SystemPromptTemplates.pluginCreatorInstructionsCompactBody(
+                hostWritableCombined: hostWritableCombined
+            )
+            : SystemPromptTemplates.pluginCreatorInstructionsBody(
+                hostWritableCombined: hostWritableCombined
+            )
+    }
+
     /// Append every gated "deterministic" prompt section given the
     /// resolved tool set.
     ///
@@ -823,6 +871,9 @@ public struct SystemPromptComposer: Sendable {
                             "## Working directory\n**Path:** \(home)\n"
                             + "This run is isolated in the VM. Host folders are unavailable. "
                             + "Use paths relative to this directory. "
+                            + "Osaurus capability ids are separate from sandbox programs and libraries: "
+                            + "check programs/libraries with shell_run, and install exact missing package "
+                            + "names with sandbox_install. "
                             + "Use the workspace tools to complete requested work now; "
                             + "do not only describe or promise it. "
                             + "After creating or changing runnable code, run an available "
@@ -899,6 +950,15 @@ public struct SystemPromptComposer: Sendable {
                     )
                 }
             }
+
+            appendPluginCreatorSection(
+                composer: &composer,
+                snapshot: snapshot,
+                effectiveToolsOff: effectiveToolsOff,
+                executionMode: executionMode,
+                prefersCompactPrompt: toolset.prefersCompactPrompt,
+                trace: trace
+            )
 
             // Dynamics follow every static section so the frozen manifest
             // remains inside the reusable KV prefix.
@@ -1002,7 +1062,9 @@ public struct SystemPromptComposer: Sendable {
                 )
             )
             let snapshotText = Self.renderSchemaSnapshot(
-                agentId: agentId, allowOpen: allowBlockingDBOpen)
+                agentId: agentId,
+                allowOpen: allowBlockingDBOpen
+            )
             if !snapshotText.isEmpty {
                 agentDBSchemaSection = snapshotText
             }
@@ -1239,7 +1301,8 @@ public struct SystemPromptComposer: Sendable {
                         // Curator line only when the proposal tool actually
                         // resolved — mirrors the section's own schema gate.
                         curator: !resolvedNames.isDisjoint(
-                            with: Self.knowledgeCuratorToolNames)
+                            with: Self.knowledgeCuratorToolNames
+                        )
                     )
                 )
             )
@@ -1426,53 +1489,14 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
-        // Plugin-creator injection: inject the `## Building new tools` section
-        // whenever plugin creation is enabled for this session.
-        // `sandbox_plugin_register` is always-loaded in that case but lives in
-        // the base schema with no tool group beneath it, so nothing ever pulls
-        // in the teaching section the way loading a governing skill pulls its
-        // tool group. This is the inverse link: the register action never
-        // arrives without the instructions that teach the plugin format.
-        //
-        // We also fire during sandbox init-pending (autonomousEnabled but
-        // sandbox tools haven't registered yet). Without that, the agent
-        // had no signal that plugin creation would be available once the
-        // container finished provisioning — `canCreatePlugins` already
-        // folds `autonomousEnabled && pluginCreate`, so this stays correct.
-        //
-        // STATIC by design: every gate input (tools-off flag, sandbox
-        // availability, the pluginCreate flag) is session-constant, so the
-        // section joins the cached KV prefix instead of breaking it. It is
-        // deliberately NOT gated on `capabilityPromptSectionsEnabled` (the
-        // per-turn trivial-input flag) — that gate would make the section
-        // appear/disappear between a trivial turn 1 and a real turn 2,
-        // rewriting the cached prefix mid-session.
-        //
-        // All agent-side flags ride on `snapshot`, captured once at the
-        // start of compose, so the gate can't race sibling MainActor work
-        // (test setup, plugin registration) between awaits.
-        let gateInputs = PluginCreatorGate.Inputs(
+        appendPluginCreatorSection(
+            composer: &composer,
+            snapshot: snapshot,
             effectiveToolsOff: effectiveToolsOff,
-            sandboxAvailable: executionMode.usesSandboxTools || snapshot.autonomousEnabled,
-            canCreatePlugins: snapshot.canCreatePlugins
+            executionMode: executionMode,
+            prefersCompactPrompt: toolset.prefersCompactPrompt,
+            trace: trace
         )
-        // Compact-prompt models drop the ~700-token plugin-creator recipe from
-        // the turn-1 prefix; it stays reachable on demand (the discovery ladder
-        // and self-improvement guidance still reference building plugins).
-        if !toolset.prefersCompactPrompt, PluginCreatorGate.shouldInject(gateInputs) {
-            composer.append(
-                .static(
-                    id: "pluginCreator",
-                    label: L("Plugin Creator"),
-                    content: PluginCreatorGate.section(
-                        instructions: SystemPromptTemplates.pluginCreatorInstructionsBody(
-                            hostWritableCombined: executionMode.allowsHostWriteTools
-                        )
-                    )
-                )
-            )
-            trace?.set("pluginCreatorInjected", "1")
-        }
 
         // ── Dynamics ─────────────────────────────────────────────────
 
@@ -2438,6 +2462,34 @@ public struct SystemPromptComposer: Sendable {
         )
     }
 
+    /// Resolve the model-visible sandbox control plane from the request's
+    /// captured agent configuration. Registry membership is only availability;
+    /// these gates are the authorization decision for both schema and execution
+    /// scope. The init placeholder is the sole non-sandbox-mode exception.
+    @MainActor
+    static func visibleSandboxControlPlaneToolNames(
+        snapshot: AgentConfigSnapshot,
+        executionMode: ExecutionMode
+    ) -> Set<String> {
+        guard snapshot.autonomousEnabled else { return [] }
+
+        let registered = ToolRegistry.shared.builtInSandboxToolNamesSnapshot
+            .intersection(ToolRegistry.sandboxControlPlaneToolNames)
+        if !executionMode.usesSandboxTools {
+            return registered.intersection([BuiltinSandboxTools.initPendingToolName])
+        }
+
+        var visible = registered
+        visible.remove(BuiltinSandboxTools.initPendingToolName)
+        if !snapshot.canCreatePlugins {
+            visible.remove("sandbox_plugin_register")
+        }
+        if snapshot.autonomousConfig?.backgroundProcessEnabled != true {
+            visible.remove("sandbox_process")
+        }
+        return visible
+    }
+
     @MainActor
     static func resolveTools(
         snapshot: AgentConfigSnapshot,
@@ -2452,6 +2504,10 @@ public struct SystemPromptComposer: Sendable {
         guard !toolsDisabled else { return [] }
 
         let isManual = snapshot.toolMode == .manual
+        let visibleSandboxControlPlane = visibleSandboxControlPlaneToolNames(
+            snapshot: snapshot,
+            executionMode: executionMode
+        )
 
         var byName: [String: Tool] = [:]
 
@@ -2467,14 +2523,11 @@ public struct SystemPromptComposer: Sendable {
         }
 
         // Filter rule for always-loaded specs:
-        //   - `sandbox_init_pending` is never returned to the model (apology
-        //     stub crowds the schema; the system-prompt notice already covers
-        //     "sandbox not ready"),
         //   - on turn 1 (`frozenAlwaysLoadedNames == nil`) keep everything,
         //   - on turn N intersect with the snapshot to keep the schema
         //     byte-stable for KV-cache reuse, plus an additive carve-out so
-        //     real sandbox tools that registered late (container booted
-        //     between turn 1 and now) join the schema instead of being
+        //     sandbox tools that registered late (the init placeholder or real
+        //     tools after provisioning) join the schema instead of being
         //     suppressed forever as "new mid-session tools".
         // Late-arriving plugin / MCP tools still need explicit
         // `capabilities_load` to appear — that path is the only sanctioned
@@ -2483,7 +2536,6 @@ public struct SystemPromptComposer: Sendable {
         let filtered: ([Tool]) -> [Tool] = { specs in
             specs.filter { spec in
                 let name = spec.function.name
-                if name == BuiltinSandboxTools.initPendingToolName { return false }
                 guard let frozen = frozenAlwaysLoadedNames else { return true }
                 return frozen.contains(name) || liveSandboxNames.contains(name)
             }
@@ -2739,7 +2791,8 @@ public struct SystemPromptComposer: Sendable {
         // resolved schema, so removing discovery here cascades automatically
         // (no nudge; the tool-name-free base grounding variant).
         if snapshot.toolsDisabled, executionMode.usesSandboxTools {
-            let allowed = ToolRegistry.shared.builtInSandboxToolNamesSnapshot
+            let allowed = ToolRegistry.coreWorkspaceToolNames
+                .union(visibleSandboxControlPlane)
                 .union(Self.agentLoopToolNames)
             byName = byName.filter { allowed.contains($0.key) }
         }
@@ -2882,7 +2935,9 @@ public struct SystemPromptComposer: Sendable {
         let hasExecutionWorkspace =
             executionMode.usesHostFolderTools || executionMode.usesSandboxTools
         if snapshot.agentId != Agent.defaultId || hasExecutionWorkspace {
-            var allowed = additionalToolNames
+            var allowed =
+                additionalToolNames
+                .union(visibleSandboxControlPlane)
             if hasExecutionWorkspace {
                 add(
                     ToolRegistry.shared.specs(
@@ -2928,20 +2983,24 @@ public struct SystemPromptComposer: Sendable {
             if !isManual {
                 allowed.formUnion(Self.agentLoopToolNames)
             }
-            // These unconditionally available baseline tools are part of the
-            // stable schema. Query wording never adds or removes tools.
-            allowed.formUnion(["get_current_time", "sandbox_process"])
+            // This unconditionally available baseline tool is part of the
+            // stable schema. Query wording never adds or removes it.
+            allowed.insert("get_current_time")
             byName = byName.filter { allowed.contains($0.key) }
 
-            // The implementation keeps its full argument compatibility, while
-            // ordinary chat publishes only the common five-tool contract.
-            // Explicit manual/session loads retain the full schema.
-            let explicitlyFull = additionalToolNames.union(snapshot.manualToolNames ?? [])
-            for name in ToolRegistry.coreWorkspaceToolNames
-            where !explicitlyFull.contains(name) {
-                guard let full = byName[name] else { continue }
-                byName[name] = compactWorkspaceSpec(full)
-            }
+        }
+
+        // Request-scoped sandbox authorization is fail-closed. Direct manual
+        // selection or a stale loaded-tool name must not resurrect a private
+        // backend adapter or a control-plane tool whose current captured agent
+        // config does not own it. `ToolExecutionScope` is seeded from this final
+        // schema, binding the same decision to execution.
+        for name in ToolRegistry.sandboxBackendAdapterToolNames {
+            byName.removeValue(forKey: name)
+        }
+        for name in ToolRegistry.sandboxControlPlaneToolNames
+        where !visibleSandboxControlPlane.contains(name) {
+            byName.removeValue(forKey: name)
         }
 
         // Eval-scoped ablation hook (nil in production): strip deferred
@@ -2953,6 +3012,21 @@ public struct SystemPromptComposer: Sendable {
             byName = Dictionary(
                 uniqueKeysWithValues: experiment.filterTools(Array(byName.values))
                     .map { ($0.function.name, $0) }
+            )
+        }
+
+        // Workspace tools always use the stable public compact contract.
+        // Apply this after every request gate and ablation so a legacy/manual
+        // selection or a schema-less backend alias cannot erase supported
+        // public arguments from the final model request.
+        for name in ToolRegistry.coreWorkspaceToolNames {
+            guard let full = byName[name] else { continue }
+            byName[name] = compactWorkspaceSpec(
+                full,
+                executionMode: executionMode,
+                backgroundProcessesEnabled:
+                    executionMode.usesSandboxTools
+                    && snapshot.autonomousConfig?.backgroundProcessEnabled == true
             )
         }
 
@@ -2971,30 +3045,72 @@ public struct SystemPromptComposer: Sendable {
         return resolved
     }
 
-    private static func compactWorkspaceSpec(_ tool: Tool) -> Tool {
+    private static func compactWorkspaceSpec(
+        _ tool: Tool,
+        executionMode: ExecutionMode,
+        backgroundProcessesEnabled: Bool
+    ) -> Tool {
         let description: String
-        let properties: [String: JSONValue]
+        var properties: [String: JSONValue]
         let required: [String]
         switch tool.function.name {
         case "file_read":
-            description = "Read a file or list a directory in the working folder. Text lines use `N|` display prefixes."
+            if executionMode.usesSandboxTools, executionMode.hostReadContext == nil {
+                description =
+                    "Read UTF-8 text or list a directory in the VM working folder. "
+                    + "For binary PDF/Word/PowerPoint/XLSX files, use sandbox shell/code extraction."
+            } else if executionMode.usesSandboxTools {
+                description =
+                    "Read/list by path: trusted-folder documents extract PDF/Word/PowerPoint text "
+                    + "and preview XLSX; `/workspace/...` VM paths are raw text only."
+            } else {
+                description =
+                    "Read a file or list a directory. Directly extracts text from PDF, Word, and "
+                    + "PowerPoint and previews XLSX—call this on the document; do not unzip it manually."
+            }
             properties = [
                 "path": .object([
                     "type": .string("string"),
                     "description": .string("Relative file or directory path"),
                 ]),
+                "max_depth": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional directory listing depth (default 3)"),
+                ]),
+                "sheet_name": .object([
+                    "type": .string("string"),
+                    "description": .string("Optional XLSX worksheet name"),
+                ]),
                 "start_line": .object([
                     "type": .string("integer"),
-                    "description": .string("Optional first line, 1-indexed"),
+                    "description": .string("Optional first line or XLSX row, 1-indexed"),
                 ]),
                 "end_line": .object([
                     "type": .string("integer"),
-                    "description": .string("Optional last line, inclusive"),
+                    "description": .string("Optional last line or XLSX row, inclusive"),
+                ]),
+                "tail_lines": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional last N lines instead of a range"),
+                ]),
+                "max_chars": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional returned-character cap"),
+                ]),
+                "max_rows": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional XLSX rows per sheet (max 50)"),
+                ]),
+                "max_columns": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional XLSX columns per row (max 30)"),
                 ]),
             ]
             required = ["path"]
         case "file_write":
-            description = "Create, replace, or append a UTF-8 file. To preserve existing bytes, choose append and send only new content."
+            description =
+                "Create, replace, append, or dry-run a UTF-8 file. To preserve existing bytes, "
+                + "choose append and send only new content."
             properties = [
                 "path": .object([
                     "type": .string("string"),
@@ -3012,10 +3128,16 @@ public struct SystemPromptComposer: Sendable {
                     "enum": .array([.string("overwrite"), .string("append")]),
                     "description": .string("Default overwrite; append adds content without replacing the file"),
                 ]),
+                "dry_run": .object([
+                    "type": .string("boolean"),
+                    "description": .string("Preview without writing (host paths only)"),
+                ]),
             ]
             required = ["path", "content"]
         case "file_edit":
-            description = "Replace one exact, unique text occurrence. For additive changes, use file_write append."
+            description =
+                "Replace one exact, unique text occurrence, optionally as a dry run. "
+                + "For additive changes, use file_write append."
             properties = [
                 "path": .object([
                     "type": .string("string"),
@@ -3029,10 +3151,14 @@ public struct SystemPromptComposer: Sendable {
                     "type": .string("string"),
                     "description": .string("Replacement text"),
                 ]),
+                "dry_run": .object([
+                    "type": .string("boolean"),
+                    "description": .string("Preview without editing (host paths only)"),
+                ]),
             ]
             required = ["path", "old_string", "new_string"]
         case "file_search":
-            description = "Search file contents or names in the working folder."
+            description = "Search file contents or names with optional path, file filter, and result limit."
             properties = [
                 "pattern": .object([
                     "type": .string("string"),
@@ -3047,16 +3173,38 @@ public struct SystemPromptComposer: Sendable {
                     "enum": .array([.string("content"), .string("files")]),
                     "description": .string("Default content; files searches names"),
                 ]),
+                "file_pattern": .object([
+                    "type": .string("string"),
+                    "description": .string("Optional filename glob for content search"),
+                ]),
+                "max_results": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional result cap (default 50)"),
+                ]),
             ]
             required = ["pattern"]
         case "shell_run":
-            description = "Run a build, test, git, process, network, or filesystem-mutation command in the working folder. Requires approval."
+            description =
+                "Run a build, test, git, process, network, package-manager, or filesystem command "
+                + "in the working folder. Requires approval; omit timeout to run until completion."
             properties = [
                 "command": .object([
                     "type": .string("string"),
                     "description": .string("Shell command; do not `cd` to the working folder first"),
-                ])
+                ]),
+                "timeout": .object([
+                    "type": .string("integer"),
+                    "description": .string("Optional idle-output timeout in seconds (1-3600)"),
+                ]),
             ]
+            if backgroundProcessesEnabled {
+                properties["background"] = .object([
+                    "type": .string("boolean"),
+                    "description": .string(
+                        "VM only: run a server/watcher as a tracked background job"
+                    ),
+                ])
+            }
             required = ["command"]
         default:
             return tool
@@ -3250,7 +3398,8 @@ public struct SystemPromptComposer: Sendable {
     /// when `applescript` is actually exposed in the frozen tool schema.
     static func appleScriptWorkingAppContext(appName: String?) -> String? {
         guard let appName else { return nil }
-        let app = appName
+        let app =
+            appName
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !app.isEmpty else { return nil }

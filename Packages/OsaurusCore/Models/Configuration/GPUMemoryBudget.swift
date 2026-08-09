@@ -11,6 +11,34 @@ import Foundation
     import Metal
 #endif
 
+/// Where the byte count behind a catalog memory estimate came from.
+///
+/// A measured value is the Hub tree sum or the installed bundle's real
+/// safetensors size. A metadata fallback is inferred from parameter count and
+/// quantization while that measurement is unavailable.
+enum ModelSizeEstimateSource: Equatable {
+    case measured
+    case metadataFallback
+}
+
+/// One calculation shared by catalog cards, onboarding, model details, and
+/// recommendation/filter policy. Keeping the inputs and thresholds together
+/// prevents the UI from comparing one number while explaining another.
+struct ModelMemoryAssessment: Equatable {
+    let modelSizeBytes: Int64?
+    let sizeSource: ModelSizeEstimateSource?
+    let estimatedRunningMemoryBytes: UInt64?
+    let physicalMemoryGB: Double
+    let gpuWorkingSetBudgetGB: Double
+    let comfortableModelBudgetGB: Double
+    let maximumAdvisoryBudgetGB: Double
+    let compatibility: ModelCompatibility
+
+    var estimatedRunningMemoryGB: Double? {
+        estimatedRunningMemoryBytes.map { Double($0) / GPUMemoryBudget.bytesPerGB }
+    }
+}
+
 /// How much unified memory a model may actually occupy before macOS starts
 /// paging it.
 ///
@@ -24,8 +52,14 @@ import Foundation
 /// `physicalMemory`.
 enum GPUMemoryBudget {
 
-    private static let bytesPerGB: Double = 1024 * 1024 * 1024
+    static let bytesPerGB: Double = 1024 * 1024 * 1024
     private static let chatRuntimeInflation = 1.25
+    /// Leaves room inside Metal's recommended working set for longer chats,
+    /// transient buffers, and ordinary system activity.
+    static let comfortableBudgetRatio: Double = 0.85
+    /// Small overshoots remain advisory because Metal's recommendation is not
+    /// an allocation cliff. Beyond this ratio paging is the expected outcome.
+    static let maximumAdvisoryBudgetRatio: Double = 1.10
 
     /// Shared picker/load-admission estimate for static weights plus ordinary
     /// chat activations and runtime buffers.
@@ -34,6 +68,45 @@ enum GPUMemoryBudget {
         let bytes = Double(onDiskBytes) * chatRuntimeInflation
         guard bytes.isFinite, bytes > 0 else { return nil }
         return UInt64(min(Double(UInt64.max), bytes.rounded(.up)))
+    }
+
+    /// Build the complete, user-facing fit calculation from one model-size
+    /// value. The same result drives labels, sorting, filtering, and default
+    /// selection.
+    static func assessment(
+        modelSizeBytes: Int64?,
+        sizeSource: ModelSizeEstimateSource?,
+        physicalMemoryGB: Double
+    ) -> ModelMemoryAssessment {
+        let runningBytes = modelSizeBytes.flatMap(estimatedChatWorkingSetBytes)
+        let workingSetBudget = budgetGB(physicalMemoryGB: physicalMemoryGB)
+        let comfortableBudget = workingSetBudget * comfortableBudgetRatio
+        let maximumAdvisoryBudget = workingSetBudget * maximumAdvisoryBudgetRatio
+
+        let compatibility: ModelCompatibility
+        if let runningBytes, workingSetBudget > 0 {
+            let requiredGB = Double(runningBytes) / bytesPerGB
+            if requiredGB <= comfortableBudget {
+                compatibility = .compatible
+            } else if requiredGB <= maximumAdvisoryBudget {
+                compatibility = .tight
+            } else {
+                compatibility = .tooLarge
+            }
+        } else {
+            compatibility = .unknown
+        }
+
+        return ModelMemoryAssessment(
+            modelSizeBytes: modelSizeBytes,
+            sizeSource: sizeSource,
+            estimatedRunningMemoryBytes: runningBytes,
+            physicalMemoryGB: physicalMemoryGB,
+            gpuWorkingSetBudgetGB: workingSetBudget,
+            comfortableModelBudgetGB: comfortableBudget,
+            maximumAdvisoryBudgetGB: maximumAdvisoryBudget,
+            compatibility: compatibility
+        )
     }
 
     /// Apple's default split between the GPU working set and everything else.

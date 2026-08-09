@@ -85,6 +85,10 @@ struct MCPServerHubTests {
         #expect(snapshot.stdioCount == 1)
         #expect(snapshot.hostStdioCount == 1)
         #expect(snapshot.toolCount == 2)
+        #expect(
+            snapshot.compactSummary
+                == MCPServerHubCompactSummary(connected: 1, attention: 1, tools: 2)
+        )
         #expect(snapshot.filtered(by: .connected).map(\.provider.name) == ["Linear"])
         #expect(snapshot.filtered(by: .stdio).map(\.provider.name) == ["Filesystem"])
         #expect(snapshot.filtered(by: .disabled).map(\.provider.name) == ["Zapier"])
@@ -94,6 +98,10 @@ struct MCPServerHubTests {
         #expect(snapshot.pasteboardText.contains("commandNotFound"))
         #expect(!snapshot.pasteboardText.contains("secret-token"))
         #expect(!snapshot.pasteboardText.contains("secret-code"))
+
+        let prioritized = snapshot.reports.first { $0.provider.id == failed.id }?.prioritizedDiagnostics
+        #expect(prioritized?.rows.first?.severity == .blocked)
+        #expect(prioritized?.rows.count == snapshot.reports.first { $0.provider.id == failed.id }?.diagnostics.rows.count)
     }
 
     @Test func failedProbeMakesEnabledProviderNeedAttention() {

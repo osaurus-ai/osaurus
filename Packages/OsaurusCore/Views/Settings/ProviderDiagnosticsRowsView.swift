@@ -13,9 +13,10 @@ struct ProviderDiagnosticsRowsView: View {
 
     let report: ProviderDiagnosticReport
     var maxRows: Int?
+    @State private var showingAll = false
 
     private var visibleRows: [ProviderDiagnosticRow] {
-        guard let maxRows else { return report.rows }
+        guard let maxRows, !showingAll else { return report.rows }
         return Array(report.rows.prefix(maxRows))
     }
 
@@ -48,9 +49,34 @@ struct ProviderDiagnosticsRowsView: View {
                     diagnosticRow(row)
                 }
                 if hiddenCount > 0 {
-                    Text("+\(hiddenCount) more in copied report", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                    Button {
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            showingAll = true
+                        }
+                    } label: {
+                        Label(
+                            hiddenCount == 1 ? "Show 1 more detail" : "Show \(hiddenCount) more details",
+                            systemImage: "chevron.down"
+                        )
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                } else if showingAll, maxRows != nil, report.rows.count > (maxRows ?? 0) {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            showingAll = false
+                        }
+                    } label: {
+                        Label {
+                            Text("Show fewer details", bundle: .module)
+                        } icon: {
+                            Image(systemName: "chevron.up")
+                        }
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(PlainButtonStyle())
                 }
             }
         }

@@ -4,7 +4,7 @@
 //  Covers the Performance filter added to `ModelFilterState`. The filter
 //  exposes the already-computed `MLXModel.compatibility(totalMemoryGB:)`
 //  assessment — same three buckets the per-row badge renders — so picking
-//  "Runs Well" or "Hide Too Large" matches visible badges 1:1.
+//  "Runs Well" or "Hide Not Recommended" matches visible badges 1:1.
 //
 
 import Foundation

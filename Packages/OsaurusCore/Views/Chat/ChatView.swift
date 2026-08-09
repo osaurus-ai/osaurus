@@ -3247,8 +3247,7 @@ final class ChatSession: ObservableObject {
     /// Translate a `SharedArtifact.ResolutionFailure` into a
     /// `ToolEnvelope.failure` whose `message` tells the model exactly
     /// what went wrong AND what to try next. The "next" hint is keyed on
-    /// `executionMode` so sandbox agents get a `sandbox_search_files`
-    /// suggestion while folder agents get `file_read`/`file_search`.
+    /// `executionMode` so every mode gets a callable public file-tool hint.
     private static func shareArtifactFailureEnvelope(
         reason: SharedArtifact.ResolutionFailure,
         executionMode: ExecutionMode
@@ -3258,7 +3257,7 @@ final class ChatSession: ObservableObject {
         switch executionMode {
         case .sandbox:
             listingHint =
-                "Verify the file with `sandbox_search_files(target=\"files\", pattern=\"<name>\")`, "
+                "Verify the file with `file_read`/`file_search`, "
                 + "or pass `content`+`filename` for inline data."
         case .hostFolder:
             listingHint =
@@ -5840,16 +5839,14 @@ final class ChatSession: ObservableObject {
                             // etc.) so the model sees the rejection.
                         }
 
-                        // Tools loaded via capabilities / sandbox_plugin_register.
+                        // Tools loaded via capabilities, first-use sandbox
+                        // provisioning, or sandbox_plugin_register.
                         // Add their schemas to the next model iteration as well as
                         // the execution scope. Returning a schema only in tool
                         // result text is insufficient for constrained decoders:
                         // they substitute a hot schema tool when the intended
                         // loaded name is absent from the request's `tools` array.
-                        if inv.toolName == "capabilities_load"
-                            || inv.toolName == "capabilities"
-                            || inv.toolName == "sandbox_plugin_register"
-                        {
+                        if CapabilityLoadBuffer.shouldActivate(after: inv.toolName) {
                             // Always drain so a buffered spec can't leak into an
                             // unrelated run; persist only in auto mode (manual
                             // mode keeps the user's explicit tool set fixed).

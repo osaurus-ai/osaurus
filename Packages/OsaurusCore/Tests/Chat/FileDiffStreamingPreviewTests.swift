@@ -77,6 +77,83 @@ struct FileDiffStreamingPreviewTests {
         #expect(diff.lines.map(\.text) == ["let x = 2", "let y"])
     }
 
+    @Test("path aliases rescued by the validator also name the preview")
+    func pathAliases() throws {
+        // `file` and camelCase spellings execute fine via
+        // SchemaValidator.normalizeKeySpelling — the live card must find the
+        // name under the same keys instead of falling back to "Untitled".
+        for key in ["file", "filePath", "fileName", "file_path", "filename"] {
+            let args = "{\"\(key)\": \"index.html\", \"old_string\": \"a\", \"new_string\": \"b\""
+            let diff = try #require(
+                FileDiff.streamingPreview(toolName: "file_edit", partialArgs: args)
+            )
+            #expect(diff.fileName == "index.html", "alias \(key)")
+        }
+    }
+
+    @Test("edit with path streamed last uses the fallback path until it arrives")
+    func fallbackPathForEdits() throws {
+        // Ornith-style arg order: new_string first, path last — no path in the
+        // buffer for most of the stream.
+        let args = #"{"new_string": "let x = 2", "old_string": "let x = 1""#
+        let diff = try #require(
+            FileDiff.streamingPreview(
+                toolName: "file_edit", partialArgs: args, fallbackPath: "merge_sort.cpp"
+            )
+        )
+        #expect(diff.fileName == "merge_sort.cpp")
+        #expect(diff.language == "cpp")
+
+        // Once the real path streams, it wins over the fallback.
+        let withPath = args + #", "path": "other.swift""#
+        let resolved = try #require(
+            FileDiff.streamingPreview(
+                toolName: "file_edit", partialArgs: withPath, fallbackPath: "merge_sort.cpp"
+            )
+        )
+        #expect(resolved.fileName == "other.swift")
+    }
+
+    @Test("old_string excerpt identifies the edited file among known files")
+    func inferredEditPath() throws {
+        let files = [
+            (path: "merge_sort.cpp", content: "int mid = std::min(i + size - 1, right - 1);\nmore"),
+            (path: "main.swift", content: "let greeting = \"hello world from swift\"\n"),
+        ]
+        // Prefix of an excerpt unique to merge_sort.cpp (path not streamed yet).
+        let args = #"{"new_string": "x", "old_string": "int mid = std::min(i + s"#
+        #expect(FileDiff.inferredEditPath(partialArgs: args, knownFiles: files) == "merge_sort.cpp")
+    }
+
+    @Test("ambiguous or too-short excerpts never name a file")
+    func inferredEditPathSafety() {
+        let shared = "the same header comment line here"
+        let files = [
+            (path: "a.txt", content: shared + " a"),
+            (path: "b.txt", content: shared + " b"),
+        ]
+        // Excerpt present in both files: ambiguous, stays unnamed.
+        let ambiguous = #"{"old_string": "the same header comment line"#
+        #expect(FileDiff.inferredEditPath(partialArgs: ambiguous, knownFiles: files) == nil)
+        // Short generic excerpt: below the confidence threshold.
+        let short = #"{"old_string": "    }"#
+        #expect(FileDiff.inferredEditPath(partialArgs: short, knownFiles: files) == nil)
+        // Excerpt matching nothing known.
+        let unknown = #"{"old_string": "text that exists in no known file at all"#
+        #expect(FileDiff.inferredEditPath(partialArgs: unknown, knownFiles: files) == nil)
+    }
+
+    @Test("write tools never take the fallback path")
+    func noFallbackForWrites() throws {
+        let args = #"{"content": "hello""#
+        let diff = try #require(
+            FileDiff.streamingPreview(
+                toolName: "file_write", partialArgs: args, fallbackPath: "old.txt"
+            )
+        )
+        #expect(diff.fileName.isEmpty)
+    }
+
     @Test("gemma function envelope streams name and content")
     func gemmaEnvelope() throws {
         let args = "call:sandbox_write_file{path:<|\"|>gen.py<|\"|>, content:<|\"|>import numpy as np\nprint(1)"

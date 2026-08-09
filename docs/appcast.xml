@@ -3,6 +3,39 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.18</title>
+            <pubDate>Fri, 07 Aug 2026 20:40:37 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.18</sparkle:version>
+            <sparkle:shortVersionString>0.22.18</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.18/Osaurus-0.22.18.dmg" length="70574130" type="application/octet-stream" sparkle:edSignature="nPibu1jfb8749SAcuLjjDu+TFM2prDQ4zVUQVxGDRpqUH0/RfwDbni/AO25hEWQJbHQaazCntLKodi78ODcyAg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🐛 Bug Fixes
+
+- fix diff card header alignment (#2314) by @RaajeevChandran
+- route skylight input through SLEventPostToPSN on macOS 26.4+ to prevent crashes (#2316) by @RaajeevChandran
+- Fix MCP capability indexing and custom agent scope (#2308) by @tpae
+- fixed main thread hangs (#2307) by @RaajeevChandran
+- Raptor JANG\_4M agent fixes + context\_window discovery key (#2305) by @jjang-ai
+- honor context windows advertised by custom provider /models endpoints (#2304) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- Fix remaining sandbox reachability gaps (#2313) by @tpae
+- Fix sandbox plugin activation and dependency installs (#2311) by @tpae
+- Clarify capability IDs and recover grouped tool calls (#2309) by @tpae
+- Clarify model memory estimates and fit guidance (#2310) by @tpae
+- Improve agent abilities context guidance (#2306) by @tpae
+- Allow importing private Hugging Face models (#2303) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.17...0.22.18
+]]></description>
+        </item>
+        <item>
             <title>0.22.17</title>
             <pubDate>Wed, 05 Aug 2026 23:18:13 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

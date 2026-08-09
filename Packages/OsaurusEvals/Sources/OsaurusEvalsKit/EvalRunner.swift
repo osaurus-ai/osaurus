@@ -983,7 +983,8 @@ public enum EvalRunner {
         let hint = shellCommandFailureHint(
             command: exp.command,
             exitCode: Int32(exp.exitCode),
-            stderr: exp.stderr
+            stderr: exp.stderr,
+            sandboxInstallAvailable: true
         )
         let fired = hint != nil
         var passed = fired == exp.expectHint

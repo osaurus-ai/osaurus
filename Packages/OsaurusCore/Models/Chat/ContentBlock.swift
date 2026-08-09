@@ -732,7 +732,11 @@ extension ContentBlock {
                         let preview = FileDiff.streamingPreview(
                             toolName: call.function.name,
                             partialArgs: call.function.arguments,
-                            isStreaming: false
+                            isStreaming: false,
+                            fallbackPath: FileDiff.inferredEditPath(
+                                partialArgs: call.function.arguments,
+                                knownFiles: Self.knownFileContents(in: turns)
+                            )
                         )
                     {
                         // FAILED file write: the streamed content was never
@@ -752,7 +756,11 @@ extension ContentBlock {
                         FileDiff.diffProducingToolNames.contains(call.function.name),
                         let preview = FileDiff.streamingPreview(
                             toolName: call.function.name,
-                            partialArgs: call.function.arguments
+                            partialArgs: call.function.arguments,
+                            fallbackPath: FileDiff.inferredEditPath(
+                                partialArgs: call.function.arguments,
+                                knownFiles: Self.knownFileContents(in: turns)
+                            )
                         )
                     {
                         // File write currently EXECUTING: the streamed preview
@@ -799,7 +807,11 @@ extension ContentBlock {
                 if let partialArgs = turn.pendingToolArgFull,
                     let preview = FileDiff.streamingPreview(
                         toolName: pendingName,
-                        partialArgs: partialArgs
+                        partialArgs: partialArgs,
+                        fallbackPath: FileDiff.inferredEditPath(
+                            partialArgs: partialArgs,
+                            knownFiles: Self.knownFileContents(in: turns)
+                        )
                     )
                 {
                     turnBlocks.append(
@@ -967,6 +979,59 @@ extension ContentBlock {
     }
 
     /// Reconstructs a SharedArtifact from an enriched share_artifact tool result.
+    /// Contents of every file the conversation has seen, keyed by path —
+    /// `file_read` result text (line-number display prefixes stripped) and
+    /// `file_write` argument content, latest version per path. Feeds
+    /// `FileDiff.inferredEditPath`, which matches a streaming edit's
+    /// `old_string` against these to name the card before its `path`
+    /// argument streams.
+    private static func knownFileContents(in turns: [ChatTurn]) -> [(path: String, content: String)] {
+        var latest: [String: String] = [:]
+        for turn in turns {
+            guard let calls = turn.toolCalls else { continue }
+            for call in calls {
+                switch call.function.name {
+                case "file_read", "sandbox_read_file":
+                    guard let result = turn.toolResults[call.id],
+                        let payload = ToolEnvelope.successPayload(result) as? [String: Any],
+                        (payload["kind"] as? String) != "directory",
+                        let path = payload["path"] as? String, !path.isEmpty,
+                        let text = payload["text"] as? String
+                    else { continue }
+                    // Reads render each line as `<line number>|<content>`;
+                    // strip the display prefix so excerpts match raw bytes.
+                    let content =
+                        payload["line_format"] == nil
+                        ? text
+                        : text.components(separatedBy: "\n")
+                            .map { line -> Substring in
+                                guard let bar = line.firstIndex(of: "|") else { return line[...] }
+                                return line[line.index(after: bar)...]
+                            }
+                            .joined(separator: "\n")
+                    latest[path] = content
+                case "file_write", "sandbox_write_file":
+                    guard let data = call.function.arguments.data(using: .utf8),
+                        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                        let path = (obj["path"] as? String), !path.isEmpty,
+                        let content = obj["content"] as? String
+                    else { continue }
+                    // Appends only add bytes; overwrites replace them.
+                    latest[path] = (obj["mode"] as? String) == "append"
+                        ? (latest[path] ?? "") + content
+                        : content
+                default:
+                    continue
+                }
+            }
+        }
+        // This index is rebuilt on the streaming UI tick and matched with
+        // `String.contains` — cap each entry so a huge file_read (up to 5MB)
+        // can't turn the tick into a main-thread scan. An excerpt past the
+        // cap just leaves the card on its placeholder.
+        return latest.map { (path: $0.key, content: String($0.value.prefix(262_144))) }
+    }
+
     private static func parseSharedArtifactFromResult(_ result: String) -> SharedArtifact? {
         SharedArtifact.fromEnrichedToolResult(result)
     }
