@@ -31,15 +31,15 @@ enum ProviderConfigurationDomain {
         displayName: "Providers",
         summary:
             "Cloud LLM providers (Anthropic, OpenAI, Gemini, Codex OAuth, Azure, "
-            + "OpenRouter, DeepSeek, xAI, Venice, Ollama, custom).",
+            + "OpenRouter, DeepSeek, SiliconFlow, xAI, Venice, Ollama, custom).",
         menuHint:
             "add / update / remove / rotate-key cloud providers — Anthropic, OpenAI, Codex OAuth, "
-            + "Gemini, Azure, OpenRouter (OAuth), DeepSeek, xAI, Venice, Ollama, custom",
+            + "Gemini, Azure, OpenRouter (OAuth), DeepSeek, SiliconFlow, xAI, Venice, Ollama, custom",
         searchKeywords: [
             "provider", "providers", "cloud", "api key", "key", "credentials",
             "anthropic", "claude", "openai", "gpt", "chatgpt", "codex",
             "gemini", "google", "openrouter", "azure", "deepseek", "xai", "grok",
-            "venice", "ollama",
+            "siliconflow", "silicon", "venice", "ollama",
             "add provider", "connect provider", "sign in",
             "update provider", "edit provider",
             "remove provider", "delete provider", "disconnect",
@@ -52,6 +52,7 @@ enum ProviderConfigurationDomain {
             "add OpenAI",
             "sign in to OpenRouter",
             "connect DeepSeek",
+            "connect SiliconFlow",
             "set up Ollama",
             "my Anthropic key stopped working",
             "remove the OpenAI provider",
@@ -99,6 +100,7 @@ internal enum ProviderToolShared {
         "gemini": .preset(.google),
         "xai": .preset(.xai),
         "deepseek": .preset(.deepseek),
+        "siliconflow": .preset(.siliconflow),
         "venice": .preset(.venice),
         "openrouter": .preset(.openrouter),
         "ollama": .preset(.ollama),
@@ -113,7 +115,7 @@ internal enum ProviderToolShared {
     /// rather than alphabetical so the most common vendors appear first.
     static let canonicalIds: [String] = [
         "anthropic", "openai", "codex_oauth", "azure_openai", "google",
-        "xai", "deepseek", "venice", "openrouter", "ollama",
+        "xai", "deepseek", "siliconflow", "venice", "openrouter", "ollama",
         "custom", "osaurus_agent",
     ]
 

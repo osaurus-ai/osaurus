@@ -218,6 +218,49 @@ struct ProviderPresetsTests {
         )
     }
 
+    @Test func siliconFlowPreset_configurationMatchesOfficialAPI() throws {
+        let config = ProviderPreset.siliconflow.configuration
+
+        #expect(config.name == "SiliconFlow")
+        #expect(config.host == "api.siliconflow.com")
+        #expect(config.providerProtocol == .https)
+        #expect(config.port == nil)
+        #expect(config.basePath == "/v1")
+        #expect(config.authType == .apiKey)
+        #expect(config.providerType == .openaiLegacy)
+    }
+
+    @Test func siliconFlowPreset_isListedAsKnownPreset() throws {
+        #expect(ProviderPreset.knownPresets.contains(.siliconflow))
+    }
+
+    @Test func matching_providerWithSiliconFlowHost_resolvesToSiliconFlowPreset() throws {
+        let provider = RemoteProvider(
+            name: "My SiliconFlow",
+            host: "api.siliconflow.com",
+            basePath: "/v1",
+            authType: .apiKey,
+            providerType: .openaiLegacy
+        )
+
+        #expect(ProviderPreset.matching(provider: provider) == .siliconflow)
+    }
+
+    @Test func siliconFlowPreset_chatEndpointResolvesToChatCompletions() throws {
+        let provider = RemoteProvider(
+            name: "SiliconFlow",
+            host: ProviderPreset.siliconflow.configuration.host,
+            basePath: ProviderPreset.siliconflow.configuration.basePath,
+            authType: .apiKey,
+            providerType: ProviderPreset.siliconflow.configuration.providerType
+        )
+
+        #expect(
+            provider.url(for: provider.providerType.chatEndpoint)?.absoluteString
+                == "https://api.siliconflow.com/v1/chat/completions"
+        )
+    }
+
     // MARK: - OAuth-first picker grouping
 
     @Test func oauthProviders_areTheThreeOneClickProviders() throws {
@@ -233,6 +276,7 @@ struct ProviderPresetsTests {
         #expect(keyVendors.contains(.openrouter))
         #expect(keyVendors.contains(.anthropic))
         #expect(keyVendors.contains(.azureOpenAI))
+        #expect(keyVendors.contains(.siliconflow))
         // Ollama (local, no key) and Custom (its own section) stay out.
         #expect(!keyVendors.contains(.ollama))
         #expect(!keyVendors.contains(.custom))

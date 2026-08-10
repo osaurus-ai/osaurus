@@ -223,6 +223,16 @@ public enum ProviderCredentialInstructionsCatalog {
                 storageAuthType: .apiKey,
                 presetId: preset.rawValue
             )
+        case .siliconflow:
+            return ProviderCredentialInstructions(
+                providerType: providerType,
+                displayName: L("SiliconFlow"),
+                authMethod: .apiKey,
+                getKeyURL: getKeyURL,
+                keyFormatHint: L("Create a key at cloud.siliconflow.com/account/ak."),
+                storageAuthType: .apiKey,
+                presetId: preset.rawValue
+            )
         case .xai:
             return ProviderCredentialInstructions(
                 providerType: providerType,

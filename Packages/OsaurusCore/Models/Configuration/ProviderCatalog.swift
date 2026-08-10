@@ -189,6 +189,7 @@ enum ProviderCatalog {
         ProviderCatalogEntry(.google, authMethods: [.apiKey], placement: .apiKey),
         ProviderCatalogEntry(.mistral, authMethods: [.apiKey], placement: .apiKey),
         ProviderCatalogEntry(.minimax, authMethods: [.apiKey], placement: .apiKey),
+        ProviderCatalogEntry(.siliconflow, authMethods: [.apiKey], placement: .apiKey),
         ProviderCatalogEntry(.venice, authMethods: [.apiKey], placement: .apiKey),
         ProviderCatalogEntry(.ollama, authMethods: [.none], placement: .local),
         ProviderCatalogEntry(.custom, authMethods: [.apiKey], placement: .custom),
