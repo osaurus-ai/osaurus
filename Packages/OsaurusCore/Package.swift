@@ -168,9 +168,14 @@ let package = Package(
         // generations died mid-stream at the 499000 allocator wall.
         // Conventional KV topologies report zero retention and are never
         // capped (VMLX_METAL_BUFFER_COUNT_GUARD=0 disables).
+        // This candidate also adds an opt-in exact FP32 head cache for users
+        // who need the materialized output path without rebuilding its 1.97 GB
+        // matrix on every token. It releases that derived matrix during model
+        // teardown and adds opt-in token-ID traces for causal validation. The
+        // fused qmm path remains the unflagged default.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "fd7ce91cde0be283c817142d96c9b3f87efcc5e5"
+            revision: "f83bd7c21d872df23ac8bb50b6e29cf8a3ac2197"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

@@ -935,7 +935,9 @@ final class ModelDownloadService: ObservableObject {
         // that arrives after deletion begins therefore waits, then resolves
         // against the refreshed catalog instead of cold-loading weights in
         // the old unload-to-unlink window.
-        let performDeletion: @Sendable () async throws -> Void = {
+        let performDeletion: @Sendable (
+            ModelRuntime.ModelDeletionLeaseAuthorization?
+        ) async throws -> Void = { deletionAuthorization in
             defer {
                 ModelManager.invalidateLocalModelsCache()
                 NotificationCenter.default.post(name: .localModelsChanged, object: nil)
@@ -944,9 +946,12 @@ final class ModelDownloadService: ObservableObject {
             // Use-after-free guard: shut down the BatchEngine and drain the
             // stream-lifetime ModelLease before touching any owned files.
             if !modelName.isEmpty {
-                let unloaded = await ModelRuntime.shared.unload(name: modelName)
+                let unloaded = await ModelRuntime.shared.unload(
+                    name: modelID,
+                    deletionAuthorization: deletionAuthorization
+                )
                 guard unloaded,
-                    await ModelRuntime.shared.residencyIdentity(named: modelName) == nil
+                    await ModelRuntime.shared.residencyIdentity(named: modelID) == nil
                 else {
                     throw ModelDeletionError.unsafeUnload
                 }
@@ -990,12 +995,14 @@ final class ModelDownloadService: ObservableObject {
             // not participate in model loading, so retain the historical
             // direct-delete path while still refreshing the catalog.
             if modelName.isEmpty {
-                try await performDeletion()
+                try await performDeletion(nil)
             } else {
                 try await ModelRuntime.shared.withModelDeletionLease(
                     modelID: modelID,
                     modelName: modelName,
-                    operation: performDeletion
+                    operation: { authorization in
+                        try await performDeletion(authorization)
+                    }
                 )
             }
         } catch {

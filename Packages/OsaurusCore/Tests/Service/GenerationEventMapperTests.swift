@@ -48,6 +48,46 @@ struct GenerationEventMapperTests {
         #expect(assembled == "Hello, world!")
     }
 
+    @Test func tokenID_is_consumed_without_an_app_event() async throws {
+        let info = GenerateCompletionInfo(
+            promptTokenCount: 1,
+            generationTokenCount: 1,
+            promptTime: 0,
+            generationTime: 0.1
+        )
+        let out = try await collect(events: [.tokenID(id: 37, ordinal: 0), .info(info)])
+
+        #expect(!out.contains { event in
+            if case .tokens = event { return true }
+            if case .reasoning = event { return true }
+            if case .toolInvocation = event { return true }
+            if case .toolCallProgress = event { return true }
+            if case .prefillProgress = event { return true }
+            return false
+        })
+        #expect(out.contains { if case .completionInfo = $0 { true } else { false } })
+    }
+
+    @Test func throwingUpstream_error_propagates_without_synthetic_completion() async {
+        let (events, producer) = AsyncThrowingStream<Generation, Error>.makeStream()
+        let mapped = GenerationEventMapper.map(events: events)
+        let failure = MapperUpstreamFailure.synthetic
+        producer.yield(.chunk("before failure"))
+        producer.finish(throwing: failure)
+
+        var output: [ModelRuntimeEvent] = []
+        var observedError: Error?
+        do {
+            for try await event in mapped { output.append(event) }
+        } catch {
+            observedError = error
+        }
+
+        #expect(observedError is MapperUpstreamFailure)
+        #expect(!output.contains { if case .completionInfo = $0 { true } else { false } })
+        #expect(output.contains { if case .tokens("before failure") = $0 { true } else { false } })
+    }
+
     @Test func toolCall_emits_serialized_arguments() async throws {
         // ToolCall.Function only exposes
         //   `init(name:, arguments: [String: any Sendable])`
@@ -549,6 +589,10 @@ struct GenerationEventMapperTests {
         #expect(argsJSON.contains("\"_error\":\"argument_serialization_failed\""))
         #expect(argsJSON.contains("\"_tool\":\"broken\""))
     }
+}
+
+private enum MapperUpstreamFailure: Error {
+    case synthetic
 }
 
 private struct MapperTestTimeout: Error {}

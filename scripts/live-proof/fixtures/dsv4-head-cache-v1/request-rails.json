@@ -1,0 +1,16 @@
+{
+  "fixture_version": "dsv4-head-cache-request/1",
+  "purpose": "Deterministic request labels for Gate D; this file contains no live result.",
+  "requests": [
+    "ordinary-coding",
+    "instruction",
+    "tool-call",
+    "refusal",
+    "long-context",
+    "repeated-prefix-miss",
+    "repeated-prefix-hit",
+    "normal-unload",
+    "normal-reload",
+    "adapter-token-id"
+  ]
+}

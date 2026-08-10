@@ -74,13 +74,24 @@ struct MLXBatchAdapter {
 
     /// Result handed back to `ModelRuntime`. The `Generation` stream is
     /// consumed by `GenerationEventMapper`, which translates the upstream
-    /// events into `ModelRuntimeEvent`. The producer task exists so callers
-    /// can cancel the underlying `BatchEngine` request via Swift's standard
-    /// task-cancellation mechanism.
+    /// events into ModelRuntimeEvent. The bridge task owns adapter drain;
+    /// the request-scoped vMLX handle owns producer cancellation.
     struct PreparedStream {
-        let stream: AsyncStream<Generation>
+        let stream: AsyncThrowingStream<Generation, Error>
         let promptTokens: [Int]
         let genTask: Task<Void, Never>
+    }
+
+    struct GenerationBridge {
+        let stream: AsyncThrowingStream<Generation, Error>
+        let task: Task<Void, Never>
+    }
+
+    enum GenerationBridgePhase: String, CaseIterable, Sendable, Equatable {
+        case beforeToken
+        case afterToken
+        case afterInfo
+        case duringFinalize
     }
 
     struct AudioPreencodeResult {
@@ -793,7 +804,7 @@ struct MLXBatchAdapter {
                 runtime: runtime,
                 maxBatchSize: maxBatchSize
             )
-            for await _ in prepared.stream {}
+            for try await _ in prepared.stream {}
             let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
             batchAdapterLog.info(
                 "native MTP load warmup: completed for \(modelName, privacy: .public) in \(elapsedMs, privacy: .public)ms; first user request decodes with MTP"
@@ -1253,8 +1264,396 @@ struct MLXBatchAdapter {
         }
     }
 
+    /// Keeps Foundation's non-Sendable activity token inside one immutable
+    /// object while the generation producer crosses Swift concurrency tasks.
+    private final class InferenceActivityTokenBox: @unchecked Sendable {
+        let token: NSObjectProtocol
+        init(_ token: NSObjectProtocol) { self.token = token }
+    }
+
+    actor GenerationCancellationBarrier {
+        private var waitTask: Task<Void, Never>?
+        private var waiters = [CheckedContinuation<Void, Never>]()
+
+        var pendingWaiterCountForTesting: Int {
+            waiters.count
+        }
+
+        func request(_ operation: @escaping @Sendable () async -> Void) {
+            guard waitTask == nil else { return }
+            waitTask = Task { await operation() }
+            let pendingWaiters = waiters
+            waiters.removeAll()
+            for waiter in pendingWaiters {
+                waiter.resume()
+            }
+        }
+
+        func wait() async {
+            if let waitTask {
+                await waitTask.value
+                return
+            }
+            await withCheckedContinuation { continuation in
+                waiters.append(continuation)
+            }
+            await waitTask?.value
+        }
+    }
+
+    private final class GenerationBridgeCancellationState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var requested = false
+
+        @discardableResult
+        func request() -> Bool {
+            lock.withLock {
+                guard !requested else { return false }
+                requested = true
+                return true
+            }
+        }
+
+        var isRequested: Bool {
+            lock.withLock { requested }
+        }
+    }
+
+    /// Trace-off keeps the existing early-info forwarding path. Trace-on
+    /// consumes diagnostic IDs, buffers terminal info, drains the source, and
+    /// finalizes the real vMLX adapter contract before releasing that info.
+    static func bridgeGenerationStream(
+        upstream: AsyncThrowingStream<Generation, Error>,
+        tokenIDTrace: TokenIDTraceConfiguration? = nil,
+        onCancellation: @escaping @Sendable () async -> Void = {},
+        onDrained: @escaping @Sendable () async -> Void = {},
+        onPhase: @escaping @Sendable (GenerationBridgePhase) -> Void = { _ in }
+    ) -> GenerationBridge {
+        let (stream, continuation) = AsyncThrowingStream<Generation, Error>.makeStream()
+        let cancellationBarrier = GenerationCancellationBarrier()
+        let cancellationState = GenerationBridgeCancellationState()
+        let drainTask = Task.detached(priority: .userInitiated) {
+            var bufferedEvents = [Generation]()
+            var bufferedInfo: GenerateCompletionInfo?
+            var diagnosticError: Error?
+            var upstreamError: Error?
+
+            do {
+                for try await event in upstream {
+                    switch event {
+                    case .tokenID(let tokenID, let ordinal):
+                        onPhase(.beforeToken)
+                        if let tokenIDTrace {
+                            do {
+                                try tokenIDTrace.adapterContract.accept(
+                                    tokenID: tokenID,
+                                    ordinal: ordinal)
+                            } catch {
+                                // Keep draining and call accept for every
+                                // later ID. vMLX latches the first error.
+                                diagnosticError = diagnosticError ?? error
+                            }
+                        }
+                        onPhase(.afterToken)
+
+                    case .info(let info):
+                        if tokenIDTrace != nil {
+                            bufferedInfo = info
+                            onPhase(.afterInfo)
+                        } else {
+                            // Terminal info is the producer's completion
+                            // record. A cancelled wrapper must still observe
+                            // it while the source drains; only non-terminal
+                            // deltas are suppressible.
+                            onPhase(.afterInfo)
+                            continuation.yield(.info(info))
+                        }
+
+                    default:
+                        if tokenIDTrace != nil {
+                            if diagnosticError == nil {
+                                bufferedEvents.append(event)
+                            }
+                        } else if !cancellationState.isRequested, diagnosticError == nil {
+                            continuation.yield(event)
+                        }
+                    }
+                }
+            } catch {
+                upstreamError = error
+            }
+
+            if cancellationState.isRequested {
+                await cancellationBarrier.wait()
+            }
+
+            var terminalError = upstreamError ?? diagnosticError
+            if cancellationState.isRequested, tokenIDTrace != nil {
+                terminalError = CancellationError()
+            } else if terminalError == nil, let tokenIDTrace {
+                if tokenIDTrace.adapterContract.sourceTerminalRule == nil {
+                    terminalError = TokenIDTraceError.sourceNotTerminated
+                } else if bufferedInfo == nil {
+                    terminalError = QualificationTraceBridgeError.missingCompletionInfo
+                } else {
+                    do {
+                        onPhase(.duringFinalize)
+                        guard !cancellationState.isRequested else {
+                            throw CancellationError()
+                        }
+                        _ = try tokenIDTrace.finalizeAdapter()
+                        _ = try tokenIDTrace.artifacts()
+                        if cancellationState.isRequested {
+                            throw CancellationError()
+                        }
+                    } catch {
+                        terminalError = error
+                    }
+                }
+
+                if terminalError == nil {
+                    for event in bufferedEvents {
+                        guard !cancellationState.isRequested else {
+                            terminalError = CancellationError()
+                            break
+                        }
+                        continuation.yield(event)
+                    }
+                    if terminalError == nil, !cancellationState.isRequested, let bufferedInfo {
+                        continuation.yield(.info(bufferedInfo))
+                    } else if terminalError == nil, cancellationState.isRequested {
+                        terminalError = CancellationError()
+                    }
+                }
+            }
+
+            if terminalError != nil {
+                if let tokenIDTrace {
+                    do {
+                        try Self.removeDiagnosticArtifacts(for: tokenIDTrace)
+                    } catch {
+                        terminalError = error
+                    }
+                }
+                if let terminalError {
+                    continuation.finish(throwing: terminalError)
+                }
+            } else {
+                continuation.finish()
+            }
+            await onDrained()
+        }
+
+        let task = Task<Void, Never> {
+            await withTaskCancellationHandler {
+                await drainTask.value
+            } onCancel: {
+                guard cancellationState.request() else { return }
+                Task {
+                    await cancellationBarrier.request(onCancellation)
+                }
+            }
+        }
+
+        continuation.onTermination = { @Sendable _ in
+            task.cancel()
+        }
+        return GenerationBridge(stream: stream, task: task)
+    }
+
+    /// Adapt vMLX's non-throwing source stream without changing its source
+    /// lifetime. The source forwarding task must finish before onDrained runs.
+    static func bridgeGenerationStream(
+        upstream: AsyncStream<Generation>,
+        tokenIDTrace: TokenIDTraceConfiguration? = nil,
+        onCancellation: @escaping @Sendable () async -> Void = {},
+        onDrained: @escaping @Sendable () async -> Void = {},
+        onPhase: @escaping @Sendable (GenerationBridgePhase) -> Void = { _ in }
+    ) -> GenerationBridge {
+        let (throwingUpstream, sourceContinuation) =
+            AsyncThrowingStream<Generation, Error>.makeStream()
+        let sourceTask = Task<Void, Never> {
+            for await event in upstream {
+                sourceContinuation.yield(event)
+            }
+            sourceContinuation.finish()
+        }
+
+        let bridge = bridgeGenerationStream(
+            upstream: throwingUpstream,
+            tokenIDTrace: tokenIDTrace,
+            onCancellation: {
+                await onCancellation()
+            },
+            onDrained: {
+                await sourceTask.value
+                await onDrained()
+            },
+            onPhase: onPhase)
+        return bridge
+    }
+
+    private static func removeDiagnosticArtifacts(
+        for configuration: TokenIDTraceConfiguration
+    ) throws {
+        guard let stem = configuration.outputStem else { return }
+        let fileManager = FileManager.default
+        var failedPaths = [String]()
+        for kind in TokenIDTraceStreamKind.allCases {
+            for suffix in ["ids", "json"] {
+                let path = stem.appendingPathExtension("\(kind.rawValue).\(suffix)")
+                do {
+                    try fileManager.removeItem(at: path)
+                } catch CocoaError.fileNoSuchFile {
+                    continue
+                } catch {
+                    failedPaths.append(path.path)
+                }
+            }
+        }
+        guard failedPaths.isEmpty else {
+            throw QualificationTraceBridgeError.artifactCleanupFailed(paths: failedPaths)
+        }
+    }
+
+    static func inferenceActivityIsEnabled(environment: [String: String]) -> Bool {
+        environment["OSAURUS_INFERENCE_ACTIVITY"] != "0"
+    }
+
+    private static func beginInferenceActivityIfEnabled() -> InferenceActivityTokenBox? {
+        guard inferenceActivityIsEnabled(environment: ProcessInfo.processInfo.environment) else {
+            return nil
+        }
+        return InferenceActivityTokenBox(
+            ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiated],
+                reason: "Local model inference"
+            )
+        )
+    }
+
+    enum QualificationTraceBridgeError: Error, LocalizedError, Sendable, Equatable {
+        case missingCompletionInfo
+        case missingModelDirectory
+        case missingExecutableURL
+        case missingArtifactKind
+        case artifactCleanupFailed(paths: [String])
+
+        var errorDescription: String? {
+            switch self {
+            case .missingCompletionInfo:
+                return "qualification token tracing requires terminal generation info"
+            case .missingModelDirectory:
+                return "qualification token tracing requires the resolved model directory"
+            case .missingExecutableURL:
+                return "qualification token tracing requires the actual executable URL"
+            case .missingArtifactKind:
+                return "qualification token tracing requires the runtime artifact kind"
+            case .artifactCleanupFailed(let paths):
+                return "qualification token trace cleanup failed for: \(paths.joined(separator: ", "))"
+            }
+        }
+    }
+
+    static func qualificationRuntimeBinding(
+        bundleURL: URL,
+        appExecutableURL: URL?,
+        commandLineArguments: [String]
+    ) -> (executableURL: URL?, artifactKind: RuntimeArtifactKind) {
+        if bundleURL.pathExtension == "app" {
+            return (appExecutableURL, .appExecutable)
+        }
+
+        guard let commandLineExecutable = commandLineArguments.first,
+              !commandLineExecutable.isEmpty else {
+            return (nil, .cli)
+        }
+        return (
+            URL(fileURLWithPath: commandLineExecutable)
+                .standardizedFileURL
+                .resolvingSymlinksInPath(),
+            .cli
+        )
+    }
+
+    static func resolveQualificationTraceConfiguration(
+        requestID: String?,
+        resolvedModelDirectory: URL?,
+        actualExecutableURL: URL?,
+        artifactKind: RuntimeArtifactKind?,
+        environment: [String: String],
+        configurationFactory: @Sendable (
+            String?,
+            URL,
+            URL,
+            RuntimeArtifactKind,
+            [String: String]
+        ) throws -> TokenIDTraceConfiguration?
+    ) throws -> TokenIDTraceConfiguration? {
+        let manifestBound = environment[
+            DSV4HeadCacheQualificationManifestVerifier.manifestPathEnvironmentKey
+        ] != nil
+        let hashBound = environment[
+            DSV4HeadCacheQualificationManifestVerifier.manifestSHA256EnvironmentKey
+        ] != nil
+        guard manifestBound || hashBound else { return nil }
+        guard let actualExecutableURL else {
+            throw QualificationTraceBridgeError.missingExecutableURL
+        }
+        guard let resolvedModelDirectory else {
+            throw QualificationTraceBridgeError.missingModelDirectory
+        }
+        guard let artifactKind else {
+            throw QualificationTraceBridgeError.missingArtifactKind
+        }
+        return try configurationFactory(
+            requestID,
+            resolvedModelDirectory,
+            actualExecutableURL,
+            artifactKind,
+            environment)
+    }
+
+    private static func qualificationTraceConfigurationIfQualified(
+        generation: GenerationParameters,
+        container: ModelContainer,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) async throws -> TokenIDTraceConfiguration? {
+        let manifestBound = environment[
+            DSV4HeadCacheQualificationManifestVerifier.manifestPathEnvironmentKey
+        ] != nil
+        let hashBound = environment[
+            DSV4HeadCacheQualificationManifestVerifier.manifestSHA256EnvironmentKey
+        ] != nil
+        guard manifestBound || hashBound else { return nil }
+
+        let resolvedModelDirectory = try await container.modelDirectory
+        let bundleURL = Bundle.main.bundleURL
+        let runtimeBinding = Self.qualificationRuntimeBinding(
+            bundleURL: bundleURL,
+            appExecutableURL: bundleURL.pathExtension == "app"
+                ? Bundle.main.executableURL
+                : nil,
+            commandLineArguments: CommandLine.arguments)
+        return try resolveQualificationTraceConfiguration(
+            requestID: generation.idempotencyKey,
+            resolvedModelDirectory: resolvedModelDirectory,
+            actualExecutableURL: runtimeBinding.executableURL,
+            artifactKind: runtimeBinding.artifactKind,
+            environment: environment,
+            configurationFactory: { requestID, modelDirectory, executableURL, artifactKind, environment in
+                try DSV4HeadCacheQualificationManifestVerifier
+                    .tokenTraceConfigurationIfQualified(
+                        requestID: requestID,
+                        resolvedModelDirectory: modelDirectory,
+                        actualExecutableURL: executableURL,
+                        artifactKind: artifactKind,
+                        environment: environment)
+            })
+    }
+
     /// Tokenize the chat + tools, fetch (or create) the per-model
-    /// `BatchEngine`, and submit one request via `engine.generate`. Returns
+    /// BatchEngine, and submit one request via engine.startGeneration. Returns
     /// the resulting `Generation` stream wrapped with cancellation plumbing.
     static func generate(
         modelName: String,
@@ -1269,6 +1668,10 @@ struct MLXBatchAdapter {
         runtime: RuntimeConfig,
         maxBatchSize: Int
     ) async throws -> PreparedStream {
+        let qualificationTraceConfiguration = try await Self
+            .qualificationTraceConfigurationIfQualified(
+                generation: generation,
+                container: container)
         let trace = generation.ttftTrace
         trace?.mark("batch_prepare_start")
         // Prefill diagnostics: a generation step's clock starts HERE. The
@@ -1453,6 +1856,9 @@ struct MLXBatchAdapter {
         if case .none = mlxParams.kvMode {
             mlxParams.kvMode = effectiveKVMode
         }
+        if let qualificationTraceConfiguration {
+            mlxParams.tokenIDTrace = qualificationTraceConfiguration
+        }
 
         // Per-request determinism now rides `GenerateParameters.randomSeed`
         // (set above): vmlx builds each request's sampler around its own
@@ -1506,9 +1912,10 @@ struct MLXBatchAdapter {
             )
         }
 
-        // `engine.generate` returns `AsyncStream<Generation>` directly with
-        // reasoning + tool-call extraction handled inside vmlx. We re-wrap
-        // it so we can attach a producer `Task` for cancellation.
+        // engine.startGeneration returns the exact request-scoped handle.
+        // Keep that handle alive until the bridge asks it to cancel and wait;
+        // the detached bridge drain must continue consuming authoritative
+        // terminal info instead of cancelling the source iterator.
         //
         // Important: the solo lease is held until the upstream stream is
         // actually done. Current vmlx emits terminal `.info` after its
@@ -1537,83 +1944,54 @@ struct MLXBatchAdapter {
             if let soloLease { await soloLease.release() }
             throw error
         }
-        let upstream = await engine.generate(
+        let inferenceActivity = Self.beginInferenceActivityIfEnabled()
+        let handle = await engine.startGeneration(
             input: prepared.input,
             parameters: mlxParams
         )
 
-        let (outStream, continuation) = AsyncStream<Generation>.makeStream()
-        // Prefill diagnostics: clock the producer from submit. The upstream
-        // loop drains only AFTER vmlx's post-`.info` disk-cache store, so
-        // `STREAM-DRAINED postSubmitMs` = this step's decode + KV store, and the
-        // lease (which the next step waits on) releases right after.
+        // Prefill diagnostics: clock the producer from submit. The bridge
+        // drains only AFTER vmlx's post-`.info` disk-cache store, so
+        // `STREAM-DRAINED postSubmitMs` = this step's decode + KV store, and
+        // the lease (which the next step waits on) releases right after.
         let producerSubmitAt = CFAbsoluteTimeGetCurrent()
-        let producerTask = Task<Void, Never> {
-            await withTaskCancellationHandler {
-                for await event in upstream {
-                    if case .info = event {
-                        continuation.yield(event)
-                        continue
-                    }
-                    if !Task.isCancelled {
-                        continuation.yield(event)
-                    }
+        let bridge = Self.bridgeGenerationStream(
+            upstream: handle.stream,
+            tokenIDTrace: qualificationTraceConfiguration,
+            onCancellation: {
+                // The handle cancels only this request ID and waits for the
+                // vMLX producer/lifecycle drain. The bridge keeps consuming
+                // the source so its authoritative terminal info remains
+                // visible before adapter cleanup releases the gates.
+                _ = await handle.cancelAndWait()
+            },
+            onDrained: {
+                if let inferenceActivity {
+                    ProcessInfo.processInfo.endActivity(inferenceActivity.token)
                 }
-            } onCancel: {
-                // Breaking a wrapping AsyncStream's consumer is not itself an
-                // awaited drain boundary. Cancel the direct B=1 producer now;
-                // the operation body awaits the same idempotent drain below
-                // before it releases the process-wide solo/Metal gates.
-                guard soloLease != nil else { return }
-                Task {
-                    await engine.cancelActiveSoloGenerationAndWait()
+                PrefillDebugLog.shared.log(
+                    "==GEN STREAM-DRAINED model=\(modelName) "
+                        + "postSubmitMs=\(Int((CFAbsoluteTimeGetCurrent() - producerSubmitAt) * 1000)) "
+                        + "(decode + post-gen disk store)"
+                )
+                if let soloLease {
+                    await soloLease.release()
                 }
-            }
-            if Task.isCancelled, soloLease != nil {
-                await engine.cancelActiveSoloGenerationAndWait()
-            }
-            // The upstream loop has fully drained (success or cancellation).
-            // Finish the wrapper and release the solo lease *inline* —
-            // `await`ed, not in a detached `Task` — so the lease is provably
-            // released before this producer task completes. The old
-            // `defer { Task { await soloLease.release() } }` released on an
-            // unordered future hop, leaving a window where the next solo
-            // request could enter `prepareInput` while this one's Metal
-            // cache-store was still materializing.
-            PrefillDebugLog.shared.log(
-                "==GEN STREAM-DRAINED model=\(modelName) "
-                    + "postSubmitMs=\(Int((CFAbsoluteTimeGetCurrent() - producerSubmitAt) * 1000)) "
-                    + "(decode + post-gen disk store)"
-            )
-            continuation.finish()
-            if let soloLease {
-                await soloLease.release()
-            }
-            PrefillDebugLog.shared.log(
-                "==GEN LEASE-RELEASED model=\(modelName) "
-                    + "postSubmitMs=\(Int((CFAbsoluteTimeGetCurrent() - producerSubmitAt) * 1000))"
-            )
-            // Release the Metal gate's shared lock now that this generation's
-            // GPU work (including the post-`.info` cache store) is fully done,
-            // letting any waiting embedder run. Paired with the
-            // `enterGeneration(model:)` taken before `engine.generate` above;
-            // the producer task always runs to completion, so the pair always
-            // balances.
-            await MetalGate.shared.exitGeneration(model: modelName)
-        }
-
-        continuation.onTermination = { @Sendable _ in
-            producerTask.cancel()
-        }
+                PrefillDebugLog.shared.log(
+                    "==GEN LEASE-RELEASED model=\(modelName) "
+                        + "postSubmitMs=\(Int((CFAbsoluteTimeGetCurrent() - producerSubmitAt) * 1000))"
+                )
+                await MetalGate.shared.exitGeneration(model: modelName)
+            })
 
         batchAdapterLog.info(
             "submit: model=\(modelName, privacy: .public) promptTokens=\(prepared.promptTokens.count, privacy: .public) temperature=\(effective.temperature, privacy: .public) topP=\(effective.topP, privacy: .public) topK=\(effective.topK, privacy: .public) minP=\(effective.minP, privacy: .public) maxTokens=\(effective.maxTokens, privacy: .public) draftStrategy=\(effectiveDraftStrategy?.kindName ?? "none", privacy: .public) nativeMTPFallback=\(nativeMTPFallbackReason ?? "none", privacy: .public) compiledBatchDecode=\(effective.compiledBatchDecode, privacy: .public)"
         )
 
         return PreparedStream(
-            stream: outStream,
+            stream: bridge.stream,
             promptTokens: prepared.promptTokens,
-            genTask: producerTask
+            genTask: bridge.task
         )
     }
 
