@@ -613,6 +613,24 @@ private final class TransferLane: NSObject, URLSessionDataDelegate, @unchecked S
         c?.resume(with: result)
     }
 
+    /// `resolve/<sha>` URLs 302-redirect to Hugging Face's CDN. Don't leak the
+    /// user's access token to that (or any other) third-party host: the
+    /// Authorization header only travels while the request stays on the host
+    /// it was originally sent to. Mirrors `DirectDownloader`'s handler.
+    func urlSession(
+        _: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection _: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        var redirected = request
+        if redirected.url?.host != task.originalRequest?.url?.host {
+            redirected.setValue(nil, forHTTPHeaderField: "Authorization")
+        }
+        completionHandler(redirected)
+    }
+
     func urlSession(
         _: URLSession,
         dataTask _: URLSessionDataTask,
