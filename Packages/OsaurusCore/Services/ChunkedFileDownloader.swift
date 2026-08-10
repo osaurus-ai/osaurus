@@ -99,6 +99,10 @@ final class ChunkedFileDownloader: @unchecked Sendable {
     private static let perChunkAttempts = 3
 
     private let lock = NSLock()
+    /// Serializes `onProgress` deliveries. Without it, two lanes can both
+    /// clear the throttle, unlock, and then land their callbacks in the
+    /// opposite order — the consumer sees progress jump backwards.
+    private let reportLock = NSLock()
     private var lanes: [TransferLane] = []
     private var pauseRequested = false
     private var bytesSoFar: Int64 = 0
@@ -326,11 +330,17 @@ final class ChunkedFileDownloader: @unchecked Sendable {
         let now = CFAbsoluteTimeGetCurrent()
         lock.lock()
         bytesSoFar += delta
-        let value = bytesSoFar
-        let due = now - lastProgressTime >= Self.progressInterval || value >= total
+        let due = now - lastProgressTime >= Self.progressInterval || bytesSoFar >= total
         if due { lastProgressTime = now }
         lock.unlock()
-        if due { onProgress(value, total) }
+        guard due else { return }
+        // Deliveries are serialized, and each re-reads the counter once it
+        // holds the report lock, so every callback carries a value at least
+        // as fresh as the one delivered before it.
+        reportLock.lock()
+        let value = lock.withLock { bytesSoFar }
+        onProgress(value, total)
+        reportLock.unlock()
     }
 
     private func checkPause() throws {
