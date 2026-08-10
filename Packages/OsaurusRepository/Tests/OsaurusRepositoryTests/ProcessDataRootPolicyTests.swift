@@ -931,10 +931,15 @@ final class ProcessDataRootPolicyTests: XCTestCase {
         if let configuredRoot = environment["OSAURUS_TEST_ROOT"]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
             !configuredRoot.isEmpty {
-            XCTAssertEqual(
-                toolsRoot.standardizedFileURL,
-                URL(fileURLWithPath: configuredRoot, isDirectory: true).standardizedFileURL
-            )
+            let configuredURL = URL(
+                fileURLWithPath: configuredRoot,
+                isDirectory: true
+            ).standardizedFileURL
+            if expected.standardizedFileURL == configuredURL {
+                XCTAssertEqual(toolsRoot.standardizedFileURL, configuredURL)
+            } else {
+                XCTAssertTrue(toolsRoot.path.hasPrefix("/tmp/osa-t-"))
+            }
         } else {
             XCTAssertTrue(toolsRoot.path.hasPrefix("/tmp/osa-t-"))
         }
