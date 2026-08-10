@@ -3123,13 +3123,31 @@ final class ChatSession: ObservableObject {
         send("")  // Empty send to trigger regeneration with existing history
     }
 
-    /// Delete a turn and all subsequent turns
+    /// Delete one turn while preserving all unrelated later conversation.
+    ///
+    /// A user turn removes its response/tool chain through the next user turn.
+    /// An assistant tool-call turn also removes the matching tool-result turns
+    /// so the next provider request never contains orphaned tool results.
     func deleteTurn(id: UUID) {
-        guard let index = turns.firstIndex(where: { $0.id == id }) else { return }
-        turns = Array(turns.prefix(index))
+        let remaining = ChatTurnDeletionPolicy.removingTurn(id: id, from: turns)
+        guard remaining.count != turns.count else { return }
+        turns = remaining
         isDirty = true
         rebuildVisibleBlocks()
-        save()
+        if turns.isEmpty, let id = sessionId {
+            // `save()` deliberately skips empty sessions. Remove the persisted
+            // row instead, so a deleted final message cannot reappear after a
+            // relaunch. The next send creates a fresh session as normal.
+            ChatSessionsManager.shared.delete(id: id)
+            sessionId = nil
+            title = "New Chat"
+            createdAt = Date()
+            updatedAt = createdAt
+            isDirty = false
+            onSessionChanged?()
+        } else {
+            save()
+        }
     }
 
     /// Regenerate an assistant response (removes it and regenerates)
@@ -8524,6 +8542,7 @@ struct ChatView: View {
                 onRegenerate: regenerateTurn,
                 onEdit: beginEditingTurn,
                 onDelete: deleteTurn,
+                onExport: exportTurnAsMarkdown,
                 onSpeak: speakTurnContent,
                 editingTurnId: editingTurnId,
                 editText: $editText,
@@ -8748,6 +8767,7 @@ private struct IsolatedThreadView: View {
     let onRegenerate: ((UUID) -> Void)?
     let onEdit: ((UUID) -> Void)?
     let onDelete: ((UUID) -> Void)?
+    let onExport: ((UUID) -> Void)?
     let onSpeak: ((UUID) -> Void)?
     let editingTurnId: UUID?
     let editText: Binding<String>?
@@ -8793,6 +8813,7 @@ private struct IsolatedThreadView: View {
             onRegenerate: onRegenerate,
             onEdit: onEdit,
             onDelete: onDelete,
+            onExport: onExport,
             onSpeak: onSpeak,
             editingTurnId: editingTurnId,
             editText: editText,
@@ -8953,6 +8974,15 @@ extension ChatView {
     private func deleteTurn(turnId: UUID) {
         if session.isStreaming { session.stop() }
         session.deleteTurn(id: turnId)
+    }
+
+    private func exportTurnAsMarkdown(turnId: UUID) {
+        guard let turn = session.turns.first(where: { $0.id == turnId }) else { return }
+        ChatSessionExportCoordinator.exportMarkdown(
+            turn: ChatTurnData(from: turn),
+            from: session.toSessionData(),
+            scope: .chat(windowState.windowId)
+        )
     }
 
     // MARK: - Inline Editing

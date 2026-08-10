@@ -1173,6 +1173,31 @@ final class SelectableNSTextView: NSTextView, CrossSelectableTextView {
         super.mouseDown(with: event)
     }
 
+    /// Keep the standard text-selection workflow available inside the native
+    /// message table. `NSTableView` can otherwise claim the contextual click
+    /// before this embedded text view becomes first responder, leaving users
+    /// with no right-click Copy action for selected response text.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        if window?.firstResponder !== self {
+            window?.makeFirstResponder(self)
+        }
+
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        let copy = NSMenuItem(title: L("Copy"), action: #selector(copy(_:)), keyEquivalent: "")
+        copy.target = self
+        copy.isEnabled = selectedRange().length > 0
+        menu.addItem(copy)
+
+        let selectAll = NSMenuItem(title: L("Select All"), action: #selector(selectAll(_:)), keyEquivalent: "")
+        selectAll.target = self
+        selectAll.isEnabled = (textStorage?.length ?? 0) > 0
+        menu.addItem(selectAll)
+
+        return menu
+    }
+
     private func handleArtifactLink(_ url: URL) {
         let filename = url.host ?? url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard !filename.isEmpty else { return }

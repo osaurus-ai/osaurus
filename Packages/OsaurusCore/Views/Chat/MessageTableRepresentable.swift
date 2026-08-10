@@ -98,6 +98,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
     let onRegenerate: ((UUID) -> Void)?
     let onEdit: ((UUID) -> Void)?
     let onDelete: ((UUID) -> Void)?
+    let onExport: ((UUID) -> Void)?
     let onSpeak: ((UUID) -> Void)?
 
     // Inline editing state
@@ -276,6 +277,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onRegenerate: onRegenerate,
             onEdit: onEdit,
             onDelete: onDelete,
+            onExport: onExport,
             onSpeak: onSpeak,
             onUserImagePreview: onUserImagePreview,
             onDocumentPreview: onDocumentPreview,
@@ -327,6 +329,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onRegenerate: onRegenerate,
             onEdit: onEdit,
             onDelete: onDelete,
+            onExport: onExport,
             onSpeak: onSpeak,
             onUserImagePreview: onUserImagePreview,
             onDocumentPreview: onDocumentPreview,

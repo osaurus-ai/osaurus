@@ -37,6 +37,7 @@ struct CellRenderingContext {
     var onRegenerate: ((UUID) -> Void)? = nil
     var onEdit: ((UUID) -> Void)? = nil
     var onDelete: ((UUID) -> Void)? = nil
+    var onExport: ((UUID) -> Void)? = nil
     var onSpeak: ((UUID) -> Void)? = nil
     /// attachment or shared-artifact id string → full screen preview from ChatView
     var onUserImagePreview: ((String) -> Void)? = nil
@@ -639,13 +640,15 @@ final class NativeAssistantActionsView: NSView {
     private let copyButton: HeaderCircleActionControl
     private let regenerateButton: HeaderCircleActionControl
     let speakButton: HeaderCircleActionControl
-    /// Overflow "…" menu holding the response timestamp and the Inspect action.
+    /// Overflow "…" menu holding the response timestamp, export, and Inspect actions.
     let overflowButton: HeaderCircleActionControl
 
     private var turnId: UUID = UUID()
     private var responseTimestamp: Date = Date()
     private var onCopy: ((UUID) -> Void)?
     private var onRegenerate: ((UUID) -> Void)?
+    private var onDelete: ((UUID) -> Void)?
+    private var onExport: ((UUID) -> Void)?
     var onSpeak: ((UUID) -> Void)?
 
     /// Formats the response timestamp for the overflow menu header, e.g.
@@ -796,6 +799,8 @@ final class NativeAssistantActionsView: NSView {
         hideSecondaryActions: Bool,
         onCopy: ((UUID) -> Void)?,
         onRegenerate: ((UUID) -> Void)?,
+        onDelete: ((UUID) -> Void)?,
+        onExport: ((UUID) -> Void)?,
         onSpeak: ((UUID) -> Void)?
     ) {
         self.turnId = turnId
@@ -803,6 +808,8 @@ final class NativeAssistantActionsView: NSView {
         self.hideSecondaryActions = hideSecondaryActions
         self.onCopy = onCopy
         self.onRegenerate = onRegenerate
+        self.onDelete = onDelete
+        self.onExport = onExport
         self.onSpeak = onSpeak
         self.currentTheme = theme
 
@@ -835,7 +842,7 @@ final class NativeAssistantActionsView: NSView {
     }
 
     /// Drops a ChatGPT-style overflow menu under the "…" button: a disabled
-    /// header showing when the response arrived, then the Inspect action.
+    /// header showing when the response arrived, then export and Inspect actions.
     private func presentOverflowMenu() {
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -847,6 +854,41 @@ final class NativeAssistantActionsView: NSView {
         )
         header.isEnabled = false
         menu.addItem(header)
+        menu.addItem(.separator())
+
+        let export = NSMenuItem(
+            title: L("Export as Markdown"),
+            action: #selector(exportFromMenu),
+            keyEquivalent: ""
+        )
+        export.target = self
+        export.isEnabled = onExport != nil
+        if let theme = currentTheme {
+            let pointSize = CGFloat(theme.captionSize)
+            let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)
+            export.image = SymbolImageCache.image(
+                "square.and.arrow.down",
+                accessibilityDescription: nil
+            )?.withSymbolConfiguration(cfg)
+        }
+        menu.addItem(export)
+
+        let delete = NSMenuItem(
+            title: L("Delete"),
+            action: #selector(deleteFromMenu),
+            keyEquivalent: ""
+        )
+        delete.target = self
+        delete.isEnabled = onDelete != nil
+        if let theme = currentTheme {
+            let pointSize = CGFloat(theme.captionSize)
+            let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)
+            delete.image = SymbolImageCache.image(
+                "trash",
+                accessibilityDescription: nil
+            )?.withSymbolConfiguration(cfg)
+        }
+        menu.addItem(delete)
         menu.addItem(.separator())
 
         let inspect = NSMenuItem(
@@ -875,6 +917,14 @@ final class NativeAssistantActionsView: NSView {
 
     @objc private func inspectFromMenu() {
         openInsights()
+    }
+
+    @objc private func exportFromMenu() {
+        onExport?(turnId)
+    }
+
+    @objc private func deleteFromMenu() {
+        onDelete?(turnId)
     }
 
     /// Opens the Settings → Insights tab, focused on the request/response log
@@ -2694,6 +2744,8 @@ final class NativeMessageCellView: NSTableCellView {
             hideSecondaryActions: imageOnly,
             onCopy: context.onCopy,
             onRegenerate: context.onRegenerate,
+            onDelete: context.onDelete,
+            onExport: context.onExport,
             onSpeak: context.onSpeak
         )
     }
