@@ -1575,6 +1575,13 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
             withIntermediateDirectories: true
         )
 
+        // A pause from a *previous* transfer must not bleed into this one:
+        // the chunked branch below reads `pauseRequested` after the probe, so
+        // a stale flag on a reused downloader would pause every future call
+        // on sight. Clearing it here means only a pause that arrives during
+        // this call counts — the legacy path re-clears under its own lock.
+        lock.withLock { pauseRequested = false }
+
         // Large weight shards go out as parallel Range requests; a single
         // connection to the Hugging Face CDN caps well below most links.
         // `resumeData` means the caller is continuing a legacy single-task
@@ -1584,13 +1591,20 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
             metadata.isChunkable
         {
             let downloader = ChunkedFileDownloader()
-            let alreadyPaused = lock.withLock { () -> Bool in
-                let paused = pauseRequested
-                if !paused { chunked = downloader }
-                return paused
+            enum Gate { case proceed, paused, invalidated }
+            let gate = lock.withLock { () -> Gate in
+                if isInvalidated { return .invalidated }
+                if pauseRequested { return .paused }
+                chunked = downloader
+                return .proceed
             }
-            if alreadyPaused {
+            switch gate {
+            case .invalidated:
+                throw URLError(.cancelled)
+            case .paused:
                 throw PauseInfo(resumeData: nil, bytesDownloaded: 0)
+            case .proceed:
+                break
             }
             defer { lock.withLock { chunked = nil } }
             try await downloader.download(
