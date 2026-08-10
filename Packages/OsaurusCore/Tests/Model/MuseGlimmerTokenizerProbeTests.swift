@@ -73,4 +73,66 @@ struct MuseGlimmerTokenizerProbeTests {
         let back = tokenizer.decode(tokenIds: ids, skipSpecialTokens: true)
         #expect(back == text, "round-trip mangled: \(back)")
     }
+
+    @Test("all four strengths render, and only the strength line differs",
+        .enabled(if: bundleExists))
+    func allFourStrengthsRenderDistinctPrefixes() async throws {
+        let tokenizer = try await SwiftTransformersTokenizerLoader()
+            .load(from: Self.bundle)
+
+        var rendered: [String: String] = [:]
+        for level in ["low", "medium", "high", "xhigh"] {
+            let ids = try tokenizer.applyChatTemplate(
+                messages: [["role": "user", "content": "hi"]],
+                tools: nil,
+                additionalContext: [
+                    "reasoning_strength": level, "add_generation_prompt": true,
+                ])
+            let text = tokenizer.decode(tokenIds: ids, skipSpecialTokens: false)
+            rendered[level] = text
+
+            let count = text.components(separatedBy: "Reasoning strength:").count - 1
+            #expect(count == 1, "\(level): expected 1 strength line, got \(count)")
+            #expect(text.contains("Reasoning strength: \(level)"),
+                "\(level) did not reach the template")
+        }
+
+        // Every level must produce a DIFFERENT prompt — that is what forces a
+        // cold prefill on an effort flip, and what the scope salt has to key on.
+        let unique = Set(rendered.values)
+        #expect(unique.count == 4, "levels collapsed to \(unique.count) distinct prompts")
+
+        // …and they must differ ONLY at the strength word: erasing the level
+        // from each should make them identical. If anything else moves, the
+        // prefix divergence is wider than the salt models.
+        let normalized = Set(rendered.map { level, text in
+            text.replacingOccurrences(of: "Reasoning strength: \(level)",
+                                      with: "Reasoning strength: <LEVEL>")
+        })
+        #expect(normalized.count == 1,
+            "levels differ beyond the strength word: \(normalized.count) shapes")
+    }
+
+    @Test("the strength line lands in the system prefix, not the tail",
+        .enabled(if: bundleExists))
+    func strengthLineIsInThePrefix() async throws {
+        let tokenizer = try await SwiftTransformersTokenizerLoader()
+            .load(from: Self.bundle)
+        let ids = try tokenizer.applyChatTemplate(
+            messages: [["role": "user", "content": "hello there"]],
+            tools: nil,
+            additionalContext: ["reasoning_strength": "high", "add_generation_prompt": true])
+        let text = tokenizer.decode(tokenIds: ids, skipSpecialTokens: false)
+
+        guard let strengthAt = text.range(of: "Reasoning strength:"),
+              let userAt = text.range(of: "hello there")
+        else {
+            Issue.record("template missing the strength line or the user turn")
+            return
+        }
+        // Strength precedes the user turn ⇒ an effort flip invalidates the
+        // whole prefix; no suffix-only reuse is possible for this family.
+        #expect(strengthAt.lowerBound < userAt.lowerBound,
+            "strength line is not in the prefix — cache reasoning would be wrong")
+    }
 }
