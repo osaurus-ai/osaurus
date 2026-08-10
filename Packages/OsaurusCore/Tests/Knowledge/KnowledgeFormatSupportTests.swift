@@ -45,60 +45,65 @@ struct KnowledgeFormatSupportTests {
 
 /// End-to-end guard: an approved proposal must never overwrite a binary
 /// source of truth. Runs against the shared singletons scoped into a
-/// temporary `OsaurusPaths.overrideRoot`, so it is serialized and bails
-/// out if another suite already opened the shared database at the real
-/// path (approving there would touch real user state).
+/// temporary `OsaurusPaths.overrideRoot`, so it takes the process-wide path
+/// lock and bails out if another suite already opened the shared database at
+/// the real path (approving there would touch real user state).
 @Suite(.serialized)
 struct KnowledgeCurationApprovalGuardTests {
 
     @MainActor
     @Test func approvingProposalAgainstPDFThrowsAndLeavesFileIntact() async throws {
-        guard !KnowledgeDatabase.shared.isOpen else {
-            Issue.record("Shared knowledge database already open outside override root; skipping")
-            return
+        try await StoragePathsTestLock.shared.run {
+            guard !KnowledgeDatabase.shared.isOpen else {
+                Issue.record("Shared knowledge database already open outside override root; skipping")
+                return
+            }
+
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent(
+                    "knowledge-format-guard-\(UUID().uuidString)",
+                    isDirectory: true
+                )
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            defer {
+                // Close so the shared database doesn't stay bound to the
+                // deleted temp root for whatever runs after this suite.
+                KnowledgeDatabase.shared.close()
+                OsaurusPaths.overrideRoot = previousRoot
+                // `reload()` is async (off-main registry I/O); a defer cannot
+                // await, so reset the shared registry as a fire-and-forget hop.
+                Task { @MainActor in await KnowledgeManager.shared.reload() }
+                try? FileManager.default.removeItem(at: root)
+            }
+
+            // A collection whose folder holds a fake pdf.
+            let folder = root.appendingPathComponent("corpus", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let pdfBytes = Data("%PDF-1.4 not really a pdf".utf8)
+            let pdfURL = folder.appendingPathComponent("pricing.pdf")
+            try pdfBytes.write(to: pdfURL)
+
+            let collection = KnowledgeCollection(
+                name: "Guard Corpus", summary: "", folderPath: folder.path)
+            KnowledgeCollectionStore.save(collection)
+            await KnowledgeManager.shared.reload()
+
+            try KnowledgeDatabase.shared.open()
+            let proposalId = try KnowledgeDatabase.shared.createProposal(
+                ticketId: nil,
+                collectionId: collection.id.uuidString,
+                relPath: "pricing.pdf",
+                newContent: "# text that must never land in a pdf",
+                rationale: "stale pricing",
+                createdBy: "curator-test"
+            )
+
+            await #expect(throws: KnowledgeCurationError.self) {
+                try await KnowledgeCurationService.shared.approve(proposalId: proposalId)
+            }
+            #expect(try Data(contentsOf: pdfURL) == pdfBytes)
+            #expect(try KnowledgeDatabase.shared.getProposal(id: proposalId)?.status == .pending)
         }
-
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("knowledge-format-guard-\(UUID().uuidString)", isDirectory: true)
-        let previousRoot = OsaurusPaths.overrideRoot
-        OsaurusPaths.overrideRoot = root
-        defer {
-            // Close so the shared database doesn't stay bound to the
-            // deleted temp root for whatever runs after this suite.
-            KnowledgeDatabase.shared.close()
-            OsaurusPaths.overrideRoot = previousRoot
-            // `reload()` is async (off-main registry I/O); a defer cannot
-            // await, so reset the shared registry as a fire-and-forget hop.
-            Task { @MainActor in await KnowledgeManager.shared.reload() }
-            try? FileManager.default.removeItem(at: root)
-        }
-
-        // A collection whose folder holds a fake pdf.
-        let folder = root.appendingPathComponent("corpus", isDirectory: true)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let pdfBytes = Data("%PDF-1.4 not really a pdf".utf8)
-        let pdfURL = folder.appendingPathComponent("pricing.pdf")
-        try pdfBytes.write(to: pdfURL)
-
-        let collection = KnowledgeCollection(
-            name: "Guard Corpus", summary: "", folderPath: folder.path)
-        KnowledgeCollectionStore.save(collection)
-        await KnowledgeManager.shared.reload()
-
-        try KnowledgeDatabase.shared.open()
-        let proposalId = try KnowledgeDatabase.shared.createProposal(
-            ticketId: nil,
-            collectionId: collection.id.uuidString,
-            relPath: "pricing.pdf",
-            newContent: "# text that must never land in a pdf",
-            rationale: "stale pricing",
-            createdBy: "curator-test"
-        )
-
-        await #expect(throws: KnowledgeCurationError.self) {
-            try await KnowledgeCurationService.shared.approve(proposalId: proposalId)
-        }
-        #expect(try Data(contentsOf: pdfURL) == pdfBytes)
-        #expect(try KnowledgeDatabase.shared.getProposal(id: proposalId)?.status == .pending)
     }
 }

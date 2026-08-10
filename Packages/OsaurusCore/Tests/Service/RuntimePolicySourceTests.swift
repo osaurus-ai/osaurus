@@ -132,6 +132,34 @@ struct RuntimePolicySourceTests {
         #expect(policy.contains("prepareProgrammaticTestOverrideRoot"))
     }
 
+    @Test("test root overrides use the process-wide path lock")
+    func testRootOverridesUseProcessWideLock() throws {
+        let assignment = try NSRegularExpression(
+            pattern: #"(?m)^\s*OsaurusPaths\.overrideRoot\s*="#
+        )
+        let acceptedGuards = [
+            "StoragePathsTestLock",
+            "runWithStoragePaths",
+            "withPathsLock",
+        ]
+
+        let unguarded = try Self.swiftFiles(under: "Tests").compactMap { url -> String? in
+            let source = try String(contentsOf: url, encoding: .utf8)
+            let range = NSRange(source.startIndex ..< source.endIndex, in: source)
+            guard assignment.firstMatch(in: source, range: range) != nil else { return nil }
+            guard !acceptedGuards.contains(where: source.contains) else { return nil }
+            return url.path.replacingOccurrences(
+                of: Self.packageRoot().appendingPathComponent("Tests").path + "/",
+                with: ""
+            )
+        }
+
+        #expect(
+            unguarded.isEmpty,
+            "Tests that mutate OsaurusPaths.overrideRoot must hold StoragePathsTestLock: \(unguarded)"
+        )
+    }
+
     @Test("AppDelegate leaves DSV4 cache topology to vmlx")
     func appDelegateDoesNotForceDSV4DiagnosticCacheMode() throws {
         let source = try Self.source("AppDelegate.swift")
