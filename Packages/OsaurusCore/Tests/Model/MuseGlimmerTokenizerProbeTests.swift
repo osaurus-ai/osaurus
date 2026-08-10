@@ -135,4 +135,53 @@ struct MuseGlimmerTokenizerProbeTests {
         #expect(strengthAt.lowerBound < userAt.lowerBound,
             "strength line is not in the prefix — cache reasoning would be wrong")
     }
+
+    @Test("structured image part renders a <|patch|> placeholder",
+        .enabled(if: bundleExists))
+    func imagePartRendersPatch() async throws {
+        let tokenizer = try await SwiftTransformersTokenizerLoader()
+            .load(from: Self.bundle)
+        let content: [[String: String]] = [
+            ["type": "image"],
+            ["type": "text", "text": "what colour?"],
+        ]
+        let ids = try tokenizer.applyChatTemplate(
+            messages: [["role": "user", "content": content]],
+            tools: nil,
+            additionalContext: ["add_generation_prompt": true])
+        let text = tokenizer.decode(tokenIds: ids, skipSpecialTokens: false)
+        print("[patch-probe] rendered: \(text.suffix(220))")
+        #expect(text.contains("<|patch|>"), "no <|patch|> in render")
+    }
+
+    @Test("media placeholder tokens are atomic", .enabled(if: bundleExists))
+    func mediaPlaceholdersAtomic() async throws {
+        let tokenizer = try await SwiftTransformersTokenizerLoader()
+            .load(from: Self.bundle)
+        for special in ["<|patch|>", "<|video|>"] {
+            let ids = tokenizer.encode(text: special, addSpecialTokens: false)
+            print("[media-probe] \(special) -> \(ids)")
+            #expect(ids.count == 1, "\(special) split into \(ids)")
+        }
+        // And the ids the config declares.
+        print("[media-probe] patch id should be 200092, video 200091")
+    }
+
+    @Test("image part still renders <|patch|> with nil additionalContext",
+        .enabled(if: bundleExists))
+    func imagePartRendersPatchWithNilContext() async throws {
+        let tokenizer = try await SwiftTransformersTokenizerLoader()
+            .load(from: Self.bundle)
+        let content: [[String: String]] = [
+            ["type": "image"],
+            ["type": "text", "text": "what colour?"],
+        ]
+        let ids = try tokenizer.applyChatTemplate(
+            messages: [["role": "user", "content": content]],
+            tools: nil,
+            additionalContext: nil)
+        let patchCount = ids.filter { $0 == 200_092 }.count
+        print("[nilctx-probe] patch tokens: \(patchCount) of \(ids.count) ids")
+        #expect(patchCount == 1, "nil additionalContext dropped the placeholder")
+    }
 }
