@@ -405,6 +405,27 @@ struct ChatWarmupControllerRAMGateTests {
         #expect(controller.state == .cold)
     }
 
+    @Test("active local streaming in another window skips warm-up")
+    func activeLocalStreamSkipsWarmup() {
+        let engine = WarmupRecordingEngine()
+        let session = WarmupTestSession()
+        session.engine = engine
+        session.payload = ChatWarmupPayload(
+            model: "test-model",
+            messages: [ChatMessage(role: "system", content: "sys")],
+            tools: nil,
+            modelOptions: nil,
+            fingerprint: "test-model|active-stream"
+        )
+        let controller = makeWarmupController()
+        controller.isAnyWindowStreamingLocalModel = { true }
+
+        controller.scheduleWarmup(session: session, debounce: .zero)
+
+        #expect(engine.lastRequest == nil)
+        #expect(controller.state == .cold)
+    }
+
     /// Sentry APPLE-MACOS-3T: a window-open warm-up of a 31B model on a
     /// 24GB machine died in a fatal Metal OOM. Proactive warm-up must skip
     /// entirely when the projection is block-severity.
@@ -1834,6 +1855,7 @@ struct ChatWarmupControllerFreedSlotRewarmTests {
 private func makeWarmupController() -> ChatWarmupController {
     let controller = ChatWarmupController()
     controller.warmModelsOnLoad = { true }
+    controller.isAnyWindowStreamingLocalModel = { false }
     return controller
 }
 

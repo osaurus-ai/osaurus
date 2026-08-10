@@ -46,6 +46,7 @@ struct ChatSessionStopTests {
         model: String
     ) async throws {
         session.warmupController.warmModelsOnLoad = { true }
+        session.warmupController.isAnyWindowStreamingLocalModel = { false }
         session.warmupController.handleModelSelectionChange(
             session: warmupSession,
             to: model,
@@ -354,6 +355,7 @@ struct ChatSessionStopTests {
             let session = ChatSession()
             let controller = session.warmupController
             controller.warmModelsOnLoad = { true }
+            controller.isAnyWindowStreamingLocalModel = { false }
             controller.projectedLoadFeasibility = { _ in nil }
             let gate = IgnoringCancellationHandshakeGate()
             let engine = CancellationIgnoringWarmupEngine(gate: gate)
@@ -407,6 +409,7 @@ struct ChatSessionStopTests {
             let session = ChatSession()
             let controller = session.warmupController
             controller.warmModelsOnLoad = { true }
+            controller.isAnyWindowStreamingLocalModel = { false }
             controller.projectedLoadFeasibility = { _ in nil }
             let gate = IgnoringCancellationHandshakeGate()
             let warmupEngine = CancellationIgnoringWarmupEngine(gate: gate)

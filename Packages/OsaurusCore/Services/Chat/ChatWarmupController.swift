@@ -107,6 +107,13 @@ final class ChatWarmupController: ObservableObject {
         ChatConfigurationStore.load().warmModelsOnLoad
     }
 
+    /// Cross-window generation guard (test seam; production reads the shared
+    /// window manager). Unit tests pin this independently of other suites that
+    /// may deliberately hold a local stream open.
+    var isAnyWindowStreamingLocalModel: @MainActor () -> Bool = {
+        ChatWindowManager.shared.isAnyWindowStreamingLocalModel
+    }
+
     /// Typed runtime snapshots make activation and notification delivery use
     /// the same monotonic residency timeline. Tests replace these seams to
     /// hold the exact focus/idle-unload race without wall-clock sleeps.
@@ -897,7 +904,7 @@ final class ChatWarmupController: ObservableObject {
         guard session.selectedModelIsLocal, !session.isRemoteAgentTarget else { return false }
         guard !session.isStreaming else { return false }
         guard !session.isImageGenerationModel(model) else { return false }
-        if ChatWindowManager.shared.isAnyWindowStreamingLocalModel { return false }
+        if isAnyWindowStreamingLocalModel() { return false }
         return true
     }
 
