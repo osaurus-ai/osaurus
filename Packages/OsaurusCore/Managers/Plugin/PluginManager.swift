@@ -716,16 +716,23 @@ final class PluginManager {
         let routed = plugins.filter { !$0.routes.isEmpty }
         guard !routed.isEmpty else { return }
 
+        let toolSecretsTestContext =
+            ToolSecretsKeychain._captureInMemoryStoreContextForTesting()
+
         // Off the main actor: the keychain write blocks on security-daemon
         // XPC and `notifyConfigBatchSync` blocks until the plugin's C
         // callback returns.
         await Task.detached(priority: .userInitiated) {
-            for loaded in routed {
-                Self.persistTunnelURLSecret(nil, pluginId: loaded.plugin.id, agentId: agentId)
-                loaded.plugin.notifyConfigBatchSync(
-                    [(key: "tunnel_url", value: "")],
-                    agentId: agentId
-                )
+            ToolSecretsKeychain._withInMemoryStoreContextForTesting(
+                toolSecretsTestContext
+            ) {
+                for loaded in routed {
+                    Self.persistTunnelURLSecret(nil, pluginId: loaded.plugin.id, agentId: agentId)
+                    loaded.plugin.notifyConfigBatchSync(
+                        [(key: "tunnel_url", value: "")],
+                        agentId: agentId
+                    )
+                }
             }
         }.value
     }

@@ -152,49 +152,51 @@ struct AgentDeletionPluginTeardownOrderingTests {
     /// by the time `delete(id:)` returns.
     @Test
     func deleteNotifiesPluginsBeforeSweepingSecrets() async throws {
-        try await ChatHistoryTestStorage.run {
-            let pluginId = "com.test.teardown-order.\(UUID().uuidString)"
-            let recorder = TeardownRecorder()
-            recorder.pluginId = pluginId
+        try await ToolSecretsKeychain._withInMemoryStoreForTesting {
+            try await ChatHistoryTestStorage.run {
+                let pluginId = "com.test.teardown-order.\(UUID().uuidString)"
+                let recorder = TeardownRecorder()
+                recorder.pluginId = pluginId
 
-            let (loaded, retain) = self.makeRoutedPlugin(recorder: recorder, pluginId: pluginId)
-            PluginManager.shared.injectLoadedPluginForTesting(loaded)
-            defer {
-                PluginManager.shared.removeLoadedPluginForTesting(pluginId: pluginId)
-                retain.release()
+                let (loaded, retain) = self.makeRoutedPlugin(recorder: recorder, pluginId: pluginId)
+                PluginManager.shared.injectLoadedPluginForTesting(loaded)
+                defer {
+                    PluginManager.shared.removeLoadedPluginForTesting(pluginId: pluginId)
+                    retain.release()
+                }
+
+                let agent = Agent(
+                    name: "TeardownOrder-\(UUID().uuidString.prefix(6))",
+                    systemPrompt: "Test identity",
+                    agentAddress: "test-teardown-\(UUID().uuidString)"
+                )
+                AgentManager.shared.add(agent)
+                recorder.agentId = agent.id
+
+                ToolSecretsKeychain.saveSecret("tok-123", id: "bot_token", for: pluginId, agentId: agent.id)
+
+                let result = await AgentManager.shared.delete(id: agent.id)
+                #expect(result.deleted)
+
+                // Teardown ran, and — the ordering regression — the plugin
+                // could still read its bot_token during deregistration.
+                #expect(recorder.sawDeregister, "plugin must receive tunnel_url=\"\" during delete()")
+                #expect(
+                    recorder.tokenDuringDeregister == "tok-123",
+                    "secrets must still exist while the plugin deregisters its webhook"
+                )
+
+                // ...and the sweep still happened afterwards.
+                #expect(
+                    ToolSecretsKeychain.getSecret(id: "bot_token", for: pluginId, agentId: agent.id) == nil,
+                    "secrets must be swept once teardown completed"
+                )
+
+                // Let the belt-and-braces `.agentRemoved` handler task run
+                // while the injected plugin is still registered (its delivery
+                // is deduped plugin-side, so the recorder must not fire again).
+                try await Task.sleep(nanoseconds: 100_000_000)
             }
-
-            let agent = Agent(
-                name: "TeardownOrder-\(UUID().uuidString.prefix(6))",
-                systemPrompt: "Test identity",
-                agentAddress: "test-teardown-\(UUID().uuidString)"
-            )
-            AgentManager.shared.add(agent)
-            recorder.agentId = agent.id
-
-            ToolSecretsKeychain.saveSecret("tok-123", id: "bot_token", for: pluginId, agentId: agent.id)
-
-            let result = await AgentManager.shared.delete(id: agent.id)
-            #expect(result.deleted)
-
-            // Teardown ran, and — the ordering regression — the plugin
-            // could still read its bot_token during deregistration.
-            #expect(recorder.sawDeregister, "plugin must receive tunnel_url=\"\" during delete()")
-            #expect(
-                recorder.tokenDuringDeregister == "tok-123",
-                "secrets must still exist while the plugin deregisters its webhook"
-            )
-
-            // ...and the sweep still happened afterwards.
-            #expect(
-                ToolSecretsKeychain.getSecret(id: "bot_token", for: pluginId, agentId: agent.id) == nil,
-                "secrets must be swept once teardown completed"
-            )
-
-            // Let the belt-and-braces `.agentRemoved` handler task run
-            // while the injected plugin is still registered (its delivery
-            // is deduped plugin-side, so the recorder must not fire again).
-            try await Task.sleep(nanoseconds: 100_000_000)
         }
     }
 }
@@ -209,94 +211,104 @@ struct AgentDeletionPluginTeardownOrderingTests {
 struct ToolSecretsResolutionPolicyTests {
 
     @Test func exactAgentValueWins() {
-        let pluginId = "com.test.resolve.\(UUID().uuidString)"
-        let agent = UUID()
-        defer {
-            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: agent)
-            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: Agent.defaultId)
+        ToolSecretsKeychain._withInMemoryStoreForTesting {
+            let pluginId = "com.test.resolve.\(UUID().uuidString)"
+            let agent = UUID()
+            defer {
+                ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: agent)
+                ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: Agent.defaultId)
+            }
+
+            ToolSecretsKeychain.saveSecret("global", id: "api_key", for: pluginId, agentId: Agent.defaultId)
+            ToolSecretsKeychain.saveSecret("mine", id: "api_key", for: pluginId, agentId: agent)
+
+            #expect(ToolSecretsKeychain.resolvedSecret(id: "api_key", for: pluginId, agentId: agent) == "mine")
         }
-
-        ToolSecretsKeychain.saveSecret("global", id: "api_key", for: pluginId, agentId: Agent.defaultId)
-        ToolSecretsKeychain.saveSecret("mine", id: "api_key", for: pluginId, agentId: agent)
-
-        #expect(ToolSecretsKeychain.resolvedSecret(id: "api_key", for: pluginId, agentId: agent) == "mine")
     }
 
     @Test func fallsBackToDefaultAgentNamespace() {
-        let pluginId = "com.test.resolve.\(UUID().uuidString)"
-        let agent = UUID()
-        defer {
-            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: Agent.defaultId)
+        ToolSecretsKeychain._withInMemoryStoreForTesting {
+            let pluginId = "com.test.resolve.\(UUID().uuidString)"
+            let agent = UUID()
+            defer {
+                ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: Agent.defaultId)
+            }
+
+            ToolSecretsKeychain.saveSecret("global", id: "api_key", for: pluginId, agentId: Agent.defaultId)
+
+            #expect(ToolSecretsKeychain.resolvedSecret(id: "api_key", for: pluginId, agentId: agent) == "global")
+            #expect(ToolSecretsKeychain.hasResolvedSecret(id: "api_key", for: pluginId, agentId: agent))
         }
-
-        ToolSecretsKeychain.saveSecret("global", id: "api_key", for: pluginId, agentId: Agent.defaultId)
-
-        #expect(ToolSecretsKeychain.resolvedSecret(id: "api_key", for: pluginId, agentId: agent) == "global")
-        #expect(ToolSecretsKeychain.hasResolvedSecret(id: "api_key", for: pluginId, agentId: agent))
     }
 
     @Test func missingEverywhereResolvesNil() {
-        let pluginId = "com.test.resolve.\(UUID().uuidString)"
-        let agent = UUID()
-        #expect(ToolSecretsKeychain.resolvedSecret(id: "api_key", for: pluginId, agentId: agent) == nil)
-        #expect(!ToolSecretsKeychain.hasResolvedSecret(id: "api_key", for: pluginId, agentId: agent))
+        ToolSecretsKeychain._withInMemoryStoreForTesting {
+            let pluginId = "com.test.resolve.\(UUID().uuidString)"
+            let agent = UUID()
+            #expect(ToolSecretsKeychain.resolvedSecret(id: "api_key", for: pluginId, agentId: agent) == nil)
+            #expect(!ToolSecretsKeychain.hasResolvedSecret(id: "api_key", for: pluginId, agentId: agent))
+        }
     }
 
     /// Required-secret checks must agree with what tool payload injection
     /// delivers: a key satisfied by a Plugins-tab (default-agent) write
     /// counts as configured for every agent.
     @Test func requiredSecretChecksHonorDefaultFallback() {
-        let pluginId = "com.test.resolve.required.\(UUID().uuidString)"
-        let agent = UUID()
-        defer {
-            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: Agent.defaultId)
+        ToolSecretsKeychain._withInMemoryStoreForTesting {
+            let pluginId = "com.test.resolve.required.\(UUID().uuidString)"
+            let agent = UUID()
+            defer {
+                ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: Agent.defaultId)
+            }
+            let specs = [
+                PluginManifest.SecretSpec(id: "bot_token", label: "Bot Token"),
+                PluginManifest.SecretSpec(id: "optional_key", label: "Optional", required: false),
+            ]
+
+            #expect(!ToolSecretsKeychain.hasAllRequiredSecrets(specs: specs, for: pluginId, agentId: agent))
+            #expect(
+                ToolSecretsKeychain.getMissingRequiredSecrets(specs: specs, for: pluginId, agentId: agent)
+                    .map(\.id) == ["bot_token"]
+            )
+
+            ToolSecretsKeychain.saveSecret("tok", id: "bot_token", for: pluginId, agentId: Agent.defaultId)
+
+            #expect(ToolSecretsKeychain.hasAllRequiredSecrets(specs: specs, for: pluginId, agentId: agent))
+            #expect(
+                ToolSecretsKeychain.getMissingRequiredSecrets(specs: specs, for: pluginId, agentId: agent).isEmpty
+            )
         }
-        let specs = [
-            PluginManifest.SecretSpec(id: "bot_token", label: "Bot Token"),
-            PluginManifest.SecretSpec(id: "optional_key", label: "Optional", required: false),
-        ]
-
-        #expect(!ToolSecretsKeychain.hasAllRequiredSecrets(specs: specs, for: pluginId, agentId: agent))
-        #expect(
-            ToolSecretsKeychain.getMissingRequiredSecrets(specs: specs, for: pluginId, agentId: agent)
-                .map(\.id) == ["bot_token"]
-        )
-
-        ToolSecretsKeychain.saveSecret("tok", id: "bot_token", for: pluginId, agentId: Agent.defaultId)
-
-        #expect(ToolSecretsKeychain.hasAllRequiredSecrets(specs: specs, for: pluginId, agentId: agent))
-        #expect(
-            ToolSecretsKeychain.getMissingRequiredSecrets(specs: specs, for: pluginId, agentId: agent).isEmpty
-        )
     }
 
     /// `config_get` (via the host context, inside a TLS scope bound to a
     /// real agent) must resolve through the same policy — the Telegram
     /// `bot_token` saved as a global default is readable from plugin code.
     @Test func configGetResolvesDefaultAgentFallback() throws {
-        let pluginId = "com.test.resolve.configget.\(UUID().uuidString)"
-        let agent = UUID()
-        defer {
-            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: agent)
-            ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: Agent.defaultId)
+        try ToolSecretsKeychain._withInMemoryStoreForTesting {
+            let pluginId = "com.test.resolve.configget.\(UUID().uuidString)"
+            let agent = UUID()
+            defer {
+                ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: agent)
+                ToolSecretsKeychain.deleteAllSecrets(for: pluginId, agentId: Agent.defaultId)
+            }
+
+            ToolSecretsKeychain.saveSecret("tok-global", id: "bot_token", for: pluginId, agentId: Agent.defaultId)
+            ToolSecretsKeychain.saveSecret("mine", id: "other_key", for: pluginId, agentId: agent)
+
+            let ctx = try PluginHostContext(pluginId: pluginId)
+            defer { ctx.teardown() }
+
+            let (fallback, exact): (String?, String?) = PluginHostContext.withTLSScope(
+                pluginId: pluginId, agentId: agent
+            ) {
+                (ctx.configGet(key: "bot_token"), ctx.configGet(key: "other_key"))
+            }
+            #expect(fallback == "tok-global", "config_get must fall back to the default-agent namespace")
+            #expect(exact == "mine", "exact-agent values keep winning")
+
+            // Anonymous context (no bound agent) still refuses to read anything.
+            let anonymous = ctx.configGet(key: "bot_token")
+            #expect(anonymous == nil, "no agent context must not leak the default namespace")
         }
-
-        ToolSecretsKeychain.saveSecret("tok-global", id: "bot_token", for: pluginId, agentId: Agent.defaultId)
-        ToolSecretsKeychain.saveSecret("mine", id: "other_key", for: pluginId, agentId: agent)
-
-        let ctx = try PluginHostContext(pluginId: pluginId)
-        defer { ctx.teardown() }
-
-        let (fallback, exact): (String?, String?) = PluginHostContext.withTLSScope(
-            pluginId: pluginId, agentId: agent
-        ) {
-            (ctx.configGet(key: "bot_token"), ctx.configGet(key: "other_key"))
-        }
-        #expect(fallback == "tok-global", "config_get must fall back to the default-agent namespace")
-        #expect(exact == "mine", "exact-agent values keep winning")
-
-        // Anonymous context (no bound agent) still refuses to read anything.
-        let anonymous = ctx.configGet(key: "bot_token")
-        #expect(anonymous == nil, "no agent context must not leak the default namespace")
     }
 }

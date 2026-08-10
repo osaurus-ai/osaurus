@@ -297,32 +297,34 @@ struct AgentManagerLifecycleNotificationTests {
 
     @Test
     func deleteSweepsPerAgentKeychainSecrets() async throws {
-        try await ChatHistoryTestStorage.run {
-            let agent = self.makeCustomAgent(name: "SecretSweep")
-            AgentManager.shared.add(agent)
+        try await ToolSecretsKeychain._withInMemoryStoreForTesting {
+            try await ChatHistoryTestStorage.run {
+                let agent = self.makeCustomAgent(name: "SecretSweep")
+                AgentManager.shared.add(agent)
 
-            let pluginA = "com.test.sweep.\(UUID().uuidString)"
-            let pluginB = "com.test.sweep.\(UUID().uuidString)"
+                let pluginA = "com.test.sweep.\(UUID().uuidString)"
+                let pluginB = "com.test.sweep.\(UUID().uuidString)"
 
-            // Two secrets under the doomed agent + one under a
-            // bystander agent. The bystander entry must survive.
-            let bystander = UUID()
-            ToolSecretsKeychain.saveSecret("tokenA", id: "k1", for: pluginA, agentId: agent.id)
-            ToolSecretsKeychain.saveSecret("tokenB", id: "k2", for: pluginB, agentId: agent.id)
-            ToolSecretsKeychain.saveSecret("survive", id: "k1", for: pluginA, agentId: bystander)
+                // Two secrets under the doomed agent + one under a
+                // bystander agent. The bystander entry must survive.
+                let bystander = UUID()
+                ToolSecretsKeychain.saveSecret("tokenA", id: "k1", for: pluginA, agentId: agent.id)
+                ToolSecretsKeychain.saveSecret("tokenB", id: "k2", for: pluginB, agentId: agent.id)
+                ToolSecretsKeychain.saveSecret("survive", id: "k1", for: pluginA, agentId: bystander)
 
-            defer {
-                ToolSecretsKeychain.deleteAllSecrets(forAgent: bystander)
+                defer {
+                    ToolSecretsKeychain.deleteAllSecrets(forAgent: bystander)
+                }
+
+                _ = await AgentManager.shared.delete(id: agent.id)
+
+                #expect(ToolSecretsKeychain.getSecret(id: "k1", for: pluginA, agentId: agent.id) == nil)
+                #expect(ToolSecretsKeychain.getSecret(id: "k2", for: pluginB, agentId: agent.id) == nil)
+                #expect(
+                    ToolSecretsKeychain.getSecret(id: "k1", for: pluginA, agentId: bystander) == "survive",
+                    "bystander agent's secrets must NOT be swept"
+                )
             }
-
-            _ = await AgentManager.shared.delete(id: agent.id)
-
-            #expect(ToolSecretsKeychain.getSecret(id: "k1", for: pluginA, agentId: agent.id) == nil)
-            #expect(ToolSecretsKeychain.getSecret(id: "k2", for: pluginB, agentId: agent.id) == nil)
-            #expect(
-                ToolSecretsKeychain.getSecret(id: "k1", for: pluginA, agentId: bystander) == "survive",
-                "bystander agent's secrets must NOT be swept"
-            )
         }
     }
 
