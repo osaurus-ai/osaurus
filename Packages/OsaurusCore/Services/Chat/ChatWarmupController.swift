@@ -100,6 +100,13 @@ final class ChatWarmupController: ObservableObject {
         await ModelRuntime.shared.hasResidentModelOther(than: model)
     }
 
+    /// Warm-up policy lookup (test seam; production reads the live chat
+    /// configuration). Tests that exercise warm-up mechanics pin this value so
+    /// concurrent settings tests cannot change the behavior under assertion.
+    var warmModelsOnLoad: @MainActor () -> Bool = {
+        ChatConfigurationStore.load().warmModelsOnLoad
+    }
+
     /// Typed runtime snapshots make activation and notification delivery use
     /// the same monotonic residency timeline. Tests replace these seams to
     /// hold the exact focus/idle-unload race without wall-clock sleeps.
@@ -354,7 +361,7 @@ final class ChatWarmupController: ObservableObject {
             model: session.selectedModel,
             selectedModelIsLocal: session.selectedModelIsLocal,
             isRemoteAgentTarget: session.isRemoteAgentTarget,
-            warmModelsOnLoad: ChatConfigurationStore.load().warmModelsOnLoad,
+            warmModelsOnLoad: warmModelsOnLoad(),
             state: state,
             selectedModelResident: selectedModelResident
         ), let model = session.selectedModel else { return }
@@ -562,7 +569,7 @@ final class ChatWarmupController: ObservableObject {
         activationID: UUID? = nil
     ) {
         guard shouldAttemptWarmup(session: session) else {
-            if !ChatConfigurationStore.load().warmModelsOnLoad {
+            if !warmModelsOnLoad() {
                 state = .cold
             } else if session.isImageGenerationModel(session.selectedModel) {
                 // Image models never take a KV warm-up. Clear the provisional
@@ -881,7 +888,7 @@ final class ChatWarmupController: ObservableObject {
 
     private func shouldAttemptWarmup(session: ChatWarmupSessionContext) -> Bool {
         guard !isShutDown else { return false }
-        guard ChatConfigurationStore.load().warmModelsOnLoad else { return false }
+        guard warmModelsOnLoad() else { return false }
         // Never load the new model while a switch is still settling — the
         // switch task itself schedules the warm-up once eviction completes,
         // and loading early would race the old model's teardown.
