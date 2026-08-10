@@ -1039,6 +1039,36 @@ struct MLXBatchAdapter {
             return context
         }
 
+        // Muse Glimmer reads `reasoning_strength`, not `reasoning_effort`, and
+        // has no thinking tags at all — so `enable_thinking` has nothing to
+        // switch and `reasoning_effort` is never looked at. Sending either one
+        // leaves the template on its own `high` default, which is why the
+        // reasoning card appeared to do nothing: every turn reasoned at high
+        // regardless of the setting.
+        //
+        // The model's level set is low / medium / high / **xhigh** — four, not
+        // three — and `xhigh` is the one intended for coding and agentic work.
+        // "Off" maps to `low` rather than dropping the line, because there is
+        // no way to disable reasoning on this family; omitting it would silently
+        // restore `high`, i.e. the opposite of what the user asked for.
+        if ModelFamilyNames.isMuseGlimmerFamily(modelName) {
+            let strength: String
+            if disableThinking == true {
+                strength = "low"
+            } else {
+                switch normalizedReasoningEffort?.lowercased() {
+                case "none", "off", "minimal", "no_think", "low": strength = "low"
+                case "medium": strength = "medium"
+                case "xhigh", "max", "highest": strength = "xhigh"
+                case "high": strength = "high"
+                case .some(let other) where !other.isEmpty: strength = other
+                default: strength = "high"
+                }
+            }
+            context["reasoning_strength"] = strength
+            return context
+        }
+
         if let disableThinking {
             context["enable_thinking"] = !disableThinking
             if !disableThinking, let normalizedReasoningEffort {

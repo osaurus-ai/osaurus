@@ -209,6 +209,7 @@ enum ModelProfileRegistry {
         LingRuntimeProfile.self,
         ZayaThinkingProfile.self,
         Gemma4RuntimeProfile.self,
+        MuseGlimmerReasoningProfile.self,
         Gemini31FlashImageProfile.self,
         GeminiProImageProfile.self,
         GeminiFlashImageProfile.self,
@@ -402,6 +403,39 @@ struct DSV4ReasoningProfile: ModelProfile {
             return nil
         }
     }
+}
+
+/// Muse Glimmer: reasoning is a system-prompt sentence
+/// (`Reasoning strength: <value>`), not a thinking toggle, and the model's
+/// level set is four — low / medium / high / xhigh — with `xhigh` the tier
+/// intended for coding and agentic work. There is no "off": the template
+/// always renders a strength line, so the lowest the UI can honestly offer
+/// is `low`. Default mirrors the template's own fallback (`high`) so the
+/// chip shows what actually happens when the user has chosen nothing.
+struct MuseGlimmerReasoningProfile: ModelProfile {
+    static let displayName = "Muse Glimmer Reasoning"
+
+    static func matches(modelId: String) -> Bool {
+        ModelFamilyNames.isMuseGlimmerFamily(modelId)
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "reasoningEffort",
+            label: L("Reasoning Strength"),
+            icon: "brain.head.profile",
+            kind: .segmented([
+                ModelOptionSegment(id: "low", label: L("Low")),
+                ModelOptionSegment(id: "medium", label: L("Medium")),
+                ModelOptionSegment(id: "high", label: L("High")),
+                ModelOptionSegment(id: "xhigh", label: L("Extra High")),
+            ])
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "reasoningEffort": .string("high")
+    ]
 }
 
 // MARK: - OpenAI Reasoning Profiles
