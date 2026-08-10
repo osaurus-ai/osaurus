@@ -195,7 +195,7 @@ final class ChunkedFileDownloader: @unchecked Sendable {
             completed: []
         )
         var manifest = Self.loadManifest(at: manifestURL, matching: fresh) ?? fresh
-        if manifest.completed.isEmpty { try Self.preallocate(partURL, size: total) }
+        if manifest.completed.isEmpty { try await Self.preallocate(partURL, size: total) }
 
         var done = Set(manifest.completed)
         // A `.part` that vanished (cache sweep, user deletion) invalidates the
@@ -203,7 +203,7 @@ final class ChunkedFileDownloader: @unchecked Sendable {
         if !fm.fileExists(atPath: partURL.path) {
             done.removeAll()
             manifest.completed = []
-            try Self.preallocate(partURL, size: total)
+            try await Self.preallocate(partURL, size: total)
         }
 
         let resumedBytes = lock.withLock { () -> Int64 in
@@ -390,7 +390,12 @@ final class ChunkedFileDownloader: @unchecked Sendable {
         // The pre-existing completion check only compares byte counts, which a
         // truncated-then-padded or revision-spliced file can satisfy.
         if let expectedSHA256 {
-            let digest = try hashFile(at: partURL)
+            // Detached: hashing a multi-gigabyte file is seconds of blocking
+            // file I/O, which must not tie up the caller's (possibly main)
+            // executor. Same pattern as `SandboxManager.verifySHA256Async`.
+            let digest = try await Task.detached(priority: .userInitiated) {
+                try hashFile(at: partURL)
+            }.value
             guard digest == expectedSHA256 else {
                 try? fm.removeItem(at: partURL)
                 try? fm.removeItem(at: manifestURL)
@@ -421,14 +426,19 @@ final class ChunkedFileDownloader: @unchecked Sendable {
 
     // MARK: - Part file + manifest
 
-    private static func preallocate(_ url: URL, size: Int64) throws {
-        let fm = FileManager.default
-        if !fm.fileExists(atPath: url.path) {
-            fm.createFile(atPath: url.path, contents: nil)
-        }
-        let handle = try FileHandle(forWritingTo: url)
-        defer { try? handle.close() }
-        try handle.truncate(atOffset: UInt64(size))
+    /// Detached for the same reason as the checksum: truncating a file out to
+    /// multiple gigabytes is blocking disk I/O that must not run on the
+    /// caller's (possibly main) executor.
+    private static func preallocate(_ url: URL, size: Int64) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            let fm = FileManager.default
+            if !fm.fileExists(atPath: url.path) {
+                fm.createFile(atPath: url.path, contents: nil)
+            }
+            let handle = try FileHandle(forWritingTo: url)
+            defer { try? handle.close() }
+            try handle.truncate(atOffset: UInt64(size))
+        }.value
     }
 
     private static func bytesFor(_ done: Set<Int>, total: Int64) -> Int64 {
