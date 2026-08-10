@@ -861,6 +861,21 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
             ? compactSkillReferenceBudget : skillReferenceBudget
     }
 
+    /// Character budget for the schemas a group load appends to its tool
+    /// result (~1.5k tokens). `enabledManifestToolCap` bounds how MANY tools a
+    /// group may load, but a group well under that count can still carry
+    /// enormous schemas — a 9-tool plugin whose skill document already spends
+    /// ~2.2k tokens leaves the continuation almost nothing to generate into,
+    /// and the model answers with empty turn after empty turn until the agent
+    /// loop gives up ("returned empty output after tool execution").
+    ///
+    /// Past the budget the schemas degrade a tier at a time rather than
+    /// truncating mid-JSON: full → compact skeleton → names and one-line
+    /// descriptions. Every tier keeps the tools callable, because registry
+    /// dispatch is by name and the model can pull any single tool's full
+    /// schema back with `capabilities_load`.
+    static let loadedSchemaBudget = 6_000
+
     /// Built-in skills are not plugin-backed, so they have no dynamic tool
     /// group for `loadSkill` to cascade automatically. Keep their concrete
     /// tool dependencies explicit here instead of parsing tool names out of
@@ -1239,12 +1254,13 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     /// kept, prose dropped) so the suffix stays as lean as its turn-1 baseline.
     /// Every other agent gets the full schema so dynamically loaded
     /// plugin/MCP/sandbox tools call correctly on the first attempt.
-    static func loadedSchemaBlock(for spec: Tool) -> String {
+    static func loadedSchemaBlock(for spec: Tool, forceCompact: Bool = false) -> String {
         // `compactLoadedResults` (eval-only, nil in production) extends the
         // default agent's skeleton-schema behavior to every agent so the
         // harness can price compacted load results.
         let compact =
-            ChatExecutionContext.currentAgentId == Agent.defaultId
+            forceCompact
+            || ChatExecutionContext.currentAgentId == Agent.defaultId
             || PromptComposerExperimentScope.current?.compactLoadedResults == true
         let rendered = compact ? SystemPromptComposer.compactBootstrapSpec(spec) : spec
         let dict = rendered.toTokenizerToolSpec()
@@ -1253,6 +1269,45 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
             let json = String(data: data, encoding: .utf8)
         else { return "" }
         return "Schema for `\(spec.function.name)`:\n\(json)\n"
+    }
+
+    /// Render the schemas for a whole group load under `loadedSchemaBudget`.
+    ///
+    /// Degrades by tier, never by truncation — a schema cut mid-JSON is worse
+    /// than no schema, because the model tries to call the fragment. Tiers are
+    /// all-or-nothing so the result does not depend on registry iteration
+    /// order: whichever tier fits, every tool in the group is rendered the
+    /// same way.
+    static func loadedSchemaBlocks(for specs: [Tool]) -> String {
+        guard !specs.isEmpty else { return "" }
+
+        let full = specs.map { loadedSchemaBlock(for: $0) }.joined()
+        if full.count <= loadedSchemaBudget { return full }
+
+        let compact = specs.map { loadedSchemaBlock(for: $0, forceCompact: true) }.joined()
+        if compact.count <= loadedSchemaBudget {
+            return compact
+                + "Schemas above are abbreviated (parameter names and types, prose dropped). "
+                + "Call `capabilities_load` with a single tool id for its full schema.\n"
+        }
+
+        // Even the skeletons overflow: name + one line each is enough for the
+        // model to pick a tool, and it can pull the full schema on demand.
+        var lines = ""
+        for spec in specs {
+            let summary = spec.function.description.map { desc -> String in
+                let firstLine = desc.split(
+                    whereSeparator: \.isNewline
+                ).first.map(String.init) ?? desc
+                return firstLine.count > 160
+                    ? String(firstLine.prefix(160)) + "…" : firstLine
+            }
+            lines += "- `\(spec.function.name)`\(summary.map { ": \($0)" } ?? "")\n"
+        }
+        return "Loaded tools (schemas omitted — this group's schemas exceed the result budget):\n"
+            + lines
+            + "Call `capabilities_load` with a single tool id to get that tool's full schema "
+            + "before calling it.\n"
     }
 
     /// True when the current session's tool state already carries this
@@ -1306,11 +1361,11 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         var output = ""
         if !loadedNames.isEmpty {
             output += "Auto-loaded tools (callable NOW by name): \(loadedNames.joined(separator: ", "))\n"
-            // Append each tool's schema so the model can call them this same
-            // turn without a mid-run `<tools>` rewrite (KV-prefix stability).
-            for spec in loadedSpecs {
-                output += Self.loadedSchemaBlock(for: spec)
-            }
+            // Append the group's schemas so the model can call them this same
+            // turn without a mid-run `<tools>` rewrite (KV-prefix stability),
+            // bounded so a large plugin group cannot crowd out the
+            // continuation's own output budget.
+            output += Self.loadedSchemaBlocks(for: loadedSpecs)
         }
         if !skippedLines.isEmpty {
             output += skippedLines.joined(separator: "\n") + "\n"
