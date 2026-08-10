@@ -11,12 +11,20 @@ import LocalAuthentication
 import Security
 
 public struct MasterKey: Sendable {
-    static let service: String = {
-        guard let namespace = KeychainQueryHelpers.realKeychainTestNamespace else {
+    /// Test-host recognition can become observable after early process
+    /// initialization, so this must not cache a production service name before
+    /// the proof lane's namespace is available. Production still resolves the
+    /// same constant service whenever no validated proof namespace exists.
+    static var service: String {
+        serviceName(realKeychainTestNamespace: KeychainQueryHelpers.realKeychainTestNamespace)
+    }
+
+    static func serviceName(realKeychainTestNamespace namespace: String?) -> String {
+        guard let namespace else {
             return "com.osaurus.account"
         }
         return "com.osaurus.tests.master-key.\(namespace)"
-    }()
+    }
     static let account = "master-key"
 
     // MARK: - Generate

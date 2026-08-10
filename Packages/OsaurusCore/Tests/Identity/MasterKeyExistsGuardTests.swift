@@ -25,6 +25,22 @@ import Testing
 
 @testable import OsaurusCore
 
+@Suite("MasterKey service isolation")
+struct MasterKeyServiceIsolationTests {
+    @Test
+    func proofNamespaceNeverUsesProductionService() {
+        #expect(
+            MasterKey.serviceName(realKeychainTestNamespace: nil)
+                == "com.osaurus.account"
+        )
+        #expect(
+            MasterKey.serviceName(
+                realKeychainTestNamespace: "01234567-89ab-cdef-0123-456789abcdef"
+            ) == "com.osaurus.tests.master-key.01234567-89ab-cdef-0123-456789abcdef"
+        )
+    }
+}
+
 // `.serialized` is required because every test in this suite mutates the same
 // per-run Master Key slot in Keychain. Without it Swift Testing runs the four
 // tests in parallel, races on that slot, and tests fail
