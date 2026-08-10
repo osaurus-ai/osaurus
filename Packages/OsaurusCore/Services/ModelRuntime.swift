@@ -4419,6 +4419,20 @@ public actor ModelRuntime {
         freeFraction: Double = 0.25,
         minUsefulGB: Double = 1.0
     ) {
+        // A non-positive cap is savable through the settings UI and the admin
+        // API (Save is not gated on validation errors). Zero reaches
+        // `DiskCache(maxSizeGB: 0)`, whose quota pass then evicts EVERY entry
+        // at insert — the disk tier reports stores and hits nothing, with no
+        // eviction trace. Normalize here, on the engine-effective path, so
+        // both entry points are covered; the guard below must not run before
+        // this or a 0 cap on an unknown-free-space volume slips through.
+        let rawConfiguredCapGB = Double(config.diskCacheMaxGB)
+        if rawConfiguredCapGB <= 0 {
+            genLog.error(
+                "buildCacheCoordinatorConfig: configured disk-L2 cap \(String(format: "%.1f", rawConfiguredCapGB), privacy: .public) GB is non-positive — a zero cap self-evicts every entry at insert; using engine default 10 GB"
+            )
+            config.diskCacheMaxGB = 10.0
+        }
         guard config.enableDiskCache, let diskCacheDir,
             let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: diskCacheDir.path),
             freeBytes > 0
