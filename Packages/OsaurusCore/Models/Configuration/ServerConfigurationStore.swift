@@ -95,7 +95,13 @@ enum ServerConfigurationStore {
             return false
         }
 
-        configuration.modelIdleResidencyPolicy = .defaultWarm
+        // Legacy `.immediately` users predate the warm-residency default;
+        // migrate them to the same RAM-tier default a fresh install would
+        // get (2 min on ≤ 16 GiB, 15 min mid-range, 60 min on ≥ 128 GiB)
+        // rather than a flat `.defaultWarm`, so low-memory machines aren't
+        // moved onto a 15-minute warm window they can't afford.
+        configuration.modelIdleResidencyPolicy = ModelIdleResidencyPolicy.tierDefault(
+            physicalMemoryBytes: ChipProfile.current.physicalMemoryBytes)
         OsaurusPaths.ensureExistsSilent(markerURL.deletingLastPathComponent())
         try? Data().write(to: markerURL, options: [.atomic])
         return true

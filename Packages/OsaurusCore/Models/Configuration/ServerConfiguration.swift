@@ -247,7 +247,8 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             allowedOrigins: [],
             globalProxyURL: nil,
             modelEvictionPolicy: .strictSingleModel,
-            modelIdleResidencyPolicy: .defaultWarm,
+            modelIdleResidencyPolicy: .tierDefault(
+                physicalMemoryBytes: ChipProfile.current.physicalMemoryBytes),
             modelLoadRAMSoftThreshold: Self.defaultModelLoadRAMSoftThreshold,
             modelLoadRAMHardThreshold: Self.defaultModelLoadRAMHardThreshold,
             maxRequestBodyBytes: 32 * 1024 * 1024,
@@ -331,8 +332,39 @@ public enum ModelIdleResidencyPolicy: Codable, Equatable, Hashable, Sendable {
     /// low-memory setting.
     public static let defaultWarm: ModelIdleResidencyPolicy = .afterSeconds(900)
 
-    /// Settings picker presets.
+    /// RAM-tier-aware default, used when the user has not chosen a policy.
+    /// The flat 15-minute default is the wrong trade at both ends of the
+    /// hardware range:
+    ///
+    ///   - ≤ 16 GiB: idle weights are the main driver of memory pressure on
+    ///     these machines (see `InferenceLoadCoordinator`'s jetsam notes);
+    ///     2 minutes still covers rapid follow-up turns while releasing RAM
+    ///     well before the system starts compressing/swapping.
+    ///   - ≥ 128 GiB: reload cost dominates (tens of seconds for the model
+    ///     sizes these machines are bought for) and idle RAM is abundant, so
+    ///     the window stretches to an hour. Deliberately NOT `.never` as a
+    ///     default: an implicit hold-forever would sidestep the
+    ///     memory-pressure relief that eventual idle unload provides (review
+    ///     feedback on #1902) — a default must guarantee weights leave on
+    ///     their own without user action. `.never` remains available as an
+    ///     explicit Settings choice.
+    ///
+    /// An explicit user selection always takes precedence — this only decides
+    /// the starting value (`ServerConfiguration.default` and the decode
+    /// fallback for configs saved before the key existed).
+    public static func tierDefault(physicalMemoryBytes: UInt64) -> ModelIdleResidencyPolicy {
+        let gib = UInt64(1) << 30
+        if physicalMemoryBytes <= 16 * gib { return .afterSeconds(120) }
+        if physicalMemoryBytes >= 128 * gib { return .afterSeconds(3_600) }
+        return .defaultWarm
+    }
+
+    /// Settings picker presets. Every value `tierDefault(physicalMemoryBytes:)`
+    /// can return must appear here, otherwise the Settings picker has no
+    /// matching tag on exactly the machines that tier targets (120 s is the
+    /// ≤ 16 GiB default).
     public static let presets: [ModelIdleResidencyPolicy] = [
+        .afterSeconds(120),
         .afterSeconds(300),
         .defaultWarm,
         .afterSeconds(1_800),
@@ -345,6 +377,8 @@ public enum ModelIdleResidencyPolicy: Codable, Equatable, Hashable, Sendable {
         switch self {
         case .immediately:
             return L("Immediately")
+        case .afterSeconds(120):
+            return L("2 minutes")
         case .afterSeconds(300):
             return L("5 minutes")
         case .afterSeconds(900):
