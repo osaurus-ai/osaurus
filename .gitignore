@@ -183,3 +183,4 @@ tmp/
 # wa-helper`, but a bare `go build ./...` drops the binary next to its
 # sources).
 helpers/osaurus-wa/osaurus-wa
+.dd-*/
