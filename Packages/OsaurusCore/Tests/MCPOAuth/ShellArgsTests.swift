@@ -335,7 +335,8 @@ final class MCPStdioTransportErrorTests: XCTestCase {
         private func runProcess(
             executable: String,
             arguments: [String],
-            environment: [String: String]
+            environment: [String: String],
+            workingDirectory: URL? = nil
         ) throws -> (status: Int32, stdout: String, stderr: String) {
             let process = Process()
             let stdout = Pipe()
@@ -343,6 +344,7 @@ final class MCPStdioTransportErrorTests: XCTestCase {
             process.executableURL = URL(fileURLWithPath: executable)
             process.arguments = arguments
             process.environment = environment
+            process.currentDirectoryURL = workingDirectory
             process.standardOutput = stdout
             process.standardError = stderr
             try process.run()
@@ -384,16 +386,150 @@ final class MCPStdioTransportErrorTests: XCTestCase {
 
         func testHostResolverExpandsUserPaths() throws {
             let home = FileManager.default.homeDirectoryForCurrentUser.path
+            let environment = ["HOME": home]
 
             XCTAssertEqual(
-                MCPStdioHostRunner.expandUserPathForTesting("~/bin/mcp-server"),
+                MCPStdioHostRunner.expandUserPathForTesting(
+                    "~/bin/mcp-server",
+                    env: environment
+                ),
                 "\(home)/bin/mcp-server"
             )
-            XCTAssertEqual(MCPStdioHostRunner.expandUserPathForTesting("~"), home)
             XCTAssertEqual(
-                MCPStdioHostRunner.expandUserPathForTesting("/usr/local/bin/mcp-server"),
+                MCPStdioHostRunner.expandUserPathForTesting("~", env: environment),
+                home
+            )
+            XCTAssertEqual(
+                MCPStdioHostRunner.expandUserPathForTesting(
+                    "/usr/local/bin/mcp-server",
+                    env: environment
+                ),
                 "/usr/local/bin/mcp-server"
             )
+        }
+
+        func testIsolatedLaunchUsesChildHomeForTildeCommandAndWorkingDirectory() throws {
+            let isolatedRoot = try makePrivateTestRoot()
+            defer { try? FileManager.default.removeItem(at: isolatedRoot) }
+            let bin = isolatedRoot.appendingPathComponent("bin", isDirectory: true)
+            try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: false)
+            let executable = bin.appendingPathComponent("tilde-mcp")
+            try "#!/bin/sh\nprintf '%s\\n%s\\n%s' \"$0\" \"$PWD\" \"$HOME\"\n".write(
+                to: executable,
+                atomically: true,
+                encoding: .utf8
+            )
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755],
+                ofItemAtPath: executable.path
+            )
+            let environment = MCPStdioHostRunner.buildEnvironmentForTesting(
+                parentEnvironment: [
+                    "PATH": "/usr/bin:/bin",
+                    "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
+                    ProcessDataRootPolicy.testRootEnvironmentKey: isolatedRoot.path,
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+                ],
+                providerEnvironment: [:],
+                parentRecognizedTestHost: false
+            )
+
+            let resolvedExecutable = try MCPStdioHostRunner.resolveExecutablePathForTesting(
+                command: "~/bin/tilde-mcp",
+                env: environment
+            )
+            let resolvedWorkingDirectory = MCPStdioHostRunner.expandUserPathForTesting(
+                "~",
+                env: environment
+            )
+            let result = try runProcess(
+                executable: resolvedExecutable,
+                arguments: [],
+                environment: environment,
+                workingDirectory: URL(fileURLWithPath: resolvedWorkingDirectory)
+            )
+
+            XCTAssertEqual(result.status, 0, result.stderr)
+            let outputLines = result.stdout.split(separator: "\n").map(String.init)
+            XCTAssertEqual(outputLines.count, 3)
+            XCTAssertEqual(outputLines[0], executable.path)
+            XCTAssertEqual(
+                URL(fileURLWithPath: outputLines[1]).resolvingSymlinksInPath().path,
+                isolatedRoot.resolvingSymlinksInPath().path
+            )
+            XCTAssertEqual(outputLines[2], isolatedRoot.path)
+        }
+
+        func testIsolatedSearchPathRejectsParentHomeAndSymlinkedHomeExecutables() throws {
+            let parentHome = try makePrivateTestRoot()
+            let isolatedRoot = try makePrivateTestRoot()
+            let linkedParentBin = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-mcp-linked-home-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            defer {
+                try? FileManager.default.removeItem(at: linkedParentBin)
+                try? FileManager.default.removeItem(at: isolatedRoot)
+                try? FileManager.default.removeItem(at: parentHome)
+            }
+            let parentBin = parentHome.appendingPathComponent("bin", isDirectory: true)
+            let isolatedBin = isolatedRoot.appendingPathComponent("bin", isDirectory: true)
+            try FileManager.default.createDirectory(at: parentBin, withIntermediateDirectories: false)
+            try FileManager.default.createDirectory(at: isolatedBin, withIntermediateDirectories: false)
+            try FileManager.default.createSymbolicLink(
+                at: linkedParentBin,
+                withDestinationURL: parentBin
+            )
+            for (url, marker) in [
+                (parentBin.appendingPathComponent("fake-mcp"), "parent"),
+                (isolatedBin.appendingPathComponent("fake-mcp"), "isolated"),
+            ] {
+                try "#!/bin/sh\nprintf '%s' '\(marker)'\n".write(
+                    to: url,
+                    atomically: true,
+                    encoding: .utf8
+                )
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o755],
+                    ofItemAtPath: url.path
+                )
+            }
+
+            let environment = MCPStdioHostRunner.buildEnvironmentForTesting(
+                parentEnvironment: [
+                    "PATH": "/usr/bin:/bin",
+                    "HOME": parentHome.path,
+                    ProcessDataRootPolicy.testRootEnvironmentKey: isolatedRoot.path,
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+                ],
+                providerEnvironment: [
+                    "PATH": [
+                        parentBin.path,
+                        linkedParentBin.path,
+                        ".",
+                        isolatedBin.path,
+                        "/usr/bin",
+                        "/bin",
+                    ].joined(separator: ":"),
+                ],
+                parentRecognizedTestHost: false
+            )
+            let resolved = try MCPStdioHostRunner.resolveExecutablePathForTesting(
+                command: "fake-mcp",
+                env: environment
+            )
+            let result = try runProcess(
+                executable: resolved,
+                arguments: [],
+                environment: environment
+            )
+
+            XCTAssertFalse(environment["PATH", default: ""].contains(parentHome.path))
+            XCTAssertFalse(environment["PATH", default: ""].contains(linkedParentBin.path))
+            XCTAssertFalse(environment["PATH", default: ""].split(separator: ":").contains("."))
+            XCTAssertEqual(resolved, isolatedBin.appendingPathComponent("fake-mcp").path)
+            XCTAssertEqual(result.status, 0, result.stderr)
+            XCTAssertEqual(result.stdout, "isolated")
         }
     }
 #endif

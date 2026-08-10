@@ -75,7 +75,7 @@
 
             let mergedEnv = Self.buildEnv(provider: provider)
             let executablePath = try Self.resolveExecutablePath(
-                command: Self.expandUserPath(provider.command),
+                command: Self.expandUserPath(provider.command, env: mergedEnv),
                 env: mergedEnv
             )
 
@@ -91,7 +91,7 @@
             process.standardError = stderrPipe
             if let cwd = provider.workingDirectory, !cwd.isEmpty {
                 process.currentDirectoryURL = URL(
-                    fileURLWithPath: Self.expandUserPath(cwd),
+                    fileURLWithPath: Self.expandUserPath(cwd, env: mergedEnv),
                     isDirectory: true
                 )
             }
@@ -161,8 +161,55 @@
                 // this prevents accidental `~` expansion into persistent user
                 // state during tests, rather than claiming filesystem sandboxing.
                 childEnvironment["HOME"] = isolatedRoot
+                childEnvironment["PATH"] = isolatedSearchPath(
+                    childEnvironment["PATH"],
+                    parentEnvironment: parentEnvironment
+                )
             }
             return childEnvironment
+        }
+
+        /// An isolated child must not discover account-home executables through
+        /// an inherited or provider-overlaid PATH. Relative entries are also
+        /// excluded because their target depends on the configured working
+        /// directory. This is accidental test-state isolation, not containment
+        /// against a hostile process running as the same user.
+        private static func isolatedSearchPath(
+            _ path: String?,
+            parentEnvironment: [String: String]
+        ) -> String {
+            let restrictedRoots = [
+                parentEnvironment["HOME"],
+                FileManager.default.homeDirectoryForCurrentUser.path,
+            ]
+            .compactMap { $0 }
+            .flatMap(pathRepresentations)
+
+            let entries = (path ?? "")
+                .split(separator: ":", omittingEmptySubsequences: true)
+                .map(String.init)
+                .filter { entry in
+                    guard entry.hasPrefix("/") else { return false }
+                    let representations = pathRepresentations(entry)
+                    return !representations.contains { candidate in
+                        restrictedRoots.contains { root in
+                            candidate == root || candidate.hasPrefix(root + "/")
+                        }
+                    }
+                }
+
+            if entries.isEmpty {
+                return "/usr/bin:/bin:/usr/sbin:/sbin"
+            }
+            return entries.joined(separator: ":")
+        }
+
+        private static func pathRepresentations(_ path: String) -> [String] {
+            guard path.hasPrefix("/") else { return [] }
+            let url = URL(fileURLWithPath: path, isDirectory: true)
+            let lexical = url.standardizedFileURL.path
+            let resolved = url.resolvingSymlinksInPath().standardizedFileURL.path
+            return lexical == resolved ? [lexical] : [lexical, resolved]
         }
 
         /// Resolve `command` to an absolute path the kernel can exec.
@@ -200,13 +247,15 @@
                 .split(separator: ":", omittingEmptySubsequences: true)
                 .map(String.init)
                 ?? []
-            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            let home = effectiveHomeDirectory(env: env)
             for fallback in [
                 "/opt/homebrew/bin",
                 "/usr/local/bin",
                 "/opt/local/bin",
-                "\(home)/.local/bin",
-                "\(home)/bin",
+                URL(fileURLWithPath: home, isDirectory: true)
+                    .appendingPathComponent(".local/bin", isDirectory: true).path,
+                URL(fileURLWithPath: home, isDirectory: true)
+                    .appendingPathComponent("bin", isDirectory: true).path,
                 "/usr/bin",
                 "/bin",
                 "/usr/sbin",
@@ -217,28 +266,40 @@
             return entries.joined(separator: ":")
         }
 
-        private static func expandUserPath(_ path: String) -> String {
+        private static func effectiveHomeDirectory(env: [String: String]) -> String {
+            if let home = env["HOME"], !home.isEmpty, home.hasPrefix("/") {
+                return URL(fileURLWithPath: home, isDirectory: true).standardizedFileURL.path
+            }
+            return FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
+        }
+
+        private static func expandUserPath(_ path: String, env: [String: String]) -> String {
             guard path == "~" || path.hasPrefix("~/") else { return path }
-            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            let home = effectiveHomeDirectory(env: env)
             if path == "~" {
                 return home
             }
-            return home + String(path.dropFirst())
+            return URL(fileURLWithPath: home, isDirectory: true)
+                .appendingPathComponent(String(path.dropFirst(2)))
+                .standardizedFileURL.path
         }
 
         static func executableSearchPathForTesting(env: [String: String]) -> String {
             executableSearchPath(env: env)
         }
 
-        static func expandUserPathForTesting(_ path: String) -> String {
-            expandUserPath(path)
+        static func expandUserPathForTesting(
+            _ path: String,
+            env: [String: String]
+        ) -> String {
+            expandUserPath(path, env: env)
         }
 
         static func resolveExecutablePathForTesting(
             command: String,
             env: [String: String]
         ) throws -> String {
-            try resolveExecutablePath(command: expandUserPath(command), env: env)
+            try resolveExecutablePath(command: expandUserPath(command, env: env), env: env)
         }
 
         /// Set once a global spawn slot is held so `stop()` releases exactly
