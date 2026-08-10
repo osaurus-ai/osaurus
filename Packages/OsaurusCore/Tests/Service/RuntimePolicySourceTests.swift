@@ -2414,7 +2414,7 @@ struct RuntimePolicySourceTests {
         #expect(appDelegate.contains("private var keychainDisabledTestMode"))
         #expect(appDelegate.contains("private var keychainDisabledUIPresentationMode"))
         #expect(appDelegate.contains("OSAURUS_KEYCHAIN_FREE_SHOW_UI"))
-        #expect(appDelegate.contains("Keychain disabled by OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1"))
+        #expect(appDelegate.contains("Keychain disabled for isolated test process"))
         #expect(appDelegate.contains("if keychainDisabledTestMode {"))
         // The provider connects stay behind the keychain-disabled gate and
         // run concurrently (one slow MCP server must not delay every model
