@@ -402,6 +402,32 @@ final class ProcessDataRootPolicyTests: XCTestCase {
         XCTAssertEqual(permissions.intValue & 0o077, 0)
     }
 
+    func testConcurrentMissingProgrammaticOverrideConvergesOnCreatedRoot() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-concurrent-programmatic-root-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let collector = URLCollector()
+
+        DispatchQueue.concurrentPerform(iterations: 64) { _ in
+            let resolved = ProcessDataRootPolicy.resolvedRootForTesting(
+                overrideRoot: root,
+                defaultRoot: URL(
+                    fileURLWithPath: "/Users/example/.osaurus",
+                    isDirectory: true
+                ),
+                environment: [:],
+                recognizedTestHost: true
+            )
+            collector.append(resolved)
+        }
+
+        let roots = collector.allValues
+        XCTAssertEqual(roots.count, 64)
+        XCTAssertEqual(Set(roots.map(\.standardizedFileURL)), Set([root.standardizedFileURL]))
+    }
+
     func testMissingProgrammaticOverrideIsNotCreatedWithoutRecognizedTestHost() {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "osaurus-unrecognized-root-\(UUID().uuidString)",

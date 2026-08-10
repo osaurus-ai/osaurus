@@ -366,10 +366,21 @@ public enum ProcessDataRootPolicy {
         }
 
         var existingInfo = stat()
-        guard lstat(candidate.path, &existingInfo) != 0, errno == ENOENT else {
-            return nil
+        if lstat(candidate.path, &existingInfo) == 0 {
+            // The root may have appeared after resolveRoot's initial check.
+            // Accept only a directory that passes the full isolation policy.
+            return safeIsolatedTestRootURL(candidate)
         }
-        guard mkdir(candidate.path, mode_t(S_IRWXU)) == 0 else { return nil }
+        guard errno == ENOENT else { return nil }
+        if mkdir(candidate.path, mode_t(S_IRWXU)) != 0 {
+            // More than one subsystem can resolve the process-wide override
+            // while a test fixture is being initialized. If another caller
+            // won the mkdir race, converge on that directory only after the
+            // same ownership, type, mode, and containment validation used for
+            // every existing root. Any other failure remains fail-closed.
+            guard errno == EEXIST else { return nil }
+            return safeIsolatedTestRootURL(candidate)
+        }
 
         var accepted = false
         defer {
