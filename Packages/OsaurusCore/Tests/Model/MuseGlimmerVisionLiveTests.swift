@@ -266,6 +266,66 @@ struct MuseGlimmerVisionLiveTests {
         #expect(aHit || bHit, "neither description used any scene vocabulary")
     }
 
+    /// Six trials, three circles and three squares at different sizes and
+    /// positions. Two trials cannot separate a real signal from a coin flip;
+    /// six can. Reported as a score so the number is comparable across runs
+    /// and across models rather than being a pass/fail on one lucky answer.
+    @Test("shape battery: six forced choices", .enabled(if: enabled))
+    func shapeBattery() async throws {
+        let trials: [(String, String)] = [
+            ("bat-circle-1", "circle"), ("bat-circle-2", "circle"), ("bat-circle-3", "circle"),
+            ("bat-square-1", "square"), ("bat-square-2", "square"), ("bat-square-3", "square"),
+        ]
+        for (name, _) in trials {
+            try #require(FileManager.default.fileExists(
+                atPath: "/tmp/raptorproof/\(name).png"))
+        }
+        let context = try await MLXVLM.VLMModelFactory.shared.load(
+            from: Self.bundle, using: SwiftTransformersTokenizerLoader())
+
+        var correct = 0
+        var answers: [String] = []
+        for (name, truth) in trials {
+            let userInput = UserInput(
+                prompt: "This image contains one black shape on a white background. "
+                    + "Is the shape a circle or a square? Reply with exactly one word.",
+                images: [.ciImage(CIImage(
+                    contentsOf: URL(fileURLWithPath: "/tmp/raptorproof/\(name).png"))!)],
+                additionalContext: ["reasoning_strength": "low"])
+            let input = try await context.processor.prepare(input: userInput)
+            var text = ""
+            let stream = try MLXLMCommon.generate(
+                input: input,
+                // Generous budget: these models think before answering, and a
+                // budget that truncates the thinking yields an empty visible
+                // answer that is indistinguishable from a refusal to commit.
+                parameters: GenerateParameters(maxTokens: 700, temperature: 0.0),
+                context: context)
+            for await item in stream {
+                if let chunk = item.chunk { text += chunk }
+            }
+            let lower = text.lowercased()
+            // Take whichever word the model commits to FIRST. Requiring the
+            // other to be absent scores "a square, not a circle" as no answer.
+            let c = lower.range(of: "circle")?.lowerBound
+            let q = lower.range(of: "square")?.lowerBound
+            let said: String
+            switch (c, q) {
+            case let (.some(ci), .some(qi)): said = ci < qi ? "circle" : "square"
+            case (.some, nil): said = "circle"
+            case (nil, .some): said = "square"
+            default: said = "?"
+            }
+            if said == truth { correct += 1 }
+            answers.append("\(name)=\(said)")
+            print("[battery]   \(name) truth=\(truth) raw=\(text.replacingOccurrences(of: "\n", with: " ").prefix(90))")
+        }
+        let window = ProcessInfo.processInfo.environment["VMLX_MUSE_VISION_WINDOW"] ?? "default"
+        print("[battery] window=\(window) score=\(correct)/6  \(answers.joined(separator: " "))")
+        // Chance is 3/6. Anything at or below that is not seeing the shape.
+        #expect(correct > 4, "shape battery scored \(correct)/6 (chance is 3/6)")
+    }
+
     /// A shape whose content is known exactly, unlike a stock thumbnail whose
     /// subject cannot be verified. High-contrast black-on-white geometry is the
     /// easiest thing a vision model can be asked to do, so failing here would
