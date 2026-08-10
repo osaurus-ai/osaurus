@@ -15,6 +15,33 @@ private func removeAutomaticTestRootAtExit() {
     try? FileManager.default.removeItem(at: root)
 }
 
+/// Caches only a confirmed test-host identity. XCTest bundles can become
+/// visible after early process initialization, so a false observation must be
+/// re-evaluated instead of becoming a process-lifetime decision.
+final class TestHostRecognitionLatch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recognized = false
+
+    func value(probe: () -> Bool) -> Bool {
+        lock.lock()
+        if recognized {
+            lock.unlock()
+            return true
+        }
+        lock.unlock()
+
+        let observed = probe()
+
+        lock.lock()
+        if observed {
+            recognized = true
+        }
+        let result = recognized
+        lock.unlock()
+        return result
+    }
+}
+
 /// Keeps test-host secrets and data out of the user's persistent stores.
 ///
 /// The policy is intentionally narrow: it only changes resolution for an
@@ -47,6 +74,8 @@ public enum ProcessDataRootPolicy {
         allowRealKeychainForTestsEnvironmentKey,
         realKeychainTestNamespaceEnvironmentKey,
     ]
+
+    private static let testHostRecognitionLatch = TestHostRecognitionLatch()
 
     // Sandbox bridge sockets are nested below the data root and macOS limits
     // Unix-domain socket paths to roughly 104 bytes. Keep the automatic root
@@ -87,17 +116,19 @@ public enum ProcessDataRootPolicy {
     /// helper. Xcode does not reliably forward arbitrary shell environment
     /// variables into the launched test host, so process identity is the
     /// fallback that keeps the keychain and data-root decisions aligned.
-    public static let isRecognizedTestHostProcess: Bool = {
-        isRecognizedTestHost(
-            environment: ProcessInfo.processInfo.environment,
-            processName: ProcessInfo.processInfo.processName,
-            bundlePath: Bundle.main.bundlePath,
-            executablePath: Bundle.main.executablePath ?? CommandLine.arguments.first ?? "",
-            arguments: CommandLine.arguments,
-            loadedBundlePaths: Bundle.allBundles.map(\.bundlePath),
-            testFrameworkLoaded: isXCTestRuntimeLoaded()
-        )
-    }()
+    public static var isRecognizedTestHostProcess: Bool {
+        testHostRecognitionLatch.value {
+            isRecognizedTestHost(
+                environment: ProcessInfo.processInfo.environment,
+                processName: ProcessInfo.processInfo.processName,
+                bundlePath: Bundle.main.bundlePath,
+                executablePath: Bundle.main.executablePath ?? CommandLine.arguments.first ?? "",
+                arguments: CommandLine.arguments,
+                loadedBundlePaths: Bundle.allBundles.map(\.bundlePath),
+                testFrameworkLoaded: isXCTestRuntimeLoaded()
+            )
+        }
+    }
 
     /// Pure host-recognition seam used by policy tests.
     public static func isRecognizedTestHost(

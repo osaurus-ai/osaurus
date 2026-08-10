@@ -156,6 +156,25 @@ private final class PolicyProbe {
 }
 
 final class ProcessDataRootPolicyTests: XCTestCase {
+    func testRecognitionLatchReevaluatesFalseAndSticksTrue() {
+        let latch = TestHostRecognitionLatch()
+        var probes = 0
+
+        XCTAssertFalse(latch.value {
+            probes += 1
+            return false
+        })
+        XCTAssertTrue(latch.value {
+            probes += 1
+            return true
+        })
+        XCTAssertTrue(latch.value {
+            XCTFail("A confirmed test-host identity must not be re-probed")
+            return false
+        })
+        XCTAssertEqual(probes, 2)
+    }
+
     func testRecognizesCurrentTestRuntimeUsingCorroboratedIdentity() throws {
         let executablePath = try XCTUnwrap(Bundle.main.executablePath)
         let testFrameworkLoaded = NSClassFromString("XCTestCase") != nil
