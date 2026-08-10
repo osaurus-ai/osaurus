@@ -265,6 +265,68 @@ class QualificationVerifierTests(unittest.TestCase):
             )
         self.assertEqual(caught.exception.field, "VMLX_DSV4_CACHE_FP32_LM_HEAD")
 
+    def test_pre_model_work_enforces_one_read_verified_byte_contract(self) -> None:
+        path = self.fixture.write_manifest()
+        sealed_path = str(path.resolve())
+        sealed_bytes = path.read_bytes()
+        altered = copy.deepcopy(self.fixture.manifest)
+        altered["model"]["id"] = "altered/dsv4"
+        altered["requests"][0]["id"] = "altered-request"
+        altered["requests"][0]["arm"] = "B"
+        altered_bytes = self.fixture.bytes(altered)
+        environment = {
+            "OSAURUS_DSV4_QUALIFICATION_MANIFEST": sealed_path,
+            "OSAURUS_DSV4_QUALIFICATION_MANIFEST_SHA256": digest(sealed_bytes),
+            VERIFY.ARM_ENVIRONMENT_KEY: "B",
+            **VERIFY.ARM_ENVIRONMENTS["B"],
+        }
+        caught: VERIFY.QualificationError | None = None
+        result = None
+        with mock.patch.object(
+            VERIFY,
+            "_read_manifest_file",
+            side_effect=[(sealed_path, sealed_bytes), (sealed_path, altered_bytes)],
+        ) as reader:
+            try:
+                result = VERIFY.verify_pre_model_work(
+                    path,
+                    environment["OSAURUS_DSV4_QUALIFICATION_MANIFEST_SHA256"],
+                    model_id="altered/dsv4",
+                    request_id="altered-request",
+                    environment=environment,
+                )
+            except VERIFY.QualificationError as exc:
+                caught = exc
+        self.assertEqual(
+            reader.call_count,
+            1,
+            f"one-read verified-byte contract violated; reads={reader.call_count}; accepted={result is not None}",
+        )
+        self.assertIsNotNone(caught)
+        self.assertEqual(caught.field, "model.id")
+        self.assertIsNone(result)
+
+    def test_pre_model_rejects_manifest_inside_campaign_root(self) -> None:
+        value = copy.deepcopy(self.fixture.manifest)
+        value["output"]["campaign_root"] = str(self.fixture.root)
+        path = self.fixture.write_manifest(value)
+        data = path.read_bytes()
+        environment = {
+            "OSAURUS_DSV4_QUALIFICATION_MANIFEST": str(path),
+            "OSAURUS_DSV4_QUALIFICATION_MANIFEST_SHA256": digest(data),
+            VERIFY.ARM_ENVIRONMENT_KEY: "A",
+            **VERIFY.ARM_ENVIRONMENTS["A"],
+        }
+        with self.assertRaises(VERIFY.QualificationError) as caught:
+            VERIFY.verify_pre_model_work(
+                path,
+                environment["OSAURUS_DSV4_QUALIFICATION_MANIFEST_SHA256"],
+                model_id="unit/dsv4",
+                request_id="ordinary-coding",
+                environment=environment,
+            )
+        self.assertEqual(caught.exception.field, "output.campaign_root")
+
     def test_unknown_fields_duplicate_ids_and_bad_digests_fail_closed(self) -> None:
         unknown = copy.deepcopy(self.fixture.manifest)
         unknown["unexpected"] = True

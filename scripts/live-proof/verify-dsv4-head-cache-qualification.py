@@ -883,8 +883,13 @@ def _read_manifest_file(path: str | os.PathLike[str]) -> tuple[str, bytes]:
     return manifest_path, data
 
 
-def verify_manifest_file(path: str | os.PathLike[str], *, expected_sha256: str | None, phase: str) -> VerificationReport:
-    manifest_path, data = _read_manifest_file(path)
+def _verify_sealed_manifest(
+    manifest_path: str,
+    data: bytes,
+    *,
+    expected_sha256: str | None,
+    phase: str,
+) -> VerificationReport:
     report = verify_manifest_bytes(data, expected_sha256=expected_sha256, phase=phase)
     if manifest_path == report.campaign_root or manifest_path.startswith(report.campaign_root + os.sep):
         _fail(
@@ -892,6 +897,16 @@ def verify_manifest_file(path: str | os.PathLike[str], *, expected_sha256: str |
             "sealed manifest must be outside the mutable campaign output",
         )
     return report
+
+
+def verify_manifest_file(path: str | os.PathLike[str], *, expected_sha256: str | None, phase: str) -> VerificationReport:
+    manifest_path, data = _read_manifest_file(path)
+    return _verify_sealed_manifest(
+        manifest_path,
+        data,
+        expected_sha256=expected_sha256,
+        phase=phase,
+    )
 
 
 def verify_pre_model_work(
@@ -914,13 +929,14 @@ def verify_pre_model_work(
     if not request_id:
         _fail("qualification.request_id", "is required before qualified model work")
 
-    report = verify_manifest_file(
-        manifest_path,
+    sealed_path, sealed_bytes = _read_manifest_file(manifest_path)
+    report = _verify_sealed_manifest(
+        sealed_path,
+        sealed_bytes,
         expected_sha256=expected_sha256,
         phase="process",
     )
-    _, data = _read_manifest_file(manifest_path)
-    manifest = _decode_manifest(data)
+    manifest = _decode_manifest(sealed_bytes)
     if manifest["model"]["id"] != model_id:
         _fail("model.id", "does not match the requested model ID")
     rows = [row for row in manifest["requests"] if row["id"] == request_id]
