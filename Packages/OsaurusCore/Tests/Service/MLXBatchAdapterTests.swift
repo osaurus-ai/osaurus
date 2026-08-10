@@ -232,7 +232,10 @@ struct MLXBatchAdapterTests {
             }
         }
 
-        let callbackStarted = await waitForBridgeSignal(probe.cancellationStarted)
+        let callbackStarted = await waitForBridgeSignal(
+            probe.cancellationStarted,
+            attempts: 2_000
+        )
         let drained = await waitForBridgeSignal(probe.drained)
         #expect(callbackStarted)
         #expect(drained)

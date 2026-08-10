@@ -60,9 +60,13 @@ struct DSV4HeadCacheQualificationManifestTests {
     }
 
     private static func makeFixture(reserveTraceOutput: Bool = false) throws -> Fixture {
-        let requestedRoot = packageRoot()
+        let buildRoot = packageRoot()
             .appendingPathComponent(".build", isDirectory: true)
-            .appendingPathComponent("dsv4-swift-qualification-\(UUID().uuidString)", isDirectory: true)
+        let requestedRoot = buildRoot.appendingPathComponent(
+            "dsv4-swift-qualification-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: buildRoot, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: requestedRoot, withIntermediateDirectories: false)
         let root = requestedRoot.resolvingSymlinksInPath()
         let script = packageRoot()
