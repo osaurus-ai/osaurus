@@ -11,7 +11,12 @@ import LocalAuthentication
 import Security
 
 public struct MasterKey: Sendable {
-    static let service = "com.osaurus.account"
+    static let service: String = {
+        guard let namespace = KeychainQueryHelpers.realKeychainTestNamespace else {
+            return "com.osaurus.account"
+        }
+        return "com.osaurus.tests.master-key.\(namespace)"
+    }()
     static let account = "master-key"
 
     // MARK: - Generate
@@ -50,9 +55,10 @@ public struct MasterKey: Sendable {
     public static func install(seed keyData: Data, allowReplace: Bool = false) throws -> OsaurusID {
         // Hermetic test/proof launches (OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1)
         // must not persist identity material into the user's login Keychain.
-        // This is the same no-op-write contract every other Keychain wrapper
-        // honors via `KeychainQueryHelpers.disablesKeychainForProcess`.
-        if KeychainQueryHelpers.disablesKeychainForProcess {
+        // Ordinary test hosts use the same no-op contract as every other
+        // Keychain wrapper. The explicit proof lane is the only exception and
+        // writes solely to its per-run namespaced identity service.
+        if KeychainQueryHelpers.disablesIdentityKeyForProcess {
             throw OsaurusIdentityError.keychainWriteFailed
         }
         if !allowReplace, exists() {
@@ -71,7 +77,14 @@ public struct MasterKey: Sendable {
             delete()
         }
 
-        let status = addToKeychain(keyData: keyData, synchronizable: true)
+        // A proof item must remain local to this Mac so an interrupted run
+        // cannot create a durable iCloud artifact. Production keeps its
+        // synchronizable-first contract.
+        let proofUsesLocalOnlyItem = KeychainQueryHelpers.realKeychainTestsAreExplicitlyEnabled
+        let status = addToKeychain(
+            keyData: keyData,
+            synchronizable: !proofUsesLocalOnlyItem
+        )
         if status != errSecSuccess {
             let fallback = addToKeychain(keyData: keyData, synchronizable: false)
             guard fallback == errSecSuccess else {
@@ -83,7 +96,11 @@ public struct MasterKey: Sendable {
         return osaurusId
     }
 
-    // The Master Key is a synchronizable iCloud Keychain item.
+    // The Master Key is a synchronizable iCloud Keychain item. The explicit
+    // proof lane deliberately uses a local-only item in its unique namespace:
+    // it exercises the overwrite guard without creating an iCloud artifact
+    // that an interrupted CLI run could leave behind. Production behavior is
+    // unchanged whenever the proof namespace is absent.
     private static func addToKeychain(keyData: Data, synchronizable: Bool) -> OSStatus {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -96,6 +113,9 @@ public struct MasterKey: Sendable {
             query[kSecAttrSynchronizable as String] = true
             query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
         } else {
+            if KeychainQueryHelpers.realKeychainTestsAreExplicitlyEnabled {
+                query[kSecAttrSynchronizable as String] = false
+            }
             query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         }
         return SecItemAdd(query as CFDictionary, nil)
@@ -110,7 +130,7 @@ public struct MasterKey: Sendable {
         // legacy login-Keychain read can raise a "wants to use your
         // confidential information" ACL prompt in a headless/differently-signed
         // process (the eval CLI).
-        if KeychainQueryHelpers.disablesKeychainForProcess { return false }
+        if KeychainQueryHelpers.disablesIdentityKeyForProcess { return false }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -227,7 +247,7 @@ public struct MasterKey: Sendable {
         // where `kSecUseAuthenticationUISkip` / `LAContext.interactionNotAllowed`
         // do NOT suppress the trusted-app ACL prompt — so the only safe headless
         // behavior is to not read at all.
-        if KeychainQueryHelpers.disablesKeychainForProcess {
+        if KeychainQueryHelpers.disablesIdentityKeyForProcess {
             throw OsaurusIdentityError.keychainReadFailed
         }
         var query: [String: Any] = [
@@ -266,7 +286,7 @@ public struct MasterKey: Sendable {
     public static func delete() -> Bool {
         // No-op delete under the keychain-disable gate, mirroring the read/write
         // no-ops above and the documented wrapper contract.
-        if KeychainQueryHelpers.disablesKeychainForProcess {
+        if KeychainQueryHelpers.disablesIdentityKeyForProcess {
             setCachedExists(false)
             return true
         }

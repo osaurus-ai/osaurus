@@ -2,6 +2,7 @@
 
 import Foundation
 import Security
+import OsaurusRepository
 import Testing
 
 @testable import OsaurusCore
@@ -106,7 +107,6 @@ private final class FakeKeychainBackend: KeychainBackend, @unchecked Sendable {
     }
 }
 
-/// The backend override is process-global, so these tests must not interleave.
 @Suite("Keychain typed outcomes", .serialized)
 struct KeychainTests {
     private static let service = "ai.osaurus.test.keychain"
@@ -114,9 +114,7 @@ struct KeychainTests {
     private func withFakeBackend<T>(
         _ backend: FakeKeychainBackend, _ body: () throws -> T
     ) rethrows -> T {
-        Keychain._setBackendForTesting(backend)
-        defer { Keychain._setBackendForTesting(nil) }
-        return try body()
+        try Keychain._withBackendForTesting(backend, operation: body)
     }
 
     // MARK: - Write
@@ -372,6 +370,62 @@ struct KeychainTests {
         #expect(backend.value(service: Self.service, account: "nested") == Data("v".utf8))
     }
 
+    @Test("backend overrides stay isolated across concurrent test tasks")
+    func backendOverridesAreTaskScoped() async {
+        let first = FakeKeychainBackend()
+        let second = FakeKeychainBackend()
+        let barrier = PairBarrier()
+
+        async let firstOutcome = Keychain._withBackendForTesting(first) {
+            await barrier.wait()
+            await Task.yield()
+            return Keychain.writeItem(
+                service: Self.service, account: "first", data: Data("a".utf8))
+        }
+        async let secondOutcome = Keychain._withBackendForTesting(second) {
+            await barrier.wait()
+            await Task.yield()
+            return Keychain.writeItem(
+                service: Self.service, account: "second", data: Data("b".utf8))
+        }
+
+        let outcomes = await (firstOutcome, secondOutcome)
+        #expect(outcomes.0 == .success)
+        #expect(outcomes.1 == .success)
+        #expect(first.value(service: Self.service, account: "first") == Data("a".utf8))
+        #expect(first.value(service: Self.service, account: "second") == nil)
+        #expect(second.value(service: Self.service, account: "second") == Data("b".utf8))
+        #expect(second.value(service: Self.service, account: "first") == nil)
+    }
+
+    @Test("detached tasks cannot escape a disabled host through a fake backend scope")
+    func detachedTasksDoNotReachRealKeychain() async throws {
+        try #require(ProcessDataRootPolicy.isRecognizedTestHostProcess)
+        try #require(KeychainQueryHelpers.disablesKeychainForProcess)
+
+        let backend = FakeKeychainBackend()
+        let service = Self.service
+        let outcomes = await Keychain._withBackendForTesting(backend) {
+            #expect(Keychain.hasInjectedBackendForCurrentContext)
+            let scopedOutcome = Keychain.writeItem(
+                service: service, account: "scoped", data: Data("fake".utf8))
+            let detachedOutcome = await Task.detached {
+                let hasInjectedBackend = Keychain.hasInjectedBackendForCurrentContext
+                let outcome = Keychain.writeItem(
+                    service: service, account: "detached", data: Data("real".utf8))
+                return (hasInjectedBackend, outcome)
+            }.value
+            return (scopedOutcome, detachedOutcome.0, detachedOutcome.1)
+        }
+
+        #expect(outcomes.0 == .success)
+        #expect(!outcomes.1)
+        #expect(outcomes.2 == .disabled)
+        #expect(backend.value(service: Self.service, account: "scoped") == Data("fake".utf8))
+        #expect(backend.value(service: Self.service, account: "detached") == nil)
+        #expect(backend.operations == ["update", "add"])
+    }
+
     @Test("synchronous writes are ordered relative to queued background work")
     func syncWritesAreOrderedWithQueue() {
         let backend = FakeKeychainBackend()
@@ -414,5 +468,18 @@ struct KeychainTests {
             #expect(Keychain.write(service: Self.service, account: "a", data: Data("v".utf8)))
             #expect(Keychain.read(service: Self.service, account: "a") == Data("v".utf8))
         }
+    }
+}
+
+private actor PairBarrier {
+    private var waiter: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        if let waiter {
+            self.waiter = nil
+            waiter.resume()
+            return
+        }
+        await withCheckedContinuation { waiter = $0 }
     }
 }

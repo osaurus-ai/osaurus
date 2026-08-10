@@ -8,6 +8,7 @@
 
 import AppKit
 import Foundation
+import OsaurusRepository
 
 /// Centralized path management for all Osaurus app data.
 /// All stores and services should use this module for path resolution.
@@ -48,15 +49,10 @@ public enum OsaurusPaths {
 
     /// The root data directory for Osaurus: `~/.osaurus/`
     public static func root() -> URL {
-        if let override = overrideRoot {
-            return override
-        }
-        if let envRoot = ProcessInfo.processInfo.environment["OSAURUS_TEST_ROOT"],
-            !envRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
-            return URL(fileURLWithPath: envRoot, isDirectory: true)
-        }
-        return defaultRoot
+        ProcessDataRootPolicy.resolvedRoot(
+            overrideRoot: overrideRoot,
+            defaultRoot: defaultRoot
+        )
     }
 
     /// Returns the marker path for a resolved root without triggering another

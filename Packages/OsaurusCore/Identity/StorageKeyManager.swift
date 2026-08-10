@@ -29,6 +29,7 @@
 import CryptoKit
 import Foundation
 import LocalAuthentication
+import OsaurusRepository
 import Security
 import os
 
@@ -108,7 +109,10 @@ public final class StorageKeyManager: @unchecked Sendable {
     /// Live proof/test launches can set this to avoid reading or writing the
     /// user's login Keychain. Production launches leave it unset.
     public static var disablesKeychainForProcess: Bool {
-        ProcessInfo.processInfo.environment["OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS"] == "1"
+        ProcessDataRootPolicy.shouldDisableKeychain(
+            environment: ProcessInfo.processInfo.environment,
+            recognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+        )
     }
 
     /// Returns the current data-encryption key, generating + persisting

@@ -82,7 +82,7 @@ struct KeychainEnumerationOutcome {
 
 /// The raw SecItem surface, injectable so unit tests can exercise every
 /// `OSStatus` path deterministically without a real keychain.
-protocol KeychainBackend {
+protocol KeychainBackend: Sendable {
     func copyMatching(_ query: [String: Any]) -> (status: OSStatus, result: AnyObject?)
     func update(query: [String: Any], attributes: [String: Any]) -> OSStatus
     func add(attributes: [String: Any]) -> OSStatus
@@ -148,23 +148,43 @@ enum Keychain {
     /// nested `sync` to the same serial queue.
     private static let writeQueueKey = DispatchSpecificKey<Void>()
 
-    private static let backendLock = NSLock()
-    nonisolated(unsafe) private static var testBackendOverride: KeychainBackend?
+    /// Concurrent executor for blocking reads. Reads do not participate in
+    /// mutation ordering, so a slow securityd read must not delay unrelated
+    /// reads or the bounded mutation flush used during termination.
+    private static let readQueue = DispatchQueue(
+        label: "com.dinoki.osaurus.keychain.read",
+        qos: .utility,
+        attributes: .concurrent
+    )
+
+    @TaskLocal private static var testBackendOverride: (any KeychainBackend)?
     private static let productionBackend = SecItemKeychainBackend()
 
-    /// Install (or clear with `nil`) a fake backend for tests. While an
-    /// override is installed the process-level disable gate is bypassed so
-    /// fake-backend tests can run under `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`
-    /// without ever touching the real keychain.
-    static func _setBackendForTesting(_ backend: KeychainBackend?) {
-        backendLock.lock()
-        defer { backendLock.unlock() }
-        testBackendOverride = backend
+    /// Scope a fake backend to one test task. Child tasks inherit the scope,
+    /// while unrelated tests keep using the production/disabled path.
+    static func _withBackendForTesting<T>(
+        _ backend: any KeychainBackend,
+        operation: () throws -> T
+    ) rethrows -> T {
+        try $testBackendOverride.withValue(backend, operation: operation)
+    }
+
+    static func _withBackendForTesting<T>(
+        _ backend: any KeychainBackend,
+        operation: () async throws -> T
+    ) async rethrows -> T {
+        try await $testBackendOverride.withValue(backend, operation: operation)
+    }
+
+    /// True only while this task is inside a scoped injected-backend context.
+    /// This is deliberately TaskLocal: queue hops made through `perform`
+    /// carry the fake backend, while detached/unscoped work cannot authorize
+    /// itself to bypass process-level Keychain isolation.
+    static var hasInjectedBackendForCurrentContext: Bool {
+        testBackendOverride != nil
     }
 
     private static func currentBackend() -> (backend: KeychainBackend, bypassesDisableGate: Bool) {
-        backendLock.lock()
-        defer { backendLock.unlock() }
         if let override = testBackendOverride { return (override, true) }
         return (productionBackend, false)
     }
@@ -258,12 +278,15 @@ enum Keychain {
     /// Block until every mutation enqueued so far has completed, bounded by
     /// `timeout`. Called from `applicationWillTerminate` so a credential
     /// saved right before quit isn't dropped when `_exit` skips the queue.
-    static func flushPendingWrites(timeout: TimeInterval = 3.0) {
+    @discardableResult
+    static func flushPendingWrites(timeout: TimeInterval = 3.0) -> Bool {
         let done = DispatchSemaphore(value: 0)
         writeQueue.async { done.signal() }
         if done.wait(timeout: .now() + timeout) == .timedOut {
             log.error("Keychain flushPendingWrites timed out after \(timeout, privacy: .public)s")
+            return false
         }
+        return true
     }
 
     // MARK: - Typed CRUD
@@ -432,8 +455,17 @@ enum Keychain {
         data: Data,
         accessible: CFString = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
     ) {
+        let backend = testBackendOverride
+        let accessibility = accessible as String
         writeQueue.async {
-            _ = writeItem(service: service, account: account, data: data, accessible: accessible)
+            $testBackendOverride.withValue(backend) {
+                _ = writeItem(
+                    service: service,
+                    account: account,
+                    data: data,
+                    accessible: accessibility as CFString
+                )
+            }
         }
     }
 
@@ -442,7 +474,10 @@ enum Keychain {
     /// delete another) to stay ordered relative to `writeInBackground` writes
     /// while keeping the blocking SecItem calls off the main thread.
     static func performInBackground(_ work: @escaping @Sendable () -> Void) {
-        writeQueue.async(execute: work)
+        let backend = testBackendOverride
+        writeQueue.async {
+            $testBackendOverride.withValue(backend, operation: work)
+        }
     }
 
     /// Await a keychain operation on the serial write queue and return its
@@ -451,8 +486,27 @@ enum Keychain {
     /// Security-framework I/O. Ordered relative to `writeInBackground` and
     /// `performInBackground` work.
     static func perform<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
-        await withCheckedContinuation { continuation in
-            writeQueue.async { continuation.resume(returning: work()) }
+        let backend = testBackendOverride
+        return await withCheckedContinuation { continuation in
+            writeQueue.async {
+                let result = $testBackendOverride.withValue(backend, operation: work)
+                continuation.resume(returning: result)
+            }
+        }
+    }
+
+    /// Await a blocking Keychain read on the concurrent read executor.
+    ///
+    /// The injected backend is captured before the DispatchQueue hop and
+    /// restored only for this operation. This preserves test/live-proof
+    /// isolation without putting independent reads behind the mutation queue.
+    static func performRead<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+        let backend = testBackendOverride
+        return await withCheckedContinuation { continuation in
+            readQueue.async {
+                let result = $testBackendOverride.withValue(backend, operation: work)
+                continuation.resume(returning: result)
+            }
         }
     }
 

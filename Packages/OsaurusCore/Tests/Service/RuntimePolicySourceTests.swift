@@ -119,6 +119,19 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("canonical test lanes isolate local model discovery")
+    func canonicalTestLanesUseDisposableModelRoots() throws {
+        let makefile = try Self.source("../../Makefile")
+        let workflow = try Self.source("../../.github/workflows/ci.yml")
+
+        #expect(makefile.contains("mkdir -p \"$$TEST_ROOT/MLXModels\""))
+        #expect(makefile.contains("OSU_MODELS_DIR=\"$$TEST_ROOT/MLXModels\""))
+        let workflowAssignments = workflow.components(
+            separatedBy: "OSU_MODELS_DIR=\"$TEST_ROOT/MLXModels\""
+        ).count - 1
+        #expect(workflowAssignments == 3)
+    }
+
     @Test("AppDelegate leaves DSV4 cache topology to vmlx")
     func appDelegateDoesNotForceDSV4DiagnosticCacheMode() throws {
         let source = try Self.source("AppDelegate.swift")
@@ -512,7 +525,16 @@ struct RuntimePolicySourceTests {
             "Services/MCP/MCPProviderKeychain.swift",
         ] {
             let source = try Self.source(path)
-            #expect(source.contains("if KeychainQueryHelpers.disablesKeychainForProcess"))
+            if path == "Services/Provider/RemoteProviderKeychain.swift" {
+                #expect(source.contains("if KeychainQueryHelpers.disablesKeychainForProcess"))
+                #expect(source.contains("Keychain.hasInjectedBackendForCurrentContext"))
+            } else {
+                #expect(
+                    source.contains(
+                        "if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"
+                    )
+                )
+            }
             let queryCount =
                 source.components(separatedBy: "kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip").count
                 - 1
@@ -2384,8 +2406,9 @@ struct RuntimePolicySourceTests {
         let remoteProvider = try Self.source("Services/Provider/RemoteProviderKeychain.swift")
         let mcpProvider = try Self.source("Services/MCP/MCPProviderKeychain.swift")
 
-        #expect(paths.contains("OSAURUS_TEST_ROOT"))
-        #expect(storage.contains("OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS"))
+        #expect(paths.contains("ProcessDataRootPolicy.resolvedRoot"))
+        #expect(storage.contains("ProcessDataRootPolicy.shouldDisableKeychain"))
+        #expect(storage.contains("ProcessDataRootPolicy.isRecognizedTestHostProcess"))
         #expect(storage.contains("generateInMemoryKey()"))
         #expect(storage.contains("if Self.disablesKeychainForProcess"))
         #expect(appDelegate.contains("private var keychainDisabledTestMode"))
@@ -2422,10 +2445,14 @@ struct RuntimePolicySourceTests {
         )
         #expect(appDelegate.contains("Headless live-proof launches only need the local HTTP server"))
         #expect(appDelegate.contains("keychainDisabledTestMode && !keychainDisabledUIPresentationMode"))
-        #expect(keychainHelper.contains("disablesKeychainForProcess"))
+        #expect(keychainHelper.contains("ProcessDataRootPolicy.shouldDisableKeychain"))
+        #expect(keychainHelper.contains("ProcessDataRootPolicy.isRecognizedTestHostProcess"))
         #expect(agentSecrets.contains("if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"))
         #expect(toolSecrets.contains("if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"))
-        #expect(remoteProvider.contains("if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"))
+        #expect(remoteProvider.contains("KeychainQueryHelpers.disablesKeychainForProcess"))
+        #expect(remoteProvider.contains("Keychain.hasInjectedBackendForCurrentContext"))
+        #expect(remoteProvider.contains("await Keychain.perform(operation)"))
+        #expect(!remoteProvider.contains("DispatchQueue.global"))
         #expect(mcpProvider.contains("if KeychainQueryHelpers.disablesKeychainForProcess { return nil }"))
     }
 

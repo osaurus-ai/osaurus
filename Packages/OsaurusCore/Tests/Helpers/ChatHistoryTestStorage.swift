@@ -48,6 +48,7 @@ enum ChatHistoryTestStorage {
             OsaurusPaths.overrideRoot = root
             var isolatedChatConfig = previousChatConfig
             isolatedChatConfig.disableTools = true
+            isolatedChatConfig.warmModelsOnLoad = false
             ChatConfigurationStore.save(isolatedChatConfig)
             DefaultAgentConfigurationStore.overrideDirectory = root.appendingPathComponent("config")
             DefaultAgentConfigurationStore.resetCacheForTests()

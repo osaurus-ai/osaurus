@@ -7,6 +7,7 @@
 
 import Foundation
 import LocalAuthentication
+import OsaurusRepository
 import Security
 
 enum KeychainQueryHelpers {
@@ -16,20 +17,44 @@ enum KeychainQueryHelpers {
     /// no-ops so validation cannot produce "wants to use your confidential
     /// information" prompts.
     static var disablesKeychainForProcess: Bool {
-        ProcessInfo.processInfo.environment["OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS"] == "1"
+        ProcessDataRootPolicy.shouldDisableKeychain(
+            environment: ProcessInfo.processInfo.environment,
+            recognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+        )
+    }
+
+    static var realKeychainTestsAreExplicitlyEnabled: Bool {
+        realKeychainTestNamespace != nil
+    }
+
+    /// Keep the explicit proof opt-in separate from namespace validation. A
+    /// malformed or missing namespace must make the proof fail, not disable
+    /// the suite and silently report zero tests.
+    static var realKeychainProofWasRequested: Bool {
+        ProcessDataRootPolicy.explicitlyAllowsRealKeychainForTests(
+            environment: ProcessInfo.processInfo.environment
+        )
+    }
+
+    /// The manual proof lane may reach only its namespaced MasterKey item.
+    /// Every other Keychain wrapper remains disabled in the test host so
+    /// filtered test discovery or incidental global initialization cannot
+    /// touch a user's production secrets.
+    static var disablesIdentityKeyForProcess: Bool {
+        disablesKeychainForProcess && !realKeychainTestsAreExplicitlyEnabled
+    }
+
+    static var realKeychainTestNamespace: String? {
+        ProcessDataRootPolicy.realKeychainTestNamespace(
+            environment: ProcessInfo.processInfo.environment,
+            recognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+        )
     }
 
     /// Unit tests need deterministic secret storage without touching the user's
     /// login Keychain or the CI runner's flaky transient Keychain state.
     static var usesInMemoryKeychainStoreForTests: Bool {
-        let env = ProcessInfo.processInfo.environment
-        return env["XCTestConfigurationFilePath"] != nil
-            || env["XCTestBundlePath"] != nil
-            || ProcessInfo.processInfo.processName == "xctest"
-            // `swift test` (SwiftPM + swift-testing) runs suites inside this
-            // helper without any of the XCTest markers above.
-            || ProcessInfo.processInfo.processName == "swiftpm-testing-helper"
-            || Bundle.main.bundlePath.hasSuffix(".xctest")
+        ProcessDataRootPolicy.isRecognizedTestHostProcess && disablesKeychainForProcess
     }
 
     /// Build an authentication context that refuses interactive prompts.

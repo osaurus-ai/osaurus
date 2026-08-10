@@ -10,6 +10,7 @@
 //
 
 import Foundation
+import OsaurusRepository
 import XCTest
 
 @testable import OsaurusCore
@@ -135,6 +136,153 @@ final class MCPStdioTransportErrorTests: XCTestCase {
 
 #if canImport(Darwin)
     final class MCPStdioHostRunnerPathTests: XCTestCase {
+        private func makePrivateTestRoot() throws -> URL {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-mcp-parent-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(
+                at: root,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
+            )
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: root.path
+            )
+            return root.standardizedFileURL.resolvingSymlinksInPath()
+        }
+
+        func testExplicitlyIsolatedParentDropsAmbientValuesAndPreservesProviderConfiguration() throws {
+            let parentRoot = try makePrivateTestRoot()
+            defer { try? FileManager.default.removeItem(at: parentRoot) }
+            let environment = MCPStdioHostRunner.buildEnvironmentForTesting(
+                parentEnvironment: [
+                    ProcessDataRootPolicy.testRootEnvironmentKey: parentRoot.path,
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+                    "PARENT_SETTING": "inherited",
+                    "GITHUB_TOKEN": "ambient-secret",
+                ],
+                providerEnvironment: [
+                    "TOOL_SETTING": "retained",
+                    ProcessDataRootPolicy.testRootEnvironmentKey: "/tmp/provider-root",
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "0",
+                    ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey: "1",
+                    ProcessDataRootPolicy.realKeychainTestNamespaceEnvironmentKey:
+                        "36CFBE8B-39DB-47DB-BA95-1742165D2657",
+                ],
+                parentRecognizedTestHost: false
+            )
+
+            XCTAssertEqual(
+                environment[ProcessDataRootPolicy.testRootEnvironmentKey],
+                parentRoot.path
+            )
+            XCTAssertEqual(
+                environment[ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey],
+                "1"
+            )
+            XCTAssertEqual(environment["TOOL_SETTING"], "retained")
+            XCTAssertNil(environment["PARENT_SETTING"])
+            XCTAssertNil(environment["GITHUB_TOKEN"])
+            XCTAssertNil(environment[ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey])
+            XCTAssertNil(
+                environment[ProcessDataRootPolicy.realKeychainTestNamespaceEnvironmentKey]
+            )
+        }
+
+        func testProviderCannotEnableIsolationMarkersForProductionHost() throws {
+            let environment = MCPStdioHostRunner.buildEnvironmentForTesting(
+                parentEnvironment: ["PATH": "/usr/bin"],
+                providerEnvironment: [
+                    "TOOL_SETTING": "retained",
+                    ProcessDataRootPolicy.testRootEnvironmentKey: "/tmp/provider-root",
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+                ],
+                parentRecognizedTestHost: false
+            )
+
+            XCTAssertEqual(environment["PATH"], "/usr/bin")
+            XCTAssertEqual(environment["TOOL_SETTING"], "retained")
+            XCTAssertNil(environment[ProcessDataRootPolicy.testRootEnvironmentKey])
+            XCTAssertNil(
+                environment[ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey]
+            )
+        }
+
+        func testRecognizedTestHostDoesNotInheritAmbientCredentials() throws {
+            let parentRoot = try makePrivateTestRoot()
+            defer { try? FileManager.default.removeItem(at: parentRoot) }
+            let environment = MCPStdioHostRunner.buildEnvironmentForTesting(
+                parentEnvironment: [
+                    "PATH": "/usr/bin",
+                    "LANG": "en_US.UTF-8",
+                    "LC_ALL": "C",
+                    "GITHUB_TOKEN": "ambient-github-secret",
+                    "AWS_SECRET_ACCESS_KEY": "ambient-aws-secret",
+                    "HOME": "/Users/production",
+                    ProcessDataRootPolicy.testRootEnvironmentKey: parentRoot.path,
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+                ],
+                providerEnvironment: [
+                    "PROVIDER_SETTING": "explicit-value",
+                    "PROVIDER_SECRET": "explicit-secret",
+                    ProcessDataRootPolicy.testRootEnvironmentKey: "/tmp/provider-root",
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "0",
+                    ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey: "1",
+                ],
+                parentRecognizedTestHost: true
+            )
+
+            XCTAssertEqual(environment["PATH"], "/usr/bin")
+            XCTAssertEqual(environment["LANG"], "en_US.UTF-8")
+            XCTAssertEqual(environment["LC_ALL"], "C")
+            XCTAssertEqual(environment["PROVIDER_SETTING"], "explicit-value")
+            XCTAssertEqual(environment["PROVIDER_SECRET"], "explicit-secret")
+            XCTAssertNil(environment["GITHUB_TOKEN"])
+            XCTAssertNil(environment["AWS_SECRET_ACCESS_KEY"])
+            XCTAssertNil(environment["HOME"])
+            XCTAssertEqual(
+                environment[ProcessDataRootPolicy.testRootEnvironmentKey],
+                parentRoot.path
+            )
+            XCTAssertEqual(
+                environment[ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey],
+                "1"
+            )
+            XCTAssertNil(environment[ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey])
+        }
+
+        func testMarkerOnlyIsolationKeepsAmbientSecretOutOfLaunchedChild() throws {
+            let ambientCanary = "ambient-canary-\(UUID().uuidString)"
+            let providerValue = "provider-value-\(UUID().uuidString)"
+            let environment = MCPStdioHostRunner.buildEnvironmentForTesting(
+                parentEnvironment: [
+                    "PATH": "/usr/bin:/bin",
+                    "AMBIENT_SECRET_CANARY": ambientCanary,
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+                ],
+                providerEnvironment: ["PROVIDER_EXPLICIT_VALUE": providerValue],
+                parentRecognizedTestHost: false
+            )
+            let process = Process()
+            let output = Pipe()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.environment = environment
+            process.standardOutput = output
+            process.standardError = Pipe()
+
+            try process.run()
+            process.waitUntilExit()
+            let bytes = output.fileHandleForReading.readDataToEndOfFile()
+            let rendered = try XCTUnwrap(String(data: bytes, encoding: .utf8))
+
+            XCTAssertEqual(process.terminationStatus, 0)
+            XCTAssertFalse(rendered.contains(ambientCanary))
+            XCTAssertFalse(rendered.contains("AMBIENT_SECRET_CANARY="))
+            XCTAssertTrue(rendered.contains("PROVIDER_EXPLICIT_VALUE=\(providerValue)"))
+        }
+
         func testHostSearchPathAppendsCommonLocalBinFallbacks() throws {
             let searchPath = MCPStdioHostRunner.executableSearchPathForTesting(
                 env: ["PATH": "/custom/bin:/usr/bin"]

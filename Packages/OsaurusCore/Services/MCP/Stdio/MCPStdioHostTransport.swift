@@ -20,6 +20,7 @@
 
     import Foundation
     import MCP
+    import OsaurusRepository
     import System
     import Darwin
 
@@ -30,6 +31,21 @@
         public let providerId: UUID
         public let command: String
         public let args: [String]
+
+        /// Recognized test hosts must not pass ambient credentials to a host
+        /// MCP child. Keep only launch/locale context; provider configuration
+        /// is added explicitly below.
+        private static let testHostAmbientEnvironmentKeys: Set<String> = [
+            "PATH",
+            "LANG",
+            "LC_ALL",
+            "LC_COLLATE",
+            "LC_CTYPE",
+            "LC_MESSAGES",
+            "LC_MONETARY",
+            "LC_NUMERIC",
+            "LC_TIME",
+        ]
 
         private let process: Process
         private let stdinPipe: Pipe
@@ -93,15 +109,47 @@
             self.transport = StdioTransport(input: readFD, output: writeFD)
         }
 
-        /// Process env = inherited app env merged with the provider's
-        /// own env (plain + Keychain-resolved secrets). Provider entries
-        /// win on key conflicts.
+        /// Production children retain the existing full ambient environment
+        /// merge. Test hosts and explicitly isolated proof processes use the
+        /// narrow allowlist below so ambient credentials cannot cross the
+        /// isolation boundary.
         private static func buildEnv(provider: MCPProvider) -> [String: String] {
-            var env = ProcessInfo.processInfo.environment
-            for (key, value) in provider.resolvedEnv() {
-                env[key] = value
+            buildEnvironmentForTesting(
+                parentEnvironment: ProcessInfo.processInfo.environment,
+                providerEnvironment: provider.resolvedEnv(),
+                parentRecognizedTestHost: ProcessDataRootPolicy.isRecognizedTestHostProcess
+            )
+        }
+
+        /// Pure environment assembly seam used to prove that provider
+        /// configuration cannot replace the parent test-isolation policy.
+        static func buildEnvironmentForTesting(
+            parentEnvironment: [String: String],
+            providerEnvironment: [String: String],
+            parentRecognizedTestHost: Bool
+        ) -> [String: String] {
+            let parentIsolated = ProcessDataRootPolicy.shouldDisableKeychain(
+                environment: parentEnvironment,
+                recognizedTestHost: parentRecognizedTestHost
+            )
+            var environment: [String: String]
+            if parentIsolated {
+                environment = parentEnvironment.filter { key, _ in
+                    testHostAmbientEnvironmentKeys.contains(key)
+                }
+            } else {
+                // Preserve production behavior: inherit the complete parent
+                // environment and overlay explicit provider configuration.
+                environment = parentEnvironment
             }
-            return env
+            for (key, value) in providerEnvironment {
+                environment[key] = value
+            }
+            return ProcessDataRootPolicy.applyingChildTestIsolation(
+                to: environment,
+                parentEnvironment: parentEnvironment,
+                parentRecognizedTestHost: parentRecognizedTestHost
+            )
         }
 
         /// Resolve `command` to an absolute path the kernel can exec.
