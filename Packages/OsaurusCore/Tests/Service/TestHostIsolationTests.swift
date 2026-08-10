@@ -54,6 +54,26 @@ struct TestHostIsolationTests {
         #expect(MasterKey.delete())
     }
 
+    @Test("factory-reset service deletion is disabled before Security.framework")
+    func factoryResetKeychainDeletionUsesCentralGate() throws {
+        try #require(KeychainQueryHelpers.disablesKeychainForProcess)
+        for service in OsaurusKeychainServices.all {
+            #expect(Keychain.deleteAllItems(service: service) == .disabled)
+        }
+
+        let serviceDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let coreRoot =
+            serviceDirectory
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let onboardingSource = try String(
+            contentsOf: coreRoot.appendingPathComponent("Services/OnboardingService.swift"),
+            encoding: .utf8
+        )
+        #expect(onboardingSource.contains("Keychain.deleteAllItems(service: service)"))
+        #expect(!onboardingSource.contains("SecItemDelete("))
+    }
+
     @Test("OsaurusPaths resolves to the disposable test root at runtime")
     func osaurusPathsUsesDisposableRootBehaviorally() async {
         await StoragePathsTestLock.shared.run {

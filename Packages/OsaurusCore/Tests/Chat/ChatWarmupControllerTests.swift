@@ -37,6 +37,28 @@ struct ChatConfigurationWarmModelsOnLoadTests {
 @MainActor
 struct ChatWarmupControllerPromptShapeTests {
 
+    @Test("default policy seams follow live configuration and window state")
+    func defaultPolicySeamsUseProductionSources() async {
+        var configuration = ChatConfiguration.default
+        configuration.warmModelsOnLoad = false
+
+        await ChatConfigurationStore.withTestConfiguration(configuration) {
+            let controller = ChatWarmupController()
+            defer { controller.shutdown() }
+
+            #expect(!controller.warmModelsOnLoad())
+            #expect(
+                controller.isAnyWindowStreamingLocalModel()
+                    == ChatWindowManager.shared.isAnyWindowStreamingLocalModel
+            )
+
+            var updated = ChatConfigurationStore.load()
+            updated.warmModelsOnLoad = true
+            ChatConfigurationStore.save(updated)
+            #expect(controller.warmModelsOnLoad())
+        }
+    }
+
     @Test("DSV4 cold local send requires pre-send warm-up")
     func dsv4ColdSendRequiresWarmup() {
         #expect(

@@ -391,6 +391,27 @@ enum Keychain {
         }
     }
 
+    /// Delete every generic-password item under `service`.
+    ///
+    /// Factory reset uses this centralized path so recognized test hosts and
+    /// keychain-free proof processes cannot bypass the process disable gate
+    /// through a direct `SecItemDelete` call.
+    static func deleteAllItems(service: String) -> KeychainMutationOutcome {
+        let (backend, bypassesGate) = currentBackend()
+        if !bypassesGate, KeychainQueryHelpers.disablesKeychainForProcess { return .disabled }
+        return onWriteQueueSync {
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+            ]
+            let status = backend.delete(query: query)
+            if status == errSecSuccess || status == errSecItemNotFound { return .success }
+            logFailure("delete-all", service: service, status: status)
+            return mutationOutcome(for: status)
+        }
+    }
+
     /// Every attribute dictionary stored under `service`, de-duplicated on
     /// account name, with an authoritative flag for cache decisions.
     static func fetchAllItems(service: String, returnData: Bool) -> KeychainEnumerationOutcome {

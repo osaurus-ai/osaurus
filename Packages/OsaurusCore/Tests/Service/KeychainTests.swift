@@ -1,6 +1,7 @@
 // Copyright © 2026 osaurus.
 
 import Foundation
+import LocalAuthentication
 import Security
 import OsaurusRepository
 import Testing
@@ -102,8 +103,32 @@ private final class FakeKeychainBackend: KeychainBackend, @unchecked Sendable {
         defer { lock.unlock() }
         recordedOperations.append("delete")
         if let forced = deleteStatus { return forced }
+        if query[kSecAttrAccount as String] == nil {
+            let service = query[kSecAttrService as String] as? String ?? ""
+            let prefix = "\(service)\u{0}"
+            let matchingKeys = store.keys.filter { $0.hasPrefix(prefix) }
+            for key in matchingKeys { store.removeValue(forKey: key) }
+            return matchingKeys.isEmpty ? errSecItemNotFound : errSecSuccess
+        }
         guard store.removeValue(forKey: itemKey(query)) != nil else { return errSecItemNotFound }
         return errSecSuccess
+    }
+}
+
+private final class AuthenticationContextCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [LAContext] = []
+
+    func append(_ context: LAContext) {
+        lock.lock()
+        storage.append(context)
+        lock.unlock()
+    }
+
+    var contexts: [LAContext] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
     }
 }
 
@@ -119,6 +144,32 @@ struct KeychainTests {
 
     // MARK: - Write
 
+    @Test("noninteractive authentication contexts are cached per thread")
+    func nonInteractiveContextsAreThreadConfined() {
+        let current = KeychainQueryHelpers.nonInteractiveContext()
+        #expect(KeychainQueryHelpers.nonInteractiveContext() === current)
+        #expect(current.interactionNotAllowed)
+
+        let collector = AuthenticationContextCollector()
+        let group = DispatchGroup()
+        for _ in 0 ..< 2 {
+            group.enter()
+            Thread.detachNewThread {
+                let context = KeychainQueryHelpers.nonInteractiveContext()
+                collector.append(context)
+                group.leave()
+            }
+        }
+
+        #expect(group.wait(timeout: .now() + 2) == .success)
+        let contexts = collector.contexts
+        let identifiers = contexts.map(ObjectIdentifier.init)
+        #expect(contexts.count == 2)
+        #expect(contexts.allSatisfy { $0.interactionNotAllowed })
+        #expect(Set(identifiers).count == 2)
+        #expect(!identifiers.contains(ObjectIdentifier(current)))
+    }
+
     @Test("write updates an existing item without adding or deleting")
     func writeUpdatesExistingItem() {
         let backend = FakeKeychainBackend()
@@ -130,6 +181,26 @@ struct KeychainTests {
         }
         #expect(backend.value(service: Self.service, account: "a") == Data("new".utf8))
         #expect(backend.operations == ["update"])
+    }
+
+    @Test("delete-all removes one service without touching another")
+    func deleteAllIsServiceScoped() {
+        let backend = FakeKeychainBackend()
+        backend.seed(service: Self.service, account: "a", data: Data("a".utf8))
+        backend.seed(service: Self.service, account: "b", data: Data("b".utf8))
+        backend.seed(service: "ai.osaurus.test.other", account: "a", data: Data("other".utf8))
+
+        withFakeBackend(backend) {
+            #expect(Keychain.deleteAllItems(service: Self.service) == .success)
+        }
+
+        #expect(backend.value(service: Self.service, account: "a") == nil)
+        #expect(backend.value(service: Self.service, account: "b") == nil)
+        #expect(
+            backend.value(service: "ai.osaurus.test.other", account: "a")
+                == Data("other".utf8)
+        )
+        #expect(backend.operations == ["delete"])
     }
 
     @Test("write adds only after errSecItemNotFound")

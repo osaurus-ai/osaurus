@@ -217,8 +217,6 @@ struct MasterKeyExistsGuardTests {
 private let realKeychainProofRequested =
     KeychainQueryHelpers.realKeychainProofWasRequested
 
-private let realKeychainProbeSucceeded = canProbeRealKeychainWrite()
-
 private func requireRealKeychainProofLane() throws {
     try #require(
         KeychainQueryHelpers.realKeychainProofWasRequested,
@@ -242,33 +240,17 @@ private func requireRealKeychainProofLane() throws {
             && MasterKey.service != "com.osaurus.account",
         "Real-Keychain proof must not select the production identity slot"
     )
-    try #require(
-        realKeychainProbeSucceeded,
-        "The host could not write and delete a throwaway real-Keychain item"
-    )
+    try verifyRealKeychainWriteAndCleanup()
 }
 
 /// Verify that this process reaches Security.framework with the same
 /// local-only write contract used by the namespaced proof Master Key. The
 /// probe is intentionally direct so it creates no detached watchdog thread
 /// that can outlive the suite.
-private func canProbeRealKeychainWrite() -> Bool {
-    guard let namespace = KeychainQueryHelpers.realKeychainTestNamespace else { return false }
+private func verifyRealKeychainWriteAndCleanup() throws {
+    let namespace = try #require(KeychainQueryHelpers.realKeychainTestNamespace)
     let probeService = "com.osaurus.tests.keychain-probe.\(namespace)"
     let probeAccount = "probe"
-
-    var ownsProbeItem = false
-    defer {
-        if ownsProbeItem {
-            let cleanup: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: probeService,
-                kSecAttrAccount as String: probeAccount,
-                kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
-            ]
-            SecItemDelete(cleanup as CFDictionary)
-        }
-    }
 
     let query: [String: Any] = [
         kSecClass as String: kSecClassGenericPassword,
@@ -279,6 +261,20 @@ private func canProbeRealKeychainWrite() -> Bool {
         kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
     ]
     let status = SecItemAdd(query as CFDictionary, nil)
-    ownsProbeItem = status == errSecSuccess
-    return ownsProbeItem
+    try #require(
+        status == errSecSuccess,
+        "The host could not write a throwaway real-Keychain item (status \(status))"
+    )
+
+    let cleanup: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: probeService,
+        kSecAttrAccount as String: probeAccount,
+        kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+    ]
+    let cleanupStatus = SecItemDelete(cleanup as CFDictionary)
+    try #require(
+        cleanupStatus == errSecSuccess,
+        "The host could not remove its throwaway real-Keychain item (status \(cleanupStatus))"
+    )
 }

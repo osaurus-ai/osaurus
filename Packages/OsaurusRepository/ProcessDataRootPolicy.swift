@@ -21,6 +21,11 @@ private func removeAutomaticTestRootAtExit() {
 /// explicit test flag, an explicit test root, or a process with XCTest host
 /// identity signals. Ordinary app launches continue to use their configured
 /// production root.
+///
+/// Explicit roots are trusted test-launcher inputs. The validation below
+/// rejects unsafe locations, foreign ownership, permissive modes, and roots
+/// that are already symlinks; it is not a security boundary against another
+/// process running as the same user replacing a pathname after validation.
 public enum ProcessDataRootPolicy {
     public static let testRootEnvironmentKey = "OSAURUS_TEST_ROOT"
     public static let disableKeychainForTestsEnvironmentKey =
@@ -206,6 +211,11 @@ public enum ProcessDataRootPolicy {
             childEnvironment.removeValue(forKey: key)
         }
 
+        let parentRequiresIsolation = shouldDisableKeychain(
+            environment: parentEnvironment,
+            recognizedTestHost: parentRecognizedTestHost
+        )
+
         if let rawRoot = parentEnvironment[testRootEnvironmentKey]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
             !rawRoot.isEmpty {
@@ -219,9 +229,15 @@ public enum ProcessDataRootPolicy {
                 childEnvironment[disableKeychainForTestsEnvironmentKey] = "1"
             }
         }
-        if parentEnvironment[disableKeychainForTestsEnvironmentKey] == "1"
-            || (parentRecognizedTestHost
-                && !hasValue(parentEnvironment[testRootEnvironmentKey])) {
+
+        // Every reason that isolates the parent must isolate the child too,
+        // including malformed/leaked real-Keychain proof markers. Forward an
+        // already-created private root so the child cannot fall back to the
+        // user's home directory before its own resolver initializes.
+        if parentRequiresIsolation {
+            if !hasValue(childEnvironment[testRootEnvironmentKey]) {
+                childEnvironment[testRootEnvironmentKey] = automaticTestRoot.path
+            }
             childEnvironment[disableKeychainForTestsEnvironmentKey] = "1"
         }
         return childEnvironment
@@ -366,8 +382,9 @@ public enum ProcessDataRootPolicy {
         guard root.isFileURL, root.path.hasPrefix("/") else { return nil }
 
         // Resolve `/tmp` and other parent aliases, but never accept a
-        // caller-controlled symlink as the root itself. Otherwise the link can
-        // be swapped after validation and redirect later test writes.
+        // caller-controlled symlink as the root itself. This rejects static
+        // path escapes; trusted launchers still own the pathname-lifetime
+        // contract documented on `ProcessDataRootPolicy` above.
         var rootInfo = stat()
         guard lstat(root.path, &rootInfo) == 0,
             rootInfo.st_mode & S_IFMT != S_IFLNK

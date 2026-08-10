@@ -641,7 +641,7 @@ final class ProcessDataRootPolicyTests: XCTestCase {
         XCTAssertNil(childEnvironment[ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey])
     }
 
-    func testRecognizedTestHostChildGetsDisableMarkerWithoutParentSecretInheritance() {
+    func testRecognizedTestHostChildGetsPrivateRootAndDisableMarker() {
         let childEnvironment = ProcessDataRootPolicy.applyingChildTestIsolation(
             to: ["TOOL_SETTING": "retained"],
             parentEnvironment: ["PARENT_SECRET": "must-not-be-inherited"],
@@ -651,6 +651,10 @@ final class ProcessDataRootPolicyTests: XCTestCase {
         XCTAssertEqual(
             childEnvironment[ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey],
             "1"
+        )
+        XCTAssertTrue(
+            childEnvironment[ProcessDataRootPolicy.testRootEnvironmentKey]?
+                .hasPrefix("/tmp/osa-t-") == true
         )
         XCTAssertNil(childEnvironment["PARENT_SECRET"])
     }
@@ -739,6 +743,44 @@ final class ProcessDataRootPolicyTests: XCTestCase {
                     environment: environment,
                     recognizedTestHost: false
                 )
+            )
+        }
+    }
+
+    func testProofMarkersCannotBeStrippedIntoAProductionChild() {
+        let proofEnvironments = [
+            [ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey: "1"],
+            [
+                ProcessDataRootPolicy.realKeychainTestNamespaceEnvironmentKey:
+                    "36CFBE8B-39DB-47DB-BA95-1742165D2657"
+            ],
+        ]
+
+        for parentEnvironment in proofEnvironments {
+            let childEnvironment = ProcessDataRootPolicy.applyingChildTestIsolation(
+                to: [
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "0",
+                    ProcessDataRootPolicy.testRootEnvironmentKey: "/tmp/provider-root",
+                ],
+                parentEnvironment: parentEnvironment,
+                parentRecognizedTestHost: false
+            )
+
+            XCTAssertEqual(
+                childEnvironment[ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey],
+                "1"
+            )
+            XCTAssertTrue(
+                childEnvironment[ProcessDataRootPolicy.testRootEnvironmentKey]?
+                    .hasPrefix("/tmp/osa-t-") == true
+            )
+            XCTAssertNil(
+                childEnvironment[ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey]
+            )
+            XCTAssertNil(
+                childEnvironment[
+                    ProcessDataRootPolicy.realKeychainTestNamespaceEnvironmentKey
+                ]
             )
         }
     }

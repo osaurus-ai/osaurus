@@ -227,6 +227,7 @@ final class MCPStdioTransportErrorTests: XCTestCase {
                 providerEnvironment: [
                     "PROVIDER_SETTING": "explicit-value",
                     "PROVIDER_SECRET": "explicit-secret",
+                    "HOME": "/Users/provider-override",
                     ProcessDataRootPolicy.testRootEnvironmentKey: "/tmp/provider-root",
                     ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "0",
                     ProcessDataRootPolicy.allowRealKeychainForTestsEnvironmentKey: "1",
@@ -241,7 +242,7 @@ final class MCPStdioTransportErrorTests: XCTestCase {
             XCTAssertEqual(environment["PROVIDER_SECRET"], "explicit-secret")
             XCTAssertNil(environment["GITHUB_TOKEN"])
             XCTAssertNil(environment["AWS_SECRET_ACCESS_KEY"])
-            XCTAssertNil(environment["HOME"])
+            XCTAssertEqual(environment["HOME"], parentRoot.path)
             XCTAssertEqual(
                 environment[ProcessDataRootPolicy.testRootEnvironmentKey],
                 parentRoot.path
@@ -281,6 +282,41 @@ final class MCPStdioTransportErrorTests: XCTestCase {
             XCTAssertFalse(rendered.contains(ambientCanary))
             XCTAssertFalse(rendered.contains("AMBIENT_SECRET_CANARY="))
             XCTAssertTrue(rendered.contains("PROVIDER_EXPLICIT_VALUE=\(providerValue)"))
+            XCTAssertEqual(
+                environment["HOME"],
+                environment[ProcessDataRootPolicy.testRootEnvironmentKey]
+            )
+        }
+
+        func testIsolatedHomeControlsShellAndPythonExpansion() throws {
+            let parentRoot = try makePrivateTestRoot()
+            defer { try? FileManager.default.removeItem(at: parentRoot) }
+            let environment = MCPStdioHostRunner.buildEnvironmentForTesting(
+                parentEnvironment: [
+                    "PATH": "/usr/bin:/bin",
+                    "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
+                    ProcessDataRootPolicy.testRootEnvironmentKey: parentRoot.path,
+                    ProcessDataRootPolicy.disableKeychainForTestsEnvironmentKey: "1",
+                ],
+                providerEnvironment: ["HOME": "/Users/provider-override"],
+                parentRecognizedTestHost: false
+            )
+
+            let shell = try runProcess(
+                executable: "/bin/sh",
+                arguments: ["-c", "printf '%s' ~"],
+                environment: environment
+            )
+            XCTAssertEqual(shell.status, 0, shell.stderr)
+            XCTAssertEqual(shell.stdout, parentRoot.path)
+
+            let python = try runProcess(
+                executable: "/usr/bin/python3",
+                arguments: ["-c", "import pathlib; print(pathlib.Path.home(), end='')"],
+                environment: environment
+            )
+            XCTAssertEqual(python.status, 0, python.stderr)
+            XCTAssertEqual(python.stdout, parentRoot.path)
         }
 
         func testHostSearchPathAppendsCommonLocalBinFallbacks() throws {
@@ -294,6 +330,34 @@ final class MCPStdioTransportErrorTests: XCTestCase {
             XCTAssertTrue(entries.contains("/usr/local/bin"))
             XCTAssertTrue(entries.contains("/usr/bin"))
             XCTAssertEqual(entries.filter { $0 == "/usr/bin" }.count, 1)
+        }
+
+        private func runProcess(
+            executable: String,
+            arguments: [String],
+            environment: [String: String]
+        ) throws -> (status: Int32, stdout: String, stderr: String) {
+            let process = Process()
+            let stdout = Pipe()
+            let stderr = Pipe()
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = arguments
+            process.environment = environment
+            process.standardOutput = stdout
+            process.standardError = stderr
+            try process.run()
+            process.waitUntilExit()
+            return (
+                process.terminationStatus,
+                String(
+                    data: stdout.fileHandleForReading.readDataToEndOfFile(),
+                    encoding: .utf8
+                ) ?? "",
+                String(
+                    data: stderr.fileHandleForReading.readDataToEndOfFile(),
+                    encoding: .utf8
+                ) ?? ""
+            )
         }
 
         func testHostResolverFindsExecutableOnPath() throws {

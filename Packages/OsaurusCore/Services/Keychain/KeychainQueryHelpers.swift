@@ -63,23 +63,22 @@ enum KeychainQueryHelpers {
     /// matching `LAContext` prevents accidental password/biometric UI if the
     /// system decides the stored item needs an authentication context.
     ///
-    /// The context is created once and reused. `LAContext.init` performs a
-    /// synchronous XPC round-trip to `coreauthd`, and every Keychain read and
-    /// enumeration builds one — on the main thread that has stalled the UI for
-    /// seconds. A non-interactive context carries no per-query state, so a
-    /// single shared instance is safe to reuse across queries and threads.
+    /// `LAContext.init` performs a synchronous XPC round-trip to `coreauthd`,
+    /// and creating one for every Keychain query has stalled the main thread.
+    /// Cache one immutable, non-interactive context per calling thread instead:
+    /// synchronous queries reuse it without sharing mutable framework state
+    /// across the concurrent Keychain read executor.
     static func nonInteractiveContext() -> LAContext {
-        contextLock.lock()
-        defer { contextLock.unlock() }
-        if let cached = sharedNonInteractiveContext {
+        let threadDictionary = Thread.current.threadDictionary
+        if let cached = threadDictionary[nonInteractiveContextThreadKey] as? LAContext {
             return cached
         }
         let context = LAContext()
         context.interactionNotAllowed = true
-        sharedNonInteractiveContext = context
+        threadDictionary[nonInteractiveContextThreadKey] = context
         return context
     }
 
-    private static let contextLock = NSLock()
-    nonisolated(unsafe) private static var sharedNonInteractiveContext: LAContext?
+    private static let nonInteractiveContextThreadKey =
+        "ai.osaurus.keychain.non-interactive-context"
 }

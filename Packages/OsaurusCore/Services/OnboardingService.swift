@@ -291,16 +291,13 @@ public final class OnboardingService: ObservableObject {
     /// secret store can't be silently missed by factory reset.
     private func wipeKeychain() {
         for service in OsaurusKeychainServices.all {
-            let query: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service,
-                kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
-            ]
-
-            let status = SecItemDelete(query as CFDictionary)
-            if status == errSecSuccess {
+            switch Keychain.deleteAllItems(service: service) {
+            case .success:
                 print("[OnboardingService] Wiped Keychain service: \(service)")
-            } else if status != errSecItemNotFound {
+            case .disabled:
+                print("[OnboardingService] Skipped Keychain wipe in isolated test process")
+                return
+            case .unavailable(let status), .accessDenied(let status), .failure(let status):
                 print("[OnboardingService] Failed to wipe Keychain service \(service): \(status)")
             }
         }

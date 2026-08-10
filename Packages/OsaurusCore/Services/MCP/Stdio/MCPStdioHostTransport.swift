@@ -145,11 +145,24 @@
             for (key, value) in providerEnvironment {
                 environment[key] = value
             }
-            return ProcessDataRootPolicy.applyingChildTestIsolation(
+            var childEnvironment = ProcessDataRootPolicy.applyingChildTestIsolation(
                 to: environment,
                 parentEnvironment: parentEnvironment,
                 parentRecognizedTestHost: parentRecognizedTestHost
             )
+            if parentIsolated,
+                let isolatedRoot = childEnvironment[
+                    ProcessDataRootPolicy.testRootEnvironmentKey
+                ] {
+                // `/bin/sh` and several runtimes fall back to the account home
+                // when HOME is absent. Provider configuration also overlays the
+                // ambient allowlist above, so force HOME after that overlay.
+                // Host MCP remains an explicitly unconfined execution mode;
+                // this prevents accidental `~` expansion into persistent user
+                // state during tests, rather than claiming filesystem sandboxing.
+                childEnvironment["HOME"] = isolatedRoot
+            }
+            return childEnvironment
         }
 
         /// Resolve `command` to an absolute path the kernel can exec.
