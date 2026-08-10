@@ -21,6 +21,11 @@ struct MuseGlimmerVisionLiveTests {
     /// run the same check against another quant (the proof matrix wants both
     /// JANG_4M and JANG_6M).
     static let bundle: URL = {
+        // An absolute path lets the same probes run against a different family
+        // as a control — a probe that no model passes measures the probe.
+        if let path = ProcessInfo.processInfo.environment["MUSE_VL_BUNDLE_PATH"] {
+            return URL(fileURLWithPath: path)
+        }
         let name = ProcessInfo.processInfo.environment["MUSE_VL_BUNDLE"]
             ?? "Muse-Glimmer-30B-JANG_4M"
         return URL(fileURLWithPath: NSHomeDirectory())
@@ -185,7 +190,8 @@ struct MuseGlimmerVisionLiveTests {
             for await item in stream {
                 if let chunk = item.chunk { text += chunk }
             }
-            return text.lowercased()
+            return text.lowercased().replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespaces)
         }
 
         let onRed = try await name(red)
@@ -294,7 +300,8 @@ struct MuseGlimmerVisionLiveTests {
             for await item in stream {
                 if let chunk = item.chunk { text += chunk }
             }
-            return text.lowercased()
+            return text.lowercased().replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespaces)
         }
 
         let onCircle = try await classify(circle)
