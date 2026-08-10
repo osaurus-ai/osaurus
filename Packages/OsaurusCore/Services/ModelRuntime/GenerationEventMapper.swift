@@ -37,13 +37,13 @@ enum GenerationEventMapper {
     ///   path, not in this translation layer. If a no-thinking request still
     ///   emits `.reasoning`, Osaurus keeps that signal visible for root-cause
     ///   debugging instead of merging or suppressing it.
-    static func map(
-        events: AsyncStream<Generation>,
+    static func map<S: AsyncSequence & Sendable>(
+        events: S,
         modelName: String = "",
         trace: TTFTTrace? = nil,
         suppressProgressUI: Bool = false,
         onConsumerCancellation: @escaping @Sendable () -> Void = {}
-    ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
+    ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> where S.Element == Generation {
         let (stream, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
         let task = Task {
             let interval = mapperSignposter.beginInterval(
@@ -89,120 +89,138 @@ enum GenerationEventMapper {
                 }
             }
 
-            for await event in events {
-                if case .info(let info) = event {
-                    sawCompletionInfo = true
-                    terminalInfoAt = CFAbsoluteTimeGetCurrent()
-                    finalTokenCount = info.generationTokenCount
-                    logCompletionInfo(info)
-                    continuation.yield(
-                        .completionInfo(
-                            tokenCount: info.generationTokenCount,
-                            tokensPerSecond: info.tokensPerSecond,
-                            unclosedReasoning: info.unclosedReasoning,
-                            stopReason: Self.openAIStopReason(from: info.stopReason),
-                            promptTokensPerSecond: info.promptTokensPerSecond
+            var upstreamError: Error?
+            do {
+                for try await event in events {
+                    if case .info(let info) = event {
+                        sawCompletionInfo = true
+                        terminalInfoAt = CFAbsoluteTimeGetCurrent()
+                        finalTokenCount = info.generationTokenCount
+                        logCompletionInfo(info)
+                        continuation.yield(
+                            .completionInfo(
+                                tokenCount: info.generationTokenCount,
+                                tokensPerSecond: info.tokensPerSecond,
+                                unclosedReasoning: info.unclosedReasoning,
+                                stopReason: Self.openAIStopReason(from: info.stopReason),
+                                promptTokensPerSecond: info.promptTokensPerSecond
+                            )
                         )
-                    )
-                    // `.info` is vmlx's authoritative logical completion.
-                    // Finish the user-facing stream now, but keep this mapper
-                    // task draining `events`. The adapter's producer still owns
-                    // the model lease and Metal gate until synchronous cache
-                    // serialization has fully drained, so a subsequent request
-                    // queues safely instead of racing it.
-                    continuation.finish()
-                    continue
-                }
-
-                if Task.isCancelled { break }
-                switch event {
-                case .chunk(let text):
-                    guard !text.isEmpty else { continue }
-                    markFirstModelOutput()
-                    if firstChunk {
-                        firstChunk = false
-                        reportPrefillFinished()
+                        // `.info` is vmlx's authoritative logical completion.
+                        // Finish the user-facing stream now, but keep this mapper
+                        // task draining `events`. The adapter's producer still owns
+                        // the model lease and Metal gate until synchronous cache
+                        // serialization has fully drained, so a subsequent request
+                        // queues safely instead of racing it.
+                        continuation.finish()
+                        continue
                     }
-                    estimatedTextTokens += max(1, text.count / 4)
-                    continuation.yield(.tokens(text))
 
-                case .reasoning(let text):
-                    guard !text.isEmpty else { continue }
-                    markFirstModelOutput()
-                    sawReasoning = true
-                    estimatedTextTokens += max(1, text.count / 4)
-                    // Reasoning-capable families (DSV4-Flash thinking,
-                    // Qwen 3.5 / 3.6 thinking-on, etc.) can stream
-                    // `.reasoning` deltas for many seconds before the
-                    // first `.chunk`. Marking prefill done on the
-                    // first non-empty event of either kind keeps the
-                    // "loading model" / spinner UI honest — the model
-                    // IS producing output, just on a different
-                    // channel.
-                    if firstChunk {
-                        firstChunk = false
-                        reportPrefillFinished()
-                    }
-                    continuation.yield(.reasoning(text))
+                    if Task.isCancelled { break }
+                    switch event {
+                    case .tokenID:
+                        // Diagnostic-only IDs belong to the token trace adapter. They
+                        // must never reach the app event surface or become text.
+                        continue
 
-                case .prefillProgress(let progress):
-                    let state = PrefillProgressState(
-                        stage: PrefillProgressStage(rawValue: progress.stage.rawValue) ?? .prefill,
-                        completedUnitCount: progress.completedUnitCount,
-                        totalUnitCount: progress.totalUnitCount,
-                        detail: progress.detail
-                    )
-                    if !suppressProgressUI {
-                        InferenceProgressManager.shared.prefillDidUpdateAsync(state)
-                    } else {
-                        WarmupProgressHub.shared.prefillDidUpdate(model: modelName, state: state)
-                    }
-                    if state.stage.rawValue != lastPrefillStage {
-                        lastPrefillStage = state.stage.rawValue
-                        PrefillDebugLog.shared.log(
-                            "     STEP-PREFILL stage=\(state.stage.rawValue) "
-                                + "completed=\(state.completedUnitCount)/\(state.totalUnitCount)"
-                                + (state.detail.map { " detail=\($0)" } ?? "")
+                    case .chunk(let text):
+                        guard !text.isEmpty else { continue }
+                        markFirstModelOutput()
+                        if firstChunk {
+                            firstChunk = false
+                            reportPrefillFinished()
+                        }
+                        estimatedTextTokens += max(1, text.count / 4)
+                        continuation.yield(.tokens(text))
+
+                    case .reasoning(let text):
+                        guard !text.isEmpty else { continue }
+                        markFirstModelOutput()
+                        sawReasoning = true
+                        estimatedTextTokens += max(1, text.count / 4)
+                        // Reasoning-capable families (DSV4-Flash thinking,
+                        // Qwen 3.5 / 3.6 thinking-on, etc.) can stream
+                        // `.reasoning` deltas for many seconds before the
+                        // first `.chunk`. Marking prefill done on the
+                        // first non-empty event of either kind keeps the
+                        // "loading model" / spinner UI honest — the model
+                        // IS producing output, just on a different
+                        // channel.
+                        if firstChunk {
+                            firstChunk = false
+                            reportPrefillFinished()
+                        }
+                        continuation.yield(.reasoning(text))
+
+                    case .prefillProgress(let progress):
+                        let state = PrefillProgressState(
+                            stage: PrefillProgressStage(rawValue: progress.stage.rawValue) ?? .prefill,
+                            completedUnitCount: progress.completedUnitCount,
+                            totalUnitCount: progress.totalUnitCount,
+                            detail: progress.detail
                         )
+                        if !suppressProgressUI {
+                            InferenceProgressManager.shared.prefillDidUpdateAsync(state)
+                        } else {
+                            WarmupProgressHub.shared.prefillDidUpdate(model: modelName, state: state)
+                        }
+                        if state.stage.rawValue != lastPrefillStage {
+                            lastPrefillStage = state.stage.rawValue
+                            PrefillDebugLog.shared.log(
+                                "     STEP-PREFILL stage=\(state.stage.rawValue) "
+                                    + "completed=\(state.completedUnitCount)/\(state.totalUnitCount)"
+                                    + (state.detail.map { " detail=\($0)" } ?? "")
+                            )
+                        }
+                        continuation.yield(.prefillProgress(state))
+
+                    case .toolCall(let call):
+                        sawToolCall = true
+                        markFirstModelOutput()
+                        let argsJSON = serializeArguments(
+                            call.function.arguments,
+                            rawArgumentsJSON: call.function.rawArgumentsJSON,
+                            toolName: call.function.name
+                        )
+                        continuation.yield(
+                            .toolInvocation(name: call.function.name, argsJSON: argsJSON)
+                        )
+
+                    case .toolCallProgress(let envelopeDelta):
+                        // Raw envelope preview while the call is still being
+                        // written. Keeps the stream alive during a long file-write
+                        // call (which otherwise buffers silently until it closes)
+                        // so the chat can render progress instead of a frozen
+                        // indicator. Marks first output so the prefill spinner
+                        // clears — the model IS producing, just inside a tool
+                        // envelope. The parsed call still lands as `.toolInvocation`.
+                        guard !envelopeDelta.isEmpty else { continue }
+                        markFirstModelOutput()
+                        if firstChunk {
+                            firstChunk = false
+                            InferenceProgressManager.shared.prefillDidFinishAsync()
+                        }
+                        continuation.yield(.toolCallProgress(envelopeDelta))
+
+                    case .info:
+                        continue
+
+                    @unknown default:
+                        // Forward-compat: unknown future cases are skipped
+                        // so a library bump cannot leak raw markers to the UI.
+                        continue
                     }
-                    continuation.yield(.prefillProgress(state))
-
-                case .toolCall(let call):
-                    sawToolCall = true
-                    markFirstModelOutput()
-                    let argsJSON = serializeArguments(
-                        call.function.arguments,
-                        rawArgumentsJSON: call.function.rawArgumentsJSON,
-                        toolName: call.function.name
-                    )
-                    continuation.yield(
-                        .toolInvocation(name: call.function.name, argsJSON: argsJSON)
-                    )
-
-                case .toolCallProgress(let envelopeDelta):
-                    // Raw envelope preview while the call is still being
-                    // written. Keeps the stream alive during a long file-write
-                    // call (which otherwise buffers silently until it closes)
-                    // so the chat can render progress instead of a frozen
-                    // indicator. Marks first output so the prefill spinner
-                    // clears — the model IS producing, just inside a tool
-                    // envelope. The parsed call still lands as `.toolInvocation`.
-                    guard !envelopeDelta.isEmpty else { continue }
-                    markFirstModelOutput()
-                    if firstChunk {
-                        firstChunk = false
-                        InferenceProgressManager.shared.prefillDidFinishAsync()
-                    }
-                    continuation.yield(.toolCallProgress(envelopeDelta))
-
-                case .info:
-                    continue
-
-                @unknown default:
-                    // Forward-compat: unknown future cases are skipped
-                    // so a library bump cannot leak raw markers to the UI.
-                    continue
                 }
+            } catch {
+                upstreamError = error
+            }
+
+            if let upstreamError {
+                mapperLog.error(
+                    "generation stream failed before completion info: \(String(describing: upstreamError), privacy: .public)"
+                )
+                continuation.finish(throwing: upstreamError)
+                return
             }
 
             if !sawCompletionInfo {

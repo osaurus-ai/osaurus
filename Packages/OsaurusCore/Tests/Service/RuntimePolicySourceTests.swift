@@ -786,7 +786,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "2ecdd5f8780537980e473805b9a347fc429f7133"
+        let expectedRuntimeHardenedRevision = "f83bd7c21d872df23ac8bb50b6e29cf8a3ac2197"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -844,10 +844,34 @@ struct RuntimePolicySourceTests {
         let postLoadWindow = String(source[loadDone.lowerBound ..< leaseAcquire.lowerBound])
 
         #expect(postLoadWindow.contains("if Task.isCancelled"))
+        #expect(postLoadWindow.contains("finishModelDeletionProtectedAccess(deletionAccess)"))
+        #expect(postLoadWindow.contains("deletionAccessReleased = true"))
         #expect(postLoadWindow.contains("await ModelResidencyManager.shared.cancel(modelName: modelName)"))
         #expect(postLoadWindow.contains("if shouldReportModelLoad"))
-        #expect(postLoadWindow.contains("await unload(name: modelName)"))
+        #expect(
+            postLoadWindow.contains(
+                "let unloaded = await Self.unloadAfterCancelledColdLoad(modelName: modelName)"
+            )
+        )
         #expect(postLoadWindow.contains("throw CancellationError()"))
+
+        let cleanup = try Self.functionBody(
+            "private nonisolated static func unloadAfterCancelledColdLoad(",
+            in: source
+        )
+        #expect(cleanup.contains("Task.detached(priority: .userInitiated)"))
+        #expect(cleanup.contains("await ModelRuntime.shared.unload(name: modelName)"))
+
+        let modelLease = try #require(
+            source.range(of: "await ModelLease.shared.acquire(modelName)")
+        )
+        let normalAccessRelease = try #require(
+            source.range(
+                of: "finishModelDeletionProtectedAccess(deletionAccess)",
+                range: modelLease.upperBound ..< source.endIndex
+            )
+        )
+        #expect(modelLease.lowerBound < normalAccessRelease.lowerBound)
     }
 
     @Test("DSV4 renderer checklist keeps invalid generic flags out of CLI preview")
@@ -1414,38 +1438,53 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             adapter.contains("post-generation disk-cache store")
-                && adapter.contains("for await event in upstream")
-                && adapter.contains(
-                    "if case .info = event {\n                        continuation.yield(event)\n                        continue\n                    }"
-                ),
-            "adapter must forward terminal info but keep draining vmlx until the upstream stream finishes, so the solo lease covers post-generation cache persistence"
+                && adapter.contains("for try await event in upstream")
+                && adapter.contains("bufferedInfo = info")
+                && adapter.contains("await onDrained()"),
+            "the bridge must retain terminal info and drain vmlx until source completion, so the solo lease covers post-generation cache persistence"
         )
         #expect(
             adapter.contains("continuation.onTermination = { @Sendable _ in")
-                && adapter.contains("producerTask.cancel()"),
-            "adapter stream termination must cancel the producer so UI Stop reaches vmlx's upstream AsyncStream termination handler"
+                && adapter.contains("task.cancel()")
+                && adapter.contains("await cancellationBarrier.wait()"),
+            "adapter stream termination must cancel the bridge and await the cancellation source before releasing gates"
         )
         #expect(
-            adapter.contains("await engine.cancelActiveSoloGenerationAndWait()"),
-            "adapter cancellation must explicitly cancel and await the underlying vmlx solo producer before releasing its gate"
+            adapter.contains("let handle = await engine.startGeneration(")
+                && adapter.contains("_ = await handle.cancelAndWait()")
+                && !adapter.contains("cancelActiveSoloGenerationAndWait()")
+                && !adapter.contains("sourceTask.cancel()"),
+            "adapter cancellation must use the exact vmlx request handle for both solo and batched producers without cancelling the source iterator or a global engine"
         )
 
         let activityBegin = try #require(
             adapter.range(of: "let inferenceActivity = Self.beginInferenceActivityIfEnabled()")
         )
-        let engineSubmit = try #require(adapter.range(of: "let upstream = await engine.generate("))
-        let producer = try #require(adapter.range(of: "let producerTask = Task<Void, Never> {"))
+        let engineSubmit = try #require(
+            adapter.range(of: "let handle = await engine.startGeneration(")
+        )
+        let bridge = try #require(
+            adapter.range(
+                of: "let bridge = Self.bridgeGenerationStream(",
+                range: engineSubmit.upperBound ..< adapter.endIndex
+            )
+        )
         let activityEnd = try #require(
             adapter.range(
                 of: "ProcessInfo.processInfo.endActivity(inferenceActivity.token)",
-                range: producer.lowerBound ..< adapter.endIndex
+                range: bridge.upperBound ..< adapter.endIndex
             )
         )
         #expect(
             activityBegin.lowerBound < engineSubmit.lowerBound
-                && engineSubmit.lowerBound < producer.lowerBound
-                && producer.lowerBound < activityEnd.lowerBound,
-            "the process activity must start before engine submission and end from the producer's full-drain lifetime"
+                && engineSubmit.lowerBound < bridge.lowerBound
+                && bridge.lowerBound < activityEnd.lowerBound,
+            "the process activity must start before engine submission and end from the bridge's full-drain lifetime"
+        )
+        #expect(
+            adapter.contains("if let soloLease {\n                    await soloLease.release()")
+                && adapter.contains("await MetalGate.shared.exitGeneration(model: modelName)"),
+            "the drained callback must release the solo lease and Metal gate only after source completion"
         )
         #expect(
             adapter.contains(
@@ -1497,10 +1536,10 @@ struct RuntimePolicySourceTests {
             "MLXBatchAdapter must preserve upstream `.info` before honoring cancellation, otherwise vmlx's final cancelled/length/stop event is dropped"
         )
         #expect(
-            adapter.contains(
-                "if !Task.isCancelled {\n                        continuation.yield(event)\n                    }"
-            ),
-            "MLXBatchAdapter must keep draining cancelled upstream streams until `.info`, while suppressing only non-terminal deltas after cancellation"
+            adapter.contains("continuation.yield(.info(info))")
+                && adapter.contains("GenerationBridgeCancellationState")
+                && adapter.contains("else if !cancellationState.isRequested, diagnosticError == nil"),
+            "MLXBatchAdapter must always preserve terminal `.info` while suppressing only non-terminal deltas after cancellation"
         )
         #expect(
             !adapter.contains(
@@ -2080,6 +2119,274 @@ struct RuntimePolicySourceTests {
             unloadBody.components(separatedBy: "await cancelActiveGeneration(for: name)").count == 2,
             "Explicit unload must cancel the selected model exactly once"
         )
+    }
+
+    @Test("model unload releases derived buffers before removing the holder")
+    func modelUnloadReleasesDerivedBuffersBeforeHolderRemoval() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let unloadBody = try Self.functionBody("private func unloadClaimed(", in: runtime)
+
+        let leaseDrain = try #require(
+            unloadBody.range(of: "await ModelLease.shared.waitForZero(")
+        )
+        let release = try #require(
+            unloadBody.range(
+                of: "await modelCache[name]?.container.releaseDerivedBuffersForTeardown()",
+                range: leaseDrain.upperBound ..< unloadBody.endIndex
+            )
+        )
+        let holderRemoval = try #require(
+            unloadBody.range(
+                of: "modelCache.removeValue(forKey: name)",
+                range: release.upperBound ..< unloadBody.endIndex
+            )
+        )
+        let cacheClear = try #require(
+            unloadBody.range(
+                of: "Memory.clearCache()",
+                range: holderRemoval.upperBound ..< unloadBody.endIndex
+            )
+        )
+
+        #expect(leaseDrain.lowerBound < release.lowerBound)
+        #expect(release.lowerBound < holderRemoval.lowerBound)
+        #expect(holderRemoval.lowerBound < cacheClear.lowerBound)
+        #expect(
+            unloadBody.components(
+                separatedBy: "await modelCache[name]?.container.releaseDerivedBuffersForTeardown()"
+            ).count == 2,
+            "The claimed unload path must release derived buffers exactly once"
+        )
+    }
+
+    @Test("model unload closes setup admission before engine shutdown")
+    func modelUnloadClosesSetupAdmissionBeforeEngineShutdown() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let unloadBody = try Self.functionBody("private func unloadClaimed(", in: runtime)
+
+        let admissionClose = try #require(
+            unloadBody.range(
+                of: "try await beginModelUnloadAdmission(",
+                range: unloadBody.startIndex ..< unloadBody.endIndex
+            )
+        )
+        let claim = try #require(
+            unloadBody.range(
+                of: "residencyUnloadClaims[name] = claim",
+                range: admissionClose.upperBound ..< unloadBody.endIndex
+            )
+        )
+        let engineShutdown = try #require(
+            unloadBody.range(
+                of: "await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)",
+                range: admissionClose.upperBound ..< unloadBody.endIndex
+            )
+        )
+        let holderRemoval = try #require(
+            unloadBody.range(
+                of: "modelCache.removeValue(forKey: name)",
+                range: engineShutdown.upperBound ..< unloadBody.endIndex
+            )
+        )
+        let admissionReleaseDefer = try #require(
+            unloadBody.range(
+                of: "if let unloadAdmissionLease {",
+                range: admissionClose.upperBound ..< unloadBody.endIndex
+            )
+        )
+        let claimReleaseDefer = try #require(
+            unloadBody.range(
+                of: "defer { finishResidencyUnloadClaim(name: name, claim: claim) }",
+                range: claim.upperBound ..< unloadBody.endIndex
+            )
+        )
+
+        #expect(admissionClose.lowerBound < claim.lowerBound)
+        #expect(admissionClose.lowerBound < engineShutdown.lowerBound)
+        #expect(engineShutdown.lowerBound < holderRemoval.lowerBound)
+        #expect(
+            admissionReleaseDefer.lowerBound < claimReleaseDefer.lowerBound,
+            "LIFO defer order must finish the unload claim before reopening model-use admission"
+        )
+        #expect(
+            claimReleaseDefer.lowerBound < engineShutdown.lowerBound,
+            "The admission lease must be held by a function-scope defer through holder removal"
+        )
+
+        for function in [
+            "func preencodeLiveVoiceAudioIfResident(",
+            "private func generateEventStream(",
+        ] {
+            let body = try Self.functionBody(function, in: runtime)
+            let protectedAccess = try #require(
+                body.range(of: "beginModelDeletionProtectedAccess(")
+            )
+            let modelLease = try #require(
+                body.range(
+                    of: "await ModelLease.shared.acquire(",
+                    range: protectedAccess.upperBound ..< body.endIndex
+                )
+            )
+            let protectedAccessRelease: Range<String.Index>
+            if function.contains("generateEventStream") {
+                protectedAccessRelease = try #require(
+                    body.range(of: "if !deletionAccessReleased")
+                )
+            } else {
+                protectedAccessRelease = try #require(
+                    body.range(of: "defer { finishModelDeletionProtectedAccess(")
+                )
+            }
+            #expect(protectedAccess.lowerBound < modelLease.lowerBound)
+            #expect(
+                protectedAccessRelease.lowerBound < modelLease.lowerBound,
+                "The function-scope protected-access defer must cover ordinary lease publication"
+            )
+        }
+    }
+
+    @Test("model delete keeps its scoped lease through unload and filesystem work")
+    func modelDeleteKeepsScopedLeaseThroughDeletionWork() throws {
+        let service = try Self.source("Services/ModelDownloadService.swift")
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let deleteBody = try Self.functionBody(
+            "func delete(_ model: MLXModel) async",
+            in: service
+        )
+
+        let performDeletion = try #require(
+            deleteBody.range(
+                of: "ModelRuntime.ModelDeletionLeaseAuthorization?\n        ) async throws -> Void = { deletionAuthorization in"
+            )
+        )
+        let unload = try #require(
+            deleteBody.range(
+                of: "let unloaded = await ModelRuntime.shared.unload(",
+                range: performDeletion.upperBound ..< deleteBody.endIndex
+            )
+        )
+        let authorization = try #require(
+            deleteBody.range(
+                of: "deletionAuthorization: deletionAuthorization",
+                range: unload.upperBound ..< deleteBody.endIndex
+            )
+        )
+        let filesystemMutation = try #require(
+            deleteBody.range(
+                of: "try fm.removeItem(atPath: localPath)",
+                range: authorization.upperBound ..< deleteBody.endIndex
+            )
+        )
+        let catalogInvalidation = try #require(
+            deleteBody.range(
+                of: "ModelManager.invalidateLocalModelsCache()",
+                range: performDeletion.upperBound ..< unload.lowerBound
+            )
+        )
+        let catalogNotification = try #require(
+            deleteBody.range(
+                of: "NotificationCenter.default.post(name: .localModelsChanged, object: nil)",
+                range: catalogInvalidation.upperBound ..< unload.lowerBound
+            )
+        )
+        let performDeletionEnd = try #require(
+            deleteBody.range(
+                of: "\n        }\n\n        do {",
+                range: filesystemMutation.upperBound ..< deleteBody.endIndex
+            )
+        )
+        let lease = try #require(
+            deleteBody.range(
+                of: "withModelDeletionLease(",
+                range: performDeletionEnd.upperBound ..< deleteBody.endIndex
+            )
+        )
+        let operation = try #require(
+            deleteBody.range(
+                of: "operation: { authorization in",
+                range: lease.upperBound ..< deleteBody.endIndex
+            )
+        )
+        let forwarded = try #require(
+            deleteBody.range(
+                of: "try await performDeletion(authorization)",
+                range: operation.upperBound ..< deleteBody.endIndex
+            )
+        )
+
+        let leaseBody = try Self.functionBody("func withModelDeletionLease<", in: runtime)
+        let leaseReleaseDefer = try #require(
+            leaseBody.range(of: "defer { finishModelDeletionLease(lease) }")
+        )
+        let awaitedOperation = try #require(
+            leaseBody.range(
+                of: "return try await operation(authorization)",
+                range: leaseReleaseDefer.upperBound ..< leaseBody.endIndex
+            )
+        )
+
+        #expect(performDeletion.lowerBound < catalogInvalidation.lowerBound)
+        #expect(catalogInvalidation.lowerBound < catalogNotification.lowerBound)
+        #expect(catalogNotification.lowerBound < unload.lowerBound)
+        #expect(unload.lowerBound < authorization.lowerBound)
+        #expect(authorization.lowerBound < filesystemMutation.lowerBound)
+        #expect(filesystemMutation.lowerBound < performDeletionEnd.lowerBound)
+        #expect(performDeletionEnd.lowerBound < lease.lowerBound)
+        #expect(lease.lowerBound < operation.lowerBound)
+        #expect(operation.lowerBound < forwarded.lowerBound)
+        #expect(leaseReleaseDefer.lowerBound < awaitedOperation.lowerBound)
+        #expect(runtime.contains("struct ModelDeletionLeaseAuthorization: Sendable"))
+        #expect(runtime.contains("activeKeys == authorization.identityKeys"))
+    }
+
+    @Test("model deletion uses stable identity for runtime teardown")
+    func modelDeletionUsesStableIdentityForRuntimeTeardown() throws {
+        let service = try Self.source("Services/ModelDownloadService.swift")
+        let model = try Self.source("Models/Configuration/MLXModel.swift")
+        let metadata = try Self.source("Models/Configuration/ModelMetadataParser.swift")
+        let manager = try Self.source("Managers/Model/ModelManager.swift")
+        let mlxService = try Self.source("Services/Inference/MLXService.swift")
+        let deleteBody = try Self.functionBody(
+            "func delete(_ model: MLXModel) async",
+            in: service
+        )
+
+        let modelID = try #require(deleteBody.range(of: "let modelID = model.id"))
+        let modelName = try #require(deleteBody.range(of: "let modelName = model.name"))
+        let unload = try #require(
+            deleteBody.range(
+                of: "let unloaded = await ModelRuntime.shared.unload(",
+                range: modelName.upperBound ..< deleteBody.endIndex
+            )
+        )
+        let residencyCheck = try #require(
+            deleteBody.range(
+                of: "await ModelRuntime.shared.residencyIdentity(named: modelID) == nil",
+                range: unload.upperBound ..< deleteBody.endIndex
+            )
+        )
+        let stableUnloadArgument = try #require(
+            deleteBody.range(
+                of: "name: modelID,",
+                range: unload.upperBound ..< residencyCheck.lowerBound
+            )
+        )
+        let unloadWindow = String(deleteBody[unload.lowerBound ..< residencyCheck.upperBound])
+
+        #expect(modelID.lowerBound < modelName.lowerBound)
+        #expect(unload.lowerBound < stableUnloadArgument.lowerBound)
+        #expect(stableUnloadArgument.lowerBound < residencyCheck.lowerBound)
+        #expect(!unloadWindow.contains("name: modelName"))
+
+        // Identity derivation is intentionally explicit across the catalog,
+        // display-name parser, and request-to-runtime bridge.
+        #expect(model.contains("let id: String"))
+        #expect(model.contains("let name: String"))
+        #expect(metadata.contains("let last = repoId.split(separator: \"/\").last"))
+        #expect(metadata.contains("replacingOccurrences(of: \"-\", with: \" \")"))
+        #expect(manager.contains("match.id.split(separator: \"/\").last.map(String.init)?.lowercased()"))
+        #expect(mlxService.contains("LocalModelRef(name: found.name, modelId: found.id)"))
+        #expect(mlxService.contains("modelName: model.name"))
     }
 
     @Test("model cache unload UI exposes progress and fail-closed result")

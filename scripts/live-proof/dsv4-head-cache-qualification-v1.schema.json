@@ -1,0 +1,551 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://osaurus.ai/schemas/dsv4-head-cache-qualification-v1.schema.json",
+  "title": "Osaurus DSV4 FP32 lm-head cache qualification manifest v1",
+  "description": "Strict, non-self-hashing contract for the bounded DSV4 head/cache qualification lane.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "campaign_id",
+    "sources",
+    "dependency_pins",
+    "artifacts",
+    "model",
+    "schemas",
+    "generation",
+    "runtime_settings",
+    "arms",
+    "diagnostics",
+    "effective_path_proof",
+    "requests",
+    "prefixes",
+    "fixtures",
+    "output",
+    "safety",
+    "decision"
+  ],
+  "properties": {
+    "schema": {
+      "enum": ["osaurus.dsv4-head-cache-qualification/1"]
+    },
+    "campaign_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "sources": {
+      "$ref": "#/$defs/sources"
+    },
+    "dependency_pins": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/dependencyPin"
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["app_executable", "cli", "default_metallib"],
+      "properties": {
+        "app_executable": { "$ref": "#/$defs/fileRef" },
+        "cli": { "$ref": "#/$defs/fileRef" },
+        "default_metallib": { "$ref": "#/$defs/fileRef" }
+      }
+    },
+    "model": {
+      "$ref": "#/$defs/model"
+    },
+    "schemas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifest", "request", "output"],
+      "properties": {
+        "manifest": { "$ref": "#/$defs/schemaStamp" },
+        "request": { "$ref": "#/$defs/schemaStamp" },
+        "output": { "$ref": "#/$defs/schemaStamp" }
+      }
+    },
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seed", "temperature", "top_p", "max_tokens", "processors", "eos", "stop"],
+      "properties": {
+        "seed": { "const": 42 },
+        "temperature": { "const": 0 },
+        "top_p": { "const": 1 },
+        "max_tokens": { "const": 64 },
+        "processors": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "eos": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "stop": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "runtime_settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exact_bytes", "mtp", "proposals", "decode_compile"],
+      "properties": {
+        "exact_bytes": { "$ref": "#/$defs/fileRef" },
+        "mtp": { "const": false },
+        "proposals": { "const": false },
+        "decode_compile": { "const": false }
+      }
+    },
+    "arms": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["A", "B", "P"],
+      "properties": {
+        "A": {
+          "allOf": [
+            { "$ref": "#/$defs/arm" },
+            {
+              "properties": {
+                "id": { "const": "A" },
+                "mode": { "const": "exact" },
+                "environment": {
+                  "properties": {
+                    "VMLX_DSV4_LM_HEAD_MODE": { "const": "exact" },
+                    "VMLX_DSV4_CACHE_FP32_LM_HEAD": { "const": "0" },
+                    "VMLX_DSV4_CACHE_FP32_LM_HEAD_SHADOW": { "const": "0" }
+                  }
+                },
+                "cache_requested": { "const": false },
+                "source_supported": { "const": true },
+                "prepared": { "const": false },
+                "cache_identity": { "type": "null" },
+                "logical_bytes": { "const": 0 },
+                "shadow": {
+                  "allOf": [
+                    { "$ref": "#/$defs/shadow" },
+                    { "properties": { "declared": { "const": false }, "logical_bytes": { "const": 0 } } }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "B": {
+          "allOf": [
+            { "$ref": "#/$defs/arm" },
+            {
+              "properties": {
+                "id": { "const": "B" },
+                "mode": { "const": "exactCached" },
+                "environment": {
+                  "properties": {
+                    "VMLX_DSV4_LM_HEAD_MODE": { "const": "exact" },
+                    "VMLX_DSV4_CACHE_FP32_LM_HEAD": { "const": "1" },
+                    "VMLX_DSV4_CACHE_FP32_LM_HEAD_SHADOW": { "const": "0" }
+                  }
+                },
+                "cache_requested": { "const": true },
+                "source_supported": { "const": true },
+                "prepared": { "const": true },
+                "logical_bytes": { "const": 2118123520 },
+                "shadow": {
+                  "allOf": [
+                    { "$ref": "#/$defs/shadow" },
+                    { "properties": { "declared": { "const": false }, "logical_bytes": { "const": 0 } } }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "P": {
+          "allOf": [
+            { "$ref": "#/$defs/arm" },
+            {
+              "properties": {
+                "id": { "const": "P" },
+                "mode": { "const": "qmm" },
+                "environment": {
+                  "properties": {
+                    "VMLX_DSV4_LM_HEAD_MODE": { "const": "qmm" },
+                    "VMLX_DSV4_CACHE_FP32_LM_HEAD": { "const": "0" },
+                    "VMLX_DSV4_CACHE_FP32_LM_HEAD_SHADOW": { "const": "0" }
+                  }
+                },
+                "cache_requested": { "const": false },
+                "source_supported": { "const": true },
+                "prepared": { "const": false },
+                "cache_identity": { "type": "null" },
+                "logical_bytes": { "const": 0 },
+                "shadow": {
+                  "allOf": [
+                    { "$ref": "#/$defs/shadow" },
+                    { "properties": { "declared": { "const": false }, "logical_bytes": { "const": 0 } } }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["shadow_control"],
+      "properties": {
+        "shadow_control": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["timed", "environment", "snapshot"],
+          "properties": {
+            "timed": { "const": false },
+            "environment": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["VMLX_DSV4_CACHE_FP32_LM_HEAD", "VMLX_DSV4_CACHE_FP32_LM_HEAD_SHADOW", "VMLX_DSV4_LM_HEAD_MODE"],
+              "properties": {
+                "VMLX_DSV4_CACHE_FP32_LM_HEAD": { "const": "1" },
+                "VMLX_DSV4_CACHE_FP32_LM_HEAD_SHADOW": { "const": "1" },
+                "VMLX_DSV4_LM_HEAD_MODE": { "const": "exact" }
+              }
+            },
+            "snapshot": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["cache_requested", "shadow_requested", "source_quantized", "source_supported", "prepared", "logical_bytes", "effective_path"],
+              "properties": {
+                "cache_requested": { "const": true },
+                "shadow_requested": { "const": true },
+                "source_quantized": { "const": true },
+                "source_supported": { "const": true },
+                "prepared": { "const": true },
+                "logical_bytes": { "const": 2118123520 },
+                "effective_path": { "const": "exact" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "effective_path_proof": {
+      "$ref": "#/$defs/effectivePathProof"
+    },
+    "requests": {
+      "type": "array",
+      "minItems": 10,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/request" }
+    },
+    "prefixes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["miss", "hit"],
+      "properties": {
+        "miss": { "$ref": "#/$defs/prefix" },
+        "hit": { "$ref": "#/$defs/prefix" }
+      }
+    },
+    "fixtures": {
+      "type": "array",
+      "minItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/fixtureRef"
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["campaign_root", "ledger", "stem", "state", "cache", "tmp"],
+      "properties": {
+        "campaign_root": { "$ref": "#/$defs/absolutePath" },
+        "ledger": { "$ref": "#/$defs/absolutePath" },
+        "stem": { "$ref": "#/$defs/absolutePath" },
+        "state": { "$ref": "#/$defs/absolutePath" },
+        "cache": { "$ref": "#/$defs/absolutePath" },
+        "tmp": { "$ref": "#/$defs/absolutePath" }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fail_closed", "allow_destructive_actions", "require_manifest_hash_env", "manifest_external", "live_claims"],
+      "properties": {
+        "fail_closed": { "const": true },
+        "allow_destructive_actions": { "const": false },
+        "require_manifest_hash_env": { "const": true },
+        "manifest_external": { "const": true },
+        "live_claims": { "enum": ["none", "measured"] }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "qualified", "live_gates_ran", "reason"],
+      "properties": {
+        "status": { "enum": ["unproven", "qualified", "rejected"] },
+        "qualified": { "type": "boolean" },
+        "live_gates_ran": { "type": "boolean" },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 2048 }
+      }
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 4096
+    }
+  },
+  "$defs": {
+    "absolutePath": {
+      "type": "string",
+      "pattern": "^/[^/].*$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "fileRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size"],
+      "properties": {
+        "path": { "$ref": "#/$defs/absolutePath" },
+        "sha256": { "$ref": "#/$defs/digest" },
+        "size": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["paths", "base", "head"],
+      "properties": {
+        "paths": {
+          "type": "array",
+          "minItems": 3,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/absolutePath" }
+        },
+        "base": { "$ref": "#/$defs/revision" },
+        "head": { "$ref": "#/$defs/revision" },
+        "clean": { "const": true },
+        "sealed_diff": { "$ref": "#/$defs/fileRef" }
+      },
+      "oneOf": [
+        { "required": ["clean"], "not": { "required": ["sealed_diff"] } },
+        { "required": ["sealed_diff"], "not": { "required": ["clean"] } }
+      ]
+    },
+    "dependencyPin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "revision"],
+      "properties": {
+        "path": { "$ref": "#/$defs/absolutePath" },
+        "revision": { "$ref": "#/$defs/revision" }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canonical_root", "id", "revision", "attestation", "inventory"],
+      "properties": {
+        "canonical_root": { "$ref": "#/$defs/absolutePath" },
+        "id": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "revision": { "$ref": "#/$defs/revision" },
+        "attestation": { "$ref": "#/$defs/attestation" },
+        "inventory": { "$ref": "#/$defs/inventory" }
+      }
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "repository", "revision", "path", "sha256", "size"],
+      "properties": {
+        "type": { "enum": ["huggingface_revision", "local_signed_attestation"] },
+        "repository": { "type": "string", "minLength": 1 },
+        "revision": { "$ref": "#/$defs/revision" },
+        "path": { "$ref": "#/$defs/absolutePath" },
+        "sha256": { "$ref": "#/$defs/digest" },
+        "size": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["config", "tokenizer", "weights", "file_count", "total_bytes"],
+      "properties": {
+        "config": { "$ref": "#/$defs/modelFileRef" },
+        "tokenizer": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/modelFileRef" }
+        },
+        "weights": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/modelFileRef" }
+        },
+        "file_count": { "type": "integer", "minimum": 3 },
+        "total_bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "schemaStamp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "path", "sha256", "size"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "path": { "$ref": "#/$defs/absolutePath" },
+        "sha256": { "$ref": "#/$defs/digest" },
+        "size": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["device", "inode", "mtime_ns"],
+      "properties": {
+        "device": { "type": "integer", "minimum": 0 },
+        "inode": { "type": "integer", "minimum": 0 },
+        "mtime_ns": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "modelFileRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size", "identity"],
+      "properties": {
+        "path": { "$ref": "#/$defs/absolutePath" },
+        "sha256": { "$ref": "#/$defs/digest" },
+        "size": { "type": "integer", "minimum": 0 },
+        "identity": { "$ref": "#/$defs/identity" }
+      }
+    },
+    "fixtureRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "sha256", "size"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+        "path": { "$ref": "#/$defs/absolutePath" },
+        "sha256": { "$ref": "#/$defs/digest" },
+        "size": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "shadow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["declared", "logical_bytes"],
+      "properties": {
+        "declared": { "type": "boolean" },
+        "logical_bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "arm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "mode", "environment", "cache_requested", "source_supported", "prepared", "cache_identity", "logical_bytes", "shadow"],
+      "properties": {
+        "id": { "enum": ["A", "B", "P"] },
+        "mode": { "enum": ["exact", "exactCached", "qmm"] },
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["VMLX_DSV4_LM_HEAD_MODE", "VMLX_DSV4_CACHE_FP32_LM_HEAD", "VMLX_DSV4_CACHE_FP32_LM_HEAD_SHADOW"],
+          "properties": {
+            "VMLX_DSV4_LM_HEAD_MODE": { "enum": ["exact", "qmm"] },
+            "VMLX_DSV4_CACHE_FP32_LM_HEAD": { "enum": ["0", "1"] },
+            "VMLX_DSV4_CACHE_FP32_LM_HEAD_SHADOW": { "const": "0" }
+          }
+        },
+        "cache_requested": { "type": "boolean" },
+        "source_supported": { "type": "boolean" },
+        "prepared": { "type": "boolean" },
+        "cache_identity": { "type": ["string", "null"], "minLength": 1 },
+        "logical_bytes": { "type": "integer", "minimum": 0 },
+        "shadow": { "$ref": "#/$defs/shadow" }
+      }
+    },
+    "sourceBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size", "symbol"],
+      "properties": {
+        "path": { "$ref": "#/$defs/absolutePath" },
+        "sha256": { "$ref": "#/$defs/digest" },
+        "size": { "type": "integer", "minimum": 0 },
+        "symbol": { "type": "string", "minLength": 1, "maxLength": 512 }
+      }
+    },
+    "effectivePathProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_gate", "adapter_gate", "runtime_artifact", "arm_order", "effective_arm"],
+      "properties": {
+        "source_gate": { "$ref": "#/$defs/sourceBinding" },
+        "adapter_gate": { "$ref": "#/$defs/sourceBinding" },
+        "runtime_artifact": { "$ref": "#/$defs/fileRef" },
+        "arm_order": {
+          "const": ["A", "B", "P"]
+        },
+        "effective_arm": { "enum": ["A", "B", "P"] }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "fixture_id", "arm", "expected_rail", "max_tokens", "trace_accepted_ids"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+        "kind": {
+          "enum": [
+            "ordinary_coding",
+            "instruction",
+            "tool_call",
+            "refusal",
+            "long_context",
+            "repeated_prefix_miss",
+            "repeated_prefix_hit",
+            "normal_unload",
+            "normal_reload",
+            "adapter_token_id"
+          ]
+        },
+        "fixture_id": { "type": "string", "minLength": 1 },
+        "arm": { "enum": ["A", "B", "P"] },
+        "expected_rail": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "max_tokens": { "const": 64 },
+        "trace_accepted_ids": { "type": "boolean" }
+      }
+    },
+    "prefix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "request_id", "expected", "cache_identity"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+        "request_id": { "type": "string", "minLength": 1 },
+        "expected": { "enum": ["miss", "hit"] },
+        "cache_identity": { "type": ["string", "null"], "minLength": 1 }
+      }
+    }
+  }
+}

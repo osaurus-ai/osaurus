@@ -1,0 +1,16 @@
+{
+  "fixture_version": "dsv4-head-cache-output/1",
+  "purpose": "Required evidence keys for Gate D output; no live gate is claimed.",
+  "rails": {
+    "ordinary_coding": ["visible_output", "token_rate", "greedy_output_hash"],
+    "instruction": ["visible_output", "instruction_followed", "token_rate"],
+    "tool_call": ["exact_tool_name", "parseable_json_args", "tool_result_continuation", "no_protocol_leak"],
+    "refusal": ["refusal_text", "no_tool_call", "no_protocol_leak"],
+    "long_context": ["prompt_token_count", "visible_output", "token_rate", "context_floor"],
+    "repeated_prefix_miss": ["miss_counter_delta", "no_cache_identity_before_store", "output"],
+    "repeated_prefix_hit": ["hit_counter_delta", "same_cache_identity", "output"],
+    "normal_unload": ["resident_before", "unloaded_after", "no_error"],
+    "normal_reload": ["reloaded_after", "same_model_identity", "visible_output"],
+    "adapter_token_id": ["input_ids", "adapter_ids", "exact_match", "source_trace"]
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "fixture_version": "adapter-token-ids/1",
+  "purpose": "Input rail for exact adapter token-ID comparison; no generated IDs are asserted here.",
+  "tokens": [
+    "<|User|>",
+    "adapter token identity probe",
+    "<|Assistant|>"
+  ],
+  "expected": "__REPLACE_WITH_PINNED_TOKEN_IDS__"
+}

@@ -200,6 +200,19 @@ public actor ModelRuntime {
         fileprivate let id: UUID
     }
 
+    /// Scoped authority issued only by `withModelDeletionLease`. The runtime
+    /// validates both the live lease ID and the canonical identities before a
+    /// caller may borrow the deletion quarantine for resident teardown.
+    struct ModelDeletionLeaseAuthorization: Sendable {
+        fileprivate let leaseID: UUID
+        fileprivate let identityKeys: Set<String>
+
+        fileprivate init(leaseID: UUID, identityKeys: Set<String>) {
+            self.leaseID = leaseID
+            self.identityKeys = identityKeys
+        }
+    }
+
     struct ModelDeletionProtectionSnapshot: Sendable, Equatable {
         let isDeleting: Bool
         let activeModelUses: Int
@@ -273,6 +286,10 @@ public actor ModelRuntime {
     }
 
     private final class SessionHolder: NSObject, @unchecked Sendable {
+        /// Stable catalog identity for the weights held by this residency.
+        /// The runtime name can be a repo tail shared by different full IDs;
+        /// teardown authorization must bind to the loaded holder's ID too.
+        let modelID: String
         let name: String
         let container: ModelContainer
         let weightsSizeBytes: Int64
@@ -295,6 +312,7 @@ public actor ModelRuntime {
         let requiresUncappedMLXAllocatorCache: Bool
         var cacheTopology: ModelCacheTopologySnapshot?
         init(
+            modelID: String,
             name: String,
             container: ModelContainer,
             weightsSizeBytes: Int64,
@@ -306,6 +324,7 @@ public actor ModelRuntime {
             allocatorCacheLimitBytes: Int? = nil,
             requiresUncappedMLXAllocatorCache: Bool = false
         ) {
+            self.modelID = modelID
             self.name = name
             self.container = container
             self.weightsSizeBytes = weightsSizeBytes
@@ -361,6 +380,7 @@ public actor ModelRuntime {
     private var nextLoadingTaskID: UInt64 = 0
 
     private struct ResidentMetadata: Sendable, Equatable {
+        let modelID: String
         let identity: ModelResidencyIdentity
         var childOwnershipToken: ModelResidencyOwnershipToken?
     }
@@ -575,7 +595,7 @@ public actor ModelRuntime {
     func withModelDeletionLease<T: Sendable>(
         modelID: String,
         modelName: String,
-        operation: @Sendable () async throws -> T
+        operation: @Sendable (ModelDeletionLeaseAuthorization) async throws -> T
     ) async throws -> T {
         let lease = try await beginModelDeletionLease(
             modelID: modelID,
@@ -583,6 +603,33 @@ public actor ModelRuntime {
         )
         defer { finishModelDeletionLease(lease) }
         try Task.checkCancellation()
+        let authorization = ModelDeletionLeaseAuthorization(
+            leaseID: lease.id,
+            identityKeys: Set(lease.identityKeys)
+        )
+        return try await operation(authorization)
+    }
+
+    /// Executable seam for the unload-admission regression test. Production
+    /// teardown uses the same scoped acquire/release helper in `unloadClaimed`.
+    func withModelUnloadAdmissionForTesting<T: Sendable>(
+        modelID: String,
+        modelName: String,
+        residentModelID: String? = nil,
+        deletionAuthorization: ModelDeletionLeaseAuthorization? = nil,
+        operation: @Sendable () async throws -> T
+    ) async throws -> T {
+        let lease = try await beginModelUnloadAdmission(
+            modelID: modelID,
+            modelName: modelName,
+            residentModelID: residentModelID ?? modelID,
+            deletionAuthorization: deletionAuthorization
+        )
+        defer {
+            if let lease {
+                finishModelDeletionLease(lease)
+            }
+        }
         return try await operation()
     }
 
@@ -662,13 +709,21 @@ public actor ModelRuntime {
         let identityKeys: [String]
     }
 
+    private enum ModelDeletionAuthorizationError: Error, LocalizedError, Sendable {
+        case invalid
+
+        var errorDescription: String? {
+            "The deletion authorization is not active for this model identity"
+        }
+    }
+
     private static func modelDeletionIdentityKeys(
         modelID: String,
         modelName: String
     ) -> [String] {
         var identities = Set<String>()
         for raw in [modelID, modelName] {
-            let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let normalized = Self.normalizedStableModelID(raw)
             guard !normalized.isEmpty else { continue }
             identities.insert(normalized)
             if let tail = normalized.split(separator: "/").last, !tail.isEmpty {
@@ -684,8 +739,75 @@ public actor ModelRuntime {
         return identities.sorted()
     }
 
+    private static func normalizedStableModelID(_ modelID: String) -> String {
+        modelID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
     private func activeModelDeletion(in identityKeys: [String]) -> UUID? {
         identityKeys.lazy.compactMap { self.modelDeletionClaims[$0] }.first
+    }
+
+    private func isValidModelDeletionAuthorization(
+        _ authorization: ModelDeletionLeaseAuthorization,
+        requestedModelID: String,
+        residentModelID: String,
+        modelName: String
+    ) -> Bool {
+        let requestedStableID = Self.normalizedStableModelID(requestedModelID)
+        let residentStableID = Self.normalizedStableModelID(residentModelID)
+        guard !requestedStableID.isEmpty,
+            requestedStableID == residentStableID
+        else {
+            return false
+        }
+
+        let targetKeys = Set(
+            Self.modelDeletionIdentityKeys(
+                modelID: requestedModelID,
+                modelName: modelName
+            )
+        )
+        guard !targetKeys.isEmpty,
+            let activeKeys = modelDeletionLeaseKeys[authorization.leaseID],
+            activeKeys == authorization.identityKeys,
+            targetKeys.isSubset(of: activeKeys)
+        else {
+            return false
+        }
+        return targetKeys.allSatisfy {
+            modelDeletionClaims[$0] == authorization.leaseID
+        }
+    }
+
+    private func beginModelUnloadAdmission(
+        modelID: String,
+        modelName: String,
+        residentModelID: String?,
+        deletionAuthorization: ModelDeletionLeaseAuthorization?
+    ) async throws -> ModelDeletionLease? {
+        if let deletionAuthorization {
+            try Task.checkCancellation()
+            guard let residentModelID,
+                isValidModelDeletionAuthorization(
+                    deletionAuthorization,
+                    requestedModelID: modelID,
+                    residentModelID: residentModelID,
+                    modelName: modelName
+                )
+            else {
+                throw ModelDeletionAuthorizationError.invalid
+            }
+            // The enclosing deletion scope owns this quarantine. Do not
+            // reacquire it and do not release it from the unload scope.
+            return nil
+        }
+        return try await beginModelDeletionLease(
+            // Preserve ordinary unload identity behavior. The full requested
+            // ID is used above only for deletion authorization; normal unload
+            // continues to admit the normalized resident runtime key.
+            modelID: modelName,
+            modelName: modelName
+        )
     }
 
     private func beginModelDeletionLease(
@@ -976,9 +1098,11 @@ public actor ModelRuntime {
         }
         let unloaded = await unloadClaimed(
             name: key,
+            requestedModelID: key,
             leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds,
             expectedIdentity: identity,
-            expectedOwnershipToken: nil
+            expectedOwnershipToken: nil,
+            deletionAuthorization: nil
         )
         return unloaded ? .unloaded : .drainTimedOut
     }
@@ -1002,9 +1126,11 @@ public actor ModelRuntime {
         }
         let unloaded = await unloadClaimed(
             name: key,
+            requestedModelID: key,
             leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds,
             expectedIdentity: identity,
-            expectedOwnershipToken: token
+            expectedOwnershipToken: token,
+            deletionAuthorization: nil
         )
         guard unloaded else { return .drainTimedOut }
         return .unloaded
@@ -1686,6 +1812,7 @@ public actor ModelRuntime {
 
         modelCache[name] = holder
         residentMetadata[name] = ResidentMetadata(
+            modelID: holder.modelID,
             identity: ModelResidencyIdentity(modelName: name, generation: UUID()),
             childOwnershipToken: loadingRecord.childOwnershipToken
         )
@@ -1728,7 +1855,8 @@ public actor ModelRuntime {
         name: String,
         reason: ModelRuntimeResidencyChangeReason = .explicit,
         idleDecisionID: UInt64? = nil,
-        leaseDrainTimeoutSeconds: Double? = nil
+        leaseDrainTimeoutSeconds: Double? = nil,
+        deletionAuthorization: ModelDeletionLeaseAuthorization? = nil
     ) async -> Bool {
         guard (reason == .idlePolicy) == (idleDecisionID != nil) else {
             assertionFailure("idlePolicy unloads require one exact decision ID; other unloads require none")
@@ -1777,9 +1905,11 @@ public actor ModelRuntime {
 
         return await unloadClaimed(
             name: key,
+            requestedModelID: name,
             leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds,
             expectedIdentity: residentMetadata[key]?.identity,
             expectedOwnershipToken: nil,
+            deletionAuthorization: deletionAuthorization,
             reason: reason,
             idleDecisionID: idleDecisionID
         )
@@ -1787,9 +1917,11 @@ public actor ModelRuntime {
 
     private func unloadClaimed(
         name: String,
+        requestedModelID: String,
         leaseDrainTimeoutSeconds: Double?,
         expectedIdentity: ModelResidencyIdentity?,
         expectedOwnershipToken: ModelResidencyOwnershipToken?,
+        deletionAuthorization: ModelDeletionLeaseAuthorization?,
         reason: ModelRuntimeResidencyChangeReason = .handoff,
         idleDecisionID: UInt64? = nil
     ) async -> Bool {
@@ -1810,9 +1942,11 @@ public actor ModelRuntime {
             guard modelCache[name] != nil else { return true }
             return await unloadClaimed(
                 name: name,
+                requestedModelID: requestedModelID,
                 leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds,
                 expectedIdentity: expectedIdentity,
                 expectedOwnershipToken: expectedOwnershipToken,
+                deletionAuthorization: deletionAuthorization,
                 reason: reason,
                 idleDecisionID: idleDecisionID
             )
@@ -1826,6 +1960,33 @@ public actor ModelRuntime {
             residentMetadata[name]?.childOwnershipToken != expectedOwnershipToken
         {
             return false
+        }
+
+        // Close model-use admission before the first teardown suspension. The
+        // same quarantine already covers preload, live-voice work, and normal
+        // generation setup until each path publishes its ModelLease. It drains
+        // setup that won the actor race before this claim and parks later setup
+        // until the holder has been removed. Ordinary unload owns the scope
+        // through this function; model deletion borrows its enclosing scope,
+        // which stays closed through filesystem and catalog mutation.
+        let unloadAdmissionLease: ModelDeletionLease?
+        do {
+            unloadAdmissionLease = try await beginModelUnloadAdmission(
+                modelID: requestedModelID,
+                modelName: name,
+                residentModelID: residentMetadata[name]?.modelID,
+                deletionAuthorization: deletionAuthorization
+            )
+        } catch {
+            genLog.error(
+                "unload: could not close model-use admission for \(name, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
+        defer {
+            if let unloadAdmissionLease {
+                finishModelDeletionLease(unloadAdmissionLease)
+            }
         }
 
         let claim = UUID()
@@ -1924,6 +2085,10 @@ public actor ModelRuntime {
         let retiredCacheCounters = modelCache[name].flatMap {
             Self.processLifetimeCacheCounters(for: $0)
         }
+        // Generation and model leases are drained above. Release model-local
+        // derived buffers while the container is still present and serialized,
+        // before removing the holder that owns the loaded weights.
+        await modelCache[name]?.container.releaseDerivedBuffersForTeardown()
         modelCache[name]?.container.disableCaching()
 
         Stream.gpu.synchronize()
@@ -3418,9 +3583,75 @@ public actor ModelRuntime {
         id: String,
         name: String,
         intent: ModelLoadIntent = .interactive,
-        restoreOwnershipToken: ModelResidencyOwnershipToken? = nil
+        restoreOwnershipToken: ModelResidencyOwnershipToken? = nil,
+        qualificationRequestID: String? = nil
     ) async throws -> SessionHolder {
         try Task.checkCancellation()
+
+        // Qualification is an admission guard, not a post-load diagnostic.
+        // Validate the exact arm and all sealed bindings before this function
+        // can evict a resident, inspect bundle metadata, or enter vMLX.
+        let qualificationEnvironment = ProcessInfo.processInfo.environment
+        let qualificationControlKeys = Set(
+            [
+                DSV4HeadCacheQualificationManifestVerifier.manifestPathEnvironmentKey,
+                DSV4HeadCacheQualificationManifestVerifier.manifestSHA256EnvironmentKey,
+                DSV4HeadCacheQualificationManifestVerifier.armEnvironmentKey,
+                "VMLX_DSV4_LM_HEAD_MODE",
+                "VMLX_DSV4_CACHE_FP32_LM_HEAD",
+                "VMLX_DSV4_CACHE_FP32_LM_HEAD_SHADOW",
+            ]
+        )
+        if qualificationControlKeys.contains(where: { qualificationEnvironment[$0] != nil }) {
+            _ = try DSV4HeadCacheQualificationManifestVerifier
+                .validateProcessArmEnvironment(qualificationEnvironment)
+            guard let qualificationRequestID, !qualificationRequestID.isEmpty else {
+                throw NSError(
+                    domain: "DSV4HeadCacheQualification",
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "A qualified model load requires the exact manifest request ID"
+                    ]
+                )
+            }
+            guard let qualificationModelDirectory = Self.findLocalDirectory(forModelId: id) else {
+                throw NSError(
+                    domain: "DSV4HeadCacheQualification",
+                    code: 2,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "The sealed qualification model directory is not resident on disk"
+                    ]
+                )
+            }
+            let runtimeBinding = MLXBatchAdapter.qualificationRuntimeBinding(
+                bundleURL: Bundle.main.bundleURL,
+                appExecutableURL: Bundle.main.bundleURL.pathExtension == "app"
+                    ? Bundle.main.executableURL
+                    : nil,
+                commandLineArguments: CommandLine.arguments
+            )
+            guard let actualExecutableURL = runtimeBinding.executableURL else {
+                throw NSError(
+                    domain: "DSV4HeadCacheQualification",
+                    code: 3,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "The qualified process executable could not be resolved"
+                    ]
+                )
+            }
+            _ = try DSV4HeadCacheQualificationManifestVerifier
+                .verifyPreModelWorkIfQualified(
+                    modelID: id,
+                    requestID: qualificationRequestID,
+                    resolvedModelDirectory: qualificationModelDirectory,
+                    actualExecutableURL: actualExecutableURL,
+                    artifactKind: runtimeBinding.artifactKind,
+                    environment: qualificationEnvironment
+                )
+        }
         let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
         let loadStartedAt = CFAbsoluteTimeGetCurrent()
         genLog.info(
@@ -3913,6 +4144,7 @@ public actor ModelRuntime {
                 "loadContainer: task loaded model=\(name, privacy: .public) loadID=\(loadID, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public) isVLM=\(isVLM, privacy: .public)"
             )
             let holder = SessionHolder(
+                modelID: id,
                 name: name,
                 container: container,
                 weightsSizeBytes: loadFootprintBytes,
@@ -4662,6 +4894,17 @@ public actor ModelRuntime {
         return false
     }
 
+    /// Cleanup after a published cold load must outlive caller cancellation.
+    /// `Task {}` would inherit the cancelled task context and fail the unload
+    /// admission check before it can acquire its teardown lease.
+    private nonisolated static func unloadAfterCancelledColdLoad(
+        modelName: String
+    ) async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            await ModelRuntime.shared.unload(name: modelName)
+        }.value
+    }
+
     // MARK: - Generation driver
 
     /// Top-level dispatcher: loads the container, takes the model lease, and
@@ -4707,7 +4950,12 @@ public actor ModelRuntime {
             modelID: modelId,
             modelName: modelName
         )
-        defer { finishModelDeletionProtectedAccess(deletionAccess) }
+        var deletionAccessReleased = false
+        defer {
+            if !deletionAccessReleased {
+                finishModelDeletionProtectedAccess(deletionAccess)
+            }
+        }
 
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
         await markModelActiveForResidency(modelName)
@@ -4755,7 +5003,8 @@ public actor ModelRuntime {
             holder = try await loadContainer(
                 id: modelId,
                 name: modelName,
-                intent: parameters.loadIntent
+                intent: parameters.loadIntent,
+                qualificationRequestID: parameters.idempotencyKey
             )
         } catch {
             await ModelResidencyManager.shared.cancel(modelName: modelName)
@@ -4773,9 +5022,20 @@ public actor ModelRuntime {
         trace?.mark("load_container_done")
 
         if Task.isCancelled {
+            // This setup claim has protected the load up to publication. Drop
+            // it before teardown so the cleanup lease cannot wait for its own
+            // caller; the detached cleanup then closes admission before it
+            // removes the published holder.
+            finishModelDeletionProtectedAccess(deletionAccess)
+            deletionAccessReleased = true
             await ModelResidencyManager.shared.cancel(modelName: modelName)
             if shouldReportModelLoad {
-                await unload(name: modelName)
+                let unloaded = await Self.unloadAfterCancelledColdLoad(modelName: modelName)
+                if !unloaded {
+                    genLog.error(
+                        "cancelled cold load cleanup did not unload \(modelName, privacy: .public)"
+                    )
+                }
             } else {
                 await scheduleIdleResidency(for: modelName)
             }
@@ -4784,6 +5044,10 @@ public actor ModelRuntime {
 
         // Pin the model against eviction for the stream's lifetime.
         await ModelLease.shared.acquire(modelName)
+        // ModelLease now covers the published generation. The setup claim is
+        // no longer needed and must not remain held across stream creation.
+        finishModelDeletionProtectedAccess(deletionAccess)
+        deletionAccessReleased = true
 
         // `MLXLMCommon.Chat.Message` is non-Sendable but the message array
         // never escapes the producer task. Heap-box the snapshot so the

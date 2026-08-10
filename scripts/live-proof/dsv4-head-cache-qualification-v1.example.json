@@ -1,0 +1,278 @@
+{
+  "schema": "osaurus.dsv4-head-cache-qualification/1",
+  "campaign_id": "dsv4-fp32-lm-head-cache-v1-current-head",
+  "sources": {
+    "paths": [
+      "/Users/mmeding/Developer/Models-0731-Osaurus/02-tooling/upstream/osaurus-dsv4-head-cache-f6384c3c/Packages/OsaurusCore/Package.swift",
+      "/Users/mmeding/Developer/Models-0731-Osaurus/02-tooling/upstream/osaurus-dsv4-head-cache-f6384c3c/Packages/OsaurusCore/Services/ModelRuntime.swift",
+      "/Users/mmeding/Developer/Models-0731-Osaurus/02-tooling/upstream/osaurus-dsv4-head-cache-f6384c3c/Packages/OsaurusCore/Services/ModelRuntime/SwiftTransformersTokenizerLoader.swift",
+      "/Users/mmeding/Developer/Models-0731-Osaurus/02-tooling/upstream/osaurus-dsv4-head-cache-f6384c3c/Packages/OsaurusCore/Services/ModelRuntime/MLXBatchAdapter.swift"
+    ],
+    "base": "__REPLACE_WITH_BASE_COMMIT_40_HEX__",
+    "head": "__REPLACE_WITH_HEAD_COMMIT_40_HEX__",
+    "sealed_diff": {
+      "path": "/__REPLACE_WITH_EXTERNAL_SEALED_DIFF__/dsv4-head-cache.patch",
+      "sha256": "__REPLACE_WITH_SEALED_DIFF_SHA256__",
+      "size": "__REPLACE_WITH_SEALED_DIFF_SIZE__"
+    }
+  },
+  "dependency_pins": [
+    {
+      "path": "/Users/mmeding/Developer/Models-0731-Osaurus/02-tooling/upstream/osaurus-dsv4-head-cache-f6384c3c/Packages/OsaurusCore/Package.swift",
+      "revision": "__REPLACE_WITH_VMLX_REVISION_40_HEX__"
+    },
+    {
+      "path": "/Users/mmeding/Developer/Models-0731-Osaurus/02-tooling/upstream/osaurus-dsv4-head-cache-f6384c3c/Packages/OsaurusCore/Package.resolved",
+      "revision": "__REPLACE_WITH_VMLX_REVISION_40_HEX__"
+    },
+    {
+      "path": "/Users/mmeding/Developer/Models-0731-Osaurus/02-tooling/upstream/osaurus-dsv4-head-cache-f6384c3c/App/osaurus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+      "revision": "__REPLACE_WITH_VMLX_REVISION_40_HEX__"
+    },
+    {
+      "path": "/Users/mmeding/Developer/Models-0731-Osaurus/02-tooling/upstream/osaurus-dsv4-head-cache-f6384c3c/osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+      "revision": "__REPLACE_WITH_VMLX_REVISION_40_HEX__"
+    }
+  ],
+  "artifacts": {
+    "app_executable": {
+      "path": "/__REPLACE_WITH_RELEASE_APP__/osaurus.app/Contents/MacOS/osaurus",
+      "sha256": "__REPLACE_WITH_APP_EXECUTABLE_SHA256__",
+      "size": "__REPLACE_WITH_APP_EXECUTABLE_SIZE__"
+    },
+    "cli": {
+      "path": "/__REPLACE_WITH_RELEASE_APP__/osaurus.app/Contents/Helpers/osaurus",
+      "sha256": "__REPLACE_WITH_CLI_SHA256__",
+      "size": "__REPLACE_WITH_CLI_SIZE__"
+    },
+    "default_metallib": {
+      "path": "/__REPLACE_WITH_RELEASE_APP__/osaurus.app/Contents/Resources/default.metallib",
+      "sha256": "__REPLACE_WITH_METALLIB_SHA256__",
+      "size": "__REPLACE_WITH_METALLIB_SIZE__"
+    }
+  },
+  "model": {
+    "canonical_root": "/__REPLACE_WITH_CANONICAL_DSV4_MODEL_ROOT__",
+    "id": "__REPLACE_WITH_MODEL_ID__",
+    "revision": "__REPLACE_WITH_MODEL_REVISION_40_HEX__",
+    "attestation": {
+      "type": "huggingface_revision",
+      "repository": "__REPLACE_WITH_MODEL_REPOSITORY__",
+      "revision": "__REPLACE_WITH_MODEL_REVISION_40_HEX__",
+      "path": "/__REPLACE_WITH_MODEL_ATTESTATION__/snapshot.json",
+      "sha256": "__REPLACE_WITH_MODEL_ATTESTATION_SHA256__",
+      "size": "__REPLACE_WITH_MODEL_ATTESTATION_SIZE__"
+    },
+    "inventory": {
+      "config": {
+        "path": "/__REPLACE_WITH_CANONICAL_DSV4_MODEL_ROOT__/config.json",
+        "sha256": "__REPLACE_WITH_CONFIG_SHA256__",
+        "size": "__REPLACE_WITH_CONFIG_SIZE__",
+        "identity": {
+          "device": "__REPLACE_WITH_CONFIG_DEVICE__",
+          "inode": "__REPLACE_WITH_CONFIG_INODE__",
+          "mtime_ns": "__REPLACE_WITH_CONFIG_MTIME_NS__"
+        }
+      },
+      "tokenizer": [
+        {
+          "path": "/__REPLACE_WITH_CANONICAL_DSV4_MODEL_ROOT__/tokenizer.json",
+          "sha256": "__REPLACE_WITH_TOKENIZER_SHA256__",
+          "size": "__REPLACE_WITH_TOKENIZER_SIZE__",
+          "identity": {
+            "device": "__REPLACE_WITH_TOKENIZER_DEVICE__",
+            "inode": "__REPLACE_WITH_TOKENIZER_INODE__",
+            "mtime_ns": "__REPLACE_WITH_TOKENIZER_MTIME_NS__"
+          }
+        }
+      ],
+      "weights": [
+        {
+          "path": "/__REPLACE_WITH_CANONICAL_DSV4_MODEL_ROOT__/model-00001-of-00079.safetensors",
+          "sha256": "__REPLACE_WITH_WEIGHT_00001_SHA256__",
+          "size": "__REPLACE_WITH_WEIGHT_00001_SIZE__",
+          "identity": {
+            "device": "__REPLACE_WITH_WEIGHT_00001_DEVICE__",
+            "inode": "__REPLACE_WITH_WEIGHT_00001_INODE__",
+            "mtime_ns": "__REPLACE_WITH_WEIGHT_00001_MTIME_NS__"
+          }
+        }
+      ],
+      "file_count": "__REPLACE_WITH_EXACT_INVENTORY_FILE_COUNT__",
+      "total_bytes": "__REPLACE_WITH_EXACT_INVENTORY_TOTAL_BYTES__"
+    }
+  },
+  "schemas": {
+    "manifest": {
+      "version": "osaurus.dsv4-head-cache-qualification/1",
+      "path": "/Users/mmeding/Developer/Models-0731-Osaurus/02-tooling/upstream/osaurus-dsv4-head-cache-f6384c3c/scripts/live-proof/dsv4-head-cache-qualification-v1.schema.json",
+      "sha256": "__REPLACE_WITH_MANIFEST_SCHEMA_SHA256__",
+      "size": "__REPLACE_WITH_MANIFEST_SCHEMA_SIZE__"
+    },
+    "request": {
+      "version": "dsv4-head-cache-request/1",
+      "path": "/Users/mmeding/Developer/Models-0731-Osaurus/02-tooling/upstream/osaurus-dsv4-head-cache-f6384c3c/scripts/live-proof/fixtures/dsv4-head-cache-v1/request-rails.json",
+      "sha256": "__REPLACE_WITH_REQUEST_SCHEMA_SHA256__",
+      "size": "__REPLACE_WITH_REQUEST_SCHEMA_SIZE__"
+    },
+    "output": {
+      "version": "dsv4-head-cache-output/1",
+      "path": "/Users/mmeding/Developer/Models-0731-Osaurus/02-tooling/upstream/osaurus-dsv4-head-cache-f6384c3c/scripts/live-proof/fixtures/dsv4-head-cache-v1/output-rails.json",
+      "sha256": "__REPLACE_WITH_OUTPUT_SCHEMA_SHA256__",
+      "size": "__REPLACE_WITH_OUTPUT_SCHEMA_SIZE__"
+    }
+  },
+  "generation": {
+    "seed": 42,
+    "temperature": 0,
+    "top_p": 1,
+    "max_tokens": 64,
+    "processors": [
+      "__REPLACE_WITH_ORDERED_PROCESSOR_1__",
+      "__REPLACE_WITH_ORDERED_PROCESSOR_2__",
+      "__REPLACE_WITH_ORDERED_PROCESSOR_3__"
+    ],
+    "eos": ["__REPLACE_WITH_PINNED_EOS_TOKEN__"],
+    "stop": ["__REPLACE_WITH_PINNED_STOP_SEQUENCE__"]
+  },
+  "runtime_settings": {
+    "exact_bytes": {
+      "path": "/__REPLACE_WITH_RUNTIME_SETTINGS_BYTES__/runtime-settings.json",
+      "sha256": "__REPLACE_WITH_RUNTIME_SETTINGS_SHA256__",
+      "size": "__REPLACE_WITH_RUNTIME_SETTINGS_SIZE__"
+    },
+    "mtp": false,
+    "proposals": false,
+    "decode_compile": false
+  },
+  "arms": {
+    "A": {
+      "id": "A",
+      "mode": "exact",
+      "environment": {
+        "VMLX_DSV4_LM_HEAD_MODE": "exact",
+        "VMLX_DSV4_CACHE_FP32_LM_HEAD": "0",
+        "VMLX_DSV4_CACHE_FP32_LM_HEAD_SHADOW": "0"
+      },
+      "cache_requested": false,
+      "source_supported": true,
+      "prepared": false,
+      "cache_identity": null,
+      "logical_bytes": 0,
+      "shadow": {"declared": false, "logical_bytes": 0}
+    },
+    "B": {
+      "id": "B",
+      "mode": "exactCached",
+      "environment": {
+        "VMLX_DSV4_LM_HEAD_MODE": "exact",
+        "VMLX_DSV4_CACHE_FP32_LM_HEAD": "1",
+        "VMLX_DSV4_CACHE_FP32_LM_HEAD_SHADOW": "0"
+      },
+      "cache_requested": true,
+      "source_supported": true,
+      "prepared": true,
+      "cache_identity": "__REPLACE_WITH_NONEMPTY_CACHE_IDENTITY__",
+      "logical_bytes": 2118123520,
+      "shadow": {"declared": false, "logical_bytes": 0}
+    },
+    "P": {
+      "id": "P",
+      "mode": "qmm",
+      "environment": {
+        "VMLX_DSV4_LM_HEAD_MODE": "qmm",
+        "VMLX_DSV4_CACHE_FP32_LM_HEAD": "0",
+        "VMLX_DSV4_CACHE_FP32_LM_HEAD_SHADOW": "0"
+      },
+      "cache_requested": false,
+      "source_supported": true,
+      "prepared": false,
+      "cache_identity": null,
+      "logical_bytes": 0,
+      "shadow": {"declared": false, "logical_bytes": 0}
+    }
+  },
+  "diagnostics": {
+    "shadow_control": {
+      "timed": false,
+      "environment": {
+        "VMLX_DSV4_CACHE_FP32_LM_HEAD": "1",
+        "VMLX_DSV4_CACHE_FP32_LM_HEAD_SHADOW": "1",
+        "VMLX_DSV4_LM_HEAD_MODE": "exact"
+      },
+      "snapshot": {
+        "cache_requested": true,
+        "shadow_requested": true,
+        "source_quantized": true,
+        "source_supported": true,
+        "prepared": true,
+        "logical_bytes": 2118123520,
+        "effective_path": "exact"
+      }
+    }
+  },
+  "effective_path_proof": {
+    "source_gate": {
+      "path": "/Users/mmeding/Developer/Models-0731-Osaurus/02-tooling/upstream/osaurus-dsv4-head-cache-f6384c3c/Packages/OsaurusCore/Services/ModelRuntime.swift",
+      "sha256": "__REPLACE_WITH_MODEL_GATE_SOURCE_SHA256__",
+      "size": "__REPLACE_WITH_MODEL_GATE_SOURCE_SIZE__",
+      "symbol": "ensureJANGTQSidecar -> validateJANGTQSidecarIfRequired"
+    },
+    "adapter_gate": {
+      "path": "/Users/mmeding/Developer/Models-0731-Osaurus/02-tooling/upstream/osaurus-dsv4-head-cache-f6384c3c/Packages/OsaurusCore/Services/ModelRuntime/MLXBatchAdapter.swift",
+      "sha256": "__REPLACE_WITH_ADAPTER_SOURCE_SHA256__",
+      "size": "__REPLACE_WITH_ADAPTER_SOURCE_SIZE__",
+      "symbol": "BatchEngine.generate"
+    },
+    "runtime_artifact": {
+      "path": "/__REPLACE_WITH_EFFECTIVE_PATH_PROOF__/effective-path.json",
+      "sha256": "__REPLACE_WITH_EFFECTIVE_PATH_PROOF_SHA256__",
+      "size": "__REPLACE_WITH_EFFECTIVE_PATH_PROOF_SIZE__"
+    },
+    "arm_order": ["A", "B", "P"],
+    "effective_arm": "__REPLACE_WITH_EFFECTIVE_ARM__"
+  },
+  "requests": [
+    {"id": "ordinary-coding", "kind": "ordinary_coding", "fixture_id": "request-rails", "arm": "A", "expected_rail": "visible_output_and_token_rate", "max_tokens": 64, "trace_accepted_ids": true},
+    {"id": "instruction", "kind": "instruction", "fixture_id": "request-rails", "arm": "A", "expected_rail": "instruction_followed", "max_tokens": 64, "trace_accepted_ids": true},
+    {"id": "tool-call", "kind": "tool_call", "fixture_id": "request-rails", "arm": "A", "expected_rail": "exact_tool_name_json_and_continuation", "max_tokens": 64, "trace_accepted_ids": true},
+    {"id": "refusal", "kind": "refusal", "fixture_id": "request-rails", "arm": "A", "expected_rail": "refusal_without_tool_or_protocol_leak", "max_tokens": 64, "trace_accepted_ids": true},
+    {"id": "long-context", "kind": "long_context", "fixture_id": "request-rails", "arm": "A", "expected_rail": "prompt_count_visible_output_and_rate", "max_tokens": 64, "trace_accepted_ids": true},
+    {"id": "repeated-prefix-miss", "kind": "repeated_prefix_miss", "fixture_id": "request-rails", "arm": "B", "expected_rail": "miss_before_hit", "max_tokens": 64, "trace_accepted_ids": true},
+    {"id": "repeated-prefix-hit", "kind": "repeated_prefix_hit", "fixture_id": "request-rails", "arm": "B", "expected_rail": "hit_after_miss_same_identity", "max_tokens": 64, "trace_accepted_ids": true},
+    {"id": "normal-unload", "kind": "normal_unload", "fixture_id": "output-rails", "arm": "A", "expected_rail": "resident_to_unloaded_without_error", "max_tokens": 64, "trace_accepted_ids": false},
+    {"id": "normal-reload", "kind": "normal_reload", "fixture_id": "output-rails", "arm": "A", "expected_rail": "same_model_identity_after_reload", "max_tokens": 64, "trace_accepted_ids": true},
+    {"id": "adapter-token-id", "kind": "adapter_token_id", "fixture_id": "adapter-token-ids", "arm": "A", "expected_rail": "exact_adapter_input_ids", "max_tokens": 64, "trace_accepted_ids": true}
+  ],
+  "prefixes": {
+    "miss": {"id": "prefix-miss", "request_id": "repeated-prefix-miss", "expected": "miss", "cache_identity": null},
+    "hit": {"id": "prefix-hit", "request_id": "repeated-prefix-hit", "expected": "hit", "cache_identity": "__REPLACE_WITH_NONEMPTY_CACHE_IDENTITY__"}
+  },
+  "fixtures": [
+    {"id": "request-rails", "path": "/Users/mmeding/Developer/Models-0731-Osaurus/02-tooling/upstream/osaurus-dsv4-head-cache-f6384c3c/scripts/live-proof/fixtures/dsv4-head-cache-v1/request-rails.json", "sha256": "__REPLACE_WITH_REQUEST_FIXTURE_SHA256__", "size": "__REPLACE_WITH_REQUEST_FIXTURE_SIZE__"},
+    {"id": "adapter-token-ids", "path": "/Users/mmeding/Developer/Models-0731-Osaurus/02-tooling/upstream/osaurus-dsv4-head-cache-f6384c3c/scripts/live-proof/fixtures/dsv4-head-cache-v1/adapter-token-ids.json", "sha256": "__REPLACE_WITH_ADAPTER_FIXTURE_SHA256__", "size": "__REPLACE_WITH_ADAPTER_FIXTURE_SIZE__"},
+    {"id": "output-rails", "path": "/Users/mmeding/Developer/Models-0731-Osaurus/02-tooling/upstream/osaurus-dsv4-head-cache-f6384c3c/scripts/live-proof/fixtures/dsv4-head-cache-v1/output-rails.json", "sha256": "__REPLACE_WITH_OUTPUT_FIXTURE_SHA256__", "size": "__REPLACE_WITH_OUTPUT_FIXTURE_SIZE__"}
+  ],
+  "output": {
+    "campaign_root": "/Users/mmeding/Developer/Models-0731-Osaurus/07-validation/head-cache-campaign",
+    "ledger": "/Users/mmeding/Developer/Models-0731-Osaurus/07-validation/head-cache-campaign/qualification-ledger.jsonl",
+    "stem": "/Users/mmeding/Developer/Models-0731-Osaurus/07-validation/head-cache-campaign/qualification",
+    "state": "/Users/mmeding/Developer/Models-0731-Osaurus/07-validation/head-cache-campaign/state",
+    "cache": "/Users/mmeding/Developer/Models-0731-Osaurus/07-validation/head-cache-campaign/cache",
+    "tmp": "/Users/mmeding/Developer/Models-0731-Osaurus/07-validation/head-cache-campaign/tmp"
+  },
+  "safety": {
+    "fail_closed": true,
+    "allow_destructive_actions": false,
+    "require_manifest_hash_env": true,
+    "manifest_external": true,
+    "live_claims": "none"
+  },
+  "decision": {
+    "status": "unproven",
+    "qualified": false,
+    "live_gates_ran": false,
+    "reason": "Template only. Replace every live placeholder after an isolated build and pre-campaign inventory hash; no live gate is claimed by this tracked file."
+  },
+  "notes": "The generated current-head manifest belongs at /Users/mmeding/Developer/Models-0731-Osaurus/07-validation/head-cache-campaign/qualification-manifest-v1.json and must remain outside Git. This example is intentionally not launchable until all placeholders are replaced with observed values."
+}

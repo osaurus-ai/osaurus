@@ -11,6 +11,7 @@
 import Foundation
 import MLX
 import MLXLMCommon
+import MLXNN
 import Testing
 
 @testable import OsaurusCore
@@ -30,6 +31,713 @@ struct MLXBatchAdapterTests {
                 environment: ["OSAURUS_INFERENCE_ACTIVITY": "0"]
             )
         )
+    }
+
+    // MARK: - Qualification token-ID bridge
+
+    @Test func qualificationRuntimeBinding_usesInjectedAppAndCLIIdentity() {
+        let appBundle = URL(fileURLWithPath: "/tmp/Osaurus.app")
+        let appExecutable = URL(fileURLWithPath: "/tmp/Osaurus.app/Contents/MacOS/osaurus")
+        let app = MLXBatchAdapter.qualificationRuntimeBinding(
+            bundleURL: appBundle,
+            appExecutableURL: appExecutable,
+            commandLineArguments: ["/ignored/cli"])
+        #expect(app.artifactKind == .appExecutable)
+        #expect(app.executableURL == appExecutable)
+
+        let cliArgument = "/usr/bin/true"
+        let cli = MLXBatchAdapter.qualificationRuntimeBinding(
+            bundleURL: URL(fileURLWithPath: "/tmp/not-an-app.xctest"),
+            appExecutableURL: appExecutable,
+            commandLineArguments: [cliArgument])
+        #expect(cli.artifactKind == .cli)
+        #expect(
+            cli.executableURL
+                == URL(fileURLWithPath: cliArgument)
+                    .standardizedFileURL
+                    .resolvingSymlinksInPath())
+    }
+
+    @Test func qualificationResolver_isNoOpWithoutExactBindings() throws {
+        let result = try MLXBatchAdapter.resolveQualificationTraceConfiguration(
+            requestID: nil,
+            resolvedModelDirectory: nil,
+            actualExecutableURL: nil,
+            artifactKind: nil,
+            environment: ["UNRELATED_QUALIFICATION_FLAG": "1"],
+            configurationFactory: { _, _, _, _, _ in
+                throw QualificationBridgeTestFailure.factoryMustNotRun
+            })
+        #expect(result == nil)
+    }
+
+    @Test func qualificationResolver_forwardsInjectedIdentityAndRequest() throws {
+        let modelDirectory = URL(fileURLWithPath: "/verified/model")
+        let executable = URL(fileURLWithPath: "/verified/bin/osaurus")
+        let environment = [
+            DSV4HeadCacheQualificationManifestVerifier.manifestPathEnvironmentKey: "/manifest.json",
+            DSV4HeadCacheQualificationManifestVerifier.manifestSHA256EnvironmentKey: String(
+                repeating: "a", count: 64),
+        ]
+        let expected = bridgeTraceConfiguration()
+        let result = try MLXBatchAdapter.resolveQualificationTraceConfiguration(
+            requestID: "instruction-1",
+            resolvedModelDirectory: modelDirectory,
+            actualExecutableURL: executable,
+            artifactKind: .cli,
+            environment: environment,
+            configurationFactory: { requestID, modelURL, executableURL, kind, receivedEnvironment in
+                #expect(requestID == "instruction-1")
+                #expect(modelURL == modelDirectory)
+                #expect(executableURL == executable)
+                #expect(kind == .cli)
+                #expect(receivedEnvironment == environment)
+                return expected
+            })
+        #expect(result === expected)
+    }
+
+    @Test func qualificationResolver_failsClosedOnMissingRuntimeIdentity() {
+        let activeEnvironment = [
+            DSV4HeadCacheQualificationManifestVerifier.manifestPathEnvironmentKey: "/manifest.json"
+        ]
+        let factory: @Sendable (
+            String?, URL, URL, RuntimeArtifactKind, [String: String]
+        ) throws -> TokenIDTraceConfiguration? = { _, _, _, _, _ in nil }
+
+        #expect(throws: MLXBatchAdapter.QualificationTraceBridgeError.missingExecutableURL) {
+            try MLXBatchAdapter.resolveQualificationTraceConfiguration(
+                requestID: "row",
+                resolvedModelDirectory: URL(fileURLWithPath: "/model"),
+                actualExecutableURL: nil,
+                artifactKind: .cli,
+                environment: activeEnvironment,
+                configurationFactory: factory)
+        }
+        #expect(throws: MLXBatchAdapter.QualificationTraceBridgeError.missingModelDirectory) {
+            try MLXBatchAdapter.resolveQualificationTraceConfiguration(
+                requestID: "row",
+                resolvedModelDirectory: nil,
+                actualExecutableURL: URL(fileURLWithPath: "/bin/tool"),
+                artifactKind: .cli,
+                environment: activeEnvironment,
+                configurationFactory: factory)
+        }
+        #expect(throws: MLXBatchAdapter.QualificationTraceBridgeError.missingArtifactKind) {
+            try MLXBatchAdapter.resolveQualificationTraceConfiguration(
+                requestID: "row",
+                resolvedModelDirectory: URL(fileURLWithPath: "/model"),
+                actualExecutableURL: URL(fileURLWithPath: "/bin/tool"),
+                artifactKind: nil,
+                environment: activeEnvironment,
+                configurationFactory: factory)
+        }
+    }
+
+    @Test func bridge_traceOffPreservesVisibleEventsAndConsumesDiagnosticIDs() async throws {
+        let info = bridgeCompletionInfo(tokenCount: 1)
+        let upstream = AsyncStream<Generation> { continuation in
+            continuation.yield(.chunk("visible"))
+            continuation.yield(.tokenID(id: 41, ordinal: 0))
+            continuation.yield(.info(info))
+            continuation.finish()
+        }
+        let bridge = MLXBatchAdapter.bridgeGenerationStream(upstream: upstream)
+        var events = [Generation]()
+        for try await event in bridge.stream { events.append(event) }
+        await bridge.task.value
+
+        #expect(events.contains { if case .chunk("visible") = $0 { true } else { false } })
+        #expect(events.contains { if case .info = $0 { true } else { false } })
+        #expect(!events.contains { if case .tokenID = $0 { true } else { false } })
+    }
+
+    @Test func bridge_traceOffCancellationPreservesTerminalInfoWhileSourceDrains() async {
+        let (upstream, upstreamContinuation) = AsyncStream<Generation>.makeStream()
+        let start = BridgeTestGate()
+        let cancellation = BridgeTaskCancellationController()
+        let terminalInfo = bridgeCompletionInfo(tokenCount: 1)
+        let bridge = MLXBatchAdapter.bridgeGenerationStream(
+            upstream: upstream,
+            onCancellation: {
+                upstreamContinuation.yield(.info(terminalInfo))
+                upstreamContinuation.finish()
+            },
+            onPhase: { phase in
+                if phase == .afterToken {
+                    cancellation.cancel()
+                }
+            })
+        cancellation.attach(bridge.task)
+        let sourceTask = Task {
+            await start.wait()
+            upstreamContinuation.yield(.tokenID(id: 41, ordinal: 0))
+        }
+        await start.open()
+
+        var events = [Generation]()
+        do {
+            for try await event in bridge.stream {
+                events.append(event)
+            }
+        } catch {
+            Issue.record("trace-off cancellation should drain the source without throwing: \(error)")
+        }
+        await sourceTask.value
+        await bridge.task.value
+
+        #expect(events.contains { if case .info = $0 { true } else { false } })
+        #expect(!events.contains { if case .tokenID = $0 { true } else { false } })
+    }
+
+    @Test(arguments: [1, 2])
+    func bridge_handleCancellationReachesExactProducerAndForwardsTerminalInfo(
+        maxBatchSize: Int
+    ) async {
+        let engine = bridgeTraceEngine(maxBatchSize: maxBatchSize)
+        let parameters = GenerateParameters(maxTokens: 4096, temperature: 0)
+        let handle = await engine.startGeneration(
+            input: LMInput(tokens: MLXArray([Int32(0)])),
+            parameters: parameters)
+
+        let probe = BridgeCancellationProbe()
+        let cancellation = BridgeTaskCancellationController()
+        let bridge = MLXBatchAdapter.bridgeGenerationStream(
+            upstream: handle.stream,
+            onCancellation: {
+                let info = await handle.cancelAndWait()
+                probe.recordCancellation(returnedTerminalInfo: info != nil)
+            },
+            onDrained: {
+                probe.recordDrained()
+            },
+            onPhase: { phase in
+                if phase == .afterToken {
+                    cancellation.cancel()
+                } else if phase == .afterInfo {
+                    probe.recordSourceInfo()
+                }
+            })
+        cancellation.attach(bridge.task)
+
+        let consumer = Task {
+            do {
+                for try await event in bridge.stream {
+                    if case .info = event {
+                        probe.recordForwardedInfo()
+                    }
+                }
+            } catch {
+                Issue.record("handle cancellation should preserve a clean trace-off stream: \(error)")
+            }
+        }
+
+        let callbackStarted = await waitForBridgeSignal(probe.cancellationStarted)
+        let drained = await waitForBridgeSignal(probe.drained)
+        #expect(callbackStarted)
+        #expect(drained)
+
+        let snapshot = await probe.snapshot()
+        #expect(snapshot.cancellationCount == 1)
+        #expect(snapshot.returnedTerminalInfo)
+        #expect(snapshot.forwardedInfo)
+        #expect(snapshot.sourceInfoBeforeDrain)
+
+        // This is idempotent cleanup after the bridge callback. It also makes
+        // a red callback assertion unable to leave the exact request running.
+        _ = await handle.cancelAndWait()
+        await engine.shutdown()
+        await consumer.value
+        await bridge.task.value
+    }
+
+    @Test func cancellationBarrierWaitBeforeRequestWaitsForOneBlockedOperation() async {
+        let waitReturned = BridgeTestSignal()
+        let operationStarted = BridgeTestSignal()
+        let releaseOperation = BridgeTestGate()
+        let operationProbe = BarrierOperationProbe()
+        let barrier = MLXBatchAdapter.GenerationCancellationBarrier()
+
+        let waiter = Task {
+            await barrier.wait()
+            await waitReturned.signal()
+        }
+
+        var observedPending = false
+        var observedReturned = false
+        for _ in 0 ..< 1_000 {
+            if await waitReturned.isSignaled() {
+                observedReturned = true
+                break
+            }
+            if await barrier.pendingWaiterCountForTesting == 1 {
+                observedPending = true
+                break
+            }
+            await Task.yield()
+        }
+        #expect(observedPending)
+        #expect(!observedReturned)
+        #expect(await barrier.pendingWaiterCountForTesting == 1)
+        #expect(!(await waitReturned.isSignaled()))
+
+        await barrier.request {
+            await operationProbe.recordStart()
+            await operationStarted.signal()
+            await releaseOperation.wait()
+            await operationProbe.recordFinish()
+        }
+        await barrier.request {
+            await operationProbe.recordDuplicateStart()
+        }
+
+        #expect(await waitForBridgeSignal(operationStarted))
+        #expect(!(await waitReturned.isSignaled()))
+
+        await releaseOperation.open()
+        await waiter.value
+        let snapshot = await operationProbe.snapshot()
+        #expect(await waitReturned.isSignaled())
+        #expect(snapshot.starts == 1)
+        #expect(snapshot.finishes == 1)
+        #expect(snapshot.duplicateStarts == 0)
+    }
+
+    @Test func bridge_traceOffCancellationWithoutTerminalInfoDrainsAndReleasesResources() async {
+        let (upstream, upstreamContinuation) = AsyncStream<Generation>.makeStream()
+        let soloGate = MLXBatchAdapter.SoloGenerationGate()
+        guard let lease = await soloGate.acquire(modelName: "bridge-no-info") else {
+            Issue.record("test could not acquire the synthetic solo lease")
+            return
+        }
+        let metalGate = MetalGate.makeForTesting()
+        do {
+            try await metalGate.enterGeneration(model: "bridge-no-info")
+        } catch {
+            Issue.record("test could not acquire the synthetic Metal gate")
+            await lease.release()
+            return
+        }
+
+        let cancellation = BridgeTaskCancellationController()
+        let cancellationCallback = BridgeTestSignal()
+        let drained = BridgeTestSignal()
+        let bridge = MLXBatchAdapter.bridgeGenerationStream(
+            upstream: upstream,
+            onCancellation: {
+                await cancellationCallback.signal()
+                // Deliberately finish without a terminal info event.
+                upstreamContinuation.finish()
+            },
+            onDrained: {
+                await lease.release()
+                await metalGate.exitGeneration(model: "bridge-no-info")
+                await drained.signal()
+            },
+            onPhase: { phase in
+                if phase == .afterToken {
+                    cancellation.cancel()
+                }
+            })
+        cancellation.attach(bridge.task)
+
+        let consumer = Task {
+            do {
+                for try await _ in bridge.stream {}
+            } catch {
+                Issue.record("trace-off no-info cancellation must finish cleanly: \(error)")
+            }
+        }
+        upstreamContinuation.yield(.tokenID(id: 41, ordinal: 0))
+
+        let callbackStarted = await waitForBridgeSignal(cancellationCallback)
+        let resourcesReleased = await waitForBridgeSignal(drained)
+        #expect(callbackStarted)
+        #expect(resourcesReleased)
+
+        if !resourcesReleased {
+            upstreamContinuation.finish()
+        }
+        await bridge.task.value
+        await consumer.value
+
+        if resourcesReleased {
+            guard let nextLease = await soloGate.acquire(modelName: "bridge-no-info") else {
+                Issue.record("solo lease remained held after no-info drain")
+                return
+            }
+            await nextLease.release()
+            do {
+                try await metalGate.enterGeneration(model: "bridge-no-info")
+                await metalGate.exitGeneration(model: "bridge-no-info")
+            } catch {
+                Issue.record("Metal gate remained held after no-info drain")
+            }
+        }
+    }
+
+    @Test func bridge_traceOnRejectsMissingSourceTerminalAndWithholdsInfo() async {
+        let configuration = bridgeTraceConfiguration()
+        let upstream = AsyncStream<Generation> { continuation in
+            continuation.yield(.info(bridgeCompletionInfo(tokenCount: 0)))
+            continuation.finish()
+        }
+        let bridge = MLXBatchAdapter.bridgeGenerationStream(
+            upstream: upstream,
+            tokenIDTrace: configuration)
+        var events = [Generation]()
+        var observedError: Error?
+        do {
+            for try await event in bridge.stream { events.append(event) }
+        } catch {
+            observedError = error
+        }
+        await bridge.task.value
+
+        #expect(observedError as? TokenIDTraceError == .sourceNotTerminated)
+        #expect(!events.contains { if case .info = $0 { true } else { false } })
+    }
+
+    @Test(arguments: [1, 2])
+    func bridge_realEngineFinalizesDirectAndBatchLineage(maxBatchSize: Int) async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-token-bridge-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let stem = temporaryRoot.appendingPathComponent("trace")
+        let configuration = bridgeTraceConfiguration(outputStem: stem)
+        let engine = bridgeTraceEngine(maxBatchSize: maxBatchSize)
+        var parameters = GenerateParameters(maxTokens: 3, temperature: 0)
+        parameters.tokenIDTrace = configuration
+        let upstream = await engine.generate(
+            input: LMInput(tokens: MLXArray([Int32(0)])),
+            parameters: parameters)
+        let bridge = MLXBatchAdapter.bridgeGenerationStream(
+            upstream: upstream,
+            tokenIDTrace: configuration)
+
+        var diagnosticEvents = 0
+        var infoObservedAfterWrite = false
+        var streamError: Error?
+        do {
+            for try await event in bridge.stream {
+                if case .tokenID = event { diagnosticEvents += 1 }
+                if case .info = event {
+                    infoObservedAfterWrite = FileManager.default.fileExists(
+                        atPath: stem.appendingPathExtension("adapterAccepted.ids").path)
+                }
+            }
+        } catch {
+            streamError = error
+        }
+        await bridge.task.value
+        await engine.shutdown()
+        if let streamError { throw streamError }
+
+        let artifacts = try configuration.artifacts()
+        let expectedSourceKind: TokenIDTraceStreamKind =
+            maxBatchSize == 1 ? .iteratorReturned : .batchYielded
+        let unexpectedSourceKind: TokenIDTraceStreamKind =
+            maxBatchSize == 1 ? .batchYielded : .iteratorReturned
+        let accepted = try #require(
+            artifacts.first { $0.streamKind == .adapterAccepted })
+        let source = try #require(
+            artifacts.first { $0.streamKind == expectedSourceKind })
+
+        #expect(diagnosticEvents == 0)
+        #expect(infoObservedAfterWrite)
+        #expect(accepted.body == source.body)
+        #expect(accepted.body == Data(repeating: 0, count: 3 * MemoryLayout<UInt32>.size))
+        #expect(!artifacts.contains { $0.streamKind == unexpectedSourceKind })
+        let sidecar = try #require(
+            JSONSerialization.jsonObject(with: accepted.sidecar) as? [String: Any])
+        #expect(sidecar["ordinalStart"] as? Int == 0)
+        #expect(sidecar["ordinalEnd"] as? Int == 2)
+    }
+
+    @Test func bridge_acceptMismatchFailsAndProducesNoPassingArtifact() async {
+        let configuration = bridgeTraceConfiguration()
+        let engine = bridgeTraceEngine(maxBatchSize: 1)
+        var parameters = GenerateParameters(maxTokens: 2, temperature: 0)
+        parameters.tokenIDTrace = configuration
+        let source = await engine.generate(
+            input: LMInput(tokens: MLXArray([Int32(0)])),
+            parameters: parameters)
+        let tampered = AsyncStream<Generation> { continuation in
+            Task {
+                var changedFirstID = false
+                for await event in source {
+                    if case .tokenID(let id, let ordinal) = event, !changedFirstID {
+                        changedFirstID = true
+                        continuation.yield(.tokenID(id: id + 1, ordinal: ordinal))
+                    } else {
+                        continuation.yield(event)
+                    }
+                }
+                continuation.finish()
+            }
+        }
+        let bridge = MLXBatchAdapter.bridgeGenerationStream(
+            upstream: tampered,
+            tokenIDTrace: configuration)
+        var observedError: Error?
+        do {
+            for try await _ in bridge.stream {}
+        } catch {
+            observedError = error
+        }
+        await bridge.task.value
+        await engine.shutdown()
+
+        #expect(observedError as? TokenIDTraceError == .adapterAcceptanceMismatch(ordinal: 0))
+        #expect(throws: TokenIDTraceError.adapterAcceptanceMismatch(ordinal: 0)) {
+            try configuration.artifacts()
+        }
+    }
+
+    @Test func bridge_writeFailureRemovesPartialArtifactsAndWithholdsInfo() async {
+        let temporaryRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-token-write-failure-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.removeItem(at: temporaryRoot)
+        let stem = temporaryRoot.appendingPathComponent("missing/trace")
+        let configuration = bridgeTraceConfiguration(outputStem: stem)
+        let engine = bridgeTraceEngine(maxBatchSize: 1)
+        var parameters = GenerateParameters(maxTokens: 2, temperature: 0)
+        parameters.tokenIDTrace = configuration
+        let upstream = await engine.generate(
+            input: LMInput(tokens: MLXArray([Int32(0)])),
+            parameters: parameters)
+        let bridge = MLXBatchAdapter.bridgeGenerationStream(
+            upstream: upstream,
+            tokenIDTrace: configuration)
+        var events = [Generation]()
+        var observedError: Error?
+        do {
+            for try await event in bridge.stream { events.append(event) }
+        } catch {
+            observedError = error
+        }
+        await bridge.task.value
+        await engine.shutdown()
+
+        #expect(observedError != nil)
+        #expect(!events.contains { if case .info = $0 { true } else { false } })
+        for kind in TokenIDTraceStreamKind.allCases {
+            #expect(!FileManager.default.fileExists(
+                atPath: stem.appendingPathExtension("\(kind.rawValue).ids").path))
+            #expect(!FileManager.default.fileExists(
+                atPath: stem.appendingPathExtension("\(kind.rawValue).json").path))
+        }
+    }
+
+    @Test func bridge_traceOnWithholdsToolCallUntilArtifactValidation() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-token-tool-order-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let stem = temporaryRoot.appendingPathComponent("trace")
+        let configuration = bridgeTraceConfiguration(outputStem: stem)
+        let engine = bridgeTraceEngine(maxBatchSize: 1)
+        var parameters = GenerateParameters(maxTokens: 2, temperature: 0)
+        parameters.tokenIDTrace = configuration
+        let source = await engine.generate(
+            input: LMInput(tokens: MLXArray([Int32(0)])),
+            parameters: parameters)
+
+        let (upstream, upstreamContinuation) =
+            AsyncThrowingStream<Generation, Error>.makeStream()
+        let sourceAtInfo = BridgeTestSignal()
+        let releaseSource = BridgeTestGate()
+        let sourceTask = Task<Void, Never> {
+            var injectedToolCall = false
+            for await event in source {
+                if !injectedToolCall, case .tokenID = event {
+                    upstreamContinuation.yield(.toolCall(bridgeTestToolCall()))
+                    injectedToolCall = true
+                }
+                upstreamContinuation.yield(event)
+                if case .info = event {
+                    await sourceAtInfo.signal()
+                    await releaseSource.wait()
+                }
+            }
+            upstreamContinuation.finish()
+        }
+
+        let bridge = MLXBatchAdapter.bridgeGenerationStream(
+            upstream: upstream,
+            tokenIDTrace: configuration)
+        let mapped = GenerationEventMapper.map(events: bridge.stream)
+        let productProbe = BridgeProductProbe()
+        let mapperTask = Task<Void, Never> {
+            do {
+                for try await event in mapped {
+                    if case .toolInvocation = event {
+                        await productProbe.record(
+                            validated: (try? configuration.artifacts()) != nil)
+                    }
+                }
+            } catch {
+                // The assertions below inspect the bridge's terminal state.
+            }
+        }
+
+        for _ in 0 ..< 200 {
+            if await sourceAtInfo.isSignaled() { break }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        #expect(await sourceAtInfo.isSignaled())
+        #expect(throws: TokenIDTraceError.adapterFinalizationRequired) {
+            try configuration.artifacts()
+        }
+
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        let beforeFinalize = await productProbe.snapshot()
+        #expect(!beforeFinalize.observed)
+
+        await releaseSource.open()
+        await sourceTask.value
+        await bridge.task.value
+        await mapperTask.value
+        await engine.shutdown()
+
+        let afterFinalize = await productProbe.snapshot()
+        #expect(afterFinalize.observed)
+        #expect(afterFinalize.validated)
+        #expect(!afterFinalize.premature)
+    }
+
+    @Test(arguments: MLXBatchAdapter.GenerationBridgePhase.allCases)
+    func bridge_traceOnCancellationFailsClosed(
+        at phase: MLXBatchAdapter.GenerationBridgePhase
+    ) async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-token-cancel-\(phase.rawValue)-\(UUID().uuidString)",
+            isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let stem = temporaryRoot.appendingPathComponent("trace")
+        let configuration = bridgeTraceConfiguration(outputStem: stem)
+        let engine = bridgeTraceEngine(maxBatchSize: 1)
+        var parameters = GenerateParameters(maxTokens: 2, temperature: 0)
+        parameters.tokenIDTrace = configuration
+        let source = await engine.generate(
+            input: LMInput(tokens: MLXArray([Int32(0)])),
+            parameters: parameters)
+
+        let (upstream, upstreamContinuation) =
+            AsyncThrowingStream<Generation, Error>.makeStream()
+        let startSource = BridgeTestGate()
+        let sourceTask = Task<Void, Never> {
+            await startSource.wait()
+            for await event in source {
+                upstreamContinuation.yield(event)
+            }
+            upstreamContinuation.finish()
+        }
+
+        let cancellationController = BridgeTaskCancellationController()
+        let bridge = MLXBatchAdapter.bridgeGenerationStream(
+            upstream: upstream,
+            tokenIDTrace: configuration,
+            onPhase: { observedPhase in
+                if observedPhase == phase {
+                    cancellationController.cancel()
+                }
+            })
+        cancellationController.attach(bridge.task)
+        await startSource.open()
+
+        var observedError: Error?
+        do {
+            for try await _ in bridge.stream {}
+        } catch {
+            observedError = error
+        }
+        await sourceTask.value
+        await bridge.task.value
+        await engine.shutdown()
+
+        #expect(observedError is CancellationError)
+        for path in bridgeTraceArtifactPaths(stem: stem) {
+            #expect(!FileManager.default.fileExists(atPath: path.path))
+        }
+    }
+
+    @Test func bridge_cleanupFailureIsObservableAndLeavesNoFalseSuccessSignal() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-token-cleanup-failure-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: temporaryRoot, withIntermediateDirectories: true)
+        let fileManager = FileManager.default
+        let originalPermissions = try fileManager.attributesOfItem(
+            atPath: temporaryRoot.path)[.posixPermissions] as? NSNumber
+        defer {
+            if let originalPermissions {
+                try? fileManager.setAttributes(
+                    [.posixPermissions: originalPermissions],
+                    ofItemAtPath: temporaryRoot.path)
+            }
+            try? fileManager.removeItem(at: temporaryRoot)
+        }
+
+        let stem = temporaryRoot.appendingPathComponent("trace")
+        let firstConfiguration = bridgeTraceConfiguration(outputStem: stem)
+        let firstEngine = bridgeTraceEngine(maxBatchSize: 1)
+        var firstParameters = GenerateParameters(maxTokens: 2, temperature: 0)
+        firstParameters.tokenIDTrace = firstConfiguration
+        let firstSource = await firstEngine.generate(
+            input: LMInput(tokens: MLXArray([Int32(0)])),
+            parameters: firstParameters)
+        let firstBridge = MLXBatchAdapter.bridgeGenerationStream(
+            upstream: firstSource,
+            tokenIDTrace: firstConfiguration)
+        for try await _ in firstBridge.stream {}
+        await firstBridge.task.value
+        await firstEngine.shutdown()
+        let completeArtifactCount = try firstConfiguration.artifacts().count * 2
+        #expect(
+            bridgeTraceArtifactPaths(stem: stem).filter {
+                fileManager.fileExists(atPath: $0.path)
+            }.count == completeArtifactCount)
+
+        try fileManager.setAttributes(
+            [.posixPermissions: NSNumber(value: 0o555)],
+            ofItemAtPath: temporaryRoot.path)
+        let secondConfiguration = bridgeTraceConfiguration(outputStem: stem)
+        let secondUpstream = AsyncStream<Generation> { continuation in
+            continuation.yield(.info(bridgeCompletionInfo(tokenCount: 0)))
+            continuation.finish()
+        }
+        let secondBridge = MLXBatchAdapter.bridgeGenerationStream(
+            upstream: secondUpstream,
+            tokenIDTrace: secondConfiguration)
+        var observedError: Error?
+        do {
+            for try await _ in secondBridge.stream {}
+        } catch {
+            observedError = error
+        }
+        await secondBridge.task.value
+
+        #expect(observedError != nil)
+        #expect(!(observedError as? TokenIDTraceError == .sourceNotTerminated))
+
+        if let originalPermissions {
+            try fileManager.setAttributes(
+                [.posixPermissions: originalPermissions],
+                ofItemAtPath: temporaryRoot.path)
+        }
+        let remainingArtifacts = bridgeTraceArtifactPaths(stem: stem).filter {
+            fileManager.fileExists(atPath: $0.path)
+        }
+        #expect(remainingArtifacts.count == completeArtifactCount)
     }
 
     @Test func processLifetimeDiagnosticsKeepOccupancyLiveAndCountersMonotonic() {
@@ -2967,4 +3675,296 @@ struct MLXBatchAdapterTests {
         #expect(other.repetitionPenalty == nil)
         #expect(other.repetitionContextSize == 20)
     }
+}
+
+private enum QualificationBridgeTestFailure: Error {
+    case factoryMustNotRun
+}
+
+private final class BridgeTaskCancellationController: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: Task<Void, Never>?
+
+    func attach(_ task: Task<Void, Never>) {
+        lock.lock()
+        self.task = task
+        lock.unlock()
+    }
+
+    func cancel() {
+        lock.lock()
+        let task = self.task
+        lock.unlock()
+        task?.cancel()
+    }
+}
+
+private actor BridgeTestGate {
+    private var isOpen = false
+    private var waiters = [CheckedContinuation<Void, Never>]()
+
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func open() {
+        isOpen = true
+        let pending = waiters
+        waiters.removeAll()
+        for continuation in pending {
+            continuation.resume()
+        }
+    }
+}
+
+private actor BridgeTestSignal {
+    private var signaled = false
+
+    func signal() {
+        signaled = true
+    }
+
+    func isSignaled() -> Bool {
+        signaled
+    }
+}
+
+private final class BridgeCancellationProbe: @unchecked Sendable {
+    struct Snapshot: Sendable {
+        let cancellationCount: Int
+        let returnedTerminalInfo: Bool
+        let forwardedInfo: Bool
+        let sourceInfoBeforeDrain: Bool
+    }
+
+    let cancellationStarted = BridgeTestSignal()
+    let drained = BridgeTestSignal()
+
+    private let lock = NSLock()
+    private var sequence = 0
+    private var sourceInfoSequence: Int?
+    private var drainSequence: Int?
+    private var cancellationCount = 0
+    private var returnedTerminalInfo = false
+    private var forwardedInfo = false
+
+    func recordCancellation(returnedTerminalInfo: Bool) {
+        lock.withLock {
+            cancellationCount += 1
+            self.returnedTerminalInfo = returnedTerminalInfo
+        }
+        Task { await cancellationStarted.signal() }
+    }
+
+    func recordSourceInfo() {
+        lock.withLock {
+            sequence += 1
+            sourceInfoSequence = sequence
+        }
+    }
+
+    func recordForwardedInfo() {
+        lock.withLock {
+            forwardedInfo = true
+        }
+    }
+
+    func recordDrained() {
+        lock.withLock {
+            sequence += 1
+            drainSequence = sequence
+        }
+        Task { await drained.signal() }
+    }
+
+    func snapshot() -> Snapshot {
+        lock.withLock {
+            Snapshot(
+                cancellationCount: cancellationCount,
+                returnedTerminalInfo: returnedTerminalInfo,
+                forwardedInfo: forwardedInfo,
+                sourceInfoBeforeDrain: {
+                    guard let sourceInfoSequence, let drainSequence else { return false }
+                    return sourceInfoSequence < drainSequence
+                }()
+            )
+        }
+    }
+}
+
+private actor BarrierOperationProbe {
+    private var starts = 0
+    private var finishes = 0
+    private var duplicateStarts = 0
+
+    func recordStart() {
+        starts += 1
+    }
+
+    func recordFinish() {
+        finishes += 1
+    }
+
+    func recordDuplicateStart() {
+        duplicateStarts += 1
+    }
+
+    func snapshot() -> (starts: Int, finishes: Int, duplicateStarts: Int) {
+        (starts, finishes, duplicateStarts)
+    }
+}
+
+private func waitForBridgeSignal(
+    _ signal: BridgeTestSignal,
+    attempts: Int = 200
+) async -> Bool {
+    for _ in 0 ..< attempts {
+        if await signal.isSignaled() { return true }
+        try? await Task.sleep(nanoseconds: 5_000_000)
+    }
+    return await signal.isSignaled()
+}
+
+private actor BridgeProductProbe {
+    private var observed = false
+    private var premature = false
+    private var validated = false
+
+    func record(validated: Bool) {
+        observed = true
+        self.validated = validated
+        premature = !validated
+    }
+
+    func snapshot() -> (observed: Bool, premature: Bool, validated: Bool) {
+        (observed, premature, validated)
+    }
+}
+
+private func bridgeTestToolCall() -> MLXLMCommon.ToolCall {
+    MLXLMCommon.ToolCall(
+        function: MLXLMCommon.ToolCall.Function(
+            name: "write_file",
+            arguments: ["path": "/tmp/proof.txt"]))
+}
+
+private func bridgeTraceArtifactPaths(stem: URL) -> [URL] {
+    TokenIDTraceStreamKind.allCases.flatMap { kind in
+        [
+            stem.appendingPathExtension("\(kind.rawValue).ids"),
+            stem.appendingPathExtension("\(kind.rawValue).json"),
+        ]
+    }
+}
+
+private func bridgeCompletionInfo(tokenCount: Int) -> GenerateCompletionInfo {
+    GenerateCompletionInfo(
+        promptTokenCount: 1,
+        generationTokenCount: tokenCount,
+        promptTime: 0,
+        generationTime: 0.01)
+}
+
+private func bridgeTraceConfiguration(
+    outputStem: URL? = nil
+) -> TokenIDTraceConfiguration {
+    TokenIDTraceConfiguration(
+        attestations: TokenIDTraceAttestations(
+            model: "test-model",
+            tokenizer: "test-tokenizer",
+            binary: "test-binary",
+            source: "test-source"),
+        settingsHash: String(repeating: "a", count: 64),
+        outputStem: outputStem,
+        externalAdapterParticipation: true)
+}
+
+private let bridgeTracePieces = ["one ", "two ", "three ", "four "]
+
+private struct BridgeTraceTokenizer: MLXLMCommon.Tokenizer {
+    let pieces: [String]
+
+    var vocabularySize: Int { 8 }
+
+    func encode(text: String, addSpecialTokens: Bool) -> [Int] { [0] }
+
+    func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String {
+        tokenIds.indices.map { pieces[min($0, pieces.count - 1)] }.joined()
+    }
+
+    func convertTokenToId(_ token: String) -> Int? { pieces.firstIndex(of: token) }
+
+    func convertIdToToken(_ id: Int) -> String? {
+        pieces.indices.contains(id) ? pieces[id] : nil
+    }
+
+    var bosToken: String? = nil
+    var eosToken: String? = nil
+    var unknownToken: String? = nil
+
+    func applyChatTemplate(
+        messages: [[String: any Sendable]],
+        tools: [[String: any Sendable]]?,
+        additionalContext: [String: any Sendable]?
+    ) throws -> [Int] { [0] }
+}
+
+private struct BridgeTraceInputProcessor: UserInputProcessor {
+    let tokenizer: Tokenizer
+    let configuration: ModelConfiguration
+    let messageGenerator: MessageGenerator
+
+    func prepare(input: UserInput) throws -> LMInput {
+        let messages = messageGenerator.generate(from: input)
+        let promptTokens = try tokenizer.applyChatTemplate(
+            messages: messages,
+            tools: input.tools,
+            additionalContext: input.additionalContext)
+        return LMInput(tokens: MLXArray(promptTokens))
+    }
+}
+
+private final class BridgeTraceModel: Module, LanguageModel,
+    KVCacheDimensionProvider, @unchecked Sendable
+{
+    let vocabularySize = 8
+    var kvHeads: [Int] { [1] }
+
+    func prepare(
+        _ input: LMInput,
+        cache: [KVCache],
+        windowSize: Int?
+    ) throws -> PrepareResult {
+        .tokens(input.text)
+    }
+
+    func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
+        let batch = inputs.shape.first ?? 1
+        let length = inputs.shape.count > 1 ? inputs.shape[1] : inputs.size
+        var values = [Float](repeating: -1, count: batch * length * vocabularySize)
+        for row in 0 ..< batch * length {
+            values[row * vocabularySize] = 0
+        }
+        return MLXArray(values).reshaped(batch, length, vocabularySize)
+    }
+}
+
+private func bridgeTraceEngine(maxBatchSize: Int) -> BatchEngine {
+    let model = BridgeTraceModel()
+    let tokenizer = BridgeTraceTokenizer(pieces: bridgeTracePieces)
+    var configuration = ModelConfiguration(id: "osaurus-token-bridge-test")
+    configuration.eosTokenIds = []
+    let processor = BridgeTraceInputProcessor(
+        tokenizer: tokenizer,
+        configuration: configuration,
+        messageGenerator: DefaultMessageGenerator())
+    let context = ModelContext(
+        configuration: configuration,
+        model: model,
+        processor: processor,
+        tokenizer: tokenizer)
+    return BatchEngine(context: context, maxBatchSize: maxBatchSize)
 }
