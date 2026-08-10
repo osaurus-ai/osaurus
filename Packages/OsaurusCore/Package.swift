@@ -170,7 +170,7 @@ let package = Package(
         // capped (VMLX_METAL_BUFFER_COUNT_GUARD=0 disables).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "e4971694849a5c9ac112789fbb1a5b803ec3ca56"
+            revision: "98bc9f9e9648fb0bcc614430ffa81713eed91ce0"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
