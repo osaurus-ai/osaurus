@@ -266,6 +266,114 @@ struct MuseGlimmerVisionLiveTests {
         #expect(aHit || bHit, "neither description used any scene vocabulary")
     }
 
+    /// Where things are, as a forced choice. The model placed a centred shape
+    /// in the bottom third and called the top band of a red/green/blue image
+    /// "blue" — the bottom band's colour — so vertical mapping is the suspect.
+    /// A bar filling only the top quarter against one filling only the bottom
+    /// quarter separates a flip (both answers wrong) from lost position (the
+    /// same answer twice). The left bar tells a vertical flip from a transpose.
+    @Test("vertical position is reported correctly", .enabled(if: enabled))
+    func verticalPosition() async throws {
+        let context = try await MLXVLM.VLMModelFactory.shared.load(
+            from: Self.bundle, using: SwiftTransformersTokenizerLoader())
+        let window = ProcessInfo.processInfo.environment["VMLX_MUSE_VISION_WINDOW"] ?? "default"
+
+        func ask(_ name: String, _ question: String) async throws -> String {
+            let userInput = UserInput(
+                prompt: question,
+                images: [.ciImage(CIImage(
+                    contentsOf: URL(fileURLWithPath: "/tmp/raptorproof/\(name).png"))!)],
+                additionalContext: ["reasoning_strength": "low"])
+            let input = try await context.processor.prepare(input: userInput)
+            var text = ""
+            let stream = try MLXLMCommon.generate(
+                input: input,
+                parameters: GenerateParameters(maxTokens: 700, temperature: 0.0),
+                context: context)
+            for await item in stream {
+                if let chunk = item.chunk { text += chunk }
+            }
+            return text.lowercased().replacingOccurrences(of: "\n", with: " ")
+        }
+        func first(_ s: String, _ a: String, _ b: String) -> String {
+            let ai = s.range(of: a)?.lowerBound, bi = s.range(of: b)?.lowerBound
+            switch (ai, bi) {
+            case let (.some(x), .some(y)): return x < y ? a : b
+            case (.some, nil): return a
+            case (nil, .some): return b
+            default: return "?"
+            }
+        }
+
+        let q = "This image has one black bar against white. Is the bar at the top or the bottom of the image? Reply with exactly one word."
+        let onTop = try await ask("pos-top", q)
+        let onBottom = try await ask("pos-bottom", q)
+        let vTop = first(onTop, "top", "bottom")
+        let vBottom = first(onBottom, "top", "bottom")
+        print("[position] window=\(window) top-bar→\(vTop)  bottom-bar→\(vBottom)")
+        print("[position]   raw top: \(onTop.prefix(80))")
+        print("[position]   raw bottom: \(onBottom.prefix(80))")
+
+        // Both sides, because one image cannot separate a mirror from a model
+        // that simply prefers saying "right".
+        let lq = "This image has one black bar against white. Is the bar on the left or the right? Reply with exactly one word."
+        let onLeft = try await ask("pos-left", lq)
+        let onRight = try await ask("pos-right", lq)
+        let hLeft = first(onLeft, "left", "right")
+        let hRight = first(onRight, "left", "right")
+        print("[position] left-bar→\(hLeft)  right-bar→\(hRight)")
+        if hLeft == "right" && hRight == "left" {
+            print("[position] HORIZONTAL MIRROR — both answers inverted")
+        } else if hLeft == hRight {
+            print("[position] horizontal not resolved — same answer for opposite images")
+        }
+        #expect(hLeft == "left", "the left bar was reported as \(hLeft)")
+        #expect(hRight == "right", "the right bar was reported as \(hRight)")
+
+        if vTop == "bottom" && vBottom == "top" {
+            print("[position] VERTICAL FLIP — both answers inverted")
+        } else if vTop == vBottom {
+            print("[position] position not resolved — same answer for opposite images")
+        }
+        #expect(vTop == "top", "the top bar was reported as \(vTop)")
+        #expect(vBottom == "bottom", "the bottom bar was reported as \(vBottom)")
+    }
+
+    /// The model's own account of what it sees. Generation here is raw — no
+    /// reasoning parser — so the `to=self` thinking channel arrives in the
+    /// stream alongside the answer. A one-word forced choice says only whether
+    /// the label is right; the thinking says what the picture looked like to
+    /// the model, which is the difference between knowing it is wrong and
+    /// knowing why.
+    @Test("read the model's perception of a known image", .enabled(if: enabled))
+    func perceptionDump() async throws {
+        let context = try await MLXVLM.VLMModelFactory.shared.load(
+            from: Self.bundle, using: SwiftTransformersTokenizerLoader())
+        let window = ProcessInfo.processInfo.environment["VMLX_MUSE_VISION_WINDOW"] ?? "default"
+
+        for name in ["bat-circle-1", "bat-square-1"] {
+            let userInput = UserInput(
+                prompt: "Describe exactly what you see in this image: the shape, "
+                    + "its colour, and where it sits.",
+                images: [.ciImage(CIImage(
+                    contentsOf: URL(fileURLWithPath: "/tmp/raptorproof/\(name).png"))!)],
+                additionalContext: ["reasoning_strength": "high"])
+            let input = try await context.processor.prepare(input: userInput)
+            var text = ""
+            let stream = try MLXLMCommon.generate(
+                input: input,
+                parameters: GenerateParameters(maxTokens: 900, temperature: 0.0),
+                context: context)
+            for await item in stream {
+                if let chunk = item.chunk { text += chunk }
+            }
+            print("[perceive] window=\(window) \(name) >>>")
+            for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+                print("[perceive]   \(line)")
+            }
+        }
+    }
+
     /// Six trials, three circles and three squares at different sizes and
     /// positions. Two trials cannot separate a real signal from a coin flip;
     /// six can. Reported as a score so the number is comparable across runs

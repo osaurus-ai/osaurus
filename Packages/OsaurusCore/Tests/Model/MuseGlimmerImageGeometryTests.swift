@@ -32,6 +32,43 @@ struct MuseGlimmerImageGeometryTests {
                 atPath: bundle.appendingPathComponent("config.json").path)
     }
 
+    /// A still image has to be duplicated across the 2-slot temporal axis, the
+    /// way a 2-frame clip would fill it. If the second slot is left empty the
+    /// model receives half a patch vector padded with zeros — input it never
+    /// saw in training — which reads downstream as low-contrast mottled noise
+    /// rather than as a picture.
+    @Test("both temporal slots carry the frame", .enabled(if: enabled))
+    func temporalSlotsAreFilled() async throws {
+        let context = try await MLXVLM.VLMModelFactory.shared.load(
+            from: Self.bundle, using: SwiftTransformersTokenizerLoader())
+        let userInput = UserInput(
+            prompt: "hi",
+            images: [.ciImage(CIImage(
+                contentsOf: URL(fileURLWithPath: "/tmp/raptorproof/solid-red.png"))!)],
+            additionalContext: ["reasoning_strength": "low"])
+        let input = try await context.processor.prepare(input: userInput)
+        let pixels = try #require(input.image?.pixels)
+        print("[temporal] patch tensor \(pixels.shape)")
+
+        // patchify emits each row as [channel][temporal][h][w].
+        let spatial = 14 * 14
+        let rows = pixels.dim(0)
+        let view = pixels.asType(.float32).reshaped(rows, 3, 2, spatial)
+        let slot0 = view[0..., 0..., 0, 0...]
+        let slot1 = view[0..., 0..., 1, 0...]
+        let diff = MLX.abs(slot0 - slot1).mean()
+        let mag0 = MLX.abs(slot0).mean()
+        let mag1 = MLX.abs(slot1).mean()
+        eval(diff, mag0, mag1)
+        print("[temporal] slot0 mean|v|=\(mag0.item(Float.self)) slot1 mean|v|=\(mag1.item(Float.self))")
+        print("[temporal] mean|slot0 - slot1| = \(diff.item(Float.self))")
+
+        #expect(mag1.item(Float.self) > 0.01,
+            "the second temporal slot is empty — a still image is not being duplicated across the temporal axis")
+        #expect(diff.item(Float.self) < 0.01,
+            "the two temporal slots differ for a still image; they should hold the same frame")
+    }
+
     @Test("placeholder count matches the vision token count", .enabled(if: enabled))
     func geometryIsConsistent() async throws {
         let context = try await MLXVLM.VLMModelFactory.shared.load(
